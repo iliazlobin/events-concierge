@@ -90,9 +90,11 @@ from .ports.browser_admission import BrowserAdmissionPort
 from .ports.calendar import CalendarPort
 from .ports.catalog_sources import CatalogPagedSourceFetcher, CatalogSourceFetcher
 from .ports.consent import RegistrationConsentEvidencePort
+from .ports.credentials import CredentialVault
 from .ports.discovery_policy import DiscoveryPolicyGate
 from .ports.google_calendar import GoogleCalendarAccessPort, GoogleCalendarBindingPort
 from .ports.invariants import LifecycleInvariantRepository
+from .ports.notifications import NotificationPort
 from .ports.object_store import ObjectStorePort
 from .ports.outbox import OutboxWakeupPort
 from .ports.policy import Pacer, PolicyEngine, SourceQuarantinePort
@@ -100,6 +102,7 @@ from .ports.ranking import RankerPort, RankingProfileRepository
 from .ports.ranking_feedback import RankingFeedbackRepository
 from .ports.sources import SourcePort
 from .ports.withdrawal import RegistrationWithdrawalPort
+from .runtime import RuntimePorts, load_runtime_ports
 
 
 @dataclass(slots=True)
@@ -127,8 +130,8 @@ class Container:
     ranking_feedback: RankingFeedbackService
     ranker: RankerPort
     calendar: CalendarPort
-    notifier: MockNotifier
-    vault: MockVault
+    notifier: NotificationPort
+    vault: CredentialVault
     registration_consent: RegistrationConsentEvidencePort
     policy: PolicyEngine
     source_quarantine: SourceQuarantinePort
@@ -175,9 +178,64 @@ def build_container(
     policy_engine: PolicyEngine | None = None,
     discovery_policy_gate: DiscoveryPolicyGate | None = None,
     source_quarantine: SourceQuarantinePort | None = None,
+    notifier: NotificationPort | None = None,
+    credential_vault: CredentialVault | None = None,
+    runtime_ports: RuntimePorts | None = None,
 ) -> Container:
     """Build the graph, accepting provisioned boundary overrides at the composition root."""
     settings = settings or get_settings()
+    provisioned = runtime_ports if runtime_ports is not None else load_runtime_ports(settings)
+    discovery_sources = (
+        discovery_sources
+        if discovery_sources is not None
+        else (
+            list(provisioned.discovery_sources)
+            if provisioned.discovery_sources is not None
+            else None
+        )
+    )
+    register_sources = (
+        register_sources
+        if register_sources is not None
+        else (
+            dict(provisioned.register_sources) if provisioned.register_sources is not None else None
+        )
+    )
+    withdrawal_sources = (
+        withdrawal_sources
+        if withdrawal_sources is not None
+        else (
+            dict(provisioned.withdrawal_sources)
+            if provisioned.withdrawal_sources is not None
+            else None
+        )
+    )
+    membership_resolver = (
+        membership_resolver if membership_resolver is not None else provisioned.membership_resolver
+    )
+    calendar = calendar if calendar is not None else provisioned.calendar
+    google_calendar_access = (
+        google_calendar_access
+        if google_calendar_access is not None
+        else provisioned.google_calendar_access
+    )
+    google_calendar_bindings = (
+        google_calendar_bindings
+        if google_calendar_bindings is not None
+        else provisioned.google_calendar_bindings
+    )
+    object_store = object_store if object_store is not None else provisioned.object_store
+    auth_context = auth_context if auth_context is not None else provisioned.auth_context
+    notifier = notifier if notifier is not None else provisioned.notifier
+    credential_vault = (
+        credential_vault if credential_vault is not None else provisioned.credential_vault
+    )
+    action_audit = action_audit if action_audit is not None else provisioned.action_audit
+    registration_consent = (
+        registration_consent
+        if registration_consent is not None
+        else provisioned.registration_consent
+    )
     init_engine(settings.database_url)
 
     embedding = DeterministicEmbedding()
@@ -224,15 +282,26 @@ def build_container(
         google_calendar_client,
     )
     configured_object_store, configured_auth_context = (
-        object_store or _build_object_store(settings),
-        auth_context or _build_auth_context(settings),
+        object_store if object_store is not None else _build_object_store(settings),
+        auth_context if auth_context is not None else _build_auth_context(settings),
     )
-    notifier, vault, configured_action_audit, configured_registration_consent = (
-        MockNotifier(),
-        MockVault(),
-        action_audit or PostgresRegistrationActionAuditRepository(),
-        registration_consent or PostgresRegistrationConsentEvidenceRepository(),
+    (
+        configured_notifier,
+        configured_vault,
+        configured_action_audit,
+        configured_registration_consent,
+    ) = (
+        notifier if notifier is not None else _build_notifier(settings),
+        (credential_vault if credential_vault is not None else _build_credential_vault(settings)),
+        (action_audit if action_audit is not None else PostgresRegistrationActionAuditRepository()),
+        (
+            registration_consent
+            if registration_consent is not None
+            else PostgresRegistrationConsentEvidenceRepository()
+        ),
     )
+    configured_register_sources = _build_register_sources(settings, register_sources)
+    configured_withdrawal_sources = _build_withdrawal_sources(settings, withdrawal_sources)
     (
         source_policies,
         configured_policy,
@@ -244,7 +313,7 @@ def build_container(
         discovery_policy_gate,
         source_quarantine,
     )
-    _bind_register_source_policy_guards(register_sources, configured_policy)
+    _bind_register_source_policy_guards(configured_register_sources, configured_policy)
     configured_pacer, configured_browser_admission = (
         pacer or _build_pacer(settings),
         browser_admission or _build_browser_admission(settings),
@@ -384,7 +453,7 @@ def build_container(
         membership_resolver=membership_resolver,
     )
     registration = RegistrationService(
-        register_sources or {},
+        configured_register_sources,
         configured_policy,
         configured_pacer,
         configured_calendar,
@@ -392,10 +461,12 @@ def build_container(
         handoff_repo,
         action_audit=configured_action_audit,
         registration_consent=configured_registration_consent,
-        credential_vault=vault,
+        credential_vault=configured_vault,
         browser_admission=configured_browser_admission,
         source_quarantine=configured_source_quarantine,
         handoff_ttl_days=settings.handoff_ttl_days,
+        handoff_completion_base_url=settings.public_base_url,
+        require_https_completion_links=not settings.mock_cloud,
     )
     request_terminal = RequestTerminalService(request_repo)
     return Container(
@@ -422,8 +493,8 @@ def build_container(
         ranking_feedback=ranking_feedback,
         ranker=configured_ranker,
         calendar=configured_calendar,
-        notifier=notifier,
-        vault=vault,
+        notifier=configured_notifier,
+        vault=configured_vault,
         registration_consent=configured_registration_consent,
         policy=configured_policy,
         source_quarantine=configured_source_quarantine,
@@ -445,8 +516,8 @@ def build_container(
             handoff_repo,
             configured_policy,
             configured_pacer,
-            withdrawal_sources or {},
-            vault,
+            configured_withdrawal_sources,
+            configured_vault,
             configured_browser_admission,
             configured_source_quarantine,
             settings.handoff_ttl_days,
@@ -464,7 +535,7 @@ def _build_reconciliation(
     policy: PolicyEngine,
     pacer: Pacer,
     withdrawals: dict[Source, RegistrationWithdrawalPort],
-    vault: MockVault,
+    vault: CredentialVault,
     browser_admission: BrowserAdmissionPort,
     source_quarantine: SourceQuarantinePort,
     handoff_ttl_days: int,
@@ -539,6 +610,11 @@ def _build_calendar(
     if calendar is not None:
         return calendar
     if not settings.google_calendar_enabled:
+        if not settings.mock_cloud:
+            raise ValueError(
+                "non-mock deployments must inject a provisioned CalendarPort or enable "
+                "Google Calendar with tenant-scoped access"
+            )
         return MockCalendar()
     configured_access = access or _load_google_calendar_access(settings)
     if configured_access is None:
@@ -575,15 +651,8 @@ def _load_google_calendar_access(settings: Settings) -> GoogleCalendarAccessPort
     if configured is None:
         return None
     module_name, separator, attribute_name = configured.strip().partition(":")
-    if (
-        not separator
-        or not module_name
-        or not attribute_name
-        or ":" in attribute_name
-    ):
-        raise ValueError(
-            "google_calendar_access_factory must use the form 'module:callable'"
-        )
+    if not separator or not module_name or not attribute_name or ":" in attribute_name:
+        raise ValueError("google_calendar_access_factory must use the form 'module:callable'")
     try:
         module = import_module(module_name)
         factory = cast("Callable[[], object]", getattr(module, attribute_name))
@@ -595,9 +664,7 @@ def _load_google_calendar_access(settings: Settings) -> GoogleCalendarAccessPort
         raise ValueError("google_calendar_access_factory must resolve to a callable")
     access = factory()
     if not callable(getattr(access, "get_access", None)):
-        raise ValueError(
-            "google_calendar_access_factory must return a GoogleCalendarAccessPort"
-        )
+        raise ValueError("google_calendar_access_factory must return a GoogleCalendarAccessPort")
     return cast("GoogleCalendarAccessPort", access)
 
 
@@ -685,6 +752,43 @@ def _build_auth_context(settings: Settings) -> AuthContextPort:
     if not settings.mock_cloud:
         raise ValueError("non-mock deployments must inject a provisioned AuthContextPort")
     return HeaderAuthContext()
+
+
+def _build_notifier(settings: Settings) -> NotificationPort:
+    """Keep the process-local delivery recorder strictly inside mock composition."""
+    if not settings.mock_cloud:
+        raise ValueError("non-mock deployments must inject a provisioned NotificationPort")
+    return MockNotifier()
+
+
+def _build_credential_vault(settings: Settings) -> CredentialVault:
+    """Never retain production credentials in the process-local mock vault."""
+    if not settings.mock_cloud:
+        raise ValueError("non-mock deployments must inject a provisioned CredentialVault")
+    return MockVault()
+
+
+def _build_register_sources(
+    settings: Settings, sources: dict[Source, SourcePort] | None
+) -> dict[Source, SourcePort]:
+    """Require production registration enablement or disablement to be an explicit decision."""
+    if sources is None:
+        if not settings.mock_cloud:
+            raise ValueError("non-mock deployments must inject an explicit register source map")
+        return {}
+    return sources
+
+
+def _build_withdrawal_sources(
+    settings: Settings,
+    sources: dict[Source, RegistrationWithdrawalPort] | None,
+) -> dict[Source, RegistrationWithdrawalPort]:
+    """Require production withdrawal enablement or disablement to be explicit."""
+    if sources is None:
+        if not settings.mock_cloud:
+            raise ValueError("non-mock deployments must inject an explicit withdrawal source map")
+        return {}
+    return sources
 
 
 def _uses_shared_redis(settings: Settings) -> bool:

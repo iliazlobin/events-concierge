@@ -181,6 +181,13 @@ class HandoffState(StrEnum):
     CANCELLED = "cancelled"
 
 
+class HandoffCompletionOutcome(StrEnum):
+    """Immutable result of consuming one mark-done capability."""
+
+    VERIFIED = "verified"
+    REVIEW_REQUIRED = "review_required"
+
+
 class HandoffReminderKind(StrEnum):
     """The owner-ratified durable reminder cadence for an open handoff (ADR-007)."""
 

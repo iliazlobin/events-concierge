@@ -369,9 +369,13 @@ async def test_watch_poll_detector_lease_check_reads_the_database_clock_after_a_
         assert await asyncio.wait_for(stale_check, timeout=5) is False
         stale_state = await _owner_watch_poll_snapshot(canonical_event_id, Source.LUMA)
         assert stale_state.lease_token == stale_lease.lease_token
+        assert stale_state.lease_expires_at is not None
         fresh_lease = await repository.claim_watch_poll(
             watch,
-            now=datetime.now(UTC),
+            # Claim with a logical instant strictly beyond the persisted expiry. The
+            # database and host clocks can differ by a few milliseconds under Docker,
+            # even though the database-clock fence above has already observed expiry.
+            now=stale_state.lease_expires_at + timedelta(microseconds=1),
             lease_seconds=60,
         )
         assert fresh_lease is not None

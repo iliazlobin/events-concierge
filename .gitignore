@@ -9,7 +9,27 @@ __pycache__/
 
 # Env / secrets
 .env
+.env.*
+!.env.example
 *.local
+*.pem
+*.key
+*.p12
+*.pfx
+*.jks
+*.keystore
+credentials*.json
+*-credentials.json
+service-account*.json
+*-service-account.json
+client_secret*.json
+secrets*.json
+
+# Test / coverage output
+.coverage
+.coverage.*
+coverage.xml
+htmlcov/
 
 # Build artifacts
 dist/

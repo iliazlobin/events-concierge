@@ -2,14 +2,12 @@
 
 from __future__ import annotations
 
-from temporalio.client import Client
-
 from ..application.catalog_refresh_router import CatalogRefreshRouter
 from ..composition import Container
 from ..config import Settings
 from ..infra.logging import get_logger
-from ..workflows.claim_check import build_claim_check_data_converter
 from ..workflows.start import TemporalCatalogPagedRefreshStarter, TemporalCatalogRefreshStarter
+from ..workflows.temporal_client import connect_temporal
 
 _log = get_logger(__name__)
 
@@ -27,13 +25,7 @@ async def build_catalog_refresh_router(
     paged_starter: TemporalCatalogPagedRefreshStarter | None = None
     if settings.uses_shared_pacer_redis:
         try:
-            client = await Client.connect(
-                settings.temporal_target,
-                namespace=settings.temporal_namespace,
-                data_converter=build_claim_check_data_converter(
-                    container.object_store, settings.claim_check_threshold_bytes
-                ),
-            )
+            client = await connect_temporal(settings, container.object_store)
             starter = TemporalCatalogRefreshStarter(client, settings)
             paged_starter = TemporalCatalogPagedRefreshStarter(client, settings)
         except Exception as exc:

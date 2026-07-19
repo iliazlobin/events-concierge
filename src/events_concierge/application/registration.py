@@ -8,11 +8,14 @@ anchored in the guarded repository transaction (FR-5.3/5.5/5.9, FR-8.3, NFR-8, A
 from __future__ import annotations
 
 import json
+import secrets
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from enum import StrEnum
 from typing import NoReturn
+from unicodedata import category
+from urllib.parse import urlsplit
 from uuid import UUID
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
@@ -28,6 +31,7 @@ from ..domain.enums import (
     ConflictVerdict,
     ConsentScope,
     GroupCondition,
+    HandoffCompletionOutcome,
     HandoffReason,
     HandoffState,
     Lane,
@@ -38,7 +42,7 @@ from ..domain.enums import (
     Source,
 )
 from ..domain.events import CanonicalEvent
-from ..domain.lifecycle import HandoffTask, IllegalTransitionError
+from ..domain.lifecycle import HandoffCompletionReceipt, HandoffTask, IllegalTransitionError
 from ..domain.policy import PolicyDecision
 from ..infra.logging import get_logger
 from ..infra.ulid import new_ulid
@@ -74,6 +78,8 @@ from ..ports.sources import (
 _log = get_logger(__name__)
 
 _DEFAULT_DURATION = timedelta(hours=2)
+_MAX_PUBLIC_BASE_URL_LENGTH = 2048
+_MAX_URL_PORT = 65535
 _LANE_SOURCE = {Lane.AUTONOMOUS_SLA: Source.MEETUP, Lane.BROWSER_BEST_EFFORT: Source.LUMA}
 _LANE_MODALITY = {Lane.AUTONOMOUS_SLA: Modality.API, Lane.BROWSER_BEST_EFFORT: Modality.BROWSER}
 _SOURCE_OUTCOME_TO_AUDIT = {
@@ -107,6 +113,14 @@ class CandidateCloseStatus(StrEnum):
     CLOSED = "closed"
     ALREADY_TERMINAL = "already_terminal"
     IGNORED = "ignored"
+
+
+class HandoffCompletionStatus(StrEnum):
+    """Fail-closed outcomes from one independently verified mark-done command."""
+
+    CONFIRMED = "confirmed"
+    REVIEW_REQUIRED = "review_required"
+    INACTIVE = "inactive"
 
 
 @dataclass(frozen=True, slots=True)
@@ -209,6 +223,13 @@ class ConfirmationResult:
     detail: str = ""
 
 
+@dataclass(frozen=True, slots=True)
+class HandoffCompletionResult:
+    status: HandoffCompletionStatus
+    detail: str = ""
+    conflict_warning: bool = False
+
+
 class RegistrationService:
     """Application-layer implementations for the ADR-003 registration saga activities.
 
@@ -232,6 +253,8 @@ class RegistrationService:
         browser_admission: BrowserAdmissionPort | None = None,
         source_quarantine: SourceQuarantinePort | None = None,
         handoff_ttl_days: int = 7,
+        handoff_completion_base_url: str = "",
+        require_https_completion_links: bool = False,
         now: Callable[[], datetime] | None = None,
     ) -> None:
         self._sources = sources_by_source
@@ -246,6 +269,10 @@ class RegistrationService:
         self._browser_admission = browser_admission
         self._source_quarantine = source_quarantine
         self._ttl = timedelta(days=handoff_ttl_days)
+        self._handoff_completion_base_url = _normalized_public_base_url(
+            handoff_completion_base_url,
+            require_https=require_https_completion_links,
+        )
         self._now = now or (lambda: datetime.now(UTC))
 
     async def resolve_membership(
@@ -674,6 +701,250 @@ class RegistrationService:
             )
         return RegisterOutcome.CONFIRMED
 
+    async def replay_handoff_completion(
+        self,
+        tenant_id: UUID,
+        task_id: str,
+        completion_id: str,
+    ) -> HandoffCompletionResult | None:
+        """Recover an exact committed completion before repeating any provider or catalog read."""
+        receipt = await self._handoff.get_completion_attempt(
+            tenant_id,
+            task_id,
+            completion_id,
+        )
+        if receipt is None:
+            return None
+        return self._handoff_completion_from_receipt(receipt)
+
+    @staticmethod
+    def _handoff_completion_from_receipt(
+        receipt: HandoffCompletionReceipt,
+    ) -> HandoffCompletionResult:
+        if receipt.outcome is HandoffCompletionOutcome.REVIEW_REQUIRED:
+            if receipt.registration_source is not None or receipt.conflict_warning is not None:
+                raise RuntimeError("review completion receipt contains verified-only fields")
+            return HandoffCompletionResult(
+                HandoffCompletionStatus.REVIEW_REQUIRED,
+                receipt.detail,
+            )
+        if receipt.outcome is HandoffCompletionOutcome.VERIFIED:
+            if receipt.registration_source is None or receipt.conflict_warning is None:
+                raise RuntimeError("verified completion receipt is incomplete")
+            return HandoffCompletionResult(
+                HandoffCompletionStatus.CONFIRMED,
+                receipt.detail or "registration independently verified",
+                conflict_warning=receipt.conflict_warning,
+            )
+        raise RuntimeError("handoff completion receipt has an unsupported outcome")
+
+    async def complete_handoff(
+        self,
+        tenant_id: UUID,
+        event: CanonicalEvent,
+        workflow_id: str,
+        *,
+        task_id: str,
+        completion_id: str,
+        registered_transition_id: str,
+        verification_read_queue_item_id: str,
+    ) -> HandoffCompletionResult:
+        """Independently verify a mark-done before consuming it and advancing the lifecycle.
+
+        A user click is only a wake-up signal. The activity freshly reads the provider registration
+        state, then freshly reads every connected calendar through ``free_busy``. Only a confirmed
+        provider state can atomically consume the capability, complete the task, and transition
+        ``HANDOFF -> REGISTERED``. Any settled unavailable/negative/ambiguous verification is
+        durably recorded and surfaced for review with zero calendar write (FR-6.3, FR-16).
+        """
+        replay = await self.replay_handoff_completion(tenant_id, task_id, completion_id)
+        if replay is not None:
+            return replay
+        task = await self._handoff.get(tenant_id, task_id)
+        lifecycle = await self._lifecycle.find_active(tenant_id, event.canonical_event_id)
+        if (
+            task is None
+            or lifecycle is None
+            or lifecycle.workflow_id != workflow_id
+            or task.workflow_id != workflow_id
+            or task.canonical_event_id != event.canonical_event_id
+            or task.state not in {HandoffState.OPEN, HandoffState.NOTIFIED}
+            or lifecycle.state is not LifecycleState.HANDOFF
+        ):
+            return HandoffCompletionResult(
+                HandoffCompletionStatus.INACTIVE,
+                "handoff task is no longer active",
+            )
+
+        target = self._handoff_verification_target(event, task)
+        if target is None:
+            return await self._route_handoff_completion_review(
+                task,
+                completion_id,
+                "no independent registration read-back is available",
+            )
+        source, modality, registration_target = target
+        adapter = self._sources[source]
+        try:
+            state = await self._paced_registration_state(
+                tenant_id,
+                source,
+                adapter,
+                registration_target,
+                modality,
+                PacerOperation.CONFIRMATION_READ,
+                queue_item_id=verification_read_queue_item_id,
+            )
+        except PacerDeferredError as deferred:
+            if deferred.lease.status is PacerLeaseStatus.WAIT:
+                # Temporal owns the durable Pacer timer. Do not consume the one-time capability
+                # until an authoritative verification result exists.
+                raise
+            return await self._route_handoff_completion_review(
+                task,
+                completion_id,
+                "independent registration verification was not admitted",
+            )
+        except Exception as exc:
+            _log.warning(
+                "handoff_completion_verification_failed",
+                workflow_id=workflow_id,
+                task_id=task_id,
+                error=type(exc).__name__,
+            )
+            return await self._route_handoff_completion_review(
+                task,
+                completion_id,
+                "independent registration verification was unavailable",
+            )
+        if state is not RsvpState.CONFIRMED:
+            return await self._route_handoff_completion_review(
+                task,
+                completion_id,
+                f"independent registration verification returned {state.value}",
+            )
+
+        event_end = event.end_at or (event.start_at + _DEFAULT_DURATION)
+        try:
+            busy = await self._calendar.free_busy(tenant_id, event.start_at, event_end)
+        except Exception as exc:
+            _log.warning(
+                "handoff_completion_free_busy_failed",
+                workflow_id=workflow_id,
+                task_id=task_id,
+                error=type(exc).__name__,
+            )
+            return await self._route_handoff_completion_review(
+                task,
+                completion_id,
+                "fresh calendar conflict verification was unavailable",
+            )
+        conflict_warning = (
+            evaluate_conflict(event.start_at, event_end, busy) is ConflictVerdict.BLOCKED
+        )
+        try:
+            await self._handoff.complete_verified(
+                task,
+                lifecycle,
+                transition_id=registered_transition_id,
+                completion_id=completion_id,
+                registration_source=source,
+                conflict_warning=conflict_warning,
+                outbox_payload={
+                    "canonical_event_id": str(event.canonical_event_id),
+                    "workflow_id": workflow_id,
+                    "event_summary": event.title,
+                    "task_id": task.task_id,
+                    "completion_id": completion_id,
+                    "evidence": "user_mark_done",
+                    "verification": "source_read_back",
+                    "conflict_warning": conflict_warning,
+                    "registration_source": source.value,
+                },
+            )
+        except Exception:
+            if await self._handoff_completion_became_inactive(task):
+                return HandoffCompletionResult(
+                    HandoffCompletionStatus.INACTIVE,
+                    "handoff task became inactive during verification",
+                )
+            raise
+        return HandoffCompletionResult(
+            HandoffCompletionStatus.CONFIRMED,
+            "registration independently verified",
+            conflict_warning=conflict_warning,
+        )
+
+    async def _route_handoff_completion_review(
+        self,
+        task: HandoffTask,
+        completion_id: str,
+        detail: str,
+    ) -> HandoffCompletionResult:
+        """Consume one failed self-report into a durable review receipt exactly once."""
+        try:
+            await self._handoff.record_completion_review(
+                task,
+                completion_id=completion_id,
+                detail=detail,
+            )
+        except Exception:
+            if await self._handoff_completion_became_inactive(task):
+                return HandoffCompletionResult(
+                    HandoffCompletionStatus.INACTIVE,
+                    "handoff task became inactive during verification",
+                )
+            raise
+        return HandoffCompletionResult(HandoffCompletionStatus.REVIEW_REQUIRED, detail)
+
+    async def _handoff_completion_became_inactive(self, task: HandoffTask) -> bool:
+        """Distinguish an expiry/terminal race from a retryable persistence failure."""
+        refreshed_task = await self._handoff.get(task.tenant_id, task.task_id)
+        lifecycle = await self._lifecycle.find_active(
+            task.tenant_id,
+            task.canonical_event_id,
+        )
+        return (
+            refreshed_task is None
+            or refreshed_task.state not in {HandoffState.OPEN, HandoffState.NOTIFIED}
+            or lifecycle is None
+            or lifecycle.workflow_id != task.workflow_id
+            or lifecycle.state is not LifecycleState.HANDOFF
+        )
+
+    def _handoff_verification_target(
+        self,
+        event: CanonicalEvent,
+        task: HandoffTask,
+    ) -> tuple[Source, Modality, RegistrationTarget] | None:
+        """Select only a retained source link with a bound read-back adapter.
+
+        The task deep link is the authoritative handoff surface. A merged event may carry several
+        source links, so an exact URL match wins; falling back is allowed only when exactly one
+        retained link exists. No caller-supplied URL/source enters this decision.
+        """
+        exact = [link for link in event.source_links if link.registration_url == task.deep_link]
+        links = exact if exact else (event.source_links if len(event.source_links) == 1 else [])
+        for link in links:
+            adapter = self._sources.get(link.source)
+            if adapter is None:
+                continue
+            if link.source is Source.MEETUP:
+                modality = Modality.API
+            elif link.source is Source.LUMA:
+                modality = Modality.BROWSER
+            else:
+                # Future API-backed exact read-back adapters can opt in without changing the
+                # capability contract. Discovery-only adapters still fail closed on consent,
+                # policy, or a non-confirmed state.
+                modality = Modality.API if adapter.capability.supports_api else Modality.BROWSER
+            return (
+                link.source,
+                modality,
+                RegistrationTarget(link.source_event_id, link.registration_url),
+            )
+        return None
+
     def dedupe_calendar(self, tenant_id: UUID, event: CanonicalEvent) -> CalendarEntry:
         """Prepare the deterministic, IANA-zone calendar upsert (FR-9.2/9.3/9.5, ADR-003)."""
         return CalendarEntry(
@@ -753,6 +1024,15 @@ class RegistrationService:
                 detail="already scheduled",
             )
         link = event.source_links[0] if event.source_links else None
+        existing_task = await self._handoff.get(tenant_id, handoff_task_id)
+        completion_token = (
+            secrets.token_urlsafe(32)
+            if existing_task is None
+            and lifecycle.state in (LifecycleState.FOUND, LifecycleState.AWAITING_CONFIRMATION)
+            and reason
+            not in {HandoffReason.CALENDAR_WRITE_FAILED, HandoffReason.WITHDRAWAL_REQUIRED}
+            else None
+        )
         task = HandoffTask(
             task_id=handoff_task_id,
             tenant_id=tenant_id,
@@ -765,8 +1045,23 @@ class RegistrationService:
             state=HandoffState.OPEN,
             metadata={"detail": detail} if detail else {},
             expiry_transition_id=handoff_expiry_transition_id,
+            completion_token=completion_token,
         )
         if lifecycle.state in (LifecycleState.FOUND, LifecycleState.AWAITING_CONFIRMATION):
+            completion_path = (
+                f"/v1/tasks/{completion_token}/done" if completion_token is not None else None
+            )
+            completion_projection: dict[str, object] = (
+                {
+                    "completion_url": (
+                        f"{self._handoff_completion_base_url}{completion_path}"
+                        if self._handoff_completion_base_url
+                        else completion_path
+                    )
+                }
+                if completion_path is not None
+                else {}
+            )
             await self._handoff.create_and_transition(
                 task,
                 lifecycle,
@@ -778,6 +1073,7 @@ class RegistrationService:
                     "workflow_id": workflow_id,
                     "event_summary": task.event_summary,
                     "deep_link": task.deep_link,
+                    **completion_projection,
                 },
             )
         elif lifecycle.state in (LifecycleState.HANDOFF, LifecycleState.REGISTERED):
@@ -1648,6 +1944,45 @@ class RegistrationService:
             # loop. A one-second durable floor is conservative and keeps the source untouched.
             lease = PacerLease(PacerLeaseStatus.WAIT, 1.0, str(throttle))
         raise PacerDeferredError(lease)
+
+
+def _normalized_public_base_url(value: str, *, require_https: bool) -> str:
+    """Validate the deployment-owned origin before placing a capability in a notification."""
+    if not isinstance(value, str):
+        raise TypeError("handoff completion base URL must be a string")
+    if not value:
+        if require_https:
+            raise ValueError("non-mock handoff completion links require a public HTTPS base URL")
+        return ""
+    if (
+        len(value) > _MAX_PUBLIC_BASE_URL_LENGTH
+        or any(
+            character.isspace() or category(character) in {"Cc", "Cf"}
+            for character in value
+        )
+    ):
+        raise ValueError("handoff completion base URL must be a bounded absolute URL")
+    try:
+        parsed = urlsplit(value)
+        port = parsed.port
+    except ValueError as error:
+        raise ValueError(
+            "handoff completion base URL must be a bounded absolute URL"
+        ) from error
+    if (
+        parsed.scheme not in {"http", "https"}
+        or not parsed.hostname
+        or parsed.username is not None
+        or parsed.password is not None
+        or "?" in value
+        or "#" in value
+        or parsed.netloc.endswith(":")
+        or (port is not None and not 1 <= port <= _MAX_URL_PORT)
+    ):
+        raise ValueError("handoff completion base URL must be a bounded absolute URL")
+    if require_https and parsed.scheme != "https":
+        raise ValueError("non-mock handoff completion links require a public HTTPS base URL")
+    return value.rstrip("/")
 
 
 def _iana_time_zone(moment: datetime) -> str:

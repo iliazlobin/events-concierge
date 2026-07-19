@@ -5,7 +5,6 @@ from __future__ import annotations
 
 import asyncio
 
-from temporalio.client import Client
 from temporalio.worker import Worker
 
 from ..composition import build_container
@@ -32,7 +31,7 @@ from .activities import (
     unrsvp,
     write_to_calendar,
 )
-from .claim_check import build_claim_check_data_converter
+from .temporal_client import connect_temporal
 from .workflows import (
     CatalogPagedRefreshWorkflow,
     CatalogRefreshWorkflow,
@@ -49,13 +48,7 @@ async def run_worker() -> None:
     container = build_container(settings)
     set_container(container)
 
-    client = await Client.connect(
-        settings.temporal_target,
-        namespace=settings.temporal_namespace,
-        data_converter=build_claim_check_data_converter(
-            container.object_store, settings.claim_check_threshold_bytes
-        ),
-    )
+    client = await connect_temporal(settings, container.object_store)
     worker = Worker(
         client,
         task_queue=settings.temporal_task_queue,

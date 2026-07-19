@@ -269,13 +269,64 @@ async def register_or_rsvp(inp: RegisterOrRsvpInput) -> RegisterOrRsvpResult:
     return RegisterOrRsvpResult(result.outcome.value, result.detail)
 
 
+async def _replayed_handoff_completion(
+    c: Container,
+    inp: AwaitConfirmationInput,
+) -> AwaitConfirmationResult | None:
+    """Return an exact committed handoff result before any replay-sensitive catalog read."""
+    if inp.handoff_task_id is not None or inp.handoff_completion_id is not None:
+        if inp.handoff_task_id is None or inp.handoff_completion_id is None:
+            return AwaitConfirmationResult(
+                status="review_required",
+                detail="incomplete handoff completion identity",
+            )
+        replay = await c.registration.replay_handoff_completion(
+            UUID(inp.tenant_id),
+            inp.handoff_task_id,
+            inp.handoff_completion_id,
+        )
+        if replay is not None:
+            return AwaitConfirmationResult(
+                status=replay.status.value,
+                detail=replay.detail,
+                conflict_warning=replay.conflict_warning,
+            )
+    return None
+
+
 @activity.defn
 async def await_confirmation(inp: AwaitConfirmationInput) -> AwaitConfirmationResult:
-    """Persist a pending/confirmed state; the 24-hour wait is a workflow timer, not worker time."""
+    """Verify either autonomous confirmation or a capability-authenticated handoff completion."""
     c = _require()
+    replay = await _replayed_handoff_completion(c, inp)
+    if replay is not None:
+        return replay
     event = await _event(c, inp.canonical_event_id)
     if event is None:
         return AwaitConfirmationResult(status="failed", detail="candidate not found")
+    if inp.handoff_task_id is not None and inp.handoff_completion_id is not None:
+        try:
+            completion = await c.registration.complete_handoff(
+                UUID(inp.tenant_id),
+                event,
+                inp.workflow_id,
+                task_id=inp.handoff_task_id,
+                completion_id=inp.handoff_completion_id,
+                registered_transition_id=inp.registered_transition_id,
+                verification_read_queue_item_id=inp.confirmation_read_queue_item_id,
+            )
+        except PacerDeferredError as deferred:
+            return AwaitConfirmationResult(
+                status="pacing_wait",
+                detail=deferred.lease.detail,
+                pacing_status=deferred.lease.status.value,
+                retry_after_seconds=deferred.lease.retry_after_seconds,
+            )
+        return AwaitConfirmationResult(
+            status=completion.status.value,
+            detail=completion.detail,
+            conflict_warning=completion.conflict_warning,
+        )
     try:
         result = await c.registration.await_confirmation(
             UUID(inp.tenant_id),

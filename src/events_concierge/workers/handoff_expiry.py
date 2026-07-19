@@ -17,8 +17,8 @@ from ..composition import build_container
 from ..config import Settings, get_settings
 from ..infra.logging import configure_logging, get_logger
 from ..ports.object_store import ObjectStorePort
-from ..workflows.claim_check import build_claim_check_data_converter
 from ..workflows.start import TemporalWorkflowLivenessInspector
+from ..workflows.temporal_client import connect_temporal
 
 _log = get_logger(__name__)
 
@@ -68,13 +68,7 @@ async def run_handoff_expiry() -> None:
 async def _try_connect_temporal(settings: Settings, object_store: ObjectStorePort) -> Client | None:
     """Do not risk orphan expiry while Temporal liveness cannot be checked (ADR-007)."""
     try:
-        return await Client.connect(
-            settings.temporal_target,
-            namespace=settings.temporal_namespace,
-            data_converter=build_claim_check_data_converter(
-                object_store, settings.claim_check_threshold_bytes
-            ),
-        )
+        return await connect_temporal(settings, object_store)
     except Exception as error:
         _log.warning("temporal unavailable for handoff expiry repair", error=str(error))
         return None

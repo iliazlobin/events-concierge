@@ -4124,6 +4124,40 @@ wave or the next phase.
     clean; strict mypy clean across **197 source files**), `make quality` (**1 passed**), and `make quality-load`
     (**1 passed, 1 deselected**) are green; `alembic heads` remains `0104 (head)`.
 
+- **2026-07-18 — P43 COMPLETE: recovered repository, fail-closed production foundation, and secure handoff
+  completion (production launch not claimed).** The recovered working tree is preserved in local root commit
+  `f947698`; no private upstream could be identified, so that root must be reconciled with the owner-approved
+  remote before any push. Non-mock composition now requires a deployment-owned runtime provider plus explicit
+  OIDC, object-store, notification, vault, Calendar, and provider-operation ports. Signed asymmetric JWT/JWKS
+  validation, bounded single-flight key refresh, version-aware convergent S3 purge, lazy API Temporal recovery,
+  bounded dependency readiness, locked non-root packaging, pinned CI actions, and an operations runbook all fail
+  closed at their authority boundaries.
+  - **Handoff completion:** migration `0105` stores only a SHA-256 digest of each 256-bit capability and an exact
+    replay receipt. Scanner-safe GET is inert; only POST signals the workflow. Verified completion re-reads
+    provider truth and fresh Calendar availability before one atomic `HANDOFF → REGISTERED` transition, task
+    completion, expiry retirement, and receipt. Review-required self-reports instead consume the capability,
+    record durable evidence, notify the user, and leave Calendar/lifecycle truth unchanged. Privileged receipt
+    replay is explicitly tenant-bound, including a direct cross-tenant `SECURITY DEFINER` regression, and exact
+    receipts are replayed before catalog/provider reads after an activity acknowledgement loss. Capability paths
+    are excluded from access logs.
+  - **Recovery and availability evidence:** the final audit closed unknown-key JWKS fetch amplification,
+    malformed issuer/completion URLs, versioned S3 delete-marker leakage, unbounded database readiness, Temporal
+    cold-start coupling, silent review-outbox acknowledgement, and verified/review activity-ACK replay gaps. A
+    Docker/Colima clock-skew flake in the pre-existing watch-poll race proof now uses its persisted logical expiry;
+    the focused race passes **5/5** and its full module passes **5/5**.
+  - **Verification:** Ruff is clean; strict mypy is clean across **203 source files**; unit tests are **631 passed,
+    208 deselected**; integration tests are **207 passed, 632 deselected**; the synthetic quality matrix is **1
+    passed** and bounded quality load is **1 passed, 1 deselected**. `0105 → 0104 → 0105` passes. The exact
+    production image runs as UID/GID **10001**, imports the installed package, reports `/healthz` healthy, and
+    reports PostgreSQL plus Temporal ready.
+  - **Explicit remaining boundary:** production still requires an owner-approved remote/history reconciliation,
+    deployment credentials and real runtime providers, authenticated operator review/approve-reject ownership,
+    P20 Calendar tri-state/upsert policy, P24a notification post-send ACK ownership, draft-v0.3 FR11–18
+    implementation or signed deferral, full account-erasure retention/legal-hold/tombstone/workflow fencing,
+    realistic G1 corpus, Meetup Pro G2, relay-domain G3, Temporal O-6, and real domain/legal/managed-infrastructure,
+    restore, observability, and on-call evidence. Mutable local Compose dependency tags remain an external
+    supply-chain review item; none of these gates is represented as complete.
+
 ## Session contract reminder
 
 Buildout phases run **Fable 5 / Opus at ultracode effort**. Orchestrate substantive phases with the Workflow

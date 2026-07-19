@@ -10,9 +10,15 @@ from typing import Protocol
 from uuid import UUID
 
 from ..domain.credentials import Tenant
-from ..domain.enums import HandoffReminderKind, LifecycleState
+from ..domain.enums import HandoffReminderKind, LifecycleState, Source
 from ..domain.events import CandidateEvent, CanonicalEvent
-from ..domain.lifecycle import HandoffReminderResult, HandoffTask, Lifecycle
+from ..domain.lifecycle import (
+    HandoffCompletionReceipt,
+    HandoffCompletionTarget,
+    HandoffReminderResult,
+    HandoffTask,
+    Lifecycle,
+)
 from ..domain.request import EventRequest, RequestConstraints
 
 
@@ -189,6 +195,48 @@ class HandoffRepository(Protocol):
 
     async def get(self, tenant_id: UUID, task_id: str) -> HandoffTask | None:
         """Read a handoff task through its required tenant RLS context (ADR-007)."""
+        ...
+
+    async def resolve_completion_token(self, token: str) -> HandoffCompletionTarget | None:
+        """Resolve one opaque completion capability without accepting caller-selected tenant data.
+
+        The implementation stores and compares only a SHA-256 digest. The narrow privileged lookup
+        may return an active, used, expired, or inactive target; it never exposes a general
+        cross-tenant task-read primitive (FR-1.3, FR-6.3, FR-16).
+        """
+        ...
+
+    async def get_completion_attempt(
+        self,
+        tenant_id: UUID,
+        task_id: str,
+        completion_id: str,
+    ) -> HandoffCompletionReceipt | None:
+        """Return only an exact same-command receipt for activity acknowledgement recovery."""
+        ...
+
+    async def complete_verified(
+        self,
+        task: HandoffTask,
+        lifecycle: Lifecycle,
+        *,
+        transition_id: str,
+        completion_id: str,
+        registration_source: Source,
+        conflict_warning: bool,
+        outbox_payload: dict[str, object],
+    ) -> bool:
+        """Atomically consume a verified capability, complete its task, and register lifecycle."""
+        ...
+
+    async def record_completion_review(
+        self,
+        task: HandoffTask,
+        *,
+        completion_id: str,
+        detail: str,
+    ) -> bool:
+        """Consume an unverified mark-done into a receipt and review-required notification."""
         ...
 
     async def enqueue_reminder(

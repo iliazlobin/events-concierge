@@ -139,6 +139,10 @@ class AwaitConfirmationInput:
     registered_transition_id: str
     confirmation_read_queue_item_id: str
     confirmation_reference: str | None = None
+    # The existing activity name also owns handoff completion verification so deployed workers do
+    # not need a second registration. These fields are all-or-none and carry only opaque IDs.
+    handoff_task_id: str | None = None
+    handoff_completion_id: str | None = None
 
 
 @dataclass
@@ -147,6 +151,7 @@ class AwaitConfirmationResult:
     detail: str = ""
     pacing_status: str | None = None
     retry_after_seconds: float | None = None
+    conflict_warning: bool = False
 
 
 @dataclass
@@ -377,6 +382,15 @@ class UnrsvpSignal:
 
 
 @dataclass
+class HandoffCompletionSignal:
+    """Capability-authenticated mark-done command delivered to one retained child workflow."""
+
+    task_id: str
+    completion_id: str
+    evidence: str = "user_mark_done"
+
+
+@dataclass
 class UnrsvpInput:
     """Once-keyed user withdrawal command executed by the lifecycle-owning child (FR-8.8)."""
 
@@ -415,6 +429,7 @@ class PendingLifecycleSignals:
 
     organizer_changes: list[OrganizerChangeSignal] = field(default_factory=list)
     unrsvp_requests: list[UnrsvpSignal] = field(default_factory=list)
+    handoff_completions: list[HandoffCompletionSignal] = field(default_factory=list)
 
 
 @dataclass

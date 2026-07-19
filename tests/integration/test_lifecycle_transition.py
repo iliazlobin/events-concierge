@@ -5,11 +5,13 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import secrets
 from datetime import UTC, datetime, timedelta
 from uuid import UUID, uuid4
 
 import pytest
 from sqlalchemy import text
+from sqlalchemy.exc import DBAPIError
 from sqlalchemy.ext.asyncio import create_async_engine
 
 from events_concierge.adapters.postgres.tenant_repos import (
@@ -170,6 +172,169 @@ async def test_handoff_task_commits_with_its_guarded_lifecycle_transition(db: No
     assert int(task_count) == 1
     assert int(transition_count) == 1
     assert int(outbox_count) == 1
+
+
+async def test_verified_handoff_completion_atomically_consumes_capability_and_task(
+    db: None,
+) -> None:
+    """A verified retry converges on one receipt/transition and retires the expiry instruction."""
+    tenant_id, canonical_event_id = uuid4(), uuid4()
+    workflow_id = registration_workflow_id(tenant_id, canonical_event_id)
+    token = secrets.token_urlsafe(32)
+    lifecycle_repo = PostgresLifecycleRepository()
+    handoff_repo = PostgresHandoffRepository()
+    await _seed_registered_source(tenant_id, canonical_event_id, Source.MEETUP)
+    lifecycle = await lifecycle_repo.get_or_create(tenant_id, canonical_event_id, workflow_id)
+    task = HandoffTask(
+        task_id=f"{workflow_id}:handoff",
+        tenant_id=tenant_id,
+        workflow_id=workflow_id,
+        canonical_event_id=canonical_event_id,
+        reason=HandoffReason.DEFERRED_REGISTER,
+        deep_link=f"https://meetup.test/{canonical_event_id}",
+        event_summary="Verified completion fixture",
+        ttl_expires_at=datetime.now(UTC) + timedelta(days=1),
+        state=HandoffState.OPEN,
+        completion_token=token,
+    )
+    await handoff_repo.create_and_transition(
+        task,
+        lifecycle,
+        LifecycleState.HANDOFF,
+        f"{workflow_id}:handoff:1",
+        {
+            "task_id": task.task_id,
+            "workflow_id": workflow_id,
+            "event_summary": task.event_summary,
+            "deep_link": task.deep_link,
+            "completion_url": f"/v1/tasks/{token}/done",
+        },
+    )
+    target = await handoff_repo.resolve_completion_token(token)
+    assert target is not None
+    assert target.status == "active"
+
+    completion_id = f"{workflow_id}:handoff-completion:{task.task_id}:1"
+    replay_lifecycle = await lifecycle_repo.get_or_create(
+        tenant_id,
+        canonical_event_id,
+        workflow_id,
+    )
+    replay_task = await handoff_repo.get(tenant_id, task.task_id)
+    assert replay_task is not None
+    barrier = asyncio.Barrier(2)
+
+    async def complete_once(
+        candidate_task: HandoffTask,
+        candidate_lifecycle: Lifecycle,
+    ) -> bool:
+        await barrier.wait()
+        return await handoff_repo.complete_verified(
+            candidate_task,
+            candidate_lifecycle,
+            transition_id=f"{workflow_id}:registered:1",
+            completion_id=completion_id,
+            registration_source=Source.MEETUP,
+            conflict_warning=True,
+            outbox_payload={
+                "workflow_id": workflow_id,
+                "event_summary": task.event_summary,
+                "registration_source": Source.MEETUP.value,
+            },
+        )
+
+    first, replay = await asyncio.gather(
+        complete_once(task, lifecycle),
+        complete_once(replay_task, replay_lifecycle),
+    )
+
+    resolved = await handoff_repo.resolve_completion_token(token)
+    receipt = await handoff_repo.get_completion_attempt(
+        tenant_id,
+        task.task_id,
+        completion_id,
+    )
+    attacker_tenant_id = uuid4()
+    cross_tenant_receipt = await handoff_repo.get_completion_attempt(
+        attacker_tenant_id,
+        task.task_id,
+        completion_id,
+    )
+    async with tenant_session_scope(tenant_id) as session:
+        row = (
+            await session.execute(
+                text(
+                    """
+                    SELECT lifecycle.state,
+                           lifecycle.conflict_warning,
+                           task.state AS task_state,
+                           attempt.outcome,
+                           expiry.resolved_at
+                    FROM lifecycle
+                    JOIN handoff_tasks AS task
+                      ON task.workflow_id = lifecycle.workflow_id
+                    JOIN handoff_completion_attempts AS attempt
+                      ON attempt.task_id = task.task_id
+                    JOIN handoff_expiry_queue AS expiry
+                      ON expiry.task_id = task.task_id
+                    WHERE lifecycle.workflow_id = :workflow_id
+                    """
+                ),
+                {"workflow_id": workflow_id},
+            )
+        ).one()
+
+    assert sorted((first, replay)) == [False, True]
+    assert lifecycle.state is LifecycleState.REGISTERED
+    assert task.state is HandoffState.COMPLETED
+    assert resolved is not None and resolved.status == "used"
+    assert receipt is not None
+    assert receipt.outcome.value == "verified"
+    assert receipt.registration_source is Source.MEETUP
+    assert receipt.conflict_warning is True
+    assert cross_tenant_receipt is None
+    assert row.state == LifecycleState.REGISTERED.value
+    assert row.conflict_warning is True
+    assert row.task_state == HandoffState.COMPLETED.value
+    assert row.outcome == "verified"
+    assert row.resolved_at is not None
+
+    # SECURITY DEFINER functions bypass FORCE RLS. The tenant predicate must therefore
+    # be explicit even on the idempotent-replay path; otherwise an exact victim receipt
+    # acts as a cross-tenant existence oracle.
+    with pytest.raises(DBAPIError) as denied:
+        async with tenant_session_scope(attacker_tenant_id) as session:
+            await session.execute(
+                text(
+                    """
+                    SELECT public.fn_complete_verified_handoff(
+                        :task_id,
+                        :lifecycle_id,
+                        :transition_id,
+                        :completion_id,
+                        :registration_source,
+                        :conflict_warning,
+                        CAST(:payload AS jsonb)
+                    )
+                    """
+                ),
+                {
+                    "task_id": task.task_id,
+                    "lifecycle_id": lifecycle.lifecycle_id,
+                    "transition_id": f"{workflow_id}:registered:1",
+                    "completion_id": completion_id,
+                    "registration_source": Source.MEETUP.value,
+                    "conflict_warning": True,
+                    "payload": json.dumps(
+                        {
+                            "workflow_id": workflow_id,
+                            "event_summary": task.event_summary,
+                            "registration_source": Source.MEETUP.value,
+                        }
+                    ),
+                },
+            )
+    assert getattr(denied.value.orig, "sqlstate", None) == "22023"
 
 
 async def test_due_handoff_expiry_commits_one_terminal_effect_and_replays_safely(db: None) -> None:

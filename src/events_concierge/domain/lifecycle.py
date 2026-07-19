@@ -8,6 +8,7 @@ from datetime import datetime
 from uuid import UUID
 
 from .enums import (
+    HandoffCompletionOutcome,
     HandoffReason,
     HandoffReminderStatus,
     HandoffState,
@@ -116,6 +117,10 @@ class HandoffTask:
     # PostgreSQL owns the task's durable creation instant. The workflow must schedule reminder
     # timers from this persisted value, never an activity-local wall clock (ADR-007, NFR-8).
     created_at: datetime | None = None
+    # A newly-created user registration handoff carries a high-entropy, single-use capability.
+    # Only its digest is persisted on ``handoff_tasks``; the plaintext exists long enough to be
+    # placed in the notification projection and is deliberately hidden from dataclass reprs.
+    completion_token: str | None = field(default=None, repr=False)
 
     def resolved_expiry_transition_id(self) -> str:
         """Return the once-stable terminal transition id for this task's TTL worker.
@@ -142,3 +147,30 @@ class HandoffReminderResult:
 
     status: HandoffReminderStatus
     detail: str = ""
+
+
+@dataclass(frozen=True, slots=True)
+class HandoffCompletionTarget:
+    """Opaque capability resolution result returned by the privileged ingress boundary.
+
+    The API never returns these tenant/workflow facts to the capability holder. They exist only so
+    it can signal the exact retained workflow rather than reconstructing or accepting an identity
+    from caller input (FR-6.3, FR-8.8, FR-16).
+    """
+
+    task_id: str
+    tenant_id: UUID
+    workflow_id: str
+    canonical_event_id: UUID
+    status: str
+
+
+@dataclass(frozen=True, slots=True)
+class HandoffCompletionReceipt:
+    """RLS-scoped replay fact for one already-consumed completion command."""
+
+    completion_id: str
+    outcome: HandoffCompletionOutcome
+    detail: str
+    registration_source: Source | None
+    conflict_warning: bool | None

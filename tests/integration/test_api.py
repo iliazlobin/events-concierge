@@ -3,17 +3,31 @@ in-process over ASGI. Temporal is not required (intake degrades gracefully when 
 
 from __future__ import annotations
 
-from datetime import UTC, datetime
+import secrets
+from datetime import UTC, datetime, timedelta
 from uuid import UUID, uuid4
 
 import pytest
 from httpx import ASGITransport, AsyncClient
 from sqlalchemy import text
 
+from events_concierge.adapters.mock.notifier import MockNotifier
+from events_concierge.adapters.postgres.tenant_repos import (
+    PostgresHandoffRepository,
+    PostgresLifecycleRepository,
+)
 from events_concierge.api.app import create_app
-from events_concierge.domain.enums import LifecycleState, Source
+from events_concierge.application.outbox import OutboxRelay
+from events_concierge.domain.enums import (
+    HandoffReason,
+    HandoffState,
+    LifecycleState,
+    Source,
+)
 from events_concierge.domain.ids import registration_workflow_id
+from events_concierge.domain.lifecycle import HandoffTask
 from events_concierge.infra.db import system_session_scope
+from events_concierge.ports.notifications import NotificationKind
 
 pytestmark = pytest.mark.integration
 
@@ -33,9 +47,18 @@ class RecordingLifecycleSignaler:
 
     def __init__(self) -> None:
         self.commands: list[tuple[str, str]] = []
+        self.handoff_completions: list[tuple[str, str, str]] = []
 
     async def signal_unrsvp(self, workflow_id: str, request_id: str) -> None:
         self.commands.append((workflow_id, request_id))
+
+    async def signal_handoff_completed(
+        self,
+        workflow_id: str,
+        task_id: str,
+        completion_id: str,
+    ) -> None:
+        self.handoff_completions.append((workflow_id, task_id, completion_id))
 
 
 def _auth_headers(tenant_id: UUID | str) -> dict[str, str]:
@@ -81,11 +104,111 @@ async def test_api_health_onboard_and_feed(db: None) -> None:
                     headers=_auth_headers(tenant_id),
                 )
             ).status_code == 404
-            assert (await client.post("/v1/tasks/tok123/done")).status_code == 202
+            assert (await client.post("/v1/tasks/tok123/done")).status_code == 404
             assert (
                 await client.post("/v1/unrsvp", json={}, headers=_auth_headers(tenant_id))
             ).status_code == 422
             assert (await client.post("/v1/feed", json={"text": "jazz"})).status_code == 401
+
+
+async def test_mark_done_uses_one_time_capability_and_signals_exact_retained_workflow(
+    db: None,
+) -> None:
+    """No tenant/body identity is accepted; retries converge on one stable workflow command."""
+    tenant_id, canonical_event_id = uuid4(), uuid4()
+    workflow_id = registration_workflow_id(tenant_id, canonical_event_id)
+    token = secrets.token_urlsafe(32)
+    lifecycle_repo = PostgresLifecycleRepository()
+    handoff_repo = PostgresHandoffRepository()
+    lifecycle = await lifecycle_repo.get_or_create(tenant_id, canonical_event_id, workflow_id)
+    task = HandoffTask(
+        task_id=f"{workflow_id}:handoff",
+        tenant_id=tenant_id,
+        workflow_id=workflow_id,
+        canonical_event_id=canonical_event_id,
+        reason=HandoffReason.DEFERRED_REGISTER,
+        deep_link="https://example.test/register",
+        event_summary="Capability fixture",
+        ttl_expires_at=datetime.now(UTC) + timedelta(days=1),
+        state=HandoffState.OPEN,
+        completion_token=token,
+    )
+    await handoff_repo.create_and_transition(
+        task,
+        lifecycle,
+        LifecycleState.HANDOFF,
+        f"{workflow_id}:handoff:1",
+        {
+            "task_id": task.task_id,
+            "workflow_id": workflow_id,
+            "event_summary": task.event_summary,
+            "deep_link": task.deep_link,
+            "completion_url": f"/v1/tasks/{token}/done",
+        },
+    )
+
+    app = create_app()
+    signaler = RecordingLifecycleSignaler()
+    async with app.router.lifespan_context(app):
+        app.state.lifecycle_signaler = signaler
+        transport = ASGITransport(app=app)
+        async with AsyncClient(transport=transport, base_url="http://test") as client:
+            landing = await client.get(f"/v1/tasks/{token}/done")
+            assert signaler.handoff_completions == []
+            accepted = await client.post(f"/v1/tasks/{token}/done")
+            replay_before_workflow = await client.post(f"/v1/tasks/{token}/done")
+            unknown = await client.post(f"/v1/tasks/{secrets.token_urlsafe(32)}/done")
+
+            completion_id = f"{workflow_id}:handoff-completion:{task.task_id}:1"
+            await handoff_repo.record_completion_review(
+                task,
+                completion_id=completion_id,
+                detail="independent registration verification returned not_present",
+            )
+            review_notifier = MockNotifier()
+            review_relay = OutboxRelay(
+                app.state.container.outbox_repo,
+                review_notifier,
+            )
+            for _ in range(100):
+                relay_stats = await review_relay.relay_once(limit=100)
+                if any(
+                    item.kind is NotificationKind.HANDOFF_REVIEW_REQUIRED
+                    and item.tenant_id == tenant_id
+                    for item in review_notifier.sent
+                ):
+                    break
+                if relay_stats.claimed == 0:
+                    break
+            replay_after_consumption = await client.post(f"/v1/tasks/{token}/done")
+            used_landing = await client.get(f"/v1/tasks/{token}/done")
+
+    assert landing.status_code == 200
+    assert 'form method="post"' in landing.text
+    assert landing.headers["cache-control"] == "no-store, max-age=0"
+    assert landing.headers["referrer-policy"] == "no-referrer"
+    assert accepted.status_code == 202
+    assert accepted.json() == {"status": "accepted"}
+    assert replay_before_workflow.status_code == 202
+    assert unknown.status_code == 404
+    assert replay_after_consumption.status_code == 202
+    assert replay_after_consumption.json() == {"status": "already_accepted"}
+    assert used_landing.status_code == 200
+    assert "Completion already submitted" in used_landing.text
+    assert 'form method="post"' not in used_landing.text
+    assert signaler.handoff_completions == [
+        (workflow_id, task.task_id, completion_id),
+        (workflow_id, task.task_id, completion_id),
+    ]
+    review_notifications = [
+        item
+        for item in review_notifier.sent
+        if item.kind is NotificationKind.HANDOFF_REVIEW_REQUIRED and item.tenant_id == tenant_id
+    ]
+    assert len(review_notifications) == 1, [
+        (item.kind.value, item.subject) for item in review_notifier.sent
+    ]
+    assert "no calendar entry was added" in review_notifications[0].body
 
 
 async def test_api_request_replay_queues_and_starts_one_parent_workflow(db: None) -> None:

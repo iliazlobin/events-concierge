@@ -243,6 +243,41 @@ async def test_relay_renders_handoff_reminder_once_across_redelivery() -> None:
     assert notification.dedup_key == "tenant:event:handoff_reminder:tenant:event:t24h:1"
 
 
+async def test_relay_delivers_handoff_completion_review_instead_of_silently_acknowledging() -> None:
+    """A consumed mark-done discrepancy remains visible through the durable notifier path."""
+    tenant_id = uuid4()
+    record = OutboxRecord(
+        outbox_id=28,
+        tenant_id=tenant_id,
+        topic="handoff_completion_review_required",
+        payload={
+            "workflow_id": "tenant:event",
+            "task_id": "tenant:event:handoff",
+            "completion_id": "tenant:event:handoff-completion:1",
+            "event_summary": "Jazz at the Blue Note",
+            "deep_link": "https://example.test/rsvp",
+        },
+        attempt_count=0,
+        lease_token="review",
+    )
+    fake = FakeOutbox([[record]])
+    notifier = MockNotifier()
+
+    stats = await OutboxRelay(fake, notifier).relay_once()
+
+    assert stats.sent == 1
+    assert stats.acknowledged == 1
+    assert fake.delivered == [28]
+    assert len(notifier.sent) == 1
+    notification = notifier.sent[0]
+    assert notification.kind is NotificationKind.HANDOFF_REVIEW_REQUIRED
+    assert notification.subject == "Registration needs review: Jazz at the Blue Note"
+    assert "no calendar entry was added" in notification.body
+    assert notification.dedup_key == (
+        "tenant:event:handoff_review_required:tenant:event:handoff-completion:1"
+    )
+
+
 async def test_relay_renders_request_no_result_once_across_redelivery() -> None:
     """A request-scoped empty-discovery terminal is a deduplicated NO_RESULT notification."""
     now = datetime(2026, 7, 17, 12, tzinfo=UTC)

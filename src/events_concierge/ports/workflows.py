@@ -51,6 +51,15 @@ class RegistrationLifecycleSignaler(Protocol):
         """Durably enqueue one idempotent un-RSVP command on the matching child workflow."""
         ...
 
+    async def signal_handoff_completed(
+        self,
+        workflow_id: str,
+        task_id: str,
+        completion_id: str,
+    ) -> None:
+        """Durably enqueue one idempotent capability-authenticated mark-done command."""
+        ...
+
 
 class WorkflowLivenessInspector(Protocol):
     """Read only whether a durable execution still owns a lifecycle (ADR-007)."""

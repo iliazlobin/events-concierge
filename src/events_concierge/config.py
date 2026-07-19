@@ -13,6 +13,8 @@ class Settings(BaseSettings):
 
     env: str = "local"
     log_level: str = "info"
+    # Public origin used in user-facing capability links. Production composition requires HTTPS.
+    public_base_url: str = "http://localhost:8000"
 
     # Dependency services (docker-compose in local dev).
     database_url: str = "postgresql+psycopg://ec_app:ec_app@localhost:5433/ec"
@@ -20,6 +22,11 @@ class Settings(BaseSettings):
     temporal_target: str = "localhost:7234"
     temporal_namespace: str = "default"
     temporal_task_queue: str = "events-concierge"
+    # Temporal Cloud accepts API-key authentication only over TLS. Self-hosted deployments may
+    # enable TLS without an API key, while local defaults keep the existing plaintext dev server.
+    temporal_tls_enabled: bool = False
+    temporal_tls_domain: str | None = None
+    temporal_api_key: SecretStr | None = None
     # ADR-011 keeps large Temporal payloads in an opaque, tenant-scoped claim-check store.  The
     # local mock is filesystem-backed so independently started API/worker processes share claims.
     claim_check_threshold_bytes: int = Field(default=256 * 1024, gt=0)
@@ -68,6 +75,9 @@ class Settings(BaseSettings):
 
     # Mock the cloud (KMS/SES/S3/Calendar/Anthropic/Browserbase) in the foundation.
     mock_cloud: bool = True
+    # ``module:callable`` deployment hook. The callable receives this immutable settings snapshot
+    # and returns ``RuntimePorts``; secrets and concrete cloud SDKs remain in deployment-owned code.
+    runtime_provider_factory: str | None = None
 
     # These two provider seams are explicit opt-ins independent of ``mock_cloud``. A configured
     # Cohere key selects its cross-encoder; Google selection additionally requires a tenant-scoped

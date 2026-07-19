@@ -8,6 +8,7 @@ ADR-007).
 
 from __future__ import annotations
 
+import hashlib
 import json
 from datetime import datetime
 from typing import Protocol, cast
@@ -18,6 +19,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from ...domain.credentials import Tenant
 from ...domain.enums import (
+    HandoffCompletionOutcome,
     HandoffReminderKind,
     HandoffReminderStatus,
     HandoffState,
@@ -27,6 +29,8 @@ from ...domain.enums import (
 )
 from ...domain.ids import registration_workflow_id
 from ...domain.lifecycle import (
+    HandoffCompletionReceipt,
+    HandoffCompletionTarget,
     HandoffReminderResult,
     HandoffTask,
     IllegalTransitionError,
@@ -136,7 +140,10 @@ async def _guarded_transition(
             "handoff_task": json.dumps(handoff_payload) if handoff_payload is not None else None,
         },
     )
-    return bool(result.scalar_one())
+    applied = bool(result.scalar_one())
+    if handoff_task is not None and handoff_task.completion_token is not None:
+        await _attach_handoff_completion_token(session, handoff_task)
+    return applied
 
 
 async def _insert_handoff_task_and_enqueue_expiry(session: AsyncSession, task: HandoffTask) -> bool:
@@ -163,7 +170,29 @@ async def _insert_handoff_task_and_enqueue_expiry(session: AsyncSession, task: H
         text("""SELECT public.fn_create_handoff_task(CAST(:task AS jsonb)) AS inserted"""),
         {"task": json.dumps(task_payload)},
     )
-    return bool(result.scalar_one())
+    inserted = bool(result.scalar_one())
+    if task.completion_token is not None:
+        await _attach_handoff_completion_token(session, task)
+    return inserted
+
+
+async def _attach_handoff_completion_token(session: AsyncSession, task: HandoffTask) -> None:
+    """Persist only the capability digest in the same transaction that creates its task."""
+    token = task.completion_token
+    if token is None:
+        return
+    await session.execute(
+        text(
+            """SELECT public.fn_attach_handoff_completion_token(
+                   :task_id,
+                   :token_hash
+               )"""
+        ),
+        {
+            "task_id": task.task_id,
+            "token_hash": hashlib.sha256(token.encode("utf-8")).hexdigest(),
+        },
+    )
 
 
 class PostgresTenantRepository:
@@ -707,6 +736,155 @@ class PostgresHandoffRepository:
             expiry_transition_id=row.expiry_transition_id,
             created_at=row.created_at,
         )
+
+    async def resolve_completion_token(self, token: str) -> HandoffCompletionTarget | None:
+        """Resolve one digest through the sole cross-tenant capability lookup.
+
+        The raw capability never reaches PostgreSQL. The SECURITY DEFINER function returns only
+        opaque routing identities and a closed status, never task text, URLs, metadata, or contact
+        information (FR-1.3, FR-6.3, FR-16).
+        """
+        token_hash = hashlib.sha256(token.encode("utf-8")).hexdigest()
+        async with system_session_scope() as session:
+            row = (
+                await session.execute(
+                    text(
+                        """SELECT *
+                           FROM public.fn_resolve_handoff_completion_token(:token_hash)"""
+                    ),
+                    {"token_hash": token_hash},
+                )
+            ).first()
+        if row is None:
+            return None
+        return HandoffCompletionTarget(
+            task_id=str(row.task_id),
+            tenant_id=row.tenant_id,
+            workflow_id=str(row.workflow_id),
+            canonical_event_id=row.canonical_event_id,
+            status=str(row.capability_status),
+        )
+
+    async def get_completion_attempt(
+        self,
+        tenant_id: UUID,
+        task_id: str,
+        completion_id: str,
+    ) -> HandoffCompletionReceipt | None:
+        """Recover an exact completion activity result through ordinary tenant RLS."""
+        async with tenant_session_scope(tenant_id) as session:
+            row = (
+                await session.execute(
+                    text(
+                        """SELECT completion_id, outcome, detail,
+                                  registration_source, conflict_warning
+                           FROM public.handoff_completion_attempts
+                           WHERE tenant_id = :tenant_id
+                             AND task_id = :task_id
+                             AND completion_id = :completion_id"""
+                    ),
+                    {
+                        "tenant_id": tenant_id,
+                        "task_id": task_id,
+                        "completion_id": completion_id,
+                    },
+                )
+            ).first()
+        if row is None:
+            return None
+        return HandoffCompletionReceipt(
+            completion_id=str(row.completion_id),
+            outcome=HandoffCompletionOutcome(str(row.outcome)),
+            detail=str(row.detail),
+            registration_source=(
+                Source(str(row.registration_source))
+                if row.registration_source is not None
+                else None
+            ),
+            conflict_warning=(
+                bool(row.conflict_warning) if row.conflict_warning is not None else None
+            ),
+        )
+
+    async def complete_verified(
+        self,
+        task: HandoffTask,
+        lifecycle: Lifecycle,
+        *,
+        transition_id: str,
+        completion_id: str,
+        registration_source: Source,
+        conflict_warning: bool,
+        outbox_payload: dict[str, object],
+    ) -> bool:
+        """Atomically consume one capability and advance its matching handoff lifecycle."""
+        if task.tenant_id != lifecycle.tenant_id:
+            raise ValueError("handoff completion tenant does not match lifecycle tenant")
+        if task.workflow_id != lifecycle.workflow_id:
+            raise ValueError("handoff completion workflow does not match lifecycle workflow")
+        if task.canonical_event_id != lifecycle.canonical_event_id:
+            raise ValueError("handoff completion event does not match lifecycle event")
+        async with tenant_session_scope(task.tenant_id) as session:
+            applied = bool(
+                (
+                    await session.execute(
+                        text(
+                            """SELECT public.fn_complete_verified_handoff(
+                                   :task_id,
+                                   :lifecycle_id,
+                                   :transition_id,
+                                   :completion_id,
+                                   :registration_source,
+                                   :conflict_warning,
+                                   CAST(:payload AS jsonb)
+                               ) AS applied"""
+                        ),
+                        {
+                            "task_id": task.task_id,
+                            "lifecycle_id": lifecycle.lifecycle_id,
+                            "transition_id": transition_id,
+                            "completion_id": completion_id,
+                            "registration_source": registration_source.value,
+                            "conflict_warning": conflict_warning,
+                            "payload": json.dumps(outbox_payload),
+                        },
+                    )
+                ).scalar_one()
+            )
+        lifecycle.state = LifecycleState.REGISTERED
+        lifecycle.lane = Lane.HANDOFF
+        lifecycle.registration_source = registration_source
+        lifecycle.conflict_warning = conflict_warning
+        task.state = HandoffState.COMPLETED
+        return applied
+
+    async def record_completion_review(
+        self,
+        task: HandoffTask,
+        *,
+        completion_id: str,
+        detail: str,
+    ) -> bool:
+        """Consume one unverified self-report and emit a replay-safe review instruction."""
+        async with tenant_session_scope(task.tenant_id) as session:
+            return bool(
+                (
+                    await session.execute(
+                        text(
+                            """SELECT public.fn_record_handoff_completion_review(
+                                   :task_id,
+                                   :completion_id,
+                                   :detail
+                               ) AS inserted"""
+                        ),
+                        {
+                            "task_id": task.task_id,
+                            "completion_id": completion_id,
+                            "detail": detail[:1000],
+                        },
+                    )
+                ).scalar_one()
+            )
 
     async def enqueue_reminder(
         self,

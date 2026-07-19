@@ -61,6 +61,7 @@ class _LifecycleRepository:
 class _HandoffRepository:
     def __init__(self) -> None:
         self.tasks: list[HandoffTask] = []
+        self.outbox_payloads: list[dict[str, object]] = []
 
     async def create(self, task: HandoffTask) -> None:
         self.tasks.append(task)
@@ -73,8 +74,9 @@ class _HandoffRepository:
         transition_id: str,
         outbox_payload: dict[str, object],
     ) -> None:
-        del transition_id, outbox_payload
+        del transition_id
         self.tasks.append(task)
+        self.outbox_payloads.append(outbox_payload)
         lifecycle.transition(to_state)
 
     async def create_calendar_recovery(
@@ -169,6 +171,83 @@ async def test_non_verified_free_event_never_reaches_an_autonomous_source(
     assert source_log == []
     assert source.registration_effects == 0
     assert source.register_attempts == 0
+
+
+async def test_handoff_notification_uses_the_configured_absolute_completion_origin() -> None:
+    """Email-facing capabilities are reachable URLs, never a process-relative path."""
+    lifecycle = _LifecycleRepository()
+    handoff = _HandoffRepository()
+    service = RegistrationService(
+        {},
+        DataPolicyEngine(source_policies={}),
+        InMemoryPacer(),
+        MockCalendar(),
+        cast(LifecycleRepository, lifecycle),
+        cast(HandoffRepository, handoff),
+        handoff_completion_base_url="https://concierge.example.test/",
+        require_https_completion_links=True,
+    )
+    tenant_id = uuid4()
+    event = _event(PriceStatus.FREE)
+    workflow_id = f"{tenant_id}:{event.canonical_event_id}"
+
+    await service.route_to_handoff(
+        tenant_id,
+        event,
+        workflow_id,
+        handoff_task_id=f"{workflow_id}:handoff",
+        handoff_transition_id=f"{workflow_id}:handoff:1",
+    )
+
+    completion_url = handoff.outbox_payloads[0]["completion_url"]
+    assert isinstance(completion_url, str)
+    assert completion_url.startswith(
+        "https://concierge.example.test/v1/tasks/"
+    )
+    assert completion_url.endswith("/done")
+
+
+@pytest.mark.parametrize(
+    "base_url",
+    [
+        "https://concierge.example.test:0",
+        "https://concierge.example.test:65536",
+        "https://concierge.example.test:not-a-port",
+        "https://concierge.example.test:",
+        "https://[::1",
+        "https://concierge.example.test/path\ninjected",
+        "https://concierge.example.test/path\u200bhidden",
+        "https://concierge.example.test?",
+        "https://concierge.example.test#",
+    ],
+)
+def test_handoff_completion_origin_rejects_malformed_ports_and_controls(
+    base_url: str,
+) -> None:
+    with pytest.raises(ValueError, match="handoff completion base URL"):
+        RegistrationService(
+            {},
+            DataPolicyEngine(source_policies={}),
+            InMemoryPacer(),
+            MockCalendar(),
+            cast(LifecycleRepository, _LifecycleRepository()),
+            cast(HandoffRepository, _HandoffRepository()),
+            handoff_completion_base_url=base_url,
+            require_https_completion_links=True,
+        )
+
+
+def test_handoff_completion_origin_allows_a_valid_explicit_https_port() -> None:
+    RegistrationService(
+        {},
+        DataPolicyEngine(source_policies={}),
+        InMemoryPacer(),
+        MockCalendar(),
+        cast(LifecycleRepository, _LifecycleRepository()),
+        cast(HandoffRepository, _HandoffRepository()),
+        handoff_completion_base_url="https://concierge.example.test:8443",
+        require_https_completion_links=True,
+    )
 
 
 async def test_free_canonical_with_a_non_free_target_link_never_reaches_source() -> None:

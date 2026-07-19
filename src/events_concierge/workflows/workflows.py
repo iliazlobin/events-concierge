@@ -38,6 +38,7 @@ from .dto import (
     ExpireHandoffResult,
     FinalizeNoCandidateInput,
     FinalizeNoCandidateResult,
+    HandoffCompletionSignal,
     HandoffInput,
     HandoffReminderActivityResult,
     HandoffReminderInput,
@@ -183,6 +184,9 @@ class RegistrationWorkflow:
         self._handled_organizer_change_fingerprints: set[str] = set()
         self._organizer_change_serial_dedup_enabled = False
         self._pending_unrsvp: dict[str, UnrsvpSignal] = {}
+        self._handoff_completion_buffer_open = False
+        self._pending_handoff_completions: dict[str, HandoffCompletionSignal] = {}
+        self._handled_handoff_completion_ids: set[str] = set()
 
     @workflow.signal
     def confirmation_received(self, confirmation_reference: str) -> None:
@@ -231,6 +235,18 @@ class RegistrationWorkflow:
         if self._post_booking_lifecycle_active and signal.request_id:
             self._pending_unrsvp.setdefault(signal.request_id, signal)
 
+    @workflow.signal
+    def handoff_completed(self, signal: HandoffCompletionSignal) -> None:
+        """Queue a capability-authenticated mark-done once by its stable command identity."""
+        if (
+            self._handoff_completion_buffer_open
+            and signal.task_id
+            and signal.completion_id
+            and signal.evidence == "user_mark_done"
+            and signal.completion_id not in self._handled_handoff_completion_ids
+        ):
+            self._pending_handoff_completions.setdefault(signal.completion_id, signal)
+
     @workflow.query
     def pending_lifecycle_signals(self) -> PendingLifecycleSignals:
         """Expose the durable command queues without consuming or mutating them.
@@ -241,6 +257,7 @@ class RegistrationWorkflow:
         return PendingLifecycleSignals(
             organizer_changes=list(self._pending_organizer_changes.values()),
             unrsvp_requests=list(self._pending_unrsvp.values()),
+            handoff_completions=list(self._pending_handoff_completions.values()),
         )
 
     @workflow.run
@@ -738,6 +755,11 @@ class RegistrationWorkflow:
         reason: HandoffReason = HandoffReason.DEFERRED_REGISTER,
     ) -> RegChildResult:
         """Compensate a terminal child outcome with a once-minted task id (ADR-003/005)."""
+        # Open the signal buffer before the task-creation activity. Once that transaction commits,
+        # the capability endpoint may immediately signal this workflow; an activity acknowledgement
+        # must not be a prerequisite for preserving the durable command (FR-6.3, NFR-8).
+        if inp.keep_open_after_scheduling:
+            self._handoff_completion_buffer_open = True
         result = await workflow.execute_activity(
             "route_to_handoff",
             HandoffInput(
@@ -1003,6 +1025,9 @@ class RegistrationWorkflow:
         signal implementation separate for replay compatibility (FR-6.6, FR-8.3/8.7/8.8,
         ADR-003/007/009).
         """
+        # Preserve pre-completion task histories while new/continued children record the marker
+        # before changing their timer wait predicates or activity sequence.
+        completion_enabled = workflow.patched("p4-secure-handoff-completion-v1")
         result = initial
         active_task_id: str | None = None
         sent_reminders: set[HandoffReminderKind] = set()
@@ -1034,6 +1059,7 @@ class RegistrationWorkflow:
                 deadline_at <= workflow.now()
                 and not self._pending_unrsvp
                 and not self._pending_organizer_changes
+                and not (completion_enabled and self._pending_handoff_completions)
             ):
                 return await self._expire_handoff_task(inp, result)
 
@@ -1048,6 +1074,15 @@ class RegistrationWorkflow:
 
             if self._pending_organizer_changes:
                 terminal_result = await self._handle_handoff_organizer_signal(inp)
+                if terminal_result is not None:
+                    return terminal_result
+                continue
+
+            if completion_enabled and self._pending_handoff_completions:
+                result, terminal_result = await self._handle_handoff_completion_signal(
+                    inp,
+                    result,
+                )
                 if terminal_result is not None:
                     return terminal_result
                 continue
@@ -1087,7 +1122,9 @@ class RegistrationWorkflow:
             timer_at = deadline_at if reminder is None else min(deadline_at, reminder[1])
             try:
                 await workflow.wait_condition(
-                    lambda: bool(self._pending_unrsvp) or bool(self._pending_organizer_changes),
+                    lambda: bool(self._pending_unrsvp)
+                    or bool(self._pending_organizer_changes)
+                    or (completion_enabled and bool(self._pending_handoff_completions)),
                     timeout=max(timer_at - workflow.now(), timedelta(0)),
                     timeout_summary="handoff-task-signal-reminder-or-expiry",
                 )
@@ -1201,6 +1238,71 @@ class RegistrationWorkflow:
         if lifecycle_result is None:
             raise RuntimeError("reconciled lifecycle ended without a terminal child result")
         return lifecycle_result
+
+    async def _handle_handoff_completion_signal(
+        self,
+        inp: RegChildInput,
+        current: RegChildResult,
+    ) -> tuple[RegChildResult, RegChildResult | None]:
+        """Verify one mark-done out of band, then schedule or retain a fail-closed review.
+
+        The signal carries no claim that registration succeeded. The existing confirmation
+        activity name performs a fresh provider read and freeBusy gate, atomically advancing to
+        REGISTERED only after both settle safely. Its stable completion id makes API/Temporal
+        redelivery converge (FR-6.3, FR-8.3, FR-16).
+        """
+        if self._keys is None:
+            raise RuntimeError("retained handoff requires workflow-minted saga keys")
+        completion_id = next(iter(self._pending_handoff_completions))
+        signal = self._pending_handoff_completions[completion_id]
+        if signal.task_id != current.handoff_task_id:
+            self._pending_handoff_completions.pop(completion_id, None)
+            self._handled_handoff_completion_ids.add(completion_id)
+            return current, None
+
+        verification: AwaitConfirmationResult = await workflow.execute_activity(
+            "await_confirmation",
+            AwaitConfirmationInput(
+                tenant_id=inp.tenant_id,
+                canonical_event_id=inp.canonical_event_id,
+                workflow_id=self._keys.workflow_id,
+                lane=Lane.HANDOFF.value,
+                source_outcome=RegisterOutcome.FAILED.value,
+                awaiting_transition_id=self._keys.awaiting_transition_id,
+                registered_transition_id=self._keys.registered_transition_id,
+                confirmation_read_queue_item_id=(
+                    f"{self._keys.workflow_id}:{self._keys.run_id}:"
+                    f"handoff-verification:{signal.task_id}:1"
+                ),
+                handoff_task_id=signal.task_id,
+                handoff_completion_id=signal.completion_id,
+            ),
+            start_to_close_timeout=_ACTIVITY_TIMEOUT,
+            result_type=AwaitConfirmationResult,
+        )
+        if verification.pacing_status == "wait":
+            await self._pacer_backoff(verification.retry_after_seconds)
+            return current, None
+
+        self._pending_handoff_completions.pop(completion_id, None)
+        self._handled_handoff_completion_ids.add(completion_id)
+        self._handoff_completion_buffer_open = False
+        if verification.status != "confirmed":
+            return current, None
+
+        self._open_organizer_change_buffer(inp)
+        self._activate_post_booking_lifecycle(inp)
+        calendar_result, scheduled = await self._calendar_stage(
+            inp,
+            self._keys,
+            Lane.HANDOFF.value,
+        )
+        if not scheduled:
+            return calendar_result, None
+        lifecycle_result = await self._wait_for_lifecycle_work(inp, self._keys)
+        if lifecycle_result is None:
+            raise RuntimeError("scheduled handoff completion ended without a terminal lifecycle")
+        return current, lifecycle_result
 
     async def _expire_handoff_task(
         self, inp: RegChildInput, result: RegChildResult

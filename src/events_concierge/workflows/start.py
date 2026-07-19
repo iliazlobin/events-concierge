@@ -24,7 +24,13 @@ from ..ports.workflows import (
     CatalogRefreshWorkflowStarter,
     WorkflowLivenessInspector,
 )
-from .dto import CatalogRefreshInput, OrganizerChangeSignal, RequestInput, UnrsvpSignal
+from .dto import (
+    CatalogRefreshInput,
+    HandoffCompletionSignal,
+    OrganizerChangeSignal,
+    RequestInput,
+    UnrsvpSignal,
+)
 from .workflows import CatalogPagedRefreshWorkflow, CatalogRefreshWorkflow, EventRequestWorkflow
 
 _log = get_logger("worker_start")
@@ -124,6 +130,22 @@ class TemporalRegistrationLifecycleSignaler:
         """Append a durable JSON-native command to the real attempt-suffixed child workflow."""
         handle = self._client.get_workflow_handle(workflow_id)
         await handle.signal("unrsvp_requested", UnrsvpSignal(request_id=request_id))
+
+    async def signal_handoff_completed(
+        self,
+        workflow_id: str,
+        task_id: str,
+        completion_id: str,
+    ) -> None:
+        """Append one opaque, replay-deduplicable completion command to the retained child."""
+        handle = self._client.get_workflow_handle(workflow_id)
+        await handle.signal(
+            "handoff_completed",
+            HandoffCompletionSignal(
+                task_id=task_id,
+                completion_id=completion_id,
+            ),
+        )
 
 
 class TemporalWorkflowLivenessInspector(WorkflowLivenessInspector):

@@ -1,7 +1,58 @@
-# Local development + integration-test dependencies.
-# Cloud services (AWS KMS/SES/S3, Google Calendar, Anthropic, Browserbase) are NOT here --
-# they are mocked behind ports for the foundation (see src/events_concierge/adapters/mock/).
+# Local development and integration-test stack.
+#
+# `docker compose up` starts dependencies only. Application processes are deliberately gated
+# behind the `app` profile: `docker compose --profile app up`.
+# Real provider credentials and managed cloud services remain deployment concerns.
 name: events-concierge
+
+x-app-environment: &app-environment
+  EC_ENV: ${EC_ENV:-local}
+  EC_LOG_LEVEL: ${EC_LOG_LEVEL:-info}
+  # Use service DNS inside Compose. The similarly named host values in .env target local processes.
+  EC_DATABASE_URL: ${EC_CONTAINER_DATABASE_URL:-postgresql+psycopg://ec_app:ec_app@postgres:5432/ec}
+  # Never expose the owner credential from .env to API/worker processes.
+  EC_MIGRATION_URL: ""
+  EC_REDIS_URL: ${EC_CONTAINER_REDIS_URL:-redis://redis:6379/0}
+  EC_TEMPORAL_TARGET: ${EC_CONTAINER_TEMPORAL_TARGET:-temporal:7233}
+  EC_TEMPORAL_NAMESPACE: ${EC_TEMPORAL_NAMESPACE:-default}
+  EC_TEMPORAL_TASK_QUEUE: ${EC_TEMPORAL_TASK_QUEUE:-events-concierge}
+  # API and workers must share claim-check payloads and pacing state across processes.
+  EC_CLAIM_CHECK_LOCAL_ROOT: /var/lib/events-concierge/claim-check
+  EC_PACER_BACKEND: ${EC_CONTAINER_PACER_BACKEND:-redis}
+  EC_MOCK_CLOUD: ${EC_MOCK_CLOUD:-true}
+
+x-app-service: &app-service
+  image: ${EC_IMAGE:-events-concierge:local}
+  build:
+    context: .
+    target: runtime
+  env_file:
+    - path: .env
+      required: false
+  environment: *app-environment
+  init: true
+  read_only: true
+  restart: unless-stopped
+  security_opt:
+    - no-new-privileges:true
+  tmpfs:
+    - /tmp:size=64m,mode=1777
+  volumes:
+    - claim-check:/var/lib/events-concierge/claim-check
+  stop_grace_period: 30s
+
+x-worker-service: &worker-service
+  <<: *app-service
+  profiles: ["app"]
+  depends_on:
+    migrate:
+      condition: service_completed_successfully
+    redis:
+      condition: service_healthy
+    temporal:
+      condition: service_healthy
+  healthcheck:
+    disable: true
 
 services:
   postgres:
@@ -11,12 +62,13 @@ services:
       POSTGRES_PASSWORD: ec
       POSTGRES_DB: ec
     ports:
-      - "5433:5432"
+      - "${EC_POSTGRES_BIND_ADDRESS:-127.0.0.1}:${EC_POSTGRES_PORT:-5433}:5432"
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ec -d ec"]
       interval: 3s
       timeout: 3s
       retries: 20
+    restart: unless-stopped
     volumes:
       - pgdata:/var/lib/postgresql/data
 
@@ -24,14 +76,15 @@ services:
     image: redis:7-alpine
     command: ["redis-server", "--save", "", "--appendonly", "no"]
     ports:
-      - "6380:6379"
+      - "${EC_REDIS_BIND_ADDRESS:-127.0.0.1}:${EC_REDIS_PORT:-6380}:6379"
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 3s
       timeout: 3s
       retries: 20
+    restart: unless-stopped
 
-  # Temporal dev server (in-memory-ish auto-setup against its own postgres).
+  # Temporal's development auto-setup image is for local use, not a production Temporal cluster.
   temporal-postgres:
     image: postgres:16-alpine
     environment:
@@ -39,10 +92,13 @@ services:
       POSTGRES_PASSWORD: temporal
       POSTGRES_DB: temporal
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U temporal"]
+      test: ["CMD-SHELL", "pg_isready -U temporal -d temporal"]
       interval: 3s
       timeout: 3s
       retries: 20
+    restart: unless-stopped
+    volumes:
+      - temporal-pgdata:/var/lib/postgresql/data
 
   temporal:
     image: temporalio/auto-setup:1.25.2
@@ -56,14 +112,14 @@ services:
       POSTGRES_PWD: temporal
       POSTGRES_SEEDS: temporal-postgres
     ports:
-      - "7234:7233"
+      - "${EC_TEMPORAL_BIND_ADDRESS:-127.0.0.1}:${EC_TEMPORAL_PORT:-7234}:7233"
     healthcheck:
       # auto-setup binds the frontend to the container's network address, not loopback.
-      # Resolve the Compose service name so this remains valid across recreated containers.
       test: ["CMD", "temporal", "operator", "cluster", "health", "--address", "temporal:7233"]
       interval: 5s
       timeout: 5s
       retries: 30
+    restart: unless-stopped
 
   temporal-ui:
     image: temporalio/ui:2.32.0
@@ -74,7 +130,70 @@ services:
       TEMPORAL_ADDRESS: temporal:7233
       TEMPORAL_CORS_ORIGINS: http://localhost:3000
     ports:
-      - "8234:8080"
+      - "${EC_TEMPORAL_UI_BIND_ADDRESS:-127.0.0.1}:${EC_TEMPORAL_UI_PORT:-8234}:8080"
+    restart: unless-stopped
+
+  migrate:
+    <<: *app-service
+    profiles: ["app"]
+    command: ["alembic", "upgrade", "head"]
+    environment:
+      <<: *app-environment
+      EC_MIGRATION_URL: ${EC_CONTAINER_MIGRATION_URL:-postgresql+psycopg://ec:ec@postgres:5432/ec}
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      disable: true
+    restart: "no"
+
+  api:
+    <<: *app-service
+    profiles: ["app"]
+    command:
+      - uvicorn
+      - events_concierge.api.app:app
+      - --host
+      - "0.0.0.0"
+      - --port
+      - "8000"
+      - --no-server-header
+      - --no-access-log
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      redis:
+        condition: service_healthy
+      temporal:
+        condition: service_healthy
+    ports:
+      - "${EC_API_BIND_ADDRESS:-127.0.0.1}:${EC_API_PORT:-8000}:8000"
+
+  workflow-worker:
+    <<: *worker-service
+    command: ["python", "-m", "events_concierge.workflows.worker"]
+
+  request-starter:
+    <<: *worker-service
+    command: ["python", "-m", "events_concierge.workers.request_starter"]
+
+  notifier:
+    <<: *worker-service
+    command: ["python", "-m", "events_concierge.workers.notifier"]
+
+  change-delivery:
+    <<: *worker-service
+    command: ["python", "-m", "events_concierge.workers.change_detection"]
+
+  handoff-expiry:
+    <<: *worker-service
+    command: ["python", "-m", "events_concierge.workers.handoff_expiry"]
+
+  lifecycle-invariants:
+    <<: *worker-service
+    command: ["python", "-m", "events_concierge.workers.lifecycle_invariants"]
 
 volumes:
+  claim-check:
   pgdata:
+  temporal-pgdata:

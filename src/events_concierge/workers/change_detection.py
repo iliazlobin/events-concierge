@@ -20,8 +20,8 @@ from ..composition import build_container
 from ..config import Settings, get_settings
 from ..infra.logging import configure_logging, get_logger
 from ..ports.object_store import ObjectStorePort
-from ..workflows.claim_check import build_claim_check_data_converter
 from ..workflows.start import TemporalOrganizerChangeFanout
+from ..workflows.temporal_client import connect_temporal
 
 _log = get_logger(__name__)
 
@@ -107,13 +107,7 @@ async def run_change_delivery() -> None:
 async def _try_connect_temporal(settings: Settings, object_store: ObjectStorePort) -> Client | None:
     """Connect opportunistically; the DB-only watch projector must not wait on Temporal."""
     try:
-        return await Client.connect(
-            settings.temporal_target,
-            namespace=settings.temporal_namespace,
-            data_converter=build_claim_check_data_converter(
-                object_store, settings.claim_check_threshold_bytes
-            ),
-        )
+        return await connect_temporal(settings, object_store)
     except Exception as exc:
         _log.warning("temporal unavailable for organizer-change fanout; retrying", error=str(exc))
         return None

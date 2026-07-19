@@ -184,12 +184,15 @@ class OutboxRelay:
         workflow_id = str(payload.get("workflow_id") or f"outbox-{record.outbox_id}")
         transition_id = str(
             payload.get("transition_id")
+            or payload.get("completion_id")
             or f"calendar-recovery:{payload.get('task_id', record.outbox_id)}"
         )
         event_summary = str(payload.get("event_summary") or "your event")
         deep_link_value = payload.get("deep_link")
         deep_link = str(deep_link_value) if deep_link_value else None
-        subject, body = _render_notification(kind, event_summary, deep_link)
+        completion_url_value = payload.get("completion_url")
+        completion_url = str(completion_url_value) if completion_url_value else None
+        subject, body = _render_notification(kind, event_summary, deep_link, completion_url)
         dedup_key = (
             f"{workflow_id}:handoff_reminder:{payload.get('reminder_id', transition_id)}"
             if kind is NotificationKind.HANDOFF_REMINDER
@@ -212,6 +215,7 @@ def _notification_kind(topic: str) -> NotificationKind | None:
         "calendar_recovery_required": NotificationKind.HANDOFF_AVAILABLE,
         "withdrawal_handoff_required": NotificationKind.HANDOFF_AVAILABLE,
         "handoff.reminder": NotificationKind.HANDOFF_REMINDER,
+        "handoff_completion_review_required": NotificationKind.HANDOFF_REVIEW_REQUIRED,
         "lifecycle.expired": NotificationKind.HANDOFF_EXPIRED,
         "lifecycle.scheduled": NotificationKind.COMPLETION,
         "lifecycle.reconciled": NotificationKind.RECONCILE,
@@ -222,31 +226,48 @@ def _notification_kind(topic: str) -> NotificationKind | None:
 
 
 def _render_notification(
-    kind: NotificationKind, event_summary: str, deep_link: str | None
+    kind: NotificationKind,
+    event_summary: str,
+    deep_link: str | None,
+    completion_url: str | None,
 ) -> tuple[str, str]:
     """Keep rendering deterministic and channel-neutral; a real adapter owns transport formatting."""
     if kind is NotificationKind.HANDOFF_AVAILABLE:
         suffix = f" Open: {deep_link}" if deep_link else ""
-        return (f"Action needed for {event_summary}", f"A registration follow-up is ready.{suffix}")
-    if kind is NotificationKind.HANDOFF_REMINDER:
+        completion = f" Mark done: {completion_url}" if completion_url else ""
+        rendered = (
+            f"Action needed for {event_summary}",
+            f"A registration follow-up is ready.{suffix}{completion}",
+        )
+    elif kind is NotificationKind.HANDOFF_REMINDER:
         suffix = f" Open: {deep_link}" if deep_link else ""
-        return (
+        rendered = (
             f"Reminder: action needed for {event_summary}",
             f"Your registration follow-up is still waiting.{suffix}",
         )
-    if kind is NotificationKind.HANDOFF_EXPIRED:
-        return (
+    elif kind is NotificationKind.HANDOFF_REVIEW_REQUIRED:
+        rendered = (
+            f"Registration needs review: {event_summary}",
+            (
+                "We could not independently verify the registration, so no calendar entry was "
+                "added. The handoff remains open for review."
+            ),
+        )
+    elif kind is NotificationKind.HANDOFF_EXPIRED:
+        rendered = (
             f"Action window expired for {event_summary}",
             "The registration follow-up was not completed before its deadline.",
         )
-    if kind is NotificationKind.COMPLETION:
-        return (
+    elif kind is NotificationKind.COMPLETION:
+        rendered = (
             f"Added to your calendar: {event_summary}",
             "Your registration is confirmed and scheduled.",
         )
-    if kind is NotificationKind.RECONCILE:
-        return (f"Event update: {event_summary}", "Your concierge event needs review.")
-    return ("No matching event found", "No candidate could be registered automatically.")
+    elif kind is NotificationKind.RECONCILE:
+        rendered = (f"Event update: {event_summary}", "Your concierge event needs review.")
+    else:
+        rendered = ("No matching event found", "No candidate could be registered automatically.")
+    return rendered
 
 
 def _with(stats: RelayStats, **changes: int) -> RelayStats:

@@ -12,6 +12,7 @@ from uuid import UUID
 class NotificationKind(StrEnum):
     HANDOFF_AVAILABLE = "handoff_available"
     HANDOFF_REMINDER = "handoff_reminder"
+    HANDOFF_REVIEW_REQUIRED = "handoff_review_required"
     HANDOFF_EXPIRED = "handoff_expired"
     COMPLETION = "completion"
     RECONCILE = "reconcile"
