@@ -17,6 +17,7 @@ dependencies = [
     "redis>=5.2",
     "httpx>=0.28",
     "PyJWT[crypto]>=2.13,<3",
+    "cryptography>=44,<50",
     "selectolax>=0.3.27",
     "structlog>=24.4",
     "numpy>=2.1",

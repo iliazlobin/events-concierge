@@ -11,6 +11,9 @@ import pytest
 from events_concierge.adapters.mock.audit import MockRegistrationActionAudit
 from events_concierge.adapters.mock.calendar import MockCalendar
 from events_concierge.adapters.mock.consent import MockRegistrationConsentEvidence
+from events_concierge.adapters.mock.notification_secrets import (
+    DevelopmentNotificationSecretProtector,
+)
 from events_concierge.adapters.mock.sources import ConfirmingSource
 from events_concierge.adapters.policy.engine import DataPolicyEngine
 from events_concierge.adapters.policy.pacer import InMemoryPacer
@@ -230,6 +233,7 @@ def _service(
         cast(HandoffRepository, _HandoffRepository()),
         action_audit=audit,
         registration_consent=consent,
+        notification_secret_protector=DevelopmentNotificationSecretProtector(),
     )
 
 

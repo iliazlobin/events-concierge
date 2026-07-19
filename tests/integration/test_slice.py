@@ -22,8 +22,21 @@ from events_concierge.domain.enums import GroupCondition, LifecycleState, Modali
 from events_concierge.domain.events import CandidateEvent
 from events_concierge.domain.ids import calendar_event_id, registration_workflow_id
 from events_concierge.domain.policy import SourcePolicy
+from events_concierge.slice_demo import run as run_slice_demo
 
 pytestmark = pytest.mark.integration
+
+
+async def test_documented_slice_demo_replays_against_a_persistent_catalog(
+    db: None,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """The `make slice` entry point remains meaningful after prior catalog history exists."""
+    await run_slice_demo()
+    await run_slice_demo()
+
+    output = capsys.readouterr().out
+    assert output.count("SLICE OK: autonomous + handoff lanes both exercised end-to-end.") == 2
 
 
 async def _seed_registration_consent(

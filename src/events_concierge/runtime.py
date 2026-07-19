@@ -22,6 +22,7 @@ from .ports.calendar import CalendarPort
 from .ports.consent import RegistrationConsentEvidencePort
 from .ports.credentials import CredentialVault
 from .ports.google_calendar import GoogleCalendarAccessPort, GoogleCalendarBindingPort
+from .ports.notification_secrets import NotificationSecretProtector
 from .ports.notifications import NotificationPort
 from .ports.object_store import ObjectStorePort
 from .ports.sources import SourcePort
@@ -40,6 +41,7 @@ class RuntimePorts:
     auth_context: AuthContextPort | None = None
     object_store: ObjectStorePort | None = None
     notifier: NotificationPort | None = None
+    notification_secret_protector: NotificationSecretProtector | None = None
     credential_vault: CredentialVault | None = None
     calendar: CalendarPort | None = None
     google_calendar_access: GoogleCalendarAccessPort | None = None

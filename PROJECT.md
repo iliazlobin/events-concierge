@@ -4158,6 +4158,45 @@ wave or the next phase.
     restore, observability, and on-call evidence. Mutable local Compose dependency tags remain an external
     supply-chain review item; none of these gates is represented as complete.
 
+- **2026-07-19 — P44 COMPLETE: bounded ingress/Temporal availability, deterministic catalog concurrency,
+  protected notification capabilities, and receipt-aware handoff recovery (production launch not claimed).**
+  Catalog ingestion now resolves exact source identity before fuzzy matching, serializes overlapping fuzzy
+  domains with deterministic advisory locks, and pre-locks all existing canonical winners in UUID order. Repeated
+  persistent-slice runs page to their exact ranked candidates rather than assuming a clean catalog. API ingress
+  enforces a 64 KiB decoded-body limit plus a whole-body deadline, skips buffering for safe bodyless methods,
+  accepts only bounded canonical decimal feed cursors, and omits the mock onboarding route outside mock mode.
+  Temporal eager connect and every API/worker start, signal, and describe RPC now have validated 0.1–60 second
+  deadlines.
+  - **Capability and delivery boundary:** migration `0106` prohibits plaintext completion URLs in the global
+    notification outbox. Registration stores tenant-bound AES-256-GCM ciphertext through a deployment-supplied
+    protector; the relay claims both queue and notification authority before decrypting, never persists untrusted
+    exception text, quarantines unknown/insecure projections, and scrubs ciphertext after delivery or terminal
+    failure. The migration safely quarantines pending legacy plaintext, retires stale undelivered ledger entries,
+    preserves delivered ledgers without their secret, validates the new constraint, and never reconstructs
+    plaintext on downgrade. Non-mock composition fails closed when no protector is supplied.
+  - **Handoff recovery boundary:** provider, Calendar, and Pacer availability failures remain retryable workflow
+    control while policy/consent/reconsent failures become durable review outcomes. Completion activities use one
+    attempt per workflow-owned cycle; retry floors grow `1m → 2m → 4m` to a one-hour cap and remain
+    command-interruptible. Organizer and authorized un-RSVP signals are buffered before the activity
+    acknowledgement gap. If verification commits but its acknowledgement is lost at TTL, expiry observes the
+    completed task and returns `completion_committed`; the child prioritizes exact receipt replay and can no
+    longer overwrite `REGISTERED` with `EXPIRED`. A persistent pre-commit dependency outage still expires
+    normally.
+  - **Verification:** Ruff is clean; strict mypy is clean across **205 source files**; all collected tests were
+    exercised as **660 unit passed**, **221 integration passed** (excluding the separately executed load marker),
+    and **1 quality-load passed**; the synthetic quality matrix also passes. The complete Temporal workflow module
+    is **36 passed**, including lost-ACK, TTL-edge, signal-buffer, and exponential-backoff histories. The
+    persistent-catalog vertical slice passes twice. Real PostgreSQL `0106 → 0105 → 0106` passes with `0106
+    (head)` restored. The locked image rebuilds and runs read-only with `no-new-privileges` as UID/GID **10001**,
+    imports the installed package without development tools or `.env`, reports `/healthz` healthy, and reports
+    PostgreSQL plus Temporal ready. Offline lock verification, Compose configuration validation, diff checks, a
+    repository credential-pattern scan, and an independent blocker-only review are clean.
+  - **Explicit remaining boundary:** P43's production gates remain open: owner-approved remote/history
+    reconciliation, deployment credentials and real runtime/provider/protector implementations, authenticated
+    operator review ownership, remaining Calendar/notification/account-erasure and draft-v0.3 scope, realistic
+    quality corpora, managed infrastructure/restore/observability/on-call evidence, and external supply-chain
+    review. These improvements harden and verify the local implementation; they do not claim production launch.
+
 ## Session contract reminder
 
 Buildout phases run **Fable 5 / Opus at ultracode effort**. Orchestrate substantive phases with the Workflow

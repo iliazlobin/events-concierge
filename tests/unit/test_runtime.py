@@ -10,6 +10,9 @@ import pytest
 
 from events_concierge.adapters.mock.auth import HeaderAuthContext
 from events_concierge.adapters.mock.calendar import MockCalendar
+from events_concierge.adapters.mock.notification_secrets import (
+    DevelopmentNotificationSecretProtector,
+)
 from events_concierge.adapters.mock.notifier import MockNotifier
 from events_concierge.adapters.mock.object_store import MockFilesystemObjectStore
 from events_concierge.adapters.mock.vault import MockVault
@@ -32,6 +35,7 @@ def _runtime(tmp_path: Path, **overrides: object) -> RuntimePorts:
         "auth_context": HeaderAuthContext(),
         "object_store": MockFilesystemObjectStore(tmp_path),
         "notifier": MockNotifier(),
+        "notification_secret_protector": DevelopmentNotificationSecretProtector(),
         "credential_vault": MockVault(),
         "calendar": MockCalendar(),
         "register_sources": {},
@@ -69,6 +73,7 @@ def test_runtime_provider_factory_supplies_non_mock_composition(
     assert container.auth_context is runtime.auth_context
     assert container.object_store is runtime.object_store
     assert container.notifier is runtime.notifier
+    assert container.notification_secret_protector is runtime.notification_secret_protector
     assert container.vault is runtime.credential_vault
     assert container.calendar is runtime.calendar
 
@@ -117,6 +122,16 @@ def test_non_mock_composition_requires_https_user_capability_links(
                 auth_context=HeaderAuthContext(),
                 notifier=MockNotifier(),
             ),
+            "NotificationSecretProtector",
+        ),
+        (
+            RuntimePorts(
+                calendar=MockCalendar(),
+                object_store=MockFilesystemObjectStore(Path("/tmp/runtime-test-store")),
+                auth_context=HeaderAuthContext(),
+                notifier=MockNotifier(),
+                notification_secret_protector=DevelopmentNotificationSecretProtector(),
+            ),
             "CredentialVault",
         ),
         (
@@ -125,6 +140,7 @@ def test_non_mock_composition_requires_https_user_capability_links(
                 object_store=MockFilesystemObjectStore(Path("/tmp/runtime-test-store")),
                 auth_context=HeaderAuthContext(),
                 notifier=MockNotifier(),
+                notification_secret_protector=DevelopmentNotificationSecretProtector(),
                 credential_vault=MockVault(),
             ),
             "register source map",
@@ -135,6 +151,7 @@ def test_non_mock_composition_requires_https_user_capability_links(
                 object_store=MockFilesystemObjectStore(Path("/tmp/runtime-test-store")),
                 auth_context=HeaderAuthContext(),
                 notifier=MockNotifier(),
+                notification_secret_protector=DevelopmentNotificationSecretProtector(),
                 credential_vault=MockVault(),
                 register_sources={},
             ),

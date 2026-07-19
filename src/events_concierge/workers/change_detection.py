@@ -66,7 +66,7 @@ async def run_change_delivery() -> None:
                 changes = ChangeDetectionService(
                     container.change_detection_repo,
                     container.change_detection_repo,
-                    TemporalOrganizerChangeFanout(client),
+                    TemporalOrganizerChangeFanout(client, settings),
                     closed_workflow_repairs=container.calendar_repair_repo,
                     fanout_batch_size=settings.change_delivery_batch_size,
                     lease_seconds=settings.change_delivery_lease_seconds,

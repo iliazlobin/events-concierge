@@ -14,6 +14,9 @@ from sqlalchemy import text
 from sqlalchemy.exc import DBAPIError
 from sqlalchemy.ext.asyncio import create_async_engine
 
+from events_concierge.adapters.mock.notification_secrets import (
+    DevelopmentNotificationSecretProtector,
+)
 from events_concierge.adapters.postgres.tenant_repos import (
     PostgresHandoffRepository,
     PostgresLifecycleRepository,
@@ -207,7 +210,12 @@ async def test_verified_handoff_completion_atomically_consumes_capability_and_ta
             "workflow_id": workflow_id,
             "event_summary": task.event_summary,
             "deep_link": task.deep_link,
-            "completion_url": f"/v1/tasks/{token}/done",
+            "protected_completion_url": (
+                await DevelopmentNotificationSecretProtector().protect_completion_url(
+                    tenant_id,
+                    f"/v1/tasks/{token}/done",
+                )
+            ),
         },
     )
     target = await handoff_repo.resolve_completion_token(token)

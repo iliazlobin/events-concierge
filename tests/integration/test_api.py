@@ -5,12 +5,17 @@ from __future__ import annotations
 
 import secrets
 from datetime import UTC, datetime, timedelta
+from typing import Any, cast
 from uuid import UUID, uuid4
 
 import pytest
 from httpx import ASGITransport, AsyncClient
 from sqlalchemy import text
+from temporalio.client import Client
 
+from events_concierge.adapters.mock.notification_secrets import (
+    DevelopmentNotificationSecretProtector,
+)
 from events_concierge.adapters.mock.notifier import MockNotifier
 from events_concierge.adapters.postgres.tenant_repos import (
     PostgresHandoffRepository,
@@ -18,6 +23,7 @@ from events_concierge.adapters.postgres.tenant_repos import (
 )
 from events_concierge.api.app import create_app
 from events_concierge.application.outbox import OutboxRelay
+from events_concierge.config import Settings
 from events_concierge.domain.enums import (
     HandoffReason,
     HandoffState,
@@ -28,6 +34,7 @@ from events_concierge.domain.ids import registration_workflow_id
 from events_concierge.domain.lifecycle import HandoffTask
 from events_concierge.infra.db import system_session_scope
 from events_concierge.ports.notifications import NotificationKind
+from events_concierge.workflows.start import TemporalRequestWorkflowStarter
 
 pytestmark = pytest.mark.integration
 
@@ -59,6 +66,18 @@ class RecordingLifecycleSignaler:
         completion_id: str,
     ) -> None:
         self.handoff_completions.append((workflow_id, task_id, completion_id))
+
+
+class TimingOutTemporalClient:
+    """Capture the native deadline and model an engine call that reaches it without an ACK."""
+
+    def __init__(self) -> None:
+        self.rpc_timeouts: list[timedelta | None] = []
+
+    async def start_workflow(self, *args: object, **kwargs: Any) -> None:
+        del args
+        self.rpc_timeouts.append(cast("timedelta | None", kwargs.get("rpc_timeout")))
+        raise TimeoutError("fixture Temporal RPC deadline exceeded")
 
 
 def _auth_headers(tenant_id: UUID | str) -> dict[str, str]:
@@ -111,6 +130,50 @@ async def test_api_health_onboard_and_feed(db: None) -> None:
             assert (await client.post("/v1/feed", json={"text": "jazz"})).status_code == 401
 
 
+async def test_feed_cursor_is_canonical_bounded_and_nonnegative(db: None) -> None:
+    app = create_app()
+    async with (
+        app.router.lifespan_context(app),
+        AsyncClient(
+            transport=ASGITransport(app=app),
+            base_url="http://test",
+        ) as client,
+    ):
+        onboard = await client.post(
+            "/v1/onboard",
+            json={"notify_email": "cursor@example.com"},
+        )
+        tenant_id = onboard.json()["tenant_id"]
+        headers = _auth_headers(tenant_id)
+
+        first_page = await client.post(
+            "/v1/feed",
+            json={"text": "jazz", "cursor": "0"},
+            headers=headers,
+        )
+        assert first_page.status_code == 200
+
+        invalid_cursors: tuple[object, ...] = (
+            "-1",
+            "+1",
+            "01",
+            "10001",
+            "1.0",
+            " 1",
+            "1\n",
+            "",
+            "9" * 2048,
+            -1,
+        )
+        for cursor in invalid_cursors:
+            response = await client.post(
+                "/v1/feed",
+                json={"text": "jazz", "cursor": cursor},
+                headers=headers,
+            )
+            assert response.status_code == 422, cursor
+
+
 async def test_mark_done_uses_one_time_capability_and_signals_exact_retained_workflow(
     db: None,
 ) -> None:
@@ -143,7 +206,12 @@ async def test_mark_done_uses_one_time_capability_and_signals_exact_retained_wor
             "workflow_id": workflow_id,
             "event_summary": task.event_summary,
             "deep_link": task.deep_link,
-            "completion_url": f"/v1/tasks/{token}/done",
+            "protected_completion_url": (
+                await DevelopmentNotificationSecretProtector().protect_completion_url(
+                    tenant_id,
+                    f"/v1/tasks/{token}/done",
+                )
+            ),
         },
     )
 
@@ -169,6 +237,7 @@ async def test_mark_done_uses_one_time_capability_and_signals_exact_retained_wor
             review_relay = OutboxRelay(
                 app.state.container.outbox_repo,
                 review_notifier,
+                app.state.container.notification_secret_protector,
             )
             for _ in range(100):
                 relay_stats = await review_relay.relay_once(limit=100)
@@ -241,6 +310,47 @@ async def test_api_request_replay_queues_and_starts_one_parent_workflow(db: None
     assert len(starter.effects) == 1
 
 
+async def test_api_temporal_timeout_returns_queued_without_false_acknowledgement(db: None) -> None:
+    """A bounded engine timeout leaves intake durable and reports that no start was acknowledged."""
+    app = create_app()
+    temporal = TimingOutTemporalClient()
+    settings = Settings(temporal_rpc_timeout_seconds=0.1)
+    async with app.router.lifespan_context(app):
+        app.state.request_starter = TemporalRequestWorkflowStarter(cast(Client, temporal), settings)
+        transport = ASGITransport(app=app)
+        async with AsyncClient(transport=transport, base_url="http://test") as client:
+            tenant_id = (
+                await client.post(
+                    "/v1/onboard", json={"notify_email": "request-timeout@example.com"}
+                )
+            ).json()["tenant_id"]
+            response = await client.post(
+                "/v1/requests",
+                json={"text": "jazz while Temporal is degraded"},
+                headers=_auth_headers(tenant_id),
+            )
+        request_id = UUID(response.json()["request_id"])
+        async with system_session_scope() as session:
+            queued = (
+                await session.execute(
+                    text(
+                        """SELECT started_at, attempt_count, lease_token, last_error
+                           FROM request_start_outbox
+                           WHERE request_id = :request_id"""
+                    ),
+                    {"request_id": request_id},
+                )
+            ).one()
+
+    assert response.status_code == 200
+    assert response.json()["workflow_started"] is False
+    assert temporal.rpc_timeouts == [timedelta(seconds=0.1)]
+    assert queued.started_at is None
+    assert int(queued.attempt_count) == 1
+    assert queued.lease_token is None
+    assert queued.last_error == "fixture Temporal RPC deadline exceeded"
+
+
 async def test_api_tenant_comes_only_from_auth_context_and_rejects_body_spoofing(db: None) -> None:
     """A caller cannot select another tenant through JSON, even in the offline auth seam (FR-1.1/1.3)."""
     app = create_app()
@@ -303,12 +413,8 @@ async def test_api_feedback_is_authenticated_replay_safe_and_server_controlled(d
                 "kind": "click",
             }
 
-            first = await client.post(
-                "/v1/feed-feedback", json=body, headers=_auth_headers(owner)
-            )
-            replay = await client.post(
-                "/v1/feed-feedback", json=body, headers=_auth_headers(owner)
-            )
+            first = await client.post("/v1/feed-feedback", json=body, headers=_auth_headers(owner))
+            replay = await client.post("/v1/feed-feedback", json=body, headers=_auth_headers(owner))
             conflict = await client.post(
                 "/v1/feed-feedback",
                 json={**body, "kind": "dismiss"},

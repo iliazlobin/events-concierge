@@ -69,6 +69,8 @@ _CONFIRMATION_TIMEOUT = timedelta(hours=24)
 _DIRECTIVE_TIMEOUT = timedelta(minutes=10)
 _SOURCE_RECOVERY_ATTEMPTS = 2
 _HANDOFF_REMINDER_DB_RETRY_DELAY = timedelta(minutes=1)
+_HANDOFF_COMPLETION_RETRY_DELAY = timedelta(minutes=1)
+_HANDOFF_COMPLETION_RETRY_CAP = timedelta(hours=1)
 _DIRECTIVE_CLOSE = "close"
 _DIRECTIVE_DEMOTE_TO_HANDOFF = "demote_to_handoff"
 _ORGANIZER_CHANGE_STATUSES = frozenset(("cancelled", "rescheduled"))
@@ -1028,10 +1030,19 @@ class RegistrationWorkflow:
         # Preserve pre-completion task histories while new/continued children record the marker
         # before changing their timer wait predicates or activity sequence.
         completion_enabled = workflow.patched("p4-secure-handoff-completion-v1")
+        # Existing retained histories used Temporal's default unlimited activity retry. Preserve
+        # their command sequence while new histories bound each dependency probe to one attempt
+        # and move retries into this workflow's durable, interruptible timer loop.
+        bounded_completion_retry = workflow.patched(
+            "p44-bounded-handoff-completion-retry-v1"
+        )
         result = initial
         active_task_id: str | None = None
         sent_reminders: set[HandoffReminderKind] = set()
         retry_not_before: dict[HandoffReminderKind, datetime] = {}
+        completion_retry_not_before: dict[str, datetime] = {}
+        completion_retry_counts: dict[str, int] = {}
+        committed_completion_ids: set[str] = set()
         while True:
             task_id = result.handoff_task_id
             expiry = result.handoff_expires_at
@@ -1050,41 +1061,57 @@ class RegistrationWorkflow:
                 # A user withdrawal can create a distinct replacement task. Its cadence begins
                 # from that task's database-created instant, never from the obsolete recovery task.
                 active_task_id = task_id
-                sent_reminders.clear()
-                retry_not_before.clear()
+                self._reset_handoff_task_retry_state(
+                    sent_reminders,
+                    retry_not_before,
+                    completion_retry_not_before,
+                    completion_retry_counts,
+                    committed_completion_ids,
+                )
 
             deadline_at = self._parse_completion_deadline(expiry)
             created_at_value = self._parse_completion_deadline(created_at)
-            if (
-                deadline_at <= workflow.now()
-                and not self._pending_unrsvp
-                and not self._pending_organizer_changes
-                and not (completion_enabled and self._pending_handoff_completions)
-            ):
-                return await self._expire_handoff_task(inp, result)
-
+            expiry_settled, expiry_result = await self._maybe_settle_handoff_expiry(
+                inp,
+                result,
+                task_id,
+                deadline_at,
+                completion_enabled=completion_enabled,
+                bounded_retry=bounded_completion_retry,
+                completion_retry_not_before=completion_retry_not_before,
+                committed_completion_ids=committed_completion_ids,
+            )
+            if expiry_settled:
+                if expiry_result is not None:
+                    return expiry_result
+                continue
             # User intent wins when both command kinds are waiting, matching the scheduled
             # lifecycle path: safely withdraw before a later organizer reschedule can write a new
             # calendar entry. This check also wins over a reminder due at the same timestamp.
-            if self._pending_unrsvp:
-                result, terminal_result = await self._handle_handoff_unrsvp_signal(inp, result)
-                if terminal_result is not None:
-                    return terminal_result
+            command_handled, result, terminal_result = await self._maybe_handle_handoff_command(
+                inp,
+                result,
+                committed_completion_ids,
+            )
+            if terminal_result is not None:
+                return terminal_result
+            if command_handled:
                 continue
 
-            if self._pending_organizer_changes:
-                terminal_result = await self._handle_handoff_organizer_signal(inp)
-                if terminal_result is not None:
-                    return terminal_result
-                continue
-
-            if completion_enabled and self._pending_handoff_completions:
-                result, terminal_result = await self._handle_handoff_completion_signal(
+            completion_handled, result, terminal_result = (
+                await self._maybe_handle_ready_handoff_completion(
                     inp,
                     result,
+                    completion_enabled=completion_enabled,
+                    bounded_retry=bounded_completion_retry,
+                    retry_not_before=completion_retry_not_before,
+                    retry_counts=completion_retry_counts,
+                    committed_completion_ids=committed_completion_ids,
                 )
-                if terminal_result is not None:
-                    return terminal_result
+            )
+            if terminal_result is not None:
+                return terminal_result
+            if completion_handled:
                 continue
 
             reminder = self._next_handoff_reminder_due(
@@ -1119,19 +1146,271 @@ class RegistrationWorkflow:
                     )
                 continue
 
-            timer_at = deadline_at if reminder is None else min(deadline_at, reminder[1])
-            try:
-                await workflow.wait_condition(
-                    lambda: bool(self._pending_unrsvp)
-                    or bool(self._pending_organizer_changes)
-                    or (completion_enabled and bool(self._pending_handoff_completions)),
-                    timeout=max(timer_at - workflow.now(), timedelta(0)),
-                    timeout_summary="handoff-task-signal-reminder-or-expiry",
+            await self._wait_for_handoff_task_event(
+                deadline_at,
+                reminder,
+                completion_enabled=completion_enabled,
+                bounded_completion_retry=bounded_completion_retry,
+                completion_retry_not_before=completion_retry_not_before,
+                committed_completion_ids=committed_completion_ids,
+            )
+
+    @staticmethod
+    def _reset_handoff_task_retry_state(
+        sent_reminders: set[HandoffReminderKind],
+        reminder_retry_not_before: dict[HandoffReminderKind, datetime],
+        completion_retry_not_before: dict[str, datetime],
+        completion_retry_counts: dict[str, int],
+        committed_completion_ids: set[str],
+    ) -> None:
+        """Reset timer state when recovery creates a distinct task identity."""
+        sent_reminders.clear()
+        reminder_retry_not_before.clear()
+        completion_retry_not_before.clear()
+        completion_retry_counts.clear()
+        committed_completion_ids.clear()
+
+    async def _maybe_handle_handoff_command(
+        self,
+        inp: RegChildInput,
+        current: RegChildResult,
+        committed_completion_ids: set[str],
+    ) -> tuple[bool, RegChildResult, RegChildResult | None]:
+        """Drain commands unless DB-confirmed completion recovery must establish workflow state."""
+        if self._committed_handoff_completion_recovery_pending(
+            committed_completion_ids
+        ):
+            return False, current, None
+        if self._pending_unrsvp:
+            current, terminal = await self._handle_handoff_unrsvp_signal(inp, current)
+            return True, current, terminal
+        if self._pending_organizer_changes:
+            terminal = await self._handle_handoff_organizer_signal(inp)
+            return True, current, terminal
+        return False, current, None
+
+    async def _maybe_settle_handoff_expiry(
+        self,
+        inp: RegChildInput,
+        current: RegChildResult,
+        task_id: str,
+        deadline_at: datetime,
+        *,
+        completion_enabled: bool,
+        bounded_retry: bool,
+        completion_retry_not_before: dict[str, datetime],
+        committed_completion_ids: set[str],
+    ) -> tuple[bool, RegChildResult | None]:
+        """Expire a due open task or recover a DB-confirmed completion instead of overwriting it."""
+        recovery_pending = self._committed_handoff_completion_recovery_pending(
+            committed_completion_ids
+        )
+        commands_can_precede_expiry = (
+            not recovery_pending
+            and (self._pending_unrsvp or self._pending_organizer_changes)
+        )
+        if (
+            deadline_at > workflow.now()
+            or commands_can_precede_expiry
+            or self._handoff_completion_prevents_expiry(
+                completion_enabled,
+                bounded_retry,
+                completion_retry_not_before,
+                committed_completion_ids,
+            )
+        ):
+            return False, None
+        expiry_result = await self._expire_handoff_task(inp, current)
+        if expiry_result.status != "completion_committed":
+            return True, expiry_result
+        self._mark_committed_handoff_completion_for_recovery(
+            task_id,
+            completion_retry_not_before,
+            committed_completion_ids,
+        )
+        return True, None
+
+    def _handoff_completion_prevents_expiry(
+        self,
+        completion_enabled: bool,
+        bounded_retry: bool,
+        retry_not_before: dict[str, datetime],
+        committed_completion_ids: set[str],
+    ) -> bool:
+        """Let a new command receive one probe at the deadline, but never extend TTL on failure."""
+        if not completion_enabled or not self._pending_handoff_completions:
+            return False
+        if not bounded_retry:
+            return True
+        return any(
+            completion_id not in retry_not_before
+            or completion_id in committed_completion_ids
+            for completion_id in self._pending_handoff_completions
+        )
+
+    def _committed_handoff_completion_recovery_pending(
+        self,
+        committed_completion_ids: set[str],
+    ) -> bool:
+        """Whether the DB has confirmed success whose receipt replay must outrank commands."""
+        return any(
+            completion_id in committed_completion_ids
+            for completion_id in self._pending_handoff_completions
+        )
+
+    def _mark_committed_handoff_completion_for_recovery(
+        self,
+        task_id: str,
+        retry_not_before: dict[str, datetime],
+        committed_completion_ids: set[str],
+    ) -> None:
+        """Force the exact receipt replay after expiry observes a completed durable task."""
+        for completion_id, signal in self._pending_handoff_completions.items():
+            if signal.task_id == task_id:
+                committed_completion_ids.add(completion_id)
+                retry_not_before.pop(completion_id, None)
+
+    async def _maybe_handle_ready_handoff_completion(
+        self,
+        inp: RegChildInput,
+        current: RegChildResult,
+        *,
+        completion_enabled: bool,
+        bounded_retry: bool,
+        retry_not_before: dict[str, datetime],
+        retry_counts: dict[str, int],
+        committed_completion_ids: set[str],
+    ) -> tuple[bool, RegChildResult, RegChildResult | None]:
+        """Run one due completion probe and project any retry into workflow-owned state."""
+        if not completion_enabled or not self._pending_handoff_completions:
+            return False, current, None
+        completion_id = self._ready_handoff_completion_id(
+            retry_not_before,
+            workflow.now(),
+        )
+        if bounded_retry and completion_id is None:
+            return False, current, None
+        if completion_id is None:
+            completion_id = next(iter(self._pending_handoff_completions))
+        current, terminal_result, retry_after_seconds = (
+            await self._handle_handoff_completion_signal(
+                inp,
+                current,
+                completion_id,
+                bounded_retry=bounded_retry,
+            )
+        )
+        if retry_after_seconds is None:
+            retry_not_before.pop(completion_id, None)
+            retry_counts.pop(completion_id, None)
+            committed_completion_ids.discard(completion_id)
+        else:
+            retry_count = retry_counts.get(completion_id, 0) + 1
+            retry_counts[completion_id] = retry_count
+            retry_not_before[completion_id] = workflow.now() + timedelta(
+                seconds=self._handoff_completion_retry_seconds(
+                    retry_count,
+                    retry_after_seconds,
                 )
-            except TimeoutError:
-                # Re-check state in the next workflow task so buffered commands win over either
-                # reminder delivery or expiry when they share a durable timestamp.
-                continue
+            )
+        return True, current, terminal_result
+
+    @staticmethod
+    def _handoff_completion_retry_seconds(
+        retry_count: int,
+        requested_seconds: float,
+    ) -> float:
+        """Apply a one-minute exponential floor capped at one hour to bound history growth."""
+        if retry_count < 1:
+            raise ValueError("handoff completion retry count must be positive")
+        exponent = min(retry_count - 1, 6)
+        workflow_floor: timedelta = min(
+            _HANDOFF_COMPLETION_RETRY_DELAY * (2**exponent),
+            _HANDOFF_COMPLETION_RETRY_CAP,
+        )
+        return max(requested_seconds, float(workflow_floor.total_seconds()))
+
+    async def _wait_for_handoff_task_event(
+        self,
+        deadline_at: datetime,
+        reminder: tuple[HandoffReminderKind, datetime] | None,
+        *,
+        completion_enabled: bool,
+        bounded_completion_retry: bool,
+        completion_retry_not_before: dict[str, datetime],
+        committed_completion_ids: set[str],
+    ) -> None:
+        """Await a command, reminder, retry, or TTL without allowing retained evidence to spin."""
+        completion_retry_at = self._next_handoff_completion_retry_at(
+            completion_retry_not_before
+        )
+        committed_recovery_pending = any(
+            completion_id in committed_completion_ids
+            for completion_id in self._pending_handoff_completions
+        )
+        if committed_recovery_pending and deadline_at <= workflow.now():
+            timer_at = completion_retry_at or (
+                workflow.now() + _HANDOFF_COMPLETION_RETRY_CAP
+            )
+        else:
+            timer_at = deadline_at if reminder is None else min(deadline_at, reminder[1])
+            if bounded_completion_retry and completion_retry_at is not None:
+                timer_at = min(timer_at, completion_retry_at)
+        try:
+            await workflow.wait_condition(
+                lambda: (
+                    not self._committed_handoff_completion_recovery_pending(
+                        committed_completion_ids
+                    )
+                    and (
+                        bool(self._pending_unrsvp)
+                        or bool(self._pending_organizer_changes)
+                    )
+                )
+                or (
+                    completion_enabled
+                    and (
+                        (
+                            not bounded_completion_retry
+                            and bool(self._pending_handoff_completions)
+                        )
+                        or self._ready_handoff_completion_id(
+                            completion_retry_not_before,
+                            workflow.now(),
+                        )
+                        is not None
+                    )
+                ),
+                timeout=max(timer_at - workflow.now(), timedelta(0)),
+                timeout_summary="handoff-task-signal-reminder-or-expiry",
+            )
+        except TimeoutError:
+            # The caller re-checks state so buffered commands win over a co-timed timer.
+            return
+
+    def _ready_handoff_completion_id(
+        self,
+        retry_not_before: dict[str, datetime],
+        now: datetime,
+    ) -> str | None:
+        """Return the first exact completion whose workflow-owned retry timer is due."""
+        for completion_id in self._pending_handoff_completions:
+            retry_at = retry_not_before.get(completion_id)
+            if retry_at is None or retry_at <= now:
+                return completion_id
+        return None
+
+    def _next_handoff_completion_retry_at(
+        self,
+        retry_not_before: dict[str, datetime],
+    ) -> datetime | None:
+        """Return the earliest retry that still belongs to a retained completion command."""
+        pending_retries = (
+            retry_at
+            for completion_id, retry_at in retry_not_before.items()
+            if completion_id in self._pending_handoff_completions
+        )
+        return min(pending_retries, default=None)
 
     @staticmethod
     def _next_handoff_reminder_due(
@@ -1243,52 +1522,92 @@ class RegistrationWorkflow:
         self,
         inp: RegChildInput,
         current: RegChildResult,
-    ) -> tuple[RegChildResult, RegChildResult | None]:
+        completion_id: str,
+        *,
+        bounded_retry: bool,
+    ) -> tuple[RegChildResult, RegChildResult | None, float | None]:
         """Verify one mark-done out of band, then schedule or retain a fail-closed review.
 
         The signal carries no claim that registration succeeded. The existing confirmation
         activity name performs a fresh provider read and freeBusy gate, atomically advancing to
         REGISTERED only after both settle safely. Its stable completion id makes API/Temporal
-        redelivery converge (FR-6.3, FR-8.3, FR-16).
+        redelivery converge. New histories make each dependency probe one activity attempt, then
+        retain this exact signal behind an interruptible workflow timer (FR-6.3, FR-8.3, FR-16).
         """
         if self._keys is None:
             raise RuntimeError("retained handoff requires workflow-minted saga keys")
-        completion_id = next(iter(self._pending_handoff_completions))
         signal = self._pending_handoff_completions[completion_id]
         if signal.task_id != current.handoff_task_id:
             self._pending_handoff_completions.pop(completion_id, None)
             self._handled_handoff_completion_ids.add(completion_id)
-            return current, None
+            return current, None, None
 
-        verification: AwaitConfirmationResult = await workflow.execute_activity(
-            "await_confirmation",
-            AwaitConfirmationInput(
-                tenant_id=inp.tenant_id,
-                canonical_event_id=inp.canonical_event_id,
-                workflow_id=self._keys.workflow_id,
-                lane=Lane.HANDOFF.value,
-                source_outcome=RegisterOutcome.FAILED.value,
-                awaiting_transition_id=self._keys.awaiting_transition_id,
-                registered_transition_id=self._keys.registered_transition_id,
-                confirmation_read_queue_item_id=(
-                    f"{self._keys.workflow_id}:{self._keys.run_id}:"
-                    f"handoff-verification:{signal.task_id}:1"
-                ),
-                handoff_task_id=signal.task_id,
-                handoff_completion_id=signal.completion_id,
+        if bounded_retry:
+            # The database/API/watch guards remain the authority for factual commands. Opening
+            # these workflow buffers before verification closes the commit-to-activity-ACK gap:
+            # if verified completion commits REGISTERED and the ACK is lost, organizer and
+            # authorized un-RSVP signals are journaled until the exact receipt replay succeeds.
+            self._open_organizer_change_buffer(inp)
+            self._activate_post_booking_lifecycle(inp)
+
+        verification_input = AwaitConfirmationInput(
+            tenant_id=inp.tenant_id,
+            canonical_event_id=inp.canonical_event_id,
+            workflow_id=self._keys.workflow_id,
+            lane=Lane.HANDOFF.value,
+            source_outcome=RegisterOutcome.FAILED.value,
+            awaiting_transition_id=self._keys.awaiting_transition_id,
+            registered_transition_id=self._keys.registered_transition_id,
+            confirmation_read_queue_item_id=(
+                f"{self._keys.workflow_id}:{self._keys.run_id}:"
+                f"handoff-verification:{signal.task_id}:1"
             ),
-            start_to_close_timeout=_ACTIVITY_TIMEOUT,
-            result_type=AwaitConfirmationResult,
+            handoff_task_id=signal.task_id,
+            handoff_completion_id=signal.completion_id,
         )
-        if verification.pacing_status == "wait":
+        try:
+            if bounded_retry:
+                verification = await workflow.execute_activity(
+                    "await_confirmation",
+                    verification_input,
+                    start_to_close_timeout=_ACTIVITY_TIMEOUT,
+                    retry_policy=RetryPolicy(maximum_attempts=1),
+                    result_type=AwaitConfirmationResult,
+                )
+            else:
+                # Replay compatibility for histories that predate bounded dependency probes.
+                verification = await workflow.execute_activity(
+                    "await_confirmation",
+                    verification_input,
+                    start_to_close_timeout=_ACTIVITY_TIMEOUT,
+                    result_type=AwaitConfirmationResult,
+                )
+        except ActivityError:
+            if not bounded_retry:
+                raise
+            return (
+                current,
+                None,
+                _HANDOFF_COMPLETION_RETRY_DELAY.total_seconds(),
+            )
+        if verification.pacing_status is not None:
+            # WAIT, projected DEGRADE, and SATURATED are all non-authoritative admission outcomes.
+            # Retain the exact completion signal and retry after the workflow timer; none may burn
+            # the user's one-time evidence or silently close the completion buffer.
+            if bounded_retry:
+                return (
+                    current,
+                    None,
+                    max(verification.retry_after_seconds or 0.0, 0.001),
+                )
             await self._pacer_backoff(verification.retry_after_seconds)
-            return current, None
+            return current, None, None
 
         self._pending_handoff_completions.pop(completion_id, None)
         self._handled_handoff_completion_ids.add(completion_id)
         self._handoff_completion_buffer_open = False
         if verification.status != "confirmed":
-            return current, None
+            return current, None, None
 
         self._open_organizer_change_buffer(inp)
         self._activate_post_booking_lifecycle(inp)
@@ -1298,11 +1617,11 @@ class RegistrationWorkflow:
             Lane.HANDOFF.value,
         )
         if not scheduled:
-            return calendar_result, None
+            return calendar_result, None, None
         lifecycle_result = await self._wait_for_lifecycle_work(inp, self._keys)
         if lifecycle_result is None:
             raise RuntimeError("scheduled handoff completion ended without a terminal lifecycle")
-        return current, lifecycle_result
+        return current, lifecycle_result, None
 
     async def _expire_handoff_task(
         self, inp: RegChildInput, result: RegChildResult
@@ -1337,6 +1656,15 @@ class RegistrationWorkflow:
             return RegChildResult(
                 status="expired",
                 handoff_task_id=task_id,
+                detail=expired.detail,
+            )
+        if expired.status == "completion_committed":
+            return RegChildResult(
+                status="completion_committed",
+                handoff_task_id=task_id,
+                handoff_expires_at=expiry,
+                handoff_expiry_transition_id=expiry_transition_id,
+                handoff_created_at=result.handoff_created_at,
                 detail=expired.detail,
             )
         if expired.terminal_state is not None:

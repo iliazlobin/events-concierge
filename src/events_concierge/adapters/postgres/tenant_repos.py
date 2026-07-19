@@ -1006,7 +1006,10 @@ class PostgresOutboxRepository:
             result = await s.execute(
                 text(
                     """UPDATE outbox
-                       SET delivered_at = now(), lease_token = NULL, lease_expires_at = NULL
+                       SET delivered_at = now(),
+                           payload = payload - 'protected_completion_url',
+                           lease_token = NULL,
+                           lease_expires_at = NULL
                        WHERE id = :id AND lease_token = :lease_token AND delivered_at IS NULL"""
                 ),
                 {"id": record.outbox_id, "lease_token": record.lease_token},
@@ -1026,6 +1029,7 @@ class PostgresOutboxRepository:
         if retry_at is None:
             sql = f"""UPDATE outbox
                        SET failed_at = now(), last_error = :error,
+                           payload = payload - 'protected_completion_url',
                            {attempt_update}
                            lease_token = NULL, lease_expires_at = NULL
                        WHERE id = :id

@@ -12,6 +12,18 @@ from uuid import UUID
 from ..domain.conflict import BusyBlock
 
 
+class CalendarBindingUnavailableError(RuntimeError):
+    """The tenant has no usable owner-provisioned calendar binding.
+
+    This is a user/operator action outcome, not a transient transport failure.  Application
+    services use the marker without depending on a concrete Google adapter.
+    """
+
+
+class CalendarReconsentRequiredError(RuntimeError):
+    """The calendar authorization is permanently unusable until the user grants consent again."""
+
+
 @dataclass(frozen=True, slots=True)
 class CalendarEntry:
     calendar_event_id: str

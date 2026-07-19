@@ -6,6 +6,8 @@ from datetime import UTC, datetime, timedelta
 from typing import cast
 from uuid import UUID, uuid4
 
+import pytest
+
 from events_concierge.adapters.mock.calendar import MockCalendar
 from events_concierge.adapters.mock.consent import MockRegistrationConsentEvidence
 from events_concierge.adapters.mock.sources import ConfirmingSource
@@ -13,6 +15,7 @@ from events_concierge.adapters.policy.engine import DataPolicyEngine
 from events_concierge.adapters.policy.pacer import InMemoryPacer
 from events_concierge.application.registration import (
     HandoffCompletionStatus,
+    PacerDeferredError,
     RegistrationService,
 )
 from events_concierge.domain.conflict import BusyBlock
@@ -25,13 +28,112 @@ from events_concierge.domain.enums import (
     LifecycleState,
     Modality,
     PriceStatus,
+    RsvpState,
     Source,
 )
 from events_concierge.domain.events import CanonicalEvent, EventSourceLink
 from events_concierge.domain.lifecycle import HandoffCompletionReceipt, HandoffTask, Lifecycle
 from events_concierge.domain.policy import SourcePolicy
+from events_concierge.ports.calendar import (
+    CalendarBindingUnavailableError,
+    CalendarReconsentRequiredError,
+)
+from events_concierge.ports.policy import Pacer, PacerLease, PacerLeaseStatus, PacerRequest
 from events_concierge.ports.repositories import HandoffRepository, LifecycleRepository
-from events_concierge.ports.sources import RegistrationTarget
+from events_concierge.ports.sources import RegistrationTarget, SourceReconsentRequiredError
+
+
+class _FailOnceRegistrationReadSource(ConfirmingSource):
+    """Transient provider read outage that succeeds on the activity retry."""
+
+    def __init__(self) -> None:
+        super().__init__(Source.MEETUP)
+        self._fail_next_read = True
+
+    async def read_registration_state(
+        self,
+        tenant_id: UUID,
+        target: RegistrationTarget,
+        modality: Modality,
+    ) -> RsvpState:
+        if self._fail_next_read:
+            self._fail_next_read = False
+            raise RuntimeError("simulated provider read outage")
+        return await super().read_registration_state(tenant_id, target, modality)
+
+
+class _FailOnceFreeBusyCalendar(MockCalendar):
+    """Transient Calendar read outage that succeeds without consuming completion evidence."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self._fail_next_read = True
+
+    async def free_busy(
+        self,
+        tenant_id: UUID,
+        window_start: datetime,
+        window_end: datetime,
+    ) -> list[BusyBlock]:
+        if self._fail_next_read:
+            self._fail_next_read = False
+            raise RuntimeError("simulated freeBusy outage")
+        return await super().free_busy(tenant_id, window_start, window_end)
+
+
+class _SaturateOncePacer(InMemoryPacer):
+    """One transient admission failure followed by the normal granted local lease."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self._saturate_next = True
+
+    async def acquire(self, request: PacerRequest) -> PacerLease:
+        if self._saturate_next:
+            self._saturate_next = False
+            return PacerLease(
+                PacerLeaseStatus.SATURATED,
+                retry_after_seconds=0.01,
+                detail="simulated transient saturation",
+            )
+        return await super().acquire(request)
+
+
+class _PermanentSourceReadFailure(ConfirmingSource):
+    """Raise one explicit user-action outcome instead of a retryable provider outage."""
+
+    def __init__(self, error: SourceReconsentRequiredError) -> None:
+        super().__init__(Source.MEETUP)
+        self._error = error
+
+    async def read_registration_state(
+        self,
+        tenant_id: UUID,
+        target: RegistrationTarget,
+        modality: Modality,
+    ) -> RsvpState:
+        del tenant_id, target, modality
+        raise self._error
+
+
+class _PermanentCalendarReadFailure(MockCalendar):
+    """Raise a typed Calendar setup/authorization outcome from freeBusy."""
+
+    def __init__(
+        self,
+        error: CalendarBindingUnavailableError | CalendarReconsentRequiredError,
+    ) -> None:
+        super().__init__()
+        self._error = error
+
+    async def free_busy(
+        self,
+        tenant_id: UUID,
+        window_start: datetime,
+        window_end: datetime,
+    ) -> list[BusyBlock]:
+        del tenant_id, window_start, window_end
+        raise self._error
 
 
 class _LifecycleRepository:
@@ -183,18 +285,21 @@ def _service(
     lifecycle: Lifecycle,
     handoff: _HandoffRepository,
     consent: MockRegistrationConsentEvidence,
+    pacer: Pacer | None = None,
+    source_policy: SourcePolicy | None = None,
 ) -> RegistrationService:
     return RegistrationService(
         {Source.MEETUP: source},
         DataPolicyEngine(
             source_policies={
-                Source.MEETUP: SourcePolicy(
+                Source.MEETUP: source_policy
+                or SourcePolicy(
                     source=Source.MEETUP,
                     automation_allowed={Modality.API: True},
-                )
+                ),
             }
         ),
-        InMemoryPacer(),
+        pacer or InMemoryPacer(),
         calendar,
         cast(LifecycleRepository, _LifecycleRepository(lifecycle)),
         cast(HandoffRepository, handoff),
@@ -262,6 +367,319 @@ async def test_mark_done_requires_source_readback_then_warns_on_fresh_conflict()
     assert handoff.verified == [("completion-1", Source.MEETUP, True)]
     assert handoff.reviews == []
     assert calendar.upsert_attempts == 0
+
+
+async def test_transient_provider_read_does_not_consume_mark_done_before_retry() -> None:
+    """A provider transport outage retries the same evidence instead of manufacturing a review."""
+    tenant_id, event, lifecycle, task = _fixture()
+    source = _FailOnceRegistrationReadSource()
+    target = RegistrationTarget(
+        event.source_links[0].source_event_id,
+        event.source_links[0].registration_url,
+    )
+    await source.register(tenant_id, target, Modality.API, "outside-concierge")
+    calendar = MockCalendar()
+    handoff = _HandoffRepository(task)
+    consent = MockRegistrationConsentEvidence()
+    consent.seed(uuid4(), tenant_id, Source.MEETUP, Modality.API)
+    service = _service(source, calendar, lifecycle, handoff, consent)
+
+    with pytest.raises(RuntimeError, match="provider read outage"):
+        await service.complete_handoff(
+            tenant_id,
+            event,
+            lifecycle.workflow_id,
+            task_id=task.task_id,
+            completion_id="completion-provider-retry",
+            registered_transition_id="registered-provider-retry",
+            verification_read_queue_item_id="readback-provider-retry",
+        )
+
+    assert task.state is HandoffState.OPEN
+    assert lifecycle.state is LifecycleState.HANDOFF
+    assert handoff.reviews == []
+    assert handoff.receipts == {}
+
+    result = await service.complete_handoff(
+        tenant_id,
+        event,
+        lifecycle.workflow_id,
+        task_id=task.task_id,
+        completion_id="completion-provider-retry",
+        registered_transition_id="registered-provider-retry",
+        verification_read_queue_item_id="readback-provider-retry",
+    )
+
+    assert result.status is HandoffCompletionStatus.CONFIRMED
+    assert handoff.reviews == []
+    assert [item[0] for item in handoff.verified] == ["completion-provider-retry"]
+
+
+async def test_transient_pacer_saturation_does_not_consume_mark_done_before_retry() -> None:
+    """Admission-plane saturation retains the same completion evidence for a durable timer retry."""
+    tenant_id, event, lifecycle, task = _fixture()
+    source = ConfirmingSource(Source.MEETUP)
+    target = RegistrationTarget(
+        event.source_links[0].source_event_id,
+        event.source_links[0].registration_url,
+    )
+    await source.register(tenant_id, target, Modality.API, "outside-concierge")
+    handoff = _HandoffRepository(task)
+    consent = MockRegistrationConsentEvidence()
+    consent.seed(uuid4(), tenant_id, Source.MEETUP, Modality.API)
+    service = _service(
+        source,
+        MockCalendar(),
+        lifecycle,
+        handoff,
+        consent,
+        _SaturateOncePacer(),
+    )
+
+    with pytest.raises(PacerDeferredError) as deferred:
+        await service.complete_handoff(
+            tenant_id,
+            event,
+            lifecycle.workflow_id,
+            task_id=task.task_id,
+            completion_id="completion-pacer-retry",
+            registered_transition_id="registered-pacer-retry",
+            verification_read_queue_item_id="readback-pacer-retry",
+        )
+
+    assert deferred.value.lease.status is PacerLeaseStatus.SATURATED
+    assert task.state is HandoffState.OPEN
+    assert lifecycle.state is LifecycleState.HANDOFF
+    assert handoff.reviews == []
+    assert handoff.receipts == {}
+
+    result = await service.complete_handoff(
+        tenant_id,
+        event,
+        lifecycle.workflow_id,
+        task_id=task.task_id,
+        completion_id="completion-pacer-retry",
+        registered_transition_id="registered-pacer-retry",
+        verification_read_queue_item_id="readback-pacer-retry",
+    )
+
+    assert result.status is HandoffCompletionStatus.CONFIRMED
+    assert handoff.reviews == []
+    assert [item[0] for item in handoff.verified] == ["completion-pacer-retry"]
+
+
+async def test_transient_free_busy_read_does_not_consume_mark_done_before_retry() -> None:
+    """A Calendar transport outage leaves the confirmed provider evidence retryable."""
+    tenant_id, event, lifecycle, task = _fixture()
+    source = ConfirmingSource(Source.MEETUP)
+    target = RegistrationTarget(
+        event.source_links[0].source_event_id,
+        event.source_links[0].registration_url,
+    )
+    await source.register(tenant_id, target, Modality.API, "outside-concierge")
+    calendar = _FailOnceFreeBusyCalendar()
+    handoff = _HandoffRepository(task)
+    consent = MockRegistrationConsentEvidence()
+    consent.seed(uuid4(), tenant_id, Source.MEETUP, Modality.API)
+    service = _service(source, calendar, lifecycle, handoff, consent)
+
+    with pytest.raises(RuntimeError, match="freeBusy outage"):
+        await service.complete_handoff(
+            tenant_id,
+            event,
+            lifecycle.workflow_id,
+            task_id=task.task_id,
+            completion_id="completion-calendar-retry",
+            registered_transition_id="registered-calendar-retry",
+            verification_read_queue_item_id="readback-calendar-retry",
+        )
+
+    assert task.state is HandoffState.OPEN
+    assert lifecycle.state is LifecycleState.HANDOFF
+    assert handoff.reviews == []
+    assert handoff.receipts == {}
+
+    result = await service.complete_handoff(
+        tenant_id,
+        event,
+        lifecycle.workflow_id,
+        task_id=task.task_id,
+        completion_id="completion-calendar-retry",
+        registered_transition_id="registered-calendar-retry",
+        verification_read_queue_item_id="readback-calendar-retry",
+    )
+
+    assert result.status is HandoffCompletionStatus.CONFIRMED
+    assert handoff.reviews == []
+    assert [item[0] for item in handoff.verified] == ["completion-calendar-retry"]
+
+
+async def test_missing_consent_consumes_mark_done_into_durable_review() -> None:
+    """Revoked verification consent needs owner action and must not create an endless retry."""
+    tenant_id, event, lifecycle, task = _fixture()
+    handoff = _HandoffRepository(task)
+
+    result = await _service(
+        ConfirmingSource(Source.MEETUP),
+        MockCalendar(),
+        lifecycle,
+        handoff,
+        MockRegistrationConsentEvidence(),
+    ).complete_handoff(
+        tenant_id,
+        event,
+        lifecycle.workflow_id,
+        task_id=task.task_id,
+        completion_id="completion-consent-review",
+        registered_transition_id="registered-consent-review",
+        verification_read_queue_item_id="readback-consent-review",
+    )
+
+    assert result.status is HandoffCompletionStatus.REVIEW_REQUIRED
+    assert result.detail == "registration consent is no longer available"
+    assert handoff.reviews == [("completion-consent-review", result.detail)]
+    assert lifecycle.state is LifecycleState.HANDOFF
+    assert task.state is HandoffState.OPEN
+
+
+@pytest.mark.parametrize(
+    ("source_policy", "expected_detail"),
+    [
+        (
+            SourcePolicy(
+                source=Source.MEETUP,
+                automation_allowed={Modality.API: False},
+            ),
+            "source automation policy no longer permits verification",
+        ),
+        (
+            SourcePolicy(
+                source=Source.MEETUP,
+                automation_allowed={Modality.API: True},
+                quarantined=True,
+            ),
+            "registration source is quarantined",
+        ),
+    ],
+)
+async def test_permanent_source_guard_consumes_mark_done_into_review(
+    source_policy: SourcePolicy,
+    expected_detail: str,
+) -> None:
+    """Policy and quarantine decisions are durable review outcomes, not dependency retries."""
+    tenant_id, event, lifecycle, task = _fixture()
+    consent = MockRegistrationConsentEvidence()
+    consent.seed(uuid4(), tenant_id, Source.MEETUP, Modality.API)
+    handoff = _HandoffRepository(task)
+
+    result = await _service(
+        ConfirmingSource(Source.MEETUP),
+        MockCalendar(),
+        lifecycle,
+        handoff,
+        consent,
+        source_policy=source_policy,
+    ).complete_handoff(
+        tenant_id,
+        event,
+        lifecycle.workflow_id,
+        task_id=task.task_id,
+        completion_id="completion-source-guard-review",
+        registered_transition_id="registered-source-guard-review",
+        verification_read_queue_item_id="readback-source-guard-review",
+    )
+
+    assert result.status is HandoffCompletionStatus.REVIEW_REQUIRED
+    assert result.detail == expected_detail
+    assert handoff.reviews == [("completion-source-guard-review", expected_detail)]
+    assert lifecycle.state is LifecycleState.HANDOFF
+    assert task.state is HandoffState.OPEN
+
+
+async def test_source_reconsent_consumes_mark_done_into_durable_review() -> None:
+    """A rejected source credential cannot recover until user action, so the command is reviewed."""
+    tenant_id, event, lifecycle, task = _fixture()
+    consent = MockRegistrationConsentEvidence()
+    consent.seed(uuid4(), tenant_id, Source.MEETUP, Modality.API)
+    handoff = _HandoffRepository(task)
+
+    result = await _service(
+        _PermanentSourceReadFailure(SourceReconsentRequiredError("credential rejected")),
+        MockCalendar(),
+        lifecycle,
+        handoff,
+        consent,
+    ).complete_handoff(
+        tenant_id,
+        event,
+        lifecycle.workflow_id,
+        task_id=task.task_id,
+        completion_id="completion-source-reconsent-review",
+        registered_transition_id="registered-source-reconsent-review",
+        verification_read_queue_item_id="readback-source-reconsent-review",
+    )
+
+    assert result.status is HandoffCompletionStatus.REVIEW_REQUIRED
+    assert result.detail == "registration source authorization requires re-consent"
+    assert handoff.reviews == [("completion-source-reconsent-review", result.detail)]
+    assert lifecycle.state is LifecycleState.HANDOFF
+    assert task.state is HandoffState.OPEN
+
+
+@pytest.mark.parametrize(
+    ("calendar_error", "expected_detail"),
+    [
+        (
+            CalendarBindingUnavailableError("binding missing"),
+            "calendar binding is not available",
+        ),
+        (
+            CalendarReconsentRequiredError("scope rejected"),
+            "calendar authorization requires re-consent",
+        ),
+    ],
+)
+async def test_permanent_calendar_access_outcome_consumes_mark_done_into_review(
+    calendar_error: CalendarBindingUnavailableError | CalendarReconsentRequiredError,
+    expected_detail: str,
+) -> None:
+    """Calendar setup/auth failures require owner action while transport failures remain retryable."""
+    tenant_id, event, lifecycle, task = _fixture()
+    source = ConfirmingSource(Source.MEETUP)
+    await source.register(
+        tenant_id,
+        RegistrationTarget(
+            event.source_links[0].source_event_id,
+            event.source_links[0].registration_url,
+        ),
+        Modality.API,
+        "outside-concierge-calendar-access",
+    )
+    consent = MockRegistrationConsentEvidence()
+    consent.seed(uuid4(), tenant_id, Source.MEETUP, Modality.API)
+    handoff = _HandoffRepository(task)
+
+    result = await _service(
+        source,
+        _PermanentCalendarReadFailure(calendar_error),
+        lifecycle,
+        handoff,
+        consent,
+    ).complete_handoff(
+        tenant_id,
+        event,
+        lifecycle.workflow_id,
+        task_id=task.task_id,
+        completion_id="completion-calendar-access-review",
+        registered_transition_id="registered-calendar-access-review",
+        verification_read_queue_item_id="readback-calendar-access-review",
+    )
+
+    assert result.status is HandoffCompletionStatus.REVIEW_REQUIRED
+    assert result.detail == expected_detail
+    assert handoff.reviews == [("completion-calendar-access-review", expected_detail)]
+    assert lifecycle.state is LifecycleState.HANDOFF
+    assert task.state is HandoffState.OPEN
 
 
 async def test_uncorroborated_mark_done_is_consumed_for_review_without_calendar_write() -> None:

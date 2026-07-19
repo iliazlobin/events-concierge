@@ -37,7 +37,7 @@ from events_concierge.adapters.mock.policy import (
 from events_concierge.adapters.mock.sources import ConfirmingSource
 from events_concierge.adapters.policy.engine import StoreBackedPolicyEngine
 from events_concierge.adapters.postgres.audit import PostgresRegistrationActionAuditRepository
-from events_concierge.composition import build_container
+from events_concierge.composition import Container, build_container
 from events_concierge.config import get_settings
 from events_concierge.domain.audit import RegistrationActionAudit, RegistrationActionAuditPhase
 from events_concierge.domain.credentials import Tenant
@@ -434,9 +434,76 @@ class _HandoffCompletionActivityRecorder:
     def __init__(self) -> None:
         self.attempts: list[int] = []
         self.statuses: list[str] = []
+        self.crashed = False
+        self.entered: asyncio.Event | None = None
+        self.release: asyncio.Event | None = None
 
 
 _handoff_completion_activity_recorder = _HandoffCompletionActivityRecorder()
+
+
+class _PersistentHandoffCompletionFailureRecorder:
+    """Capture each workflow-owned probe of a dependency that never recovers."""
+
+    def __init__(self) -> None:
+        self.completion_ids: list[str] = []
+        self.activity_attempts: list[int] = []
+        self.scheduled_at: list[datetime] = []
+
+
+_persistent_handoff_completion_failure = _PersistentHandoffCompletionFailureRecorder()
+
+
+async def _wait_for_persistent_completion_probes(
+    expected: list[str],
+    failure: str,
+) -> None:
+    """Wait for an exact deterministic probe sequence without hiding unexpected extra attempts."""
+    for _ in range(400):
+        if _persistent_handoff_completion_failure.completion_ids == expected:
+            return
+        await asyncio.sleep(0.01)
+    pytest.fail(failure)
+
+
+async def _wait_for_retained_handoff_state(
+    container: Container,
+    tenant_id: UUID,
+    canonical_event_id: UUID,
+    task_id: str,
+    *,
+    task_state: HandoffState | None = None,
+    lifecycle_state: LifecycleState | None = None,
+    failure: str,
+) -> None:
+    """Wait for one exact task/lifecycle projection used by retained-child regressions."""
+    for _ in range(400):
+        task = await container.handoff_repo.get(tenant_id, task_id)
+        lifecycle = (
+            await container.lifecycle_repo.find_active(tenant_id, canonical_event_id)
+            if lifecycle_state is not None
+            else None
+        )
+        if (
+            task is not None
+            and (task_state is None or task.state is task_state)
+            and (lifecycle_state is None or lifecycle is not None)
+            and (lifecycle_state is None or lifecycle.state is lifecycle_state)
+        ):
+            return
+        await asyncio.sleep(0.01)
+    pytest.fail(failure)
+
+
+class _BlockedHandoffRoute:
+    """Hold task creation after the workflow has opened its completion signal buffer."""
+
+    def __init__(self) -> None:
+        self.entered: asyncio.Event | None = None
+        self.release: asyncio.Event | None = None
+
+
+_blocked_handoff_route = _BlockedHandoffRoute()
 
 
 class _ReconcileActivityRecorder:
@@ -493,9 +560,42 @@ async def _crash_after_handoff_completion_commit(
     attempt = activity.info().attempt
     _handoff_completion_activity_recorder.attempts.append(attempt)
     _handoff_completion_activity_recorder.statuses.append(result.status)
-    if attempt == 1:
+    if not _handoff_completion_activity_recorder.crashed:
+        entered = _handoff_completion_activity_recorder.entered
+        release = _handoff_completion_activity_recorder.release
+        if entered is not None and release is not None:
+            entered.set()
+            await release.wait()
+        _handoff_completion_activity_recorder.crashed = True
         raise RuntimeError("simulated handoff-completion acknowledgement loss")
     return result
+
+
+@activity.defn(name="await_confirmation")
+async def _persistently_failing_handoff_confirmation(
+    inp: AwaitConfirmationInput,
+) -> AwaitConfirmationResult:
+    """Model a provider/freeBusy transport outage that never consumes completion evidence."""
+    if inp.handoff_completion_id is None:
+        return await await_confirmation(inp)
+    _persistent_handoff_completion_failure.completion_ids.append(
+        inp.handoff_completion_id
+    )
+    _persistent_handoff_completion_failure.activity_attempts.append(activity.info().attempt)
+    _persistent_handoff_completion_failure.scheduled_at.append(activity.info().scheduled_time)
+    raise RuntimeError("simulated persistent handoff verification outage")
+
+
+@activity.defn(name="route_to_handoff")
+async def _blocked_route_to_handoff(inp: HandoffInput) -> RegChildResult:
+    """Let a completion arrive before a zero-TTL handoff task activity acknowledges creation."""
+    entered = _blocked_handoff_route.entered
+    release = _blocked_handoff_route.release
+    if entered is None or release is None:
+        raise RuntimeError("handoff route gate is not configured")
+    entered.set()
+    await release.wait()
+    return await route_to_handoff(inp)
 
 
 @activity.defn(name="complete_lifecycle")
@@ -576,6 +676,7 @@ def _saga_activities(
     reconcile_activity: object = reconcile_organizer_change,
     expiry_activity: object = expire_handoff,
     reminder_activity: object = enqueue_handoff_reminder,
+    handoff_activity: object = route_to_handoff,
 ) -> list[object]:
     return [
         discovery_activity,
@@ -590,7 +691,7 @@ def _saga_activities(
         write_to_calendar,
         reconcile_activity,
         unrsvp,
-        route_to_handoff,
+        handoff_activity,
         completion_activity,
         expiry_activity,
         reminder_activity,
@@ -2400,12 +2501,15 @@ async def test_retained_handoff_reminder_retries_lost_ack_with_one_outbox_effect
     assert await _handoff_reminder_outbox_effects(tenant_id, task_id) == (1, 1, "t24h")
 
 
-async def test_retained_handoff_mark_done_verifies_then_schedules_before_completion(
+async def test_retained_handoff_mark_done_buffers_organizer_command_through_lost_ack(
     db: None,
 ) -> None:
-    """A lost completion ACK replays its receipt, then schedules without a second source effect."""
+    """A post-commit organizer command is journaled before the completion activity ACK settles."""
     _handoff_completion_activity_recorder.attempts.clear()
     _handoff_completion_activity_recorder.statuses.clear()
+    _handoff_completion_activity_recorder.crashed = False
+    _handoff_completion_activity_recorder.entered = asyncio.Event()
+    _handoff_completion_activity_recorder.release = asyncio.Event()
     settings = get_settings()
     tag = uuid4().hex
     source = ConfirmingSource(Source.MEETUP, membership_state=GroupCondition.NON_MEMBER)
@@ -2467,21 +2571,14 @@ async def test_retained_handoff_mark_done_verifies_then_schedules_before_complet
                     id=workflow_id,
                     task_queue=f"ec-handoff-completion-{tag}",
                 )
-                for _ in range(400):
-                    task = await container.handoff_repo.get(tenant_id, task_id)
-                    lifecycle = await container.lifecycle_repo.find_active(
-                        tenant_id,
-                        canonical.canonical_event_id,
-                    )
-                    if (
-                        task is not None
-                        and lifecycle is not None
-                        and lifecycle.state is LifecycleState.HANDOFF
-                    ):
-                        break
-                    await asyncio.sleep(0.01)
-                else:
-                    pytest.fail("retained child did not create its registration handoff")
+                await _wait_for_retained_handoff_state(
+                    container,
+                    tenant_id,
+                    canonical.canonical_event_id,
+                    task_id,
+                    lifecycle_state=LifecycleState.HANDOFF,
+                    failure="retained child did not create its registration handoff",
+                )
 
                 await source.register(
                     tenant_id,
@@ -2500,39 +2597,452 @@ async def test_retained_handoff_mark_done_verifies_then_schedules_before_complet
                         completion_id=completion_id,
                     ),
                 )
-                for _ in range(400):
-                    task = await container.handoff_repo.get(tenant_id, task_id)
-                    lifecycle = await container.lifecycle_repo.find_active(
-                        tenant_id,
-                        canonical.canonical_event_id,
-                    )
-                    if (
-                        task is not None
-                        and task.state is HandoffState.COMPLETED
-                        and lifecycle is not None
-                        and lifecycle.state is LifecycleState.SCHEDULED
-                    ):
-                        break
-                    await asyncio.sleep(0.01)
-                else:
-                    pytest.fail("verified handoff completion did not reach scheduling")
-
-                assert len(container.calendar.entries(tenant_id)) == 1
+                entered = _handoff_completion_activity_recorder.entered
+                release = _handoff_completion_activity_recorder.release
+                if entered is None or release is None:
+                    raise RuntimeError("handoff completion ACK-loss gate was not configured")
+                await asyncio.wait_for(entered.wait(), timeout=2)
+                cancellation_fingerprint = f"handoff-completion-cancel-{tag}"
                 await handle.signal(
                     "organizer_change",
                     OrganizerChangeSignal(
-                        fingerprint=f"handoff-completion-cancel-{tag}",
+                        fingerprint=cancellation_fingerprint,
                         canonical_event_id=str(canonical.canonical_event_id),
                         source=Source.MEETUP.value,
                         event_status="cancelled",
                     ),
                 )
+                for _ in range(400):
+                    pending = await handle.query(
+                        "pending_lifecycle_signals",
+                        result_type=PendingLifecycleSignals,
+                    )
+                    if any(
+                        signal.fingerprint == cancellation_fingerprint
+                        for signal in pending.organizer_changes
+                    ):
+                        break
+                    await asyncio.sleep(0.01)
+                else:
+                    pytest.fail("post-commit organizer command was not retained")
+                release.set()
                 child_result = await handle.result()
 
     assert child_result.status == "cancelled"
     assert source.registration_effects == 1
-    assert _handoff_completion_activity_recorder.attempts == [1, 2]
-    assert _handoff_completion_activity_recorder.statuses == ["confirmed", "confirmed"]
+    assert _handoff_completion_activity_recorder.attempts == [1]
+    assert _handoff_completion_activity_recorder.statuses == ["confirmed"]
+    _handoff_completion_activity_recorder.entered = None
+    _handoff_completion_activity_recorder.release = None
+
+
+async def test_retained_handoff_dependency_failure_uses_interruptible_workflow_backoff(
+    db: None,
+) -> None:
+    """Retries are one-attempt, interruptible, and exponentially bounded in workflow history."""
+    settings = get_settings()
+    tag = uuid4().hex
+    source = ConfirmingSource(Source.MEETUP)
+    container = build_container(
+        settings,
+        register_sources={Source.MEETUP: source},
+        membership_resolver=lambda value: (
+            GroupCondition.MEMBER if value is Source.MEETUP else GroupCondition.UNKNOWN
+        ),
+    )
+    set_container(container)
+    tenant_id = uuid4()
+    await container.tenant_repo.add(
+        Tenant(
+            tenant_id,
+            f"oidc|handoff-completion-outage-{tag}",
+            f"{tag}@example.com",
+            f"{tag}@u.test",
+        )
+    )
+    await _seed_registration_consent(tenant_id, Source.MEETUP, Modality.API)
+    canonical = (
+        await container.catalog.upsert_candidates(
+            [
+                CandidateEvent(
+                    source=Source.MEETUP,
+                    source_event_id=f"handoff-completion-outage-{tag}",
+                    title=f"Handoff completion outage {tag}",
+                    start_at=datetime.now(UTC).replace(microsecond=0) + timedelta(days=2),
+                    registration_url=f"https://meetup.example/handoff-completion-outage-{tag}",
+                    city="San Francisco",
+                    # Paid candidates route directly to a retained task without source effects.
+                    is_free=False,
+                )
+            ]
+        )
+    )[0]
+    workflow_id = registration_workflow_id(tenant_id, canonical.canonical_event_id)
+    task_id = f"{workflow_id}:handoff"
+    first_completion_id = f"{workflow_id}:completion:first"
+    second_completion_id = f"{workflow_id}:completion:second"
+    recorder = _persistent_handoff_completion_failure
+    recorder.completion_ids.clear()
+    recorder.activity_attempts.clear()
+    recorder.scheduled_at.clear()
+
+    async with await WorkflowEnvironment.start_time_skipping() as env:
+        async with Worker(
+            env.client,
+            task_queue=f"ec-handoff-completion-outage-{tag}",
+            workflows=[RegistrationWorkflow],
+            activities=_saga_activities(
+                confirmation_activity=_persistently_failing_handoff_confirmation,
+            ),
+        ):
+            with env.auto_time_skipping_disabled():
+                handle = await env.client.start_workflow(
+                    RegistrationWorkflow.run,
+                    RegChildInput(
+                        tenant_id=str(tenant_id),
+                        canonical_event_id=str(canonical.canonical_event_id),
+                        keep_open_after_scheduling=True,
+                    ),
+                    id=workflow_id,
+                    task_queue=f"ec-handoff-completion-outage-{tag}",
+                )
+                await _wait_for_retained_handoff_state(
+                    container,
+                    tenant_id,
+                    canonical.canonical_event_id,
+                    task_id,
+                    failure="retained child did not create its handoff task",
+                )
+
+                await handle.signal(
+                    "handoff_completed",
+                    HandoffCompletionSignal(
+                        task_id=task_id,
+                        completion_id=first_completion_id,
+                    ),
+                )
+                await _wait_for_persistent_completion_probes(
+                    [first_completion_id],
+                    "first handoff verification probe did not fail",
+                )
+
+                pending = await handle.query(
+                    "pending_lifecycle_signals",
+                    result_type=PendingLifecycleSignals,
+                )
+                assert pending.handoff_completions == [
+                    HandoffCompletionSignal(
+                        task_id=task_id,
+                        completion_id=first_completion_id,
+                    )
+                ]
+
+                # No hidden activity retry may run before the workflow's one-minute timer.
+                await env.sleep(timedelta(seconds=30))
+                await asyncio.sleep(0.05)
+                assert recorder.completion_ids == [first_completion_id]
+                await env.sleep(timedelta(seconds=31))
+                await _wait_for_persistent_completion_probes(
+                    [
+                        first_completion_id,
+                        first_completion_id,
+                    ],
+                    "workflow-owned handoff verification retry did not run",
+                )
+
+                assert recorder.activity_attempts == [1, 1]
+                assert (
+                    recorder.scheduled_at[1] - recorder.scheduled_at[0]
+                    >= timedelta(minutes=1)
+                )
+
+                # The second failure doubles the workflow-owned floor to two minutes. This keeps
+                # a seven-day task to a bounded number of history events even during an outage.
+                await env.sleep(timedelta(seconds=60))
+                await asyncio.sleep(0.05)
+                assert recorder.completion_ids == [
+                    first_completion_id,
+                    first_completion_id,
+                ]
+                await env.sleep(timedelta(seconds=61))
+                await _wait_for_persistent_completion_probes(
+                    [
+                        first_completion_id,
+                        first_completion_id,
+                        first_completion_id,
+                    ],
+                    "exponentially backed-off handoff verification retry did not run",
+                )
+                assert (
+                    recorder.scheduled_at[2] - recorder.scheduled_at[1]
+                    >= timedelta(minutes=2)
+                )
+
+                # A new exact command wakes the retained child during the first command's next
+                # backoff. It receives its own bounded probe instead of waiting behind an activity.
+                await handle.signal(
+                    "handoff_completed",
+                    HandoffCompletionSignal(
+                        task_id=task_id,
+                        completion_id=second_completion_id,
+                    ),
+                )
+                await _wait_for_persistent_completion_probes(
+                    [
+                        first_completion_id,
+                        first_completion_id,
+                        first_completion_id,
+                        second_completion_id,
+                    ],
+                    "new completion command did not interrupt workflow backoff",
+                )
+                pending = await handle.query(
+                    "pending_lifecycle_signals",
+                    result_type=PendingLifecycleSignals,
+                )
+                assert [item.completion_id for item in pending.handoff_completions] == [
+                    first_completion_id,
+                    second_completion_id,
+                ]
+                assert recorder.activity_attempts == [1, 1, 1, 1]
+                await handle.cancel()
+
+    task = await container.handoff_repo.get(tenant_id, task_id)
+    assert task is not None and task.state in {HandoffState.OPEN, HandoffState.NOTIFIED}
+    assert source.registration_effects == 0
+    assert container.calendar.entries(tenant_id) == []
+
+
+async def test_persistent_handoff_completion_outage_cannot_extend_task_ttl(db: None) -> None:
+    """A completion arriving at the deadline gets one probe, then guarded expiry settles the task."""
+    settings = get_settings().model_copy(update={"handoff_ttl_days": 0})
+    tag = uuid4().hex
+    source = ConfirmingSource(Source.MEETUP)
+    container = build_container(
+        settings,
+        register_sources={Source.MEETUP: source},
+        membership_resolver=lambda value: (
+            GroupCondition.MEMBER if value is Source.MEETUP else GroupCondition.UNKNOWN
+        ),
+    )
+    set_container(container)
+    tenant_id = uuid4()
+    await container.tenant_repo.add(
+        Tenant(
+            tenant_id,
+            f"oidc|handoff-completion-expiry-{tag}",
+            f"{tag}@example.com",
+            f"{tag}@u.test",
+        )
+    )
+    await _seed_registration_consent(tenant_id, Source.MEETUP, Modality.API)
+    canonical = (
+        await container.catalog.upsert_candidates(
+            [
+                CandidateEvent(
+                    source=Source.MEETUP,
+                    source_event_id=f"handoff-completion-expiry-{tag}",
+                    title=f"Handoff completion expiry {tag}",
+                    start_at=datetime.now(UTC).replace(microsecond=0) + timedelta(days=2),
+                    registration_url=f"https://meetup.example/handoff-completion-expiry-{tag}",
+                    city="San Francisco",
+                    is_free=False,
+                )
+            ]
+        )
+    )[0]
+    workflow_id = registration_workflow_id(tenant_id, canonical.canonical_event_id)
+    task_id = f"{workflow_id}:handoff"
+    completion_id = f"{workflow_id}:completion:at-expiry"
+    recorder = _persistent_handoff_completion_failure
+    recorder.completion_ids.clear()
+    recorder.activity_attempts.clear()
+    recorder.scheduled_at.clear()
+    _blocked_handoff_route.entered = asyncio.Event()
+    _blocked_handoff_route.release = asyncio.Event()
+
+    try:
+        async with await WorkflowEnvironment.start_time_skipping() as env:
+            async with Worker(
+                env.client,
+                task_queue=f"ec-handoff-completion-expiry-{tag}",
+                workflows=[RegistrationWorkflow],
+                activities=_saga_activities(
+                    confirmation_activity=_persistently_failing_handoff_confirmation,
+                    handoff_activity=_blocked_route_to_handoff,
+                ),
+            ):
+                with env.auto_time_skipping_disabled():
+                    handle = await env.client.start_workflow(
+                        RegistrationWorkflow.run,
+                        RegChildInput(
+                            tenant_id=str(tenant_id),
+                            canonical_event_id=str(canonical.canonical_event_id),
+                            keep_open_after_scheduling=True,
+                        ),
+                        id=workflow_id,
+                        task_queue=f"ec-handoff-completion-expiry-{tag}",
+                    )
+                    entered = _blocked_handoff_route.entered
+                    release = _blocked_handoff_route.release
+                    if entered is None or release is None:
+                        raise RuntimeError("handoff route gate was not configured")
+                    await asyncio.wait_for(entered.wait(), timeout=2)
+                    await handle.signal(
+                        "handoff_completed",
+                        HandoffCompletionSignal(
+                            task_id=task_id,
+                            completion_id=completion_id,
+                        ),
+                    )
+                    release.set()
+                    child_result = await handle.result()
+    finally:
+        release = _blocked_handoff_route.release
+        if release is not None:
+            release.set()
+        _blocked_handoff_route.entered = None
+        _blocked_handoff_route.release = None
+
+    assert child_result.status == "expired"
+    assert recorder.completion_ids == [completion_id]
+    assert recorder.activity_attempts == [1]
+    task = await container.handoff_repo.get(tenant_id, task_id)
+    assert task is not None and task.state is HandoffState.EXPIRED
+    assert await _lifecycle_state(tenant_id, workflow_id) == LifecycleState.EXPIRED.value
+    assert source.registration_effects == 0
+    assert container.calendar.entries(tenant_id) == []
+
+
+async def test_verified_handoff_ack_loss_at_ttl_recovers_receipt_instead_of_expiring(
+    db: None,
+) -> None:
+    """A completed task is durable proof that expiry must yield to exact receipt recovery."""
+    settings = get_settings().model_copy(update={"handoff_ttl_days": 0})
+    tag = uuid4().hex
+    source = ConfirmingSource(Source.MEETUP, membership_state=GroupCondition.NON_MEMBER)
+    container = build_container(
+        settings,
+        register_sources={Source.MEETUP: source},
+        membership_resolver=lambda value: (
+            GroupCondition.NON_MEMBER if value is Source.MEETUP else GroupCondition.UNKNOWN
+        ),
+    )
+    set_container(container)
+    tenant_id = uuid4()
+    await container.tenant_repo.add(
+        Tenant(
+            tenant_id,
+            f"oidc|handoff-completion-ttl-ack-{tag}",
+            f"{tag}@example.com",
+            f"{tag}@u.test",
+        )
+    )
+    await _seed_registration_consent(tenant_id, Source.MEETUP, Modality.API)
+    canonical = (
+        await container.catalog.upsert_candidates(
+            [
+                CandidateEvent(
+                    source=Source.MEETUP,
+                    source_event_id=f"handoff-completion-ttl-ack-{tag}",
+                    title=f"Handoff completion TTL ACK {tag}",
+                    start_at=datetime.now(UTC).replace(microsecond=0) + timedelta(days=2),
+                    end_at=datetime.now(UTC).replace(microsecond=0) + timedelta(days=2, hours=2),
+                    registration_url=f"https://meetup.example/handoff-completion-ttl-ack-{tag}",
+                    city="San Francisco",
+                    is_free=True,
+                )
+            ]
+        )
+    )[0]
+    workflow_id = registration_workflow_id(tenant_id, canonical.canonical_event_id)
+    task_id = f"{workflow_id}:handoff"
+    await source.register(
+        tenant_id,
+        RegistrationTarget(
+            canonical.source_links[0].source_event_id,
+            canonical.source_links[0].registration_url,
+        ),
+        Modality.API,
+        f"outside-concierge-ttl-{tag}",
+    )
+    recorder = _handoff_completion_activity_recorder
+    recorder.attempts.clear()
+    recorder.statuses.clear()
+    recorder.crashed = False
+    recorder.entered = None
+    recorder.release = None
+    _blocked_handoff_route.entered = asyncio.Event()
+    _blocked_handoff_route.release = asyncio.Event()
+
+    try:
+        async with await WorkflowEnvironment.start_time_skipping() as env:
+            async with Worker(
+                env.client,
+                task_queue=f"ec-handoff-completion-ttl-ack-{tag}",
+                workflows=[RegistrationWorkflow],
+                activities=_saga_activities(
+                    confirmation_activity=_crash_after_handoff_completion_commit,
+                    handoff_activity=_blocked_route_to_handoff,
+                ),
+            ):
+                with env.auto_time_skipping_disabled():
+                    handle = await env.client.start_workflow(
+                        RegistrationWorkflow.run,
+                        RegChildInput(
+                            tenant_id=str(tenant_id),
+                            canonical_event_id=str(canonical.canonical_event_id),
+                            keep_open_after_scheduling=True,
+                        ),
+                        id=workflow_id,
+                        task_queue=f"ec-handoff-completion-ttl-ack-{tag}",
+                    )
+                    entered = _blocked_handoff_route.entered
+                    release = _blocked_handoff_route.release
+                    if entered is None or release is None:
+                        raise RuntimeError("handoff route gate was not configured")
+                    await asyncio.wait_for(entered.wait(), timeout=2)
+                    await handle.signal(
+                        "handoff_completed",
+                        HandoffCompletionSignal(
+                            task_id=task_id,
+                            completion_id=f"{workflow_id}:completion:ttl-ack",
+                        ),
+                    )
+                    release.set()
+                    await _wait_for_retained_handoff_state(
+                        container,
+                        tenant_id,
+                        canonical.canonical_event_id,
+                        task_id,
+                        task_state=HandoffState.COMPLETED,
+                        lifecycle_state=LifecycleState.SCHEDULED,
+                        failure="TTL-edge completion receipt did not recover into scheduling",
+                    )
+                    await handle.signal(
+                        "organizer_change",
+                        OrganizerChangeSignal(
+                            fingerprint=f"handoff-completion-ttl-cancel-{tag}",
+                            canonical_event_id=str(canonical.canonical_event_id),
+                            source=Source.MEETUP.value,
+                            event_status="cancelled",
+                        ),
+                    )
+                    child_result = await handle.result()
+    finally:
+        release = _blocked_handoff_route.release
+        if release is not None:
+            release.set()
+        _blocked_handoff_route.entered = None
+        _blocked_handoff_route.release = None
+
+    assert child_result.status == "cancelled"
+    assert recorder.attempts == [1, 1]
+    assert recorder.statuses == ["confirmed", "confirmed"]
+    task = await container.handoff_repo.get(tenant_id, task_id)
+    assert task is not None and task.state is HandoffState.COMPLETED
+    assert await _lifecycle_state(tenant_id, workflow_id) == LifecycleState.CANCELLED.value
+    assert "lifecycle.expired" not in await _outbox_topic_counts(tenant_id)
 
 
 async def test_parent_routes_projected_meetup_saturation_to_one_handoff_without_fallthrough(

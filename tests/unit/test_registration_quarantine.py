@@ -8,6 +8,9 @@ from uuid import UUID, uuid4
 
 from events_concierge.adapters.mock.calendar import MockCalendar
 from events_concierge.adapters.mock.consent import MockRegistrationConsentEvidence
+from events_concierge.adapters.mock.notification_secrets import (
+    DevelopmentNotificationSecretProtector,
+)
 from events_concierge.adapters.mock.policy import (
     MockPolicySnapshotReader,
     MockSourceQuarantineRepository,
@@ -191,6 +194,7 @@ def _service(
         cast(HandoffRepository, handoff),
         registration_consent=consent,
         source_quarantine=quarantine,
+        notification_secret_protector=DevelopmentNotificationSecretProtector(),
     )
     return service, policies, quarantine, handoff, consent
 

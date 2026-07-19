@@ -16,6 +16,8 @@ x-app-environment: &app-environment
   EC_TEMPORAL_TARGET: ${EC_CONTAINER_TEMPORAL_TARGET:-temporal:7233}
   EC_TEMPORAL_NAMESPACE: ${EC_TEMPORAL_NAMESPACE:-default}
   EC_TEMPORAL_TASK_QUEUE: ${EC_TEMPORAL_TASK_QUEUE:-events-concierge}
+  EC_TEMPORAL_RPC_TIMEOUT_SECONDS: ${EC_TEMPORAL_RPC_TIMEOUT_SECONDS:-5}
+  EC_REQUEST_BODY_TIMEOUT_SECONDS: ${EC_REQUEST_BODY_TIMEOUT_SECONDS:-10}
   # API and workers must share claim-check payloads and pacing state across processes.
   EC_CLAIM_CHECK_LOCAL_ROOT: /var/lib/events-concierge/claim-check
   EC_PACER_BACKEND: ${EC_CONTAINER_PACER_BACKEND:-redis}

@@ -54,7 +54,7 @@ async def run_lifecycle_invariants() -> None:
         if client is None:
             client = await _try_connect_temporal(settings, container.object_store)
         liveness: WorkflowLivenessInspector = (
-            TemporalWorkflowLivenessInspector(client)
+            TemporalWorkflowLivenessInspector(client, settings)
             if client is not None
             else _UnavailableWorkflowLivenessInspector()
         )

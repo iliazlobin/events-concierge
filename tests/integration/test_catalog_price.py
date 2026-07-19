@@ -2,18 +2,89 @@
 
 from __future__ import annotations
 
+import asyncio
 from datetime import UTC, datetime, timedelta
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 import pytest
+from sqlalchemy import text
 
 from events_concierge.composition import build_container
 from events_concierge.config import get_settings
 from events_concierge.domain.enums import PriceStatus, Source
 from events_concierge.domain.events import CandidateEvent, GeoPoint
 from events_concierge.domain.request import RequestConstraints, TimeWindow
+from events_concierge.infra.db import system_session_scope
 
 pytestmark = pytest.mark.integration
+
+
+async def _catalog_identity_counts(*, candidate: CandidateEvent) -> tuple[int, int, int, UUID]:
+    async with system_session_scope() as session:
+        row = (
+            await session.execute(
+                text(
+                    """
+                    SELECT
+                        (
+                            SELECT count(*) FROM canonical_events
+                            WHERE title = :title
+                        ) AS canonical_count,
+                        (
+                            SELECT count(*) FROM event_source_links
+                            WHERE source = :source AND source_event_id = :source_event_id
+                        ) AS link_count,
+                        (
+                            SELECT count(*)
+                            FROM canonical_events AS canonical
+                            LEFT JOIN event_source_links AS link
+                              ON link.canonical_event_id = canonical.canonical_event_id
+                            WHERE canonical.title = :title
+                              AND link.canonical_event_id IS NULL
+                        ) AS orphan_count,
+                        (
+                            SELECT canonical_event_id FROM event_source_links
+                            WHERE source = :source AND source_event_id = :source_event_id
+                        ) AS linked_canonical_id
+                    """
+                ),
+                {
+                    "title": candidate.title,
+                    "source": candidate.source.value,
+                    "source_event_id": candidate.source_event_id,
+                },
+            )
+        ).one()
+    return (
+        row.canonical_count,
+        row.link_count,
+        row.orphan_count,
+        row.linked_canonical_id,
+    )
+
+
+async def _catalog_title_counts(title: str) -> tuple[int, int, int]:
+    async with system_session_scope() as session:
+        row = (
+            await session.execute(
+                text(
+                    """
+                    SELECT
+                        count(DISTINCT canonical.canonical_event_id) AS canonical_count,
+                        count(link.source_event_id) AS link_count,
+                        count(*) FILTER (
+                            WHERE link.canonical_event_id IS NULL
+                        ) AS orphan_count
+                    FROM canonical_events AS canonical
+                    LEFT JOIN event_source_links AS link
+                      ON link.canonical_event_id = canonical.canonical_event_id
+                    WHERE canonical.title = :title
+                    """
+                ),
+                {"title": title},
+            )
+        ).one()
+    return int(row.canonical_count), int(row.link_count), int(row.orphan_count)
 
 
 async def test_catalog_persists_all_price_states_and_retrieves_verified_free_only(db: None) -> None:
@@ -153,3 +224,332 @@ async def test_catalog_enriches_absent_metadata_on_a_repeat_source_observation(d
     assert enriched.venue_name == "Enriched venue"
     assert enriched.geo == richer.geo
     assert enriched.description == richer.description
+
+
+async def test_catalog_replay_outside_fuzzy_window_reuses_exact_source_identity(db: None) -> None:
+    """A rescheduled source event refreshes its canonical instead of leaking an orphan."""
+    tag = uuid4().hex
+    start = datetime.now(UTC).replace(microsecond=0) + timedelta(days=120)
+    common = {
+        "source": Source.PUBLIC_JSONLD,
+        "source_event_id": f"rescheduled-{tag}",
+        "title": f"catalog-source-identity-{tag}",
+        "city": f"identity-city-{tag}",
+    }
+    initial = CandidateEvent(
+        start_at=start,
+        registration_url=f"https://example.test/{tag}/initial",
+        description="Initial listing.",
+        is_free=True,
+        **common,
+    )
+    moved = CandidateEvent(
+        start_at=start + timedelta(days=7),
+        registration_url=f"https://example.test/{tag}/moved",
+        description="A richer description published after this event was rescheduled.",
+        is_free=False,
+        **common,
+    )
+    container = build_container(get_settings())
+
+    first = (await container.catalog.upsert_candidates([initial]))[0]
+    replay = (await container.catalog.upsert_candidates([moved]))[0]
+    canonical_count, link_count, orphan_count, linked_canonical_id = await _catalog_identity_counts(
+        candidate=initial
+    )
+
+    assert replay.canonical_event_id == first.canonical_event_id == linked_canonical_id
+    assert replay.start_at == initial.start_at
+    assert replay.description == moved.description
+    assert replay.price_status is PriceStatus.PAID
+    assert len(replay.source_links) == 1
+    assert replay.source_links[0].registration_url == moved.registration_url
+    assert replay.source_links[0].price_status is PriceStatus.PAID
+    assert (canonical_count, link_count, orphan_count) == (1, 1, 0)
+
+
+async def test_catalog_exact_source_identity_wins_before_fuzzy_dedup(db: None) -> None:
+    """A moved replay cannot be redirected to a different nearby fuzzy canonical."""
+    tag = uuid4().hex
+    start = datetime.now(UTC).replace(microsecond=0) + timedelta(days=150)
+    common = {
+        "source": Source.PUBLIC_JSONLD,
+        "title": f"catalog-identity-priority-{tag}",
+        "city": f"priority-city-{tag}",
+    }
+    original = CandidateEvent(
+        source_event_id=f"original-{tag}",
+        start_at=start,
+        registration_url=f"https://example.test/{tag}/original",
+        **common,
+    )
+    nearby_other = CandidateEvent(
+        source_event_id=f"other-{tag}",
+        start_at=start + timedelta(days=1),
+        registration_url=f"https://example.test/{tag}/other",
+        **common,
+    )
+    moved_original = CandidateEvent(
+        source_event_id=original.source_event_id,
+        start_at=nearby_other.start_at,
+        registration_url=f"https://example.test/{tag}/original-moved",
+        **common,
+    )
+    container = build_container(get_settings())
+
+    original_event, other_event = await container.catalog.upsert_candidates(
+        [original, nearby_other]
+    )
+    replayed_original, replayed_other = await container.catalog.upsert_candidates(
+        [moved_original, nearby_other]
+    )
+    canonical_count, link_count, orphan_count, linked_canonical_id = await _catalog_identity_counts(
+        candidate=original
+    )
+
+    assert original_event.canonical_event_id != other_event.canonical_event_id
+    assert replayed_original.canonical_event_id == original_event.canonical_event_id
+    assert replayed_other.canonical_event_id == other_event.canonical_event_id
+    assert linked_canonical_id == original_event.canonical_event_id
+    assert (canonical_count, link_count, orphan_count) == (2, 1, 0)
+
+
+async def test_catalog_concurrent_first_ingest_replay_has_one_canonical_and_link(
+    db: None,
+) -> None:
+    """Opposite-order concurrent retries serialize without orphans, deadlocks, or reordering."""
+    tag = uuid4().hex
+    start = datetime.now(UTC).replace(microsecond=0) + timedelta(days=180)
+    first_candidate = CandidateEvent(
+        source=Source.PUBLIC_JSONLD,
+        source_event_id=f"concurrent-first-{tag}",
+        title=f"catalog-concurrent-first-{tag}",
+        start_at=start,
+        registration_url=f"https://example.test/{tag}/first",
+        city=f"concurrent-first-city-{tag}",
+    )
+    second_candidate = CandidateEvent(
+        source=Source.PUBLIC_JSONLD,
+        source_event_id=f"concurrent-second-{tag}",
+        title=f"catalog-concurrent-second-{tag}",
+        start_at=start + timedelta(hours=12),
+        registration_url=f"https://example.test/{tag}/second",
+        city=f"concurrent-second-city-{tag}",
+    )
+    container = build_container(get_settings())
+    input_batches = [
+        [first_candidate, second_candidate]
+        if index % 2 == 0
+        else [second_candidate, first_candidate]
+        for index in range(8)
+    ]
+
+    batches = await asyncio.gather(
+        *(container.catalog.upsert_candidates(candidates) for candidates in input_batches)
+    )
+    first_counts = await _catalog_identity_counts(candidate=first_candidate)
+    second_counts = await _catalog_identity_counts(candidate=second_candidate)
+
+    for candidates, events in zip(input_batches, batches, strict=True):
+        assert [event.source_links[0].source_event_id for event in events] == [
+            candidate.source_event_id for candidate in candidates
+        ]
+    assert first_counts[:3] == (1, 1, 0)
+    assert second_counts[:3] == (1, 1, 0)
+    assert {event.canonical_event_id for batch in batches for event in batch} == {
+        first_counts[3],
+        second_counts[3],
+    }
+
+
+async def test_catalog_concurrent_distinct_sources_fuzzy_merge_first_ingest(
+    db: None,
+) -> None:
+    """Two source identities for one new event cannot concurrently mint split canonicals."""
+    tag = uuid4().hex
+    title = f"catalog-concurrent-fuzzy-first-{tag}"
+    common = {
+        "title": title,
+        "start_at": datetime.now(UTC).replace(microsecond=0) + timedelta(days=210),
+        "city": f"concurrent-fuzzy-city-{tag}",
+        "is_free": True,
+    }
+    public_candidate = CandidateEvent(
+        source=Source.PUBLIC_JSONLD,
+        source_event_id=f"public-{tag}",
+        registration_url=f"https://example.test/{tag}/public",
+        **common,
+    )
+    meetup_candidate = CandidateEvent(
+        source=Source.MEETUP,
+        source_event_id=f"meetup-{tag}",
+        registration_url=f"https://meetup.test/{tag}",
+        **common,
+    )
+    container = build_container(get_settings())
+
+    public_result, meetup_result = await asyncio.wait_for(
+        asyncio.gather(
+            container.catalog.upsert_candidates([public_candidate]),
+            container.catalog.upsert_candidates([meetup_candidate]),
+        ),
+        timeout=10,
+    )
+
+    assert public_result[0].canonical_event_id == meetup_result[0].canonical_event_id
+    assert await _catalog_title_counts(title) == (1, 2, 0)
+
+
+async def test_catalog_crossed_fuzzy_batches_lock_canonicals_in_one_order(
+    db: None,
+) -> None:
+    """Disjoint source IDs in opposite input order converge without a canonical-row deadlock."""
+    tag = uuid4().hex
+    start = datetime.now(UTC).replace(microsecond=0) + timedelta(days=240)
+    city = f"crossed-fuzzy-city-{tag}"
+    first_title = f"crossed-fuzzy-first-{tag}"
+    second_title = f"crossed-fuzzy-second-{tag}"
+    container = build_container(get_settings())
+    seeds = [
+        CandidateEvent(
+            source=Source.PUBLIC_JSONLD,
+            source_event_id=f"seed-first-{tag}",
+            title=first_title,
+            start_at=start,
+            registration_url=f"https://example.test/{tag}/seed-first",
+            city=city,
+        ),
+        CandidateEvent(
+            source=Source.PUBLIC_JSONLD,
+            source_event_id=f"seed-second-{tag}",
+            title=second_title,
+            start_at=start + timedelta(hours=12),
+            registration_url=f"https://example.test/{tag}/seed-second",
+            city=city,
+        ),
+    ]
+    seeded = await container.catalog.upsert_candidates(seeds)
+    batches: list[list[CandidateEvent]] = []
+    for index in range(8):
+        first_refresh = CandidateEvent(
+            source=Source.MEETUP,
+            source_event_id=f"refresh-first-{index}-{tag}",
+            title=first_title,
+            start_at=start,
+            registration_url=f"https://meetup.test/{tag}/first/{index}",
+            city=city,
+        )
+        second_refresh = CandidateEvent(
+            source=Source.MEETUP,
+            source_event_id=f"refresh-second-{index}-{tag}",
+            title=second_title,
+            start_at=start + timedelta(hours=12),
+            registration_url=f"https://meetup.test/{tag}/second/{index}",
+            city=city,
+        )
+        batches.append(
+            [first_refresh, second_refresh]
+            if index % 2 == 0
+            else [second_refresh, first_refresh]
+        )
+
+    refreshed = await asyncio.wait_for(
+        asyncio.gather(*(container.catalog.upsert_candidates(batch) for batch in batches)),
+        timeout=10,
+    )
+
+    expected_by_title = {
+        first_title: seeded[0].canonical_event_id,
+        second_title: seeded[1].canonical_event_id,
+    }
+    for candidates, events in zip(batches, refreshed, strict=True):
+        assert [event.title for event in events] == [candidate.title for candidate in candidates]
+        assert [event.canonical_event_id for event in events] == [
+            expected_by_title[candidate.title] for candidate in candidates
+        ]
+    assert await _catalog_title_counts(first_title) == (1, 9, 0)
+    assert await _catalog_title_counts(second_title) == (1, 9, 0)
+
+
+async def test_catalog_crossed_exact_refreshes_lock_drifted_canonicals_in_one_order(
+    db: None,
+) -> None:
+    """Rescheduled identities outside their old fuzzy domains cannot invert canonical row locks."""
+    tag = uuid4().hex
+    start = datetime.now(UTC).replace(microsecond=0) + timedelta(days=270)
+    first_title = f"crossed-drift-first-{tag}"
+    second_title = f"crossed-drift-second-{tag}"
+    first_public = CandidateEvent(
+        source=Source.PUBLIC_JSONLD,
+        source_event_id=f"drift-first-public-{tag}",
+        title=first_title,
+        start_at=start,
+        registration_url=f"https://example.test/{tag}/first/public",
+        city=f"drift-seed-first-{tag}",
+    )
+    first_meetup = CandidateEvent(
+        source=Source.MEETUP,
+        source_event_id=f"drift-first-meetup-{tag}",
+        title=first_title,
+        start_at=start,
+        registration_url=f"https://meetup.test/{tag}/first",
+        city=f"drift-seed-first-{tag}",
+    )
+    second_public = CandidateEvent(
+        source=Source.PUBLIC_JSONLD,
+        source_event_id=f"drift-second-public-{tag}",
+        title=second_title,
+        start_at=start + timedelta(days=1),
+        registration_url=f"https://example.test/{tag}/second/public",
+        city=f"drift-seed-second-{tag}",
+    )
+    second_meetup = CandidateEvent(
+        source=Source.MEETUP,
+        source_event_id=f"drift-second-meetup-{tag}",
+        title=second_title,
+        start_at=start + timedelta(days=1),
+        registration_url=f"https://meetup.test/{tag}/second",
+        city=f"drift-seed-second-{tag}",
+    )
+    container = build_container(get_settings())
+    seeded = await container.catalog.upsert_candidates(
+        [first_public, first_meetup, second_public, second_meetup]
+    )
+    first_id = seeded[0].canonical_event_id
+    second_id = seeded[2].canonical_event_id
+    assert seeded[1].canonical_event_id == first_id
+    assert seeded[3].canonical_event_id == second_id
+
+    def drift(candidate: CandidateEvent, *, city: str, days: int) -> CandidateEvent:
+        return CandidateEvent(
+            source=candidate.source,
+            source_event_id=candidate.source_event_id,
+            title=candidate.title,
+            start_at=start + timedelta(days=days),
+            registration_url=f"{candidate.registration_url}?drift={days}",
+            city=city,
+        )
+
+    first_then_second = [
+        drift(first_public, city=f"drift-a-{tag}", days=30),
+        drift(second_public, city=f"drift-b-{tag}", days=40),
+    ]
+    second_then_first = [
+        drift(second_meetup, city=f"drift-c-{tag}", days=50),
+        drift(first_meetup, city=f"drift-d-{tag}", days=60),
+    ]
+
+    crossed = await asyncio.wait_for(
+        asyncio.gather(
+            container.catalog.upsert_candidates(first_then_second),
+            container.catalog.upsert_candidates(second_then_first),
+        ),
+        timeout=10,
+    )
+
+    assert [[event.canonical_event_id for event in batch] for batch in crossed] == [
+        [first_id, second_id],
+        [second_id, first_id],
+    ]
+    assert await _catalog_title_counts(first_title) == (1, 2, 0)
+    assert await _catalog_title_counts(second_title) == (1, 2, 0)

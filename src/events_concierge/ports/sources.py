@@ -93,6 +93,10 @@ class SourceAccessDeniedError(Exception):
         super().__init__(f"normalized source access denial: {signal.value}")
 
 
+class SourceReconsentRequiredError(RuntimeError):
+    """A tenant source credential cannot be used again until the user re-authorizes it."""
+
+
 @dataclass(frozen=True, slots=True)
 class RegisterResult:
     outcome: RegisterOutcome

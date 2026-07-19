@@ -17,9 +17,11 @@ from uuid import UUID, uuid4
 
 from fastapi import Depends, FastAPI, HTTPException, Request
 from fastapi.responses import HTMLResponse, JSONResponse
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 from sqlalchemy import text
+from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
+from ..application.feed import MAX_FEED_OFFSET
 from ..application.ranking_feedback import UnknownFeedbackEventError
 from ..application.request_start import RequestIntakeService, RequestStartRelay
 from ..composition import Container, build_container
@@ -39,6 +41,139 @@ from ..workflows.temporal_client import connect_temporal, validate_temporal_sett
 
 _log = get_logger("api")
 _READINESS_TIMEOUT_SECONDS = 2.0
+_MAX_REQUEST_BODY_BYTES = 64 * 1024
+_MAX_FEED_CURSOR = MAX_FEED_OFFSET
+_FEED_CURSOR_PATTERN = rf"^(?:0|[1-9][0-9]{{0,{len(str(_MAX_FEED_CURSOR)) - 1}}})$"
+
+
+class _MalformedContentLengthError(ValueError):
+    """The edge supplied an ambiguous or syntactically invalid message boundary."""
+
+
+class _RequestBodyTooLargeError(ValueError):
+    """The decoded ASGI body exceeded the application boundary."""
+
+
+class _RequestDisconnectedError(ConnectionError):
+    """The caller left before completing its request body."""
+
+
+def _declared_content_length(scope: Scope, limit: int) -> int | None:
+    """Parse every Content-Length field without unbounded integer conversion.
+
+    ASGI servers normally reject malformed framing before application dispatch, but this boundary
+    remains defensive because tests, proxies, and alternate servers may preserve duplicate fields.
+    Equal duplicates are harmless; conflicting values are ambiguous and fail closed.
+    """
+    raw_values = [
+        value for name, value in scope.get("headers", ()) if name.lower() == b"content-length"
+    ]
+    if not raw_values:
+        return None
+
+    values: set[int] = set()
+    limit_digits = len(str(limit))
+    for raw_value in raw_values:
+        for raw_token in raw_value.split(b","):
+            token = raw_token.strip()
+            if not token or any(byte < ord("0") or byte > ord("9") for byte in token):
+                raise _MalformedContentLengthError
+            significant = token.lstrip(b"0") or b"0"
+            # A valid decimal with more digits than the configured limit can use one bounded
+            # sentinel; converting attacker-sized decimal strings is unnecessary and unsafe.
+            value = limit + 1 if len(significant) > limit_digits else int(significant)
+            values.add(value)
+    if len(values) != 1:
+        raise _MalformedContentLengthError
+    return values.pop()
+
+
+class _BoundedRequestBodyMiddleware:
+    """Buffer at most one small API body, including requests without Content-Length."""
+
+    def __init__(
+        self,
+        app: ASGIApp,
+        *,
+        max_body_bytes: int,
+        body_read_timeout_seconds: float,
+    ) -> None:
+        self._app = app
+        self._max_body_bytes = max_body_bytes
+        self._body_read_timeout_seconds = body_read_timeout_seconds
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        if scope["type"] != "http" or scope.get("method", "GET").upper() in {
+            "GET",
+            "HEAD",
+            "OPTIONS",
+            "TRACE",
+        }:
+            await self._app(scope, receive, send)
+            return
+        await self._handle_bounded_http(scope, receive, send)
+
+    async def _handle_bounded_http(self, scope: Scope, receive: Receive, send: Send) -> None:
+        try:
+            declared_length = _declared_content_length(scope, self._max_body_bytes)
+        except _MalformedContentLengthError:
+            await self._error_response(400, "invalid Content-Length")(scope, receive, send)
+            return
+        if declared_length is not None and declared_length > self._max_body_bytes:
+            await self._error_response(413, "request body too large")(scope, receive, send)
+            return
+
+        try:
+            async with asyncio.timeout(self._body_read_timeout_seconds):
+                body = await self._read_body(receive)
+        except TimeoutError:
+            await self._error_response(408, "request body timed out")(scope, receive, send)
+            return
+        except _RequestBodyTooLargeError:
+            await self._error_response(413, "request body too large")(scope, receive, send)
+            return
+        except _RequestDisconnectedError:
+            return
+
+        if declared_length is not None and declared_length != len(body):
+            await self._error_response(400, "Content-Length does not match request body")(
+                scope, receive, send
+            )
+            return
+        replay = {"type": "http.request", "body": bytes(body), "more_body": False}
+        await self._app(scope, self._single_message_receive(replay, receive), send)
+
+    async def _read_body(self, receive: Receive) -> bytearray:
+        body = bytearray()
+        while True:
+            message = await receive()
+            if message["type"] == "http.disconnect":
+                raise _RequestDisconnectedError
+            if message["type"] != "http.request":
+                continue
+            chunk = message.get("body", b"")
+            if len(chunk) > self._max_body_bytes - len(body):
+                raise _RequestBodyTooLargeError
+            body.extend(chunk)
+            if not message.get("more_body", False):
+                return body
+
+    @staticmethod
+    def _single_message_receive(message: Message, receive: Receive) -> Receive:
+        delivered = False
+
+        async def replay() -> Message:
+            nonlocal delivered
+            if not delivered:
+                delivered = True
+                return message
+            return await receive()
+
+        return replay
+
+    @staticmethod
+    def _error_response(status_code: int, detail: str) -> JSONResponse:
+        return JSONResponse(status_code=status_code, content={"detail": detail})
 
 
 class OnboardBody(BaseModel):
@@ -51,7 +186,26 @@ class RequestBody(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     text: str = Field(min_length=1, max_length=2000)
-    cursor: str | None = Field(default=None, max_length=2048)
+    cursor: str | None = Field(
+        default=None,
+        max_length=len(str(_MAX_FEED_CURSOR)),
+        pattern=_FEED_CURSOR_PATTERN,
+    )
+
+    @field_validator("cursor")
+    @classmethod
+    def cursor_is_bounded(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        if (
+            not value.isascii()
+            or not value.isdecimal()
+            or (len(value) > 1 and value.startswith("0"))
+        ):
+            raise ValueError("cursor must be a canonical nonnegative decimal")
+        if int(value) > _MAX_FEED_CURSOR:
+            raise ValueError(f"cursor must be no greater than {_MAX_FEED_CURSOR}")
+        return value
 
 
 class FeedItemOut(BaseModel):
@@ -139,8 +293,8 @@ def _completion_page(message: str, *, show_form: bool) -> HTMLResponse:
     )
     return HTMLResponse(
         content=(
-            "<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\">"
-            "<meta name=\"viewport\" content=\"width=device-width,initial-scale=1\">"
+            '<!doctype html><html lang="en"><head><meta charset="utf-8">'
+            '<meta name="viewport" content="width=device-width,initial-scale=1">'
             "<title>Events Concierge</title></head><body>"
             f"<main><h1>{message}</h1>{form}</main></body></html>"
         ),
@@ -249,7 +403,9 @@ async def _configure_temporal(app: FastAPI, settings: Settings, container: Conta
             lazy=True,
         )
         app.state.request_starter = TemporalRequestWorkflowStarter(app.state.temporal, settings)
-        app.state.lifecycle_signaler = TemporalRegistrationLifecycleSignaler(app.state.temporal)
+        app.state.lifecycle_signaler = TemporalRegistrationLifecycleSignaler(
+            app.state.temporal, settings
+        )
     except Exception as exc:
         _log.warning(
             "temporal unavailable; request starts remain durable in the start outbox",
@@ -358,6 +514,11 @@ def create_app() -> FastAPI:
             await dispose_engine()
 
     app = FastAPI(title="Events Concierge", version="0.1.0", lifespan=lifespan)
+    app.add_middleware(
+        _BoundedRequestBodyMiddleware,
+        max_body_bytes=_MAX_REQUEST_BODY_BYTES,
+        body_read_timeout_seconds=settings.request_body_timeout_seconds,
+    )
 
     @app.get("/healthz")
     async def healthz() -> dict[str, str]:
@@ -379,21 +540,20 @@ def create_app() -> FastAPI:
             },
         )
 
-    @app.post("/v1/onboard", status_code=201)
-    async def onboard(body: OnboardBody) -> dict[str, str]:
-        if not settings.mock_cloud:
-            # Production identity provisioning belongs to the signed OIDC/BFF bootstrap. Leaving
-            # this local fixture route reachable would create unauthenticated tenant identities.
-            raise HTTPException(status_code=404, detail="not found")
-        container: Container = app.state.container
-        tenant = Tenant(
-            tenant_id=uuid4(),
-            oidc_subject=f"oidc|{uuid4()}",
-            notify_email=body.notify_email,
-            relay_inbox=f"{uuid4().hex[:12]}@u.concierge.test",
-        )
-        await container.tenant_repo.add(tenant)
-        return {"tenant_id": str(tenant.tenant_id), "relay_inbox": tenant.relay_inbox}
+    if settings.mock_cloud:
+
+        @app.post("/v1/onboard", status_code=201)
+        async def onboard(body: OnboardBody) -> dict[str, str]:
+            """Create a local fixture identity; production has no unauthenticated bootstrap route."""
+            container: Container = app.state.container
+            tenant = Tenant(
+                tenant_id=uuid4(),
+                oidc_subject=f"oidc|{uuid4()}",
+                notify_email=body.notify_email,
+                relay_inbox=f"{uuid4().hex[:12]}@u.concierge.test",
+            )
+            await container.tenant_repo.add(tenant)
+            return {"tenant_id": str(tenant.tenant_id), "relay_inbox": tenant.relay_inbox}
 
     @app.post("/v1/requests", response_model=RequestAccepted)
     async def create_request(body: RequestBody, tenant_id: AuthenticatedTenant) -> RequestAccepted:

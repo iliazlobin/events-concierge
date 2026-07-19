@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import asyncio
+
 from temporalio.client import Client, TLSConfig
 
 from ..config import Settings
@@ -23,7 +25,7 @@ async def connect_temporal(
     """
     api_key = _temporal_api_key(settings)
     tls = _temporal_tls(settings, api_key=api_key)
-    return await Client.connect(
+    connection = Client.connect(
         settings.temporal_target,
         namespace=settings.temporal_namespace,
         api_key=api_key,
@@ -33,6 +35,12 @@ async def connect_temporal(
             object_store, settings.claim_check_threshold_bytes
         ),
     )
+    if lazy:
+        # The SDK's lazy client deliberately performs no eager transport handshake. Keep API
+        # composition immediate and let deadlines on each later start/signal own network liveness.
+        return await connection
+    async with asyncio.timeout(settings.temporal_rpc_timeout_seconds):
+        return await connection
 
 
 def validate_temporal_settings(settings: Settings) -> None:

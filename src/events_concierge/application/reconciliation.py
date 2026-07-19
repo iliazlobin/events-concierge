@@ -133,6 +133,7 @@ class HandoffExpiryStatus(StrEnum):
     """The guarded result of a handoff TTL terminalization (FR-6.6, ADR-007)."""
 
     EXPIRED = "expired"
+    COMPLETION_COMMITTED = "completion_committed"
     TERMINAL = "terminal"
     IGNORED = "ignored"
 
@@ -332,6 +333,14 @@ class LifecycleReconciliationService:
         lifecycle = await self._lifecycle.get_or_create(
             tenant_id, task.canonical_event_id, workflow_id
         )
+        if task.state is HandoffState.COMPLETED:
+            # Verified mark-done commits the task and HANDOFF -> REGISTERED in one transaction.
+            # An activity acknowledgement can be lost after that commit; task TTL must never
+            # overwrite the factual registration while the workflow recovers its exact receipt.
+            return HandoffExpiryResult(
+                HandoffExpiryStatus.COMPLETION_COMMITTED,
+                "verified handoff completion already committed",
+            )
         if lifecycle.state is LifecycleState.EXPIRED:
             return HandoffExpiryResult(
                 HandoffExpiryStatus.EXPIRED,

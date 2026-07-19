@@ -13,6 +13,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 
 from ..infra.logging import get_logger
+from ..ports.notification_secrets import NotificationSecretProtector
 from ..ports.notifications import Notification, NotificationKind, NotificationPort
 from ..ports.repositories import NotificationClaim, OutboxRecord, OutboxRepository
 
@@ -24,6 +25,21 @@ _RETRY_DELAYS = (
 )
 _BUSY_RETRY_DELAY = timedelta(seconds=2)
 _MAX_ATTEMPTS = 5
+_AUDIT_ONLY_TOPICS = frozenset(
+    {
+        "lifecycle.found",
+        "lifecycle.awaiting_confirmation",
+        "lifecycle.registered",
+        "lifecycle.withdrawing",
+        "lifecycle.completed",
+    }
+)
+_NON_CAPABILITY_HANDOFF_REASONS = frozenset(
+    {
+        "calendar_write_failed",
+        "withdrawal_required",
+    }
+)
 
 _log = get_logger(__name__)
 
@@ -39,6 +55,17 @@ class RelayStats:
     failed: int = 0
 
 
+@dataclass(frozen=True, slots=True)
+class _NotificationDraft:
+    """Non-secret notification projection sufficient to acquire the durable send lease."""
+
+    kind: NotificationKind
+    event_summary: str
+    deep_link: str | None
+    protected_completion_url: str | None
+    dedup_key: str
+
+
 class OutboxRelay:
     """Deliver notification-worthy outbox rows with leased at-least-once semantics (ADR-009)."""
 
@@ -46,6 +73,7 @@ class OutboxRelay:
         self,
         outbox: OutboxRepository,
         notifier: NotificationPort,
+        secret_protector: NotificationSecretProtector,
         *,
         now: Callable[[], datetime] | None = None,
         lease_seconds: int = 60,
@@ -54,6 +82,7 @@ class OutboxRelay:
             raise ValueError("lease_seconds must be positive")
         self._outbox = outbox
         self._notifier = notifier
+        self._secret_protector = secret_protector
         self._now = now or (lambda: datetime.now(UTC))
         self._lease_seconds = lease_seconds
 
@@ -68,45 +97,60 @@ class OutboxRelay:
         return stats
 
     async def _relay_record(self, record: OutboxRecord, stats: RelayStats) -> RelayStats:
-        notification = self._notification_for(record)
-        claim = (
-            await self._outbox.claim_notification(
-                record,
-                dedup_key=notification.dedup_key,
-                lease_seconds=self._lease_seconds,
-            )
-            if notification is not None
-            else None
-        )
-        if notification is None or claim is NotificationClaim.DELIVERED:
-            acknowledged = await self._outbox.mark_delivered(record)
-            return _with(stats, acknowledged=stats.acknowledged + int(acknowledged))
-        if claim is NotificationClaim.BUSY:
-            return await self._reschedule_contention(
+        prepared = await self._prepare_notification(record, stats)
+        if isinstance(prepared, RelayStats):
+            return prepared
+        return await self._relay_notification(record, prepared, stats)
+
+    async def _prepare_notification(
+        self,
+        record: OutboxRecord,
+        stats: RelayStats,
+    ) -> _NotificationDraft | RelayStats:
+        """Classify one projection before acquiring any notification-ledger state."""
+        if "completion_url" in record.payload:
+            return await self._quarantine_projection(
                 record,
                 stats,
-                "notification ledger is leased by another relay",
+                "outbox projection contains a forbidden plaintext completion URL",
             )
-        assert notification is not None
-        if (
-            claim is NotificationClaim.LEASE_LOST
-            or not await self._outbox.has_notification_send_authority(
-                record, dedup_key=notification.dedup_key
+        if _is_silent_audit(record):
+            acknowledged = await self._outbox.mark_delivered(record)
+            return _with(stats, acknowledged=stats.acknowledged + int(acknowledged))
+        kind = _notification_kind(record.topic)
+        if kind is None:
+            return await self._quarantine_projection(
+                record,
+                stats,
+                "outbox topic has no notification or audit-only classification",
             )
-        ):
-            # A delayed claimant must never send after another worker reclaimed or terminalized
-            # its outbox row. This also closes the interval after a scheduler pause. The next valid
-            # claimant owns recovery; NotificationPort's dedup key remains the final external-effect
-            # fence for a crash or pause after this local check (ADR-009, NFR-8).
-            return stats
+        return _notification_draft(record, kind)
+
+    async def _relay_notification(
+        self,
+        record: OutboxRecord,
+        draft: _NotificationDraft,
+        stats: RelayStats,
+    ) -> RelayStats:
+        """Acquire authority, reveal any secret just in time, and settle one visible send."""
+        claim_outcome = await self._claim_notification_authority(record, draft, stats)
+        if claim_outcome is not None:
+            return claim_outcome
         try:
+            notification = await self._materialize_notification(record, draft)
             await self._notifier.send(notification)
-        except Exception as exc:
-            await self._outbox.release_notification(record, dedup_key=notification.dedup_key)
-            return await self._schedule_failure(record, stats, str(exc))
+        except Exception:
+            await self._outbox.release_notification(record, dedup_key=draft.dedup_key)
+            # Provider/protector exceptions are untrusted and may echo the URL or bearer. Keep
+            # persisted relay errors and structured logs independent of exception text.
+            return await self._schedule_failure(
+                record,
+                stats,
+                "notification materialization or delivery failed",
+            )
 
         ledger_recorded = await self._outbox.mark_notification_delivered(
-            record, dedup_key=notification.dedup_key
+            record, dedup_key=draft.dedup_key
         )
         if not ledger_recorded:
             # A send may already be visible. Do not acknowledge the outbox: lease expiry will retry
@@ -120,6 +164,96 @@ class OutboxRelay:
             acknowledged=stats.acknowledged + int(acknowledged),
             sent=stats.sent + 1,
         )
+
+    async def _claim_notification_authority(
+        self,
+        record: OutboxRecord,
+        draft: _NotificationDraft,
+        stats: RelayStats,
+    ) -> RelayStats | None:
+        """Settle non-send claim outcomes and return ``None`` only for an authorized send."""
+        claim = await self._outbox.claim_notification(
+            record,
+            dedup_key=draft.dedup_key,
+            lease_seconds=self._lease_seconds,
+        )
+        if claim is NotificationClaim.DELIVERED:
+            acknowledged = await self._outbox.mark_delivered(record)
+            return _with(stats, acknowledged=stats.acknowledged + int(acknowledged))
+        if claim is NotificationClaim.BUSY:
+            return await self._reschedule_contention(
+                record,
+                stats,
+                "notification ledger is leased by another relay",
+            )
+        if claim is NotificationClaim.LEASE_LOST:
+            # A delayed claimant must never send after another worker reclaimed or terminalized
+            # its outbox row. This also closes the interval after a scheduler pause. The next valid
+            # claimant owns recovery; NotificationPort's dedup key remains the final external-effect
+            # fence for a crash or pause after this local check (ADR-009, NFR-8).
+            return stats
+        if _requires_protected_completion_url(record) and draft.protected_completion_url is None:
+            await self._outbox.release_notification(record, dedup_key=draft.dedup_key)
+            return await self._quarantine_projection(
+                record,
+                stats,
+                "completion-capable handoff has no protected completion URL",
+            )
+        if not await self._outbox.has_notification_send_authority(
+            record, dedup_key=draft.dedup_key
+        ):
+            return stats
+        return None
+
+    async def _materialize_notification(
+        self,
+        record: OutboxRecord,
+        draft: _NotificationDraft,
+    ) -> Notification:
+        """Reveal a capability only after durable authority, immediately before port delivery."""
+        completion_url = (
+            await self._secret_protector.reveal_completion_url(
+                record.tenant_id,
+                draft.protected_completion_url,
+            )
+            if draft.protected_completion_url is not None
+            else None
+        )
+        subject, body = _render_notification(
+            draft.kind,
+            draft.event_summary,
+            draft.deep_link,
+            completion_url,
+        )
+        return Notification(
+            tenant_id=record.tenant_id,
+            kind=draft.kind,
+            subject=subject,
+            body=body,
+            dedup_key=draft.dedup_key,
+            deep_link=draft.deep_link,
+        )
+
+    async def _quarantine_projection(
+        self,
+        record: OutboxRecord,
+        stats: RelayStats,
+        error: str,
+    ) -> RelayStats:
+        """Terminalize an unclassified or insecure row instead of silently dropping it."""
+        quarantined = await self._outbox.reschedule(
+            record,
+            retry_at=None,
+            error=error,
+            consume_attempt=False,
+        )
+        if quarantined:
+            _log.error(
+                "outbox projection quarantined",
+                outbox_id=record.outbox_id,
+                error=error,
+            )
+        return _with(stats, failed=stats.failed + int(quarantined))
 
     async def _schedule_failure(
         self, record: OutboxRecord, stats: RelayStats, error: str
@@ -169,44 +303,6 @@ class OutboxRelay:
         )
         return _with(stats, retried=stats.retried + 1)
 
-    @staticmethod
-    def _notification_for(record: OutboxRecord) -> Notification | None:
-        """Render only the user-facing projection topics; audit-only rows are acknowledged silently."""
-        if record.payload.get("notification_suppressed") is True:
-            # A parent fall-through still needs its atomic lifecycle/ledger/outbox audit record,
-            # but it must not tell the user that a candidate was cancelled while the same request
-            # is actively trying the next one (FR-5.0/6.6, ADR-003/007).
-            return None
-        kind = _notification_kind(record.topic)
-        if kind is None:
-            return None
-        payload = record.payload
-        workflow_id = str(payload.get("workflow_id") or f"outbox-{record.outbox_id}")
-        transition_id = str(
-            payload.get("transition_id")
-            or payload.get("completion_id")
-            or f"calendar-recovery:{payload.get('task_id', record.outbox_id)}"
-        )
-        event_summary = str(payload.get("event_summary") or "your event")
-        deep_link_value = payload.get("deep_link")
-        deep_link = str(deep_link_value) if deep_link_value else None
-        completion_url_value = payload.get("completion_url")
-        completion_url = str(completion_url_value) if completion_url_value else None
-        subject, body = _render_notification(kind, event_summary, deep_link, completion_url)
-        dedup_key = (
-            f"{workflow_id}:handoff_reminder:{payload.get('reminder_id', transition_id)}"
-            if kind is NotificationKind.HANDOFF_REMINDER
-            else f"{workflow_id}:{kind.value}:{transition_id}"
-        )
-        return Notification(
-            tenant_id=record.tenant_id,
-            kind=kind,
-            subject=subject,
-            body=body,
-            dedup_key=dedup_key,
-            deep_link=deep_link,
-        )
-
 
 def _notification_kind(topic: str) -> NotificationKind | None:
     """Map lifecycle/outbox projection topics to the stable user-facing port vocabulary."""
@@ -223,6 +319,54 @@ def _notification_kind(topic: str) -> NotificationKind | None:
         "lifecycle.failed_no_candidate": NotificationKind.NO_RESULT,
         "request.failed_no_candidate": NotificationKind.NO_RESULT,
     }.get(topic)
+
+
+def _is_silent_audit(record: OutboxRecord) -> bool:
+    """Recognize only intentional non-notification rows; unknown topics are quarantined."""
+    if (
+        record.payload.get("notification_suppressed") is True
+        and record.topic in {"lifecycle.cancelled", "lifecycle.failed_no_candidate"}
+        and record.payload.get("candidate_close_reason") == "parent_fallthrough"
+    ):
+        # A parent fall-through still needs its atomic lifecycle/ledger/outbox audit record,
+        # but it must not tell the user that a candidate was cancelled while the same request
+        # is actively trying the next one (FR-5.0/6.6, ADR-003/007).
+        return True
+    return record.topic in _AUDIT_ONLY_TOPICS
+
+
+def _requires_protected_completion_url(record: OutboxRecord) -> bool:
+    """Identify user-registration handoffs whose notification must carry a mark-done action."""
+    return (
+        record.topic == "lifecycle.handoff"
+        and record.payload.get("reason") not in _NON_CAPABILITY_HANDOFF_REASONS
+    )
+
+
+def _notification_draft(record: OutboxRecord, kind: NotificationKind) -> _NotificationDraft:
+    """Build only non-secret send identity before the notifier owns delivery authority."""
+    payload = record.payload
+    workflow_id = str(payload.get("workflow_id") or f"outbox-{record.outbox_id}")
+    transition_id = str(
+        payload.get("transition_id")
+        or payload.get("completion_id")
+        or f"calendar-recovery:{payload.get('task_id', record.outbox_id)}"
+    )
+    deep_link_value = payload.get("deep_link")
+    protected_value = payload.get("protected_completion_url")
+    return _NotificationDraft(
+        kind=kind,
+        event_summary=str(payload.get("event_summary") or "your event"),
+        deep_link=str(deep_link_value) if deep_link_value else None,
+        protected_completion_url=(
+            protected_value if isinstance(protected_value, str) and protected_value else None
+        ),
+        dedup_key=(
+            f"{workflow_id}:handoff_reminder:{payload.get('reminder_id', transition_id)}"
+            if kind is NotificationKind.HANDOFF_REMINDER
+            else f"{workflow_id}:{kind.value}:{transition_id}"
+        ),
+    )
 
 
 def _render_notification(

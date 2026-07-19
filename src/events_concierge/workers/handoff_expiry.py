@@ -42,7 +42,7 @@ async def run_handoff_expiry() -> None:
                 continue
         worker = HandoffExpiryWorker(
             container.handoff_expiry_repo,
-            TemporalWorkflowLivenessInspector(client),
+            TemporalWorkflowLivenessInspector(client, settings),
             lease_seconds=settings.handoff_expiry_lease_seconds,
         )
         try:

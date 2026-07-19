@@ -27,6 +27,13 @@ class Settings(BaseSettings):
     temporal_tls_enabled: bool = False
     temporal_tls_domain: str | None = None
     temporal_api_key: SecretStr | None = None
+    # Bound every API/worker Temporal RPC independently from workflow execution time. The upper
+    # limit prevents a deployment typo from turning durable intake or repair loops into minute-plus
+    # socket waits; retryable work remains owned by its PostgreSQL queue.
+    temporal_rpc_timeout_seconds: float = Field(default=5.0, ge=0.1, le=60.0)
+    # Cap the complete inbound body-read interval so a slow/dripping client cannot retain an API
+    # request task indefinitely while remaining under the decoded-byte limit.
+    request_body_timeout_seconds: float = Field(default=10.0, ge=0.1, le=60.0)
     # ADR-011 keeps large Temporal payloads in an opaque, tenant-scoped claim-check store.  The
     # local mock is filesystem-backed so independently started API/worker processes share claims.
     claim_check_threshold_bytes: int = Field(default=256 * 1024, gt=0)

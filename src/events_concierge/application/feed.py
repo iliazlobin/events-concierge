@@ -18,6 +18,7 @@ from ..ports.ranking import RankerPort
 from ..ports.repositories import CatalogRepository
 
 DEFAULT_DURATION = timedelta(hours=2)
+MAX_FEED_OFFSET = 10_000
 
 # The modality a source is REGISTERED through (discovery-only sources fall through to handoff).
 _REGISTER_MODALITY = {Source.MEETUP: Modality.API, Source.LUMA: Modality.BROWSER}
@@ -46,7 +47,7 @@ class FeedService:
     async def build_feed(
         self, request: EventRequest, *, limit: int = 25, cursor: str | None = None
     ) -> Feed:
-        offset = int(cursor) if cursor else 0
+        offset = self._cursor_offset(cursor)
         pool = await self._catalog.retrieve(
             request.constraints, request.intent_embedding, limit * 4 + offset
         )
@@ -68,8 +69,28 @@ class FeedService:
             )
 
         page = items[offset : offset + limit]
-        next_cursor = str(offset + limit) if offset + limit < len(items) else None
+        next_offset = offset + limit
+        next_cursor = (
+            str(next_offset)
+            if next_offset <= MAX_FEED_OFFSET and next_offset < len(items)
+            else None
+        )
         return Feed(request_id=request.request_id, items=tuple(page), next_cursor=next_cursor)
+
+    @staticmethod
+    def _cursor_offset(cursor: str | None) -> int:
+        if cursor is None:
+            return 0
+        if (
+            not cursor.isascii()
+            or not cursor.isdecimal()
+            or (len(cursor) > 1 and cursor.startswith("0"))
+        ):
+            raise ValueError("feed cursor must be a canonical nonnegative decimal")
+        offset = int(cursor)
+        if offset > MAX_FEED_OFFSET:
+            raise ValueError(f"feed cursor cannot exceed {MAX_FEED_OFFSET}")
+        return offset
 
     async def _free_busy_window(
         self, request: EventRequest, events: list[CanonicalEvent]

@@ -23,6 +23,7 @@ from .adapters.google_calendar.calendar import GoogleCalendarAdapter
 from .adapters.luma.source import LumaSource
 from .adapters.mock.auth import HeaderAuthContext
 from .adapters.mock.calendar import MockCalendar
+from .adapters.mock.notification_secrets import DevelopmentNotificationSecretProtector
 from .adapters.mock.notifier import MockNotifier
 from .adapters.mock.object_store import MockFilesystemObjectStore
 from .adapters.mock.vault import MockVault
@@ -94,6 +95,7 @@ from .ports.credentials import CredentialVault
 from .ports.discovery_policy import DiscoveryPolicyGate
 from .ports.google_calendar import GoogleCalendarAccessPort, GoogleCalendarBindingPort
 from .ports.invariants import LifecycleInvariantRepository
+from .ports.notification_secrets import NotificationSecretProtector
 from .ports.notifications import NotificationPort
 from .ports.object_store import ObjectStorePort
 from .ports.outbox import OutboxWakeupPort
@@ -131,6 +133,7 @@ class Container:
     ranker: RankerPort
     calendar: CalendarPort
     notifier: NotificationPort
+    notification_secret_protector: NotificationSecretProtector
     vault: CredentialVault
     registration_consent: RegistrationConsentEvidencePort
     policy: PolicyEngine
@@ -179,6 +182,7 @@ def build_container(
     discovery_policy_gate: DiscoveryPolicyGate | None = None,
     source_quarantine: SourceQuarantinePort | None = None,
     notifier: NotificationPort | None = None,
+    notification_secret_protector: NotificationSecretProtector | None = None,
     credential_vault: CredentialVault | None = None,
     runtime_ports: RuntimePorts | None = None,
 ) -> Container:
@@ -227,6 +231,11 @@ def build_container(
     object_store = object_store if object_store is not None else provisioned.object_store
     auth_context = auth_context if auth_context is not None else provisioned.auth_context
     notifier = notifier if notifier is not None else provisioned.notifier
+    notification_secret_protector = (
+        notification_secret_protector
+        if notification_secret_protector is not None
+        else provisioned.notification_secret_protector
+    )
     credential_vault = (
         credential_vault if credential_vault is not None else provisioned.credential_vault
     )
@@ -287,11 +296,17 @@ def build_container(
     )
     (
         configured_notifier,
+        configured_notification_secret_protector,
         configured_vault,
         configured_action_audit,
         configured_registration_consent,
     ) = (
         notifier if notifier is not None else _build_notifier(settings),
+        (
+            notification_secret_protector
+            if notification_secret_protector is not None
+            else _build_notification_secret_protector(settings)
+        ),
         (credential_vault if credential_vault is not None else _build_credential_vault(settings)),
         (action_audit if action_audit is not None else PostgresRegistrationActionAuditRepository()),
         (
@@ -467,6 +482,7 @@ def build_container(
         handoff_ttl_days=settings.handoff_ttl_days,
         handoff_completion_base_url=settings.public_base_url,
         require_https_completion_links=not settings.mock_cloud,
+        notification_secret_protector=configured_notification_secret_protector,
     )
     request_terminal = RequestTerminalService(request_repo)
     return Container(
@@ -494,6 +510,7 @@ def build_container(
         ranker=configured_ranker,
         calendar=configured_calendar,
         notifier=configured_notifier,
+        notification_secret_protector=configured_notification_secret_protector,
         vault=configured_vault,
         registration_consent=configured_registration_consent,
         policy=configured_policy,
@@ -759,6 +776,15 @@ def _build_notifier(settings: Settings) -> NotificationPort:
     if not settings.mock_cloud:
         raise ValueError("non-mock deployments must inject a provisioned NotificationPort")
     return MockNotifier()
+
+
+def _build_notification_secret_protector(settings: Settings) -> NotificationSecretProtector:
+    """Use a stable local-only AEAD key; production must provision KMS/envelope protection."""
+    if not settings.mock_cloud:
+        raise ValueError(
+            "non-mock deployments must inject a provisioned NotificationSecretProtector"
+        )
+    return DevelopmentNotificationSecretProtector()
 
 
 def _build_credential_vault(settings: Settings) -> CredentialVault:

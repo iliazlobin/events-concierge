@@ -35,6 +35,9 @@ from events_concierge.adapters.luma.scripted_browser import (
 )
 from events_concierge.adapters.luma.source import LumaSource
 from events_concierge.adapters.mock.calendar import MockCalendar
+from events_concierge.adapters.mock.notification_secrets import (
+    DevelopmentNotificationSecretProtector,
+)
 from events_concierge.adapters.mock.notifier import MockNotifier
 from events_concierge.adapters.mock.sources import ConfirmingSource
 from events_concierge.application.outbox import OutboxRelay
@@ -562,7 +565,7 @@ async def _relay_tenant_records(records: list[OutboxRecord]) -> tuple[tuple[str,
     ]
     outbox = ScenarioOutbox([records, replay])
     notifier = MockNotifier()
-    relay = OutboxRelay(outbox, notifier)
+    relay = OutboxRelay(outbox, notifier, DevelopmentNotificationSecretProtector())
     await relay.relay_once()
     await relay.relay_once()
     kinds = tuple(sorted(notification.kind.value for notification in notifier.sent))

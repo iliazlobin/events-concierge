@@ -52,9 +52,15 @@ from ..ports.browser_admission import (
     BrowserAdmissionPort,
     BrowserAdmissionRequest,
 )
-from ..ports.calendar import CalendarEntry, CalendarPort
+from ..ports.calendar import (
+    CalendarBindingUnavailableError,
+    CalendarEntry,
+    CalendarPort,
+    CalendarReconsentRequiredError,
+)
 from ..ports.consent import RegistrationConsentEvidencePort
 from ..ports.credentials import CredentialVault
+from ..ports.notification_secrets import NotificationSecretProtector
 from ..ports.policy import (
     Pacer,
     PacerLease,
@@ -73,6 +79,7 @@ from ..ports.sources import (
     SourceAccessDeniedError,
     SourcePort,
     SourceRateLimitedError,
+    SourceReconsentRequiredError,
 )
 
 _log = get_logger(__name__)
@@ -255,6 +262,7 @@ class RegistrationService:
         handoff_ttl_days: int = 7,
         handoff_completion_base_url: str = "",
         require_https_completion_links: bool = False,
+        notification_secret_protector: NotificationSecretProtector | None = None,
         now: Callable[[], datetime] | None = None,
     ) -> None:
         self._sources = sources_by_source
@@ -273,6 +281,7 @@ class RegistrationService:
             handoff_completion_base_url,
             require_https=require_https_completion_links,
         )
+        self._notification_secret_protector = notification_secret_protector
         self._now = now or (lambda: datetime.now(UTC))
 
     async def resolve_membership(
@@ -754,8 +763,10 @@ class RegistrationService:
         A user click is only a wake-up signal. The activity freshly reads the provider registration
         state, then freshly reads every connected calendar through ``free_busy``. Only a confirmed
         provider state can atomically consume the capability, complete the task, and transition
-        ``HANDOFF -> REGISTERED``. Any settled unavailable/negative/ambiguous verification is
-        durably recorded and surfaced for review with zero calendar write (FR-6.3, FR-16).
+        ``HANDOFF -> REGISTERED``. Authoritative negative/ambiguous verification is durably
+        recorded for review; transport/provider exceptions remain retryable and never consume the
+        one-time capability merely because a dependency was temporarily unavailable (FR-6.3,
+        FR-16, NFR-8).
         """
         replay = await self.replay_handoff_completion(tenant_id, task_id, completion_id)
         if replay is not None:
@@ -795,15 +806,28 @@ class RegistrationService:
                 PacerOperation.CONFIRMATION_READ,
                 queue_item_id=verification_read_queue_item_id,
             )
-        except PacerDeferredError as deferred:
-            if deferred.lease.status is PacerLeaseStatus.WAIT:
-                # Temporal owns the durable Pacer timer. Do not consume the one-time capability
-                # until an authoritative verification result exists.
-                raise
+        except PacerDeferredError:
+            # Every non-granted admission result is transient workflow control, including a
+            # projected degrade or browser saturation. Temporal owns its durable retry timer; no
+            # Pacer outcome is independent evidence that the user's registration claim is false.
+            raise
+        except (
+            RegistrationConsentDeniedError,
+            SourcePolicyDeniedError,
+            SourceQuarantinedError,
+            SourceReconsentRequiredError,
+        ) as exc:
+            detail = _permanent_source_verification_detail(exc)
+            _log.info(
+                "handoff_completion_verification_requires_review",
+                workflow_id=workflow_id,
+                task_id=task_id,
+                outcome=type(exc).__name__,
+            )
             return await self._route_handoff_completion_review(
                 task,
                 completion_id,
-                "independent registration verification was not admitted",
+                detail,
             )
         except Exception as exc:
             _log.warning(
@@ -812,11 +836,7 @@ class RegistrationService:
                 task_id=task_id,
                 error=type(exc).__name__,
             )
-            return await self._route_handoff_completion_review(
-                task,
-                completion_id,
-                "independent registration verification was unavailable",
-            )
+            raise
         if state is not RsvpState.CONFIRMED:
             return await self._route_handoff_completion_review(
                 task,
@@ -827,6 +847,23 @@ class RegistrationService:
         event_end = event.end_at or (event.start_at + _DEFAULT_DURATION)
         try:
             busy = await self._calendar.free_busy(tenant_id, event.start_at, event_end)
+        except (CalendarBindingUnavailableError, CalendarReconsentRequiredError) as exc:
+            detail = (
+                "calendar authorization requires re-consent"
+                if isinstance(exc, CalendarReconsentRequiredError)
+                else "calendar binding is not available"
+            )
+            _log.info(
+                "handoff_completion_calendar_requires_review",
+                workflow_id=workflow_id,
+                task_id=task_id,
+                outcome=type(exc).__name__,
+            )
+            return await self._route_handoff_completion_review(
+                task,
+                completion_id,
+                detail,
+            )
         except Exception as exc:
             _log.warning(
                 "handoff_completion_free_busy_failed",
@@ -834,11 +871,7 @@ class RegistrationService:
                 task_id=task_id,
                 error=type(exc).__name__,
             )
-            return await self._route_handoff_completion_review(
-                task,
-                completion_id,
-                "fresh calendar conflict verification was unavailable",
-            )
+            raise
         conflict_warning = (
             evaluate_conflict(event.start_at, event_end, busy) is ConflictVerdict.BLOCKED
         )
@@ -1051,17 +1084,21 @@ class RegistrationService:
             completion_path = (
                 f"/v1/tasks/{completion_token}/done" if completion_token is not None else None
             )
-            completion_projection: dict[str, object] = (
-                {
-                    "completion_url": (
-                        f"{self._handoff_completion_base_url}{completion_path}"
-                        if self._handoff_completion_base_url
-                        else completion_path
-                    )
-                }
-                if completion_path is not None
-                else {}
-            )
+            completion_projection: dict[str, object] = {}
+            if completion_path is not None:
+                if self._notification_secret_protector is None:
+                    raise RuntimeError("handoff completion requires a NotificationSecretProtector")
+                completion_url = (
+                    f"{self._handoff_completion_base_url}{completion_path}"
+                    if self._handoff_completion_base_url
+                    else completion_path
+                )
+                completion_projection[
+                    "protected_completion_url"
+                ] = await self._notification_secret_protector.protect_completion_url(
+                    tenant_id,
+                    completion_url,
+                )
             await self._handoff.create_and_transition(
                 task,
                 lifecycle,
@@ -1946,6 +1983,19 @@ class RegistrationService:
         raise PacerDeferredError(lease)
 
 
+def _permanent_source_verification_detail(exc: Exception) -> str:
+    """Render a closed, non-sensitive review reason for permanent source guard outcomes."""
+    if isinstance(exc, RegistrationConsentDeniedError):
+        return "registration consent is no longer available"
+    if isinstance(exc, SourceQuarantinedError):
+        return "registration source is quarantined"
+    if isinstance(exc, SourceReconsentRequiredError):
+        return "registration source authorization requires re-consent"
+    if isinstance(exc, SourcePolicyDeniedError):
+        return "source automation policy no longer permits verification"
+    raise TypeError("unsupported permanent source verification outcome")
+
+
 def _normalized_public_base_url(value: str, *, require_https: bool) -> str:
     """Validate the deployment-owned origin before placing a capability in a notification."""
     if not isinstance(value, str):
@@ -1954,21 +2004,15 @@ def _normalized_public_base_url(value: str, *, require_https: bool) -> str:
         if require_https:
             raise ValueError("non-mock handoff completion links require a public HTTPS base URL")
         return ""
-    if (
-        len(value) > _MAX_PUBLIC_BASE_URL_LENGTH
-        or any(
-            character.isspace() or category(character) in {"Cc", "Cf"}
-            for character in value
-        )
+    if len(value) > _MAX_PUBLIC_BASE_URL_LENGTH or any(
+        character.isspace() or category(character) in {"Cc", "Cf"} for character in value
     ):
         raise ValueError("handoff completion base URL must be a bounded absolute URL")
     try:
         parsed = urlsplit(value)
         port = parsed.port
     except ValueError as error:
-        raise ValueError(
-            "handoff completion base URL must be a bounded absolute URL"
-        ) from error
+        raise ValueError("handoff completion base URL must be a bounded absolute URL") from error
     if (
         parsed.scheme not in {"http", "https"}
         or not parsed.hostname

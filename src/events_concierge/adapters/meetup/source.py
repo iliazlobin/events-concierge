@@ -29,6 +29,7 @@ from ...ports.sources import (
     RegistrationTarget,
     SourceAccessDeniedError,
     SourceCapability,
+    SourceReconsentRequiredError,
 )
 
 _DEFAULT_ENDPOINT: Final = "https://api.meetup.com/gql"
@@ -62,7 +63,7 @@ class MeetupApiError(RuntimeError):
     """A fixture/transport/API failure that must stop autonomous Meetup mutation."""
 
 
-class MeetupReconsentRequiredError(MeetupApiError):
+class MeetupReconsentRequiredError(MeetupApiError, SourceReconsentRequiredError):
     """The OAuth token was rejected; callers must route to re-consent/handoff (FR-2.3/2.12)."""
 
 

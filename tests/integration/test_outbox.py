@@ -10,8 +10,12 @@ from uuid import UUID, uuid4
 
 import pytest
 from sqlalchemy import text
+from sqlalchemy.exc import DBAPIError
 from sqlalchemy.ext.asyncio import create_async_engine
 
+from events_concierge.adapters.mock.notification_secrets import (
+    DevelopmentNotificationSecretProtector,
+)
 from events_concierge.adapters.postgres.tenant_repos import PostgresOutboxRepository
 from events_concierge.application.outbox import OutboxRelay
 from events_concierge.composition import Container, build_container
@@ -113,6 +117,89 @@ async def _owner_seed_outbox(outbox_id: int, tenant_id: UUID) -> None:
         },
     )
     assert inserted == 1
+
+
+async def test_outbox_rejects_plaintext_completion_projection(db: None) -> None:
+    """0106 rejects the legacy JSON key even when its value is not a syntactically valid URL."""
+    outbox_id = _isolated_outbox_ids(1)[0]
+    with pytest.raises(DBAPIError) as denied:
+        await _owner_execute(
+            """
+            INSERT INTO public.outbox (id, tenant_id, topic, payload)
+            VALUES (:outbox_id, :tenant_id, 'lifecycle.handoff', CAST(:payload AS jsonb))
+            """,
+            {
+                "outbox_id": outbox_id,
+                "tenant_id": uuid4(),
+                "payload": json.dumps({"completion_url": "redacted-fixture"}),
+            },
+        )
+    assert getattr(denied.value.orig, "sqlstate", None) == "23514"
+
+
+async def test_terminal_outbox_failure_scrubs_protected_completion_projection(db: None) -> None:
+    """A permanently failed delivery retains audit state but not its encrypted bearer."""
+    outbox_id = _isolated_outbox_ids(1)[0]
+    tenant_id = uuid4()
+    lease_token = uuid4().hex
+    protector = DevelopmentNotificationSecretProtector()
+    protected = await protector.protect_completion_url(
+        tenant_id,
+        "http://localhost:8000/v1/tasks/terminal-fixture/done",
+    )
+    inserted = await _owner_execute(
+        """
+        INSERT INTO public.outbox
+            (id, tenant_id, topic, payload, lease_token, lease_expires_at)
+        VALUES (
+            :outbox_id,
+            :tenant_id,
+            'lifecycle.handoff',
+            CAST(:payload AS jsonb),
+            :lease_token,
+            pg_catalog.clock_timestamp() + INTERVAL '5 minutes'
+        )
+        """,
+        {
+            "outbox_id": outbox_id,
+            "tenant_id": tenant_id,
+            "payload": json.dumps(
+                {
+                    "workflow_id": "terminal-fixture",
+                    "protected_completion_url": protected,
+                }
+            ),
+            "lease_token": lease_token,
+        },
+    )
+    assert inserted == 1
+    record = OutboxRecord(
+        outbox_id=outbox_id,
+        tenant_id=tenant_id,
+        topic="lifecycle.handoff",
+        payload={"protected_completion_url": protected},
+        attempt_count=4,
+        lease_token=lease_token,
+    )
+
+    terminalized = await PostgresOutboxRepository().reschedule(
+        record,
+        retry_at=None,
+        error="notification materialization or delivery failed",
+        consume_attempt=True,
+    )
+    terminal = await _owner_outbox_failure_state(outbox_id)
+
+    assert terminalized is True
+    assert terminal.failed_at is not None
+    terminal_payload = json.loads(terminal.payload)
+    assert "protected_completion_url" not in terminal_payload
+    if protected in json.dumps(terminal_payload, sort_keys=True):
+        raise AssertionError("terminal outbox row retained its protected completion capability")
+    await _owner_execute(
+        "DELETE FROM public.outbox WHERE id = :outbox_id",
+        {"outbox_id": outbox_id},
+    )
 
 
 async def _claim_fixture_records(
@@ -351,9 +438,41 @@ async def test_relay_delivers_atomic_handoff_outbox_once_with_durable_ledger(db:
     container = build_container(settings, register_sources={})
     tenant_id, workflow_id, tag = await _create_handoff_outbox(container)
 
+    async with system_session_scope() as session:
+        projection = (
+            (
+                await session.execute(
+                    text(
+                        """SELECT payload
+                       FROM outbox
+                       WHERE tenant_id = :tenant_id AND topic = 'lifecycle.handoff'
+                       ORDER BY id DESC
+                       LIMIT 1"""
+                    ),
+                    {"tenant_id": tenant_id},
+                )
+            )
+            .one()
+            .payload
+        )
+    assert "completion_url" not in projection
+    protected_value = projection.get("protected_completion_url")
+    assert isinstance(protected_value, str)
+    revealed_url = await container.notification_secret_protector.reveal_completion_url(
+        tenant_id,
+        protected_value,
+    )
+    serialized_projection = json.dumps(projection, sort_keys=True)
+    if revealed_url in serialized_projection:
+        raise AssertionError("outbox projection retained a plaintext completion capability")
+
     # The development database intentionally persists integration fixtures. A large bounded batch
     # lets this real relay reach this test's fresh row without relying on global outbox ordering.
-    relay = OutboxRelay(container.outbox_repo, container.notifier)
+    relay = OutboxRelay(
+        container.outbox_repo,
+        container.notifier,
+        container.notification_secret_protector,
+    )
     await relay.relay_once(limit=10_000)
     first_delivery = [item for item in container.notifier.sent if item.tenant_id == tenant_id]
     assert len(first_delivery) == 1
@@ -370,7 +489,7 @@ async def test_relay_delivers_atomic_handoff_outbox_once_with_durable_ledger(db:
         row = (
             await session.execute(
                 text(
-                    """SELECT o.delivered_at, o.attempt_count, l.state, l.dedup_key
+                    """SELECT o.delivered_at, o.attempt_count, o.payload, l.state, l.dedup_key
                        FROM outbox AS o
                        JOIN notification_ledger AS l ON l.outbox_id = o.id
                        WHERE o.tenant_id = :tenant_id AND o.topic = 'lifecycle.handoff'
@@ -384,6 +503,7 @@ async def test_relay_delivers_atomic_handoff_outbox_once_with_durable_ledger(db:
     assert int(row.attempt_count) == 0
     assert row.state == "delivered"
     assert row.dedup_key == first_delivery[0].dedup_key
+    assert "protected_completion_url" not in row.payload
 
 
 async def test_relay_busy_ledger_deferral_does_not_consume_retry_budget(db: None) -> None:
@@ -423,7 +543,11 @@ async def test_relay_busy_ledger_deferral_does_not_consume_retry_budget(db: None
 
     # The persistent development database can contain old fixtures; a large bounded batch reliably
     # reaches this test's fresh row without relying on global outbox ordering.
-    relay = OutboxRelay(container.outbox_repo, container.notifier)
+    relay = OutboxRelay(
+        container.outbox_repo,
+        container.notifier,
+        container.notification_secret_protector,
+    )
     await relay.relay_once(limit=10_000)
 
     async with system_session_scope() as session:
@@ -465,7 +589,11 @@ async def test_relay_reopened_outbox_uses_durable_ledger_without_a_second_send(d
     container = build_container(settings, register_sources={})
     tenant_id, _, _ = await _create_handoff_outbox(container)
     notifier = TenantCountingNotifier(tenant_id)
-    relay = OutboxRelay(container.outbox_repo, notifier)
+    relay = OutboxRelay(
+        container.outbox_repo,
+        notifier,
+        container.notification_secret_protector,
+    )
 
     await relay.relay_once(limit=10_000)
     assert notifier.calls == 1

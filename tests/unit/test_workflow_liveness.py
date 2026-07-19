@@ -2,12 +2,14 @@
 
 from __future__ import annotations
 
+from datetime import timedelta
 from typing import cast
 
 import pytest
 from temporalio.client import Client, WorkflowExecutionStatus
 from temporalio.service import RPCError, RPCStatusCode
 
+from events_concierge.config import Settings
 from events_concierge.workflows.start import TemporalWorkflowLivenessInspector
 
 
@@ -23,8 +25,10 @@ class _WorkflowHandle:
 
     def __init__(self, result: _Description | RPCError) -> None:
         self._result = result
+        self.rpc_timeouts: list[timedelta | None] = []
 
-    async def describe(self) -> _Description:
+    async def describe(self, *, rpc_timeout: timedelta | None = None) -> _Description:
+        self.rpc_timeouts.append(rpc_timeout)
         if isinstance(self._result, RPCError):
             raise self._result
         return self._result
@@ -44,15 +48,23 @@ class _Client:
 
 async def test_temporal_liveness_treats_only_running_as_open() -> None:
     """A non-running execution is definitively closed for the read-only ADR-007 check."""
-    client = _Client(_WorkflowHandle(_Description(WorkflowExecutionStatus.RUNNING)))
+    timeout = 0.25
+    settings = Settings(temporal_rpc_timeout_seconds=timeout)
+    running_handle = _WorkflowHandle(_Description(WorkflowExecutionStatus.RUNNING))
+    client = _Client(running_handle)
 
-    assert await TemporalWorkflowLivenessInspector(cast(Client, client)).is_open("opaque-workflow")
-    assert client.workflow_ids == ["opaque-workflow"]
-
-    closed_client = _Client(_WorkflowHandle(_Description(WorkflowExecutionStatus.COMPLETED)))
-    assert not await TemporalWorkflowLivenessInspector(cast(Client, closed_client)).is_open(
-        "closed-workflow"
+    assert await TemporalWorkflowLivenessInspector(cast(Client, client), settings).is_open(
+        "opaque-workflow"
     )
+    assert client.workflow_ids == ["opaque-workflow"]
+    assert running_handle.rpc_timeouts == [timedelta(seconds=timeout)]
+
+    closed_handle = _WorkflowHandle(_Description(WorkflowExecutionStatus.COMPLETED))
+    closed_client = _Client(closed_handle)
+    assert not await TemporalWorkflowLivenessInspector(
+        cast(Client, closed_client), settings
+    ).is_open("closed-workflow")
+    assert closed_handle.rpc_timeouts == [timedelta(seconds=timeout)]
 
 
 async def test_temporal_liveness_treats_not_found_as_authoritatively_closed() -> None:
@@ -61,7 +73,7 @@ async def test_temporal_liveness_treats_not_found_as_authoritatively_closed() ->
         _WorkflowHandle(RPCError("workflow execution not found", RPCStatusCode.NOT_FOUND, b""))
     )
 
-    assert not await TemporalWorkflowLivenessInspector(cast(Client, client)).is_open(
+    assert not await TemporalWorkflowLivenessInspector(cast(Client, client), Settings()).is_open(
         "gone-workflow"
     )
 
@@ -71,5 +83,6 @@ async def test_temporal_liveness_does_not_classify_an_unknown_status_as_closed()
 
     with pytest.raises(RuntimeError, match="omitted an execution status"):
         await TemporalWorkflowLivenessInspector(
-            cast(Client, _Client(_WorkflowHandle(_Description(None))))
+            cast(Client, _Client(_WorkflowHandle(_Description(None)))),
+            Settings(),
         ).is_open("missing-status-workflow")

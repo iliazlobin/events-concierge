@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
+import asyncio
 from pathlib import Path
 from typing import Any
 
 import pytest
+from pydantic import ValidationError
 from temporalio.client import TLSConfig
 
 from events_concierge.adapters.mock.object_store import MockFilesystemObjectStore
@@ -77,6 +79,35 @@ async def test_temporal_cloud_connection_uses_tls_domain_and_trimmed_api_key(
     assert tls.domain == "example.tmprl.cloud"
 
 
+async def test_eager_temporal_connection_has_the_configured_outer_deadline(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    cancelled = False
+
+    async def blocked_connect(*args: object, **kwargs: object) -> _FixtureClient:
+        del args, kwargs
+        nonlocal cancelled
+        try:
+            await asyncio.Event().wait()
+        finally:
+            cancelled = True
+        return _FixtureClient()
+
+    monkeypatch.setattr(
+        "events_concierge.workflows.temporal_client.Client.connect",
+        blocked_connect,
+    )
+
+    with pytest.raises(TimeoutError):
+        await connect_temporal(
+            Settings(temporal_rpc_timeout_seconds=0.1),
+            MockFilesystemObjectStore(tmp_path),
+        )
+
+    assert cancelled is True
+
+
 @pytest.mark.parametrize(
     ("settings", "message"),
     [
@@ -120,3 +151,14 @@ def test_temporal_validation_does_not_require_engine_reachability() -> None:
     )
 
     validate_temporal_settings(settings)
+
+
+def test_temporal_rpc_timeout_has_a_short_validated_bound() -> None:
+    """A deployment cannot disable the outer Temporal call deadline with zero or an extreme value."""
+    assert Settings().temporal_rpc_timeout_seconds == 5.0
+    assert Settings(temporal_rpc_timeout_seconds=0.1).temporal_rpc_timeout_seconds == 0.1
+    assert Settings(temporal_rpc_timeout_seconds=60.0).temporal_rpc_timeout_seconds == 60.0
+
+    for invalid in (0.0, 0.099, -1.0, 1e-9, 60.01, float("inf"), float("nan")):
+        with pytest.raises(ValidationError):
+            Settings(temporal_rpc_timeout_seconds=invalid)

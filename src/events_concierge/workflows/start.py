@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from datetime import timedelta
 from uuid import UUID
 
 from temporalio.client import Client, WorkflowExecutionStatus
@@ -47,6 +48,7 @@ class TemporalRequestWorkflowStarter:
     def __init__(self, client: Client, settings: Settings) -> None:
         self._client = client
         self._settings = settings
+        self._rpc_timeout = _rpc_timeout(settings)
 
     async def start(self, tenant_id: UUID, request_id: UUID) -> None:
         """Start an opaque parent identity; activity code re-reads request text under RLS (ADR-011)."""
@@ -62,6 +64,7 @@ class TemporalRequestWorkflowStarter:
                 id=workflow_id,
                 task_queue=self._settings.temporal_task_queue,
                 id_reuse_policy=WorkflowIDReusePolicy.REJECT_DUPLICATE,
+                rpc_timeout=self._rpc_timeout,
             )
         except WorkflowAlreadyStartedError:
             _log.info("request workflow already started", workflow_id=workflow_id)
@@ -78,6 +81,7 @@ class TemporalCatalogRefreshStarter(CatalogRefreshWorkflowStarter):
     def __init__(self, client: Client, settings: Settings) -> None:
         self._client = client
         self._settings = settings
+        self._rpc_timeout = _rpc_timeout(settings)
 
     async def start(self, source_key: str, run_key: str) -> None:
         """Ensure one source/run continuation is open only with shared Pacer state (ADR-005)."""
@@ -91,6 +95,7 @@ class TemporalCatalogRefreshStarter(CatalogRefreshWorkflowStarter):
                 id=workflow_id,
                 task_queue=self._settings.temporal_task_queue,
                 id_reuse_policy=WorkflowIDReusePolicy.ALLOW_DUPLICATE_FAILED_ONLY,
+                rpc_timeout=self._rpc_timeout,
             )
         except WorkflowAlreadyStartedError:
             _log.info("catalog refresh workflow already started", workflow_id=workflow_id)
@@ -102,6 +107,7 @@ class TemporalCatalogPagedRefreshStarter(CatalogPagedRefreshWorkflowStarter):
     def __init__(self, client: Client, settings: Settings) -> None:
         self._client = client
         self._settings = settings
+        self._rpc_timeout = _rpc_timeout(settings)
 
     async def start(self, source_key: str, run_key: str) -> None:
         """Ensure one paged source/run workflow exists only with shared Pacer state (NFR-8)."""
@@ -115,6 +121,7 @@ class TemporalCatalogPagedRefreshStarter(CatalogPagedRefreshWorkflowStarter):
                 id=workflow_id,
                 task_queue=self._settings.temporal_task_queue,
                 id_reuse_policy=WorkflowIDReusePolicy.ALLOW_DUPLICATE_FAILED_ONLY,
+                rpc_timeout=self._rpc_timeout,
             )
         except WorkflowAlreadyStartedError:
             _log.info("catalog paged refresh workflow already started", workflow_id=workflow_id)
@@ -123,13 +130,18 @@ class TemporalCatalogPagedRefreshStarter(CatalogPagedRefreshWorkflowStarter):
 class TemporalRegistrationLifecycleSignaler:
     """Temporal adapter for the narrow post-booking signal port (FR-6.7, FR-8.8)."""
 
-    def __init__(self, client: Client) -> None:
+    def __init__(self, client: Client, settings: Settings) -> None:
         self._client = client
+        self._rpc_timeout = _rpc_timeout(settings)
 
     async def signal_unrsvp(self, workflow_id: str, request_id: str) -> None:
         """Append a durable JSON-native command to the real attempt-suffixed child workflow."""
         handle = self._client.get_workflow_handle(workflow_id)
-        await handle.signal("unrsvp_requested", UnrsvpSignal(request_id=request_id))
+        await handle.signal(
+            "unrsvp_requested",
+            UnrsvpSignal(request_id=request_id),
+            rpc_timeout=self._rpc_timeout,
+        )
 
     async def signal_handoff_completed(
         self,
@@ -145,20 +157,22 @@ class TemporalRegistrationLifecycleSignaler:
                 task_id=task_id,
                 completion_id=completion_id,
             ),
+            rpc_timeout=self._rpc_timeout,
         )
 
 
 class TemporalWorkflowLivenessInspector(WorkflowLivenessInspector):
     """Read the authoritative Temporal execution state for the ADR-007 orphan repair guard."""
 
-    def __init__(self, client: Client) -> None:
+    def __init__(self, client: Client, settings: Settings) -> None:
         self._client = client
+        self._rpc_timeout = _rpc_timeout(settings)
 
     async def is_open(self, workflow_id: str) -> bool:
         """Return false only for a closed/not-found execution; transport uncertainty must retry."""
         handle = self._client.get_workflow_handle(workflow_id)
         try:
-            description = await handle.describe()
+            description = await handle.describe(rpc_timeout=self._rpc_timeout)
         except RPCError as error:
             if error.status is RPCStatusCode.NOT_FOUND:
                 return False
@@ -176,8 +190,9 @@ class TemporalOrganizerChangeFanout:
     identifiers; it neither polls a source nor reads a tenant's lifecycle (FR-8.7a, ADR-008).
     """
 
-    def __init__(self, client: Client) -> None:
+    def __init__(self, client: Client, settings: Settings) -> None:
         self._client = client
+        self._rpc_timeout = _rpc_timeout(settings)
 
     async def signal_organizer_change(self, delivery: OrganizerChangeDelivery) -> None:
         """Append the fingerprint-keyed command to the target lifecycle workflow."""
@@ -214,8 +229,14 @@ class TemporalOrganizerChangeFanout:
                     title=change.title,
                     venue_name=change.venue_name,
                 ),
+                rpc_timeout=self._rpc_timeout,
             )
         except RPCError as error:
             if error.status is RPCStatusCode.NOT_FOUND:
                 raise ClosedWorkflowSignalError("Temporal target workflow is closed") from error
             raise
+
+
+def _rpc_timeout(settings: Settings) -> timedelta:
+    """Translate the validated deployment setting at the Temporal adapter boundary."""
+    return timedelta(seconds=settings.temporal_rpc_timeout_seconds)

@@ -387,6 +387,44 @@ async def test_handoff_expiry_terminalizes_each_task_owning_lifecycle_once(
     assert repository.transition_payloads[0]["event_summary"] == "Persisted handoff summary"
 
 
+async def test_handoff_expiry_never_overwrites_a_verified_completion_commit() -> None:
+    """A completed task proves mark-done won even if its activity acknowledgement was lost."""
+    tenant_id, event = uuid4(), _event()
+    lifecycle = Lifecycle(
+        uuid4(),
+        tenant_id,
+        event.canonical_event_id,
+        "tenant:event",
+        LifecycleState.REGISTERED,
+    )
+    service, repository, handoffs, _ = _service(lifecycle, MockCalendar())
+    task = HandoffTask(
+        task_id="tenant:event:verified-task",
+        tenant_id=tenant_id,
+        workflow_id=lifecycle.workflow_id,
+        canonical_event_id=event.canonical_event_id,
+        reason=HandoffReason.DEFERRED_REGISTER,
+        deep_link="https://example.test/handoff",
+        event_summary="Verified handoff summary",
+        ttl_expires_at=datetime(2026, 7, 20, tzinfo=UTC),
+        expiry_transition_id="tenant:event:verified-expiry:1",
+        state=HandoffState.COMPLETED,
+    )
+    await handoffs.create(task)
+
+    result = await service.expire_handoff(
+        tenant_id,
+        event.canonical_event_id,
+        lifecycle.workflow_id,
+        task_id=task.task_id,
+        expiry_transition_id=task.resolved_expiry_transition_id(),
+    )
+
+    assert result.status is HandoffExpiryStatus.COMPLETION_COMMITTED
+    assert lifecycle.state is LifecycleState.REGISTERED
+    assert repository.transitions == []
+
+
 async def test_unrsvp_recovery_after_source_ack_loss_has_one_withdrawal_effect() -> None:
     """A retry re-reads NOT_PRESENT after a lost ACK and never calls withdrawal twice (FR-8.8)."""
     tenant_id, event = uuid4(), _event()

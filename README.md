@@ -141,10 +141,17 @@ A real deployment must also:
 
 - provide the deployment-owned runtime provider package in the image and set
   `EC_MOCK_CLOUD=false` plus `EC_RUNTIME_PROVIDER_FACTORY`;
+- have that provider supply a `NotificationSecretProtector` backed by production KMS/envelope
+  encryption; the stable AES-GCM key used by local mocks is intentionally non-production;
 - set `EC_PUBLIC_BASE_URL` to the public HTTPS origin used by handoff-completion links;
 - inject database, Redis, provider, and Temporal credentials from a secret manager;
 - set `EC_TEMPORAL_TLS_ENABLED=true` and `EC_TEMPORAL_API_KEY` for Temporal Cloud (plus
   `EC_TEMPORAL_TLS_DOMAIN` when required);
+- tune `EC_TEMPORAL_RPC_TIMEOUT_SECONDS` only within its validated 0.1–60 second range; the
+  five-second default bounds eager connects, workflow starts, signals, and liveness reads while
+  durable queues retain retries;
+- keep `EC_REQUEST_BODY_TIMEOUT_SECONDS` within its validated 0.1–60 second range; the ten-second
+  default bounds the complete decoded body read in addition to the 64 KiB request-size ceiling;
 - terminate TLS and enforce signed edge authentication before the API;
 - provide persistent, encrypted claim-check/object storage shared by every API and worker replica;
 - run managed PostgreSQL/pgvector, Redis, and Temporal rather than the local Compose dependencies;

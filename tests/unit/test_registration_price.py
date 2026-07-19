@@ -10,6 +10,9 @@ import pytest
 
 from events_concierge.adapters.mock.calendar import MockCalendar
 from events_concierge.adapters.mock.consent import MockRegistrationConsentEvidence
+from events_concierge.adapters.mock.notification_secrets import (
+    DevelopmentNotificationSecretProtector,
+)
 from events_concierge.adapters.mock.sources import ConfirmingSource
 from events_concierge.adapters.policy.engine import DataPolicyEngine
 from events_concierge.adapters.policy.pacer import InMemoryPacer
@@ -33,6 +36,8 @@ from events_concierge.domain.lifecycle import HandoffTask, Lifecycle
 from events_concierge.domain.policy import SourcePolicy
 from events_concierge.ports.repositories import HandoffRepository, LifecycleRepository
 from events_concierge.ports.sources import RegisterOutcome
+
+_SECRETS = DevelopmentNotificationSecretProtector()
 
 
 class _LifecycleRepository:
@@ -146,6 +151,7 @@ async def test_non_verified_free_event_never_reaches_an_autonomous_source(
         MockCalendar(),
         cast(LifecycleRepository, lifecycle),
         cast(HandoffRepository, handoff),
+        notification_secret_protector=_SECRETS,
     )
     tenant_id = uuid4()
     event = _event(price_status)
@@ -186,6 +192,7 @@ async def test_handoff_notification_uses_the_configured_absolute_completion_orig
         cast(HandoffRepository, handoff),
         handoff_completion_base_url="https://concierge.example.test/",
         require_https_completion_links=True,
+        notification_secret_protector=_SECRETS,
     )
     tenant_id = uuid4()
     event = _event(PriceStatus.FREE)
@@ -199,12 +206,19 @@ async def test_handoff_notification_uses_the_configured_absolute_completion_orig
         handoff_transition_id=f"{workflow_id}:handoff:1",
     )
 
-    completion_url = handoff.outbox_payloads[0]["completion_url"]
-    assert isinstance(completion_url, str)
-    assert completion_url.startswith(
-        "https://concierge.example.test/v1/tasks/"
+    payload = handoff.outbox_payloads[0]
+    assert "completion_url" not in payload
+    protected_url = payload["protected_completion_url"]
+    assert isinstance(protected_url, str)
+    completion_url = await DevelopmentNotificationSecretProtector().reveal_completion_url(
+        tenant_id,
+        protected_url,
     )
-    assert completion_url.endswith("/done")
+    if not (
+        completion_url.startswith("https://concierge.example.test/v1/tasks/")
+        and completion_url.endswith("/done")
+    ):
+        raise AssertionError("completion capability did not use the configured HTTPS origin")
 
 
 @pytest.mark.parametrize(
@@ -307,6 +321,7 @@ async def test_fresh_hard_calendar_conflict_blocks_a_stale_registration_attempt(
         cast(LifecycleRepository, lifecycle),
         cast(HandoffRepository, handoff),
         registration_consent=consent,
+        notification_secret_protector=_SECRETS,
     )
     tenant_id = uuid4()
     consent.seed(

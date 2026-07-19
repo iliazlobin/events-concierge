@@ -23,7 +23,11 @@ from ...domain.calendar_dedup import (
     fuzzy_calendar_matches,
 )
 from ...domain.conflict import BusyBlock
-from ...ports.calendar import CalendarEntry
+from ...ports.calendar import (
+    CalendarBindingUnavailableError,
+    CalendarEntry,
+    CalendarReconsentRequiredError,
+)
 from ...ports.google_calendar import (
     GOOGLE_CALENDAR_CANONICAL_EVENT_ID_KEY,
     GoogleCalendarAccess,
@@ -58,11 +62,11 @@ class GoogleCalendarError(RuntimeError):
     """A Google Calendar API response that cannot safely be treated as a successful effect."""
 
 
-class GoogleCalendarBindingNotFoundError(GoogleCalendarError):
+class GoogleCalendarBindingNotFoundError(GoogleCalendarError, CalendarBindingUnavailableError):
     """The tenant has not completed owner-gated Google app-calendar provisioning (FR-9.6)."""
 
 
-class GoogleCalendarReconsentRequiredError(GoogleCalendarError):
+class GoogleCalendarReconsentRequiredError(GoogleCalendarError, CalendarReconsentRequiredError):
     """Google rejected Calendar authorization; callers must surface one explicit re-consent (FR-9.7)."""
 
 

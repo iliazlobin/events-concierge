@@ -10,6 +10,7 @@ import pytest
 from temporalio.client import Client
 from temporalio.service import RPCError, RPCStatusCode
 
+from events_concierge.config import Settings
 from events_concierge.domain.enums import EventStatus, Source
 from events_concierge.ports.calendar_repair import ClosedWorkflowSignalError
 from events_concierge.ports.change_detection import (
@@ -26,9 +27,17 @@ class RecordingWorkflowHandle:
 
     def __init__(self) -> None:
         self.signals: list[tuple[str, OrganizerChangeSignal]] = []
+        self.rpc_timeouts: list[timedelta | None] = []
 
-    async def signal(self, name: str, arg: OrganizerChangeSignal) -> None:
+    async def signal(
+        self,
+        name: str,
+        arg: OrganizerChangeSignal,
+        *,
+        rpc_timeout: timedelta | None = None,
+    ) -> None:
         self.signals.append((name, arg))
+        self.rpc_timeouts.append(rpc_timeout)
 
 
 class RecordingClient:
@@ -46,8 +55,14 @@ class RecordingClient:
 class NotFoundWorkflowHandle(RecordingWorkflowHandle):
     """Model Temporal's authoritative closed-workflow signal response."""
 
-    async def signal(self, name: str, arg: OrganizerChangeSignal) -> None:
-        del name, arg
+    async def signal(
+        self,
+        name: str,
+        arg: OrganizerChangeSignal,
+        *,
+        rpc_timeout: timedelta | None = None,
+    ) -> None:
+        del name, arg, rpc_timeout
         raise RPCError("workflow execution not found", RPCStatusCode.NOT_FOUND, b"")
 
 
@@ -80,7 +95,8 @@ async def test_temporal_fanout_preserves_normalized_change_and_workflow_identity
     )
     handle = RecordingWorkflowHandle()
     client = RecordingClient(handle)
-    fanout = TemporalOrganizerChangeFanout(cast(Client, client))
+    settings = Settings(temporal_rpc_timeout_seconds=0.25)
+    fanout = TemporalOrganizerChangeFanout(cast(Client, client), settings)
 
     await fanout.signal_organizer_change(delivery)
 
@@ -101,6 +117,7 @@ async def test_temporal_fanout_preserves_normalized_change_and_workflow_identity
             ),
         )
     ]
+    assert handle.rpc_timeouts == [timedelta(seconds=0.25)]
 
 
 async def test_temporal_fanout_refuses_a_malformed_global_delivery_identity() -> None:
@@ -130,7 +147,9 @@ async def test_temporal_fanout_refuses_a_malformed_global_delivery_identity() ->
     client = RecordingClient(handle)
 
     with pytest.raises(ClosedWorkflowSignalError, match="deterministic"):
-        await TemporalOrganizerChangeFanout(cast(Client, client)).signal_organizer_change(delivery)
+        await TemporalOrganizerChangeFanout(
+            cast(Client, client), Settings()
+        ).signal_organizer_change(delivery)
 
     assert client.workflow_ids == []
     assert handle.signals == []
@@ -162,4 +181,6 @@ async def test_temporal_fanout_classifies_a_closed_target_for_delayed_calendar_r
     client = RecordingClient(NotFoundWorkflowHandle())
 
     with pytest.raises(ClosedWorkflowSignalError, match="closed"):
-        await TemporalOrganizerChangeFanout(cast(Client, client)).signal_organizer_change(delivery)
+        await TemporalOrganizerChangeFanout(
+            cast(Client, client), Settings()
+        ).signal_organizer_change(delivery)

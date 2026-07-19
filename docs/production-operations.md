@@ -142,6 +142,15 @@ non-determinism, stuck open executions, and history growth. An engine outage sho
 start-outbox while leaving committed requests intact; recovery should drain it through
 reject-duplicate starts.
 
+Every eager connection, workflow start, signal, and execution-description read has the independently
+validated `EC_TEMPORAL_RPC_TIMEOUT_SECONDS` bound (five seconds by default, 0.1–60 seconds). A start
+timeout is not an acknowledgement: the request remains in `request_start_outbox` for deterministic
+reject-duplicate replay after the engine or network recovers.
+
+API request bodies are capped at 64 KiB and must finish within the validated
+`EC_REQUEST_BODY_TIMEOUT_SECONDS` interval (ten seconds by default, 0.1–60 seconds). Safe
+body-independent routes such as health checks bypass buffering; stalled mutation bodies receive 408.
+
 ### Claim-check object storage
 
 Claim-check objects are required to replay Temporal histories that contain opaque references. The
@@ -223,7 +232,14 @@ logs, metrics, traces, tickets, or chat.
 The handoff-completion URL contains a one-time bearer capability. Configure CDN, load-balancer,
 reverse-proxy, and APM access logs to redact the token segment on `/v1/tasks/*/done`; never emit the
 full URL to telemetry. Preserve `Cache-Control: no-store` and `Referrer-Policy: no-referrer`; GET
-must remain inert and only an explicit POST may signal completion.
+must remain inert and only an explicit POST may signal completion. The database outbox stores only
+an authenticated-encrypted projection, reveals it inside the notification relay immediately before
+delivery, and scrubs the ciphertext on delivery or terminal failure.
+
+Migration `0106` cannot safely reconstruct encryption for an already-persisted plaintext
+capability. It scrubs and terminal-quarantines any such pending row (and clears its non-delivered
+ledger lease); never copy the old value into a replacement. Recreate the handoff through the normal
+workflow if the user still needs an action link.
 
 ## Incident controls
 
@@ -285,7 +301,9 @@ Incident sequence:
 
 Production startup must fail closed unless the deployment-owned runtime provider supplies real
 authentication, shared object storage, notifications, credential vault, calendar access, and
-explicit registration and withdrawal source maps. The concrete OIDC and S3-compatible adapters
+explicit registration and withdrawal source maps, plus a `NotificationSecretProtector` backed by
+production KMS/envelope encryption. The stable local AES-GCM key is public development scaffolding
+and must never protect production data. The concrete OIDC and S3-compatible adapters
 still require deployment-owned issuer/client and storage-client/bucket construction; this repository
 does not include a production notifier or credential-vault backend. Mock adapters and local claim
 storage are for local/test environments only.

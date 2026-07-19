@@ -28,6 +28,7 @@ async def run_notifier() -> None:
     relay = OutboxRelay(
         container.outbox_repo,
         container.notifier,
+        container.notification_secret_protector,
         lease_seconds=settings.outbox_lease_seconds,
     )
     worker = NotifierWorker(
