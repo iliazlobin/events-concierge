@@ -1,0 +1,23 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+*.egg-info/
+.mypy_cache/
+.ruff_cache/
+.pytest_cache/
+
+# Env / secrets
+.env
+*.local
+
+# Build artifacts
+dist/
+build/
+
+# Spike outputs
+spikes/**/g2-report-*.json
+spikes/**/.venv/
+
+# OS
+.DS_Store

@@ -1,0 +1,13 @@
+{
+  "items": [
+    {
+      "id": "full-event-one",
+      "etag": "\"full-one-v1\"",
+      "status": "confirmed",
+      "summary": "Fresh full-sync event",
+      "start": {"dateTime": "2026-07-16T18:00:00Z"},
+      "end": {"dateTime": "2026-07-16T20:00:00Z"}
+    }
+  ],
+  "nextSyncToken": "sync-token-after-full"
+}

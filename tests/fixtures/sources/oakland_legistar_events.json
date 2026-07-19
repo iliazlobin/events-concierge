@@ -1,0 +1,167 @@
+[
+  {
+    "EventId": 9560,
+    "EventGuid": "95600000-0000-4000-8000-000000000001",
+    "EventBodyName": "Concurrent Meeting of the Oakland Redevelopment Successor Agency and the City Council",
+    "EventDate": "2026-07-21T00:00:00",
+    "EventTime": "3:30 PM",
+    "EventLocation": "City Council Chamber, 3rd Floor",
+    "EventComment": "Regular public meeting",
+    "EventAgendaStatusName": "SUPPLEMENTAL",
+    "EventInSiteURL": "https://Oakland.legistar.com/MeetingDetail.aspx?LEGID=9560&GID=134&G=15529D0E-EFE8-4C09-817E-CE554309072E"
+  },
+  {
+    "EventId": 9561,
+    "EventGuid": "95610000-0000-4000-8000-000000000001",
+    "EventBodyName": "Finance and Management Committee",
+    "EventDate": "2026-07-22T00:00:00",
+    "EventTime": "9:30 AM",
+    "EventLocation": "City Council Chamber, 3rd Floor / Tele-Conference",
+    "EventComment": "Hybrid public meeting",
+    "EventAgendaStatusName": "FINAL",
+    "EventInSiteURL": "https://oakland.legistar.com/MeetingDetail.aspx?LEGID=9561&GID=134&G=15529D0E-EFE8-4C09-817E-CE554309072E"
+  },
+  {
+    "EventId": 9562,
+    "EventGuid": "95620000-0000-4000-8000-000000000001",
+    "EventBodyName": "Virtual Meeting One",
+    "EventDate": "2026-07-23T00:00:00",
+    "EventTime": "10:00 AM",
+    "EventLocation": "Teleconference",
+    "EventComment": "Please see the agenda to participate",
+    "EventAgendaStatusName": "FINAL",
+    "EventInSiteURL": "https://oakland.legistar.com/MeetingDetail.aspx?LEGID=9562&GID=134&G=15529D0E-EFE8-4C09-817E-CE554309072E"
+  },
+  {
+    "EventId": 9563,
+    "EventGuid": "95630000-0000-4000-8000-000000000001",
+    "EventBodyName": "Virtual Meeting Two",
+    "EventDate": "2026-07-23T00:00:00",
+    "EventTime": "11:00 AM",
+    "EventLocation": "Tele-Conference",
+    "EventComment": "Please see the agenda to participate",
+    "EventAgendaStatusName": "FINAL",
+    "EventInSiteURL": "https://oakland.legistar.com/MeetingDetail.aspx?LEGID=9563&GID=134&G=15529D0E-EFE8-4C09-817E-CE554309072E"
+  },
+  {
+    "EventId": 9564,
+    "EventGuid": "95640000-0000-4000-8000-000000000001",
+    "EventBodyName": "Virtual Meeting Three",
+    "EventDate": "2026-07-23T00:00:00",
+    "EventTime": "1:00 PM",
+    "EventLocation": "Tele - Conference",
+    "EventComment": "Please see the agenda to participate",
+    "EventAgendaStatusName": "FINAL",
+    "EventInSiteURL": "https://oakland.legistar.com/MeetingDetail.aspx?LEGID=9564&GID=134&G=15529D0E-EFE8-4C09-817E-CE554309072E"
+  },
+  {
+    "EventId": 9565,
+    "EventGuid": "95650000-0000-4000-8000-000000000001",
+    "EventBodyName": "Virtual Meeting Four",
+    "EventDate": "2026-07-23T00:00:00",
+    "EventTime": "2:00 PM",
+    "EventLocation": "Tele- Conference",
+    "EventComment": "Please see the agenda to participate",
+    "EventAgendaStatusName": "FINAL",
+    "EventInSiteURL": "https://oakland.legistar.com/MeetingDetail.aspx?LEGID=9565&GID=134&G=15529D0E-EFE8-4C09-817E-CE554309072E"
+  },
+  {
+    "EventId": 9566,
+    "EventGuid": "95660000-0000-4000-8000-000000000001",
+    "EventBodyName": "Hidden Committee",
+    "EventDate": "2026-07-24T00:00:00",
+    "EventTime": "9:00 AM",
+    "EventLocation": "City Council Chamber, 3rd Floor",
+    "EventComment": "Not publicly available",
+    "EventAgendaStatusName": "Hidden",
+    "EventInSiteURL": "https://oakland.legistar.com/MeetingDetail.aspx?LEGID=9566&GID=134&G=15529D0E-EFE8-4C09-817E-CE554309072E"
+  },
+  {
+    "EventId": 9567,
+    "EventGuid": "95670000-0000-4000-8000-000000000001",
+    "EventBodyName": "Rules and Legislation Committee - CANCELLED",
+    "EventDate": "2026-07-24T00:00:00",
+    "EventTime": "10:30 AM",
+    "EventLocation": "City Council Chamber, 3rd Floor",
+    "EventComment": "This meeting has been cancelled.",
+    "EventAgendaStatusName": "FINAL",
+    "EventInSiteURL": "https://oakland.legistar.com/MeetingDetail.aspx?LEGID=9567&GID=134&G=15529D0E-EFE8-4C09-817E-CE554309072E"
+  },
+  {
+    "EventId": 9568,
+    "EventGuid": "95680000-0000-4000-8000-000000000001",
+    "EventBodyName": "City Council Closed Session",
+    "EventDate": "2026-07-24T00:00:00",
+    "EventTime": "3:00 PM",
+    "EventLocation": "City Council Chamber, 3rd Floor",
+    "EventComment": "Closed session",
+    "EventAgendaStatusName": "FINAL",
+    "EventInSiteURL": "https://oakland.legistar.com/MeetingDetail.aspx?LEGID=9568&GID=134&G=15529D0E-EFE8-4C09-817E-CE554309072E"
+  },
+  {
+    "EventId": 9569,
+    "EventGuid": "95690000-0000-4000-8000-000000000001",
+    "EventBodyName": "Blank Location Committee",
+    "EventDate": "2026-07-24T00:00:00",
+    "EventTime": "4:00 PM",
+    "EventLocation": "",
+    "EventComment": "Regular public meeting",
+    "EventAgendaStatusName": "FINAL",
+    "EventInSiteURL": "https://oakland.legistar.com/MeetingDetail.aspx?LEGID=9569&GID=134&G=15529D0E-EFE8-4C09-817E-CE554309072E"
+  },
+  {
+    "EventId": -1,
+    "EventGuid": "00000000-0000-4000-8000-000000000001",
+    "EventBodyName": "Malformed Identity Committee",
+    "EventDate": "2026-07-24T00:00:00",
+    "EventTime": "5:00 PM",
+    "EventLocation": "City Council Chamber, 3rd Floor",
+    "EventComment": "Regular public meeting",
+    "EventAgendaStatusName": "FINAL",
+    "EventInSiteURL": "https://oakland.legistar.com/MeetingDetail.aspx?LEGID=-1&GID=134&G=15529D0E-EFE8-4C09-817E-CE554309072E"
+  },
+  {
+    "EventId": 9570,
+    "EventGuid": "95700000-0000-4000-8000-000000000001",
+    "EventBodyName": "Malformed Time Committee",
+    "EventDate": "2026-07-24T00:00:00",
+    "EventTime": "after lunch",
+    "EventLocation": "City Council Chamber, 3rd Floor",
+    "EventComment": "Regular public meeting",
+    "EventAgendaStatusName": "FINAL",
+    "EventInSiteURL": "https://oakland.legistar.com/MeetingDetail.aspx?LEGID=9570&GID=134&G=15529D0E-EFE8-4C09-817E-CE554309072E"
+  },
+  {
+    "EventId": 9571,
+    "EventGuid": "95710000-0000-4000-8000-000000000001",
+    "EventBodyName": "Unsafe Handoff Committee",
+    "EventDate": "2026-07-24T00:00:00",
+    "EventTime": "6:00 PM",
+    "EventLocation": "City Council Chamber, 3rd Floor",
+    "EventComment": "Regular public meeting",
+    "EventAgendaStatusName": "FINAL",
+    "EventInSiteURL": "https://unapproved.example.test/MeetingDetail.aspx?LEGID=9571"
+  },
+  {
+    "EventId": 9572,
+    "EventGuid": "95720000-0000-4000-8000-000000000001",
+    "EventBodyName": "Mismatched Handoff Committee",
+    "EventDate": "2026-07-24T00:00:00",
+    "EventTime": "6:30 PM",
+    "EventLocation": "City Council Chamber, 3rd Floor",
+    "EventComment": "Regular public meeting",
+    "EventAgendaStatusName": "FINAL",
+    "EventInSiteURL": "https://oakland.legistar.com/MeetingDetail.aspx?LEGID=9999&GID=134&G=15529D0E-EFE8-4C09-817E-CE554309072E"
+  },
+  {
+    "EventId": 9573,
+    "EventGuid": "95730000-0000-4000-8000-000000000001",
+    "EventBodyName": "Past Committee",
+    "EventDate": "2026-07-17T00:00:00",
+    "EventTime": "9:00 AM",
+    "EventLocation": "City Council Chamber, 3rd Floor",
+    "EventComment": "Regular public meeting",
+    "EventAgendaStatusName": "FINAL",
+    "EventInSiteURL": "https://oakland.legistar.com/MeetingDetail.aspx?LEGID=9573&GID=134&G=15529D0E-EFE8-4C09-817E-CE554309072E"
+  }
+]

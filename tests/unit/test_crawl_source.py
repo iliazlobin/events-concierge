@@ -1,0 +1,199 @@
+"""Public-crawl source filtering tests (FR-3.1, FR-5.10)."""
+
+from __future__ import annotations
+
+from datetime import UTC, datetime, timedelta
+
+import httpx
+import pytest
+
+from events_concierge.adapters.crawl.source import PublicJsonLdSource
+from events_concierge.composition import build_container
+from events_concierge.config import Settings
+from events_concierge.domain.catalog_sources import CatalogSource
+from events_concierge.domain.enums import CatalogSourceMode, Source
+from events_concierge.domain.events import CandidateEvent
+from events_concierge.domain.request import RequestConstraints
+
+
+async def test_public_crawl_returns_all_future_fixture_events_by_default() -> None:
+    """Paid and unknown public listings remain discoverable unless a user asks for free-only (FR-4.6)."""
+    now = datetime(2026, 7, 16, 12, 0, tzinfo=UTC)
+    source = PublicJsonLdSource(
+        user_agent="test",
+        fixture_events=[
+            CandidateEvent(
+                source=Source.PUBLIC_JSONLD,
+                source_event_id="past",
+                title="Past free event",
+                start_at=now - timedelta(minutes=1),
+                registration_url="https://example.test/past",
+                is_free=True,
+            ),
+            CandidateEvent(
+                source=Source.PUBLIC_JSONLD,
+                source_event_id="paid",
+                title="Future paid event",
+                start_at=now + timedelta(hours=1),
+                registration_url="https://example.test/paid",
+                is_free=False,
+            ),
+            CandidateEvent(
+                source=Source.PUBLIC_JSONLD,
+                source_event_id="free",
+                title="Future free event",
+                start_at=now + timedelta(hours=2),
+                registration_url="https://example.test/free",
+                is_free=True,
+            ),
+            CandidateEvent(
+                source=Source.PUBLIC_JSONLD,
+                source_event_id="unknown",
+                title="Future price unknown event",
+                start_at=now + timedelta(hours=3),
+                registration_url="https://example.test/unknown",
+            ),
+        ],
+        now=lambda: now,
+    )
+
+    events = await source.discover(RequestConstraints())
+
+    assert [event.source_event_id for event in events] == ["paid", "free", "unknown"]
+
+
+async def test_public_crawl_free_only_filter_requires_verified_free_price() -> None:
+    """A free-only request excludes both paid and unverified price states (FR-4.6)."""
+    now = datetime(2026, 7, 16, 12, 0, tzinfo=UTC)
+    source = PublicJsonLdSource(
+        user_agent="test",
+        fixture_events=[
+            CandidateEvent(
+                source=Source.PUBLIC_JSONLD,
+                source_event_id="free",
+                title="Future free event",
+                start_at=now + timedelta(hours=1),
+                registration_url="https://example.test/free",
+                is_free=True,
+            ),
+            CandidateEvent(
+                source=Source.PUBLIC_JSONLD,
+                source_event_id="paid",
+                title="Future paid event",
+                start_at=now + timedelta(hours=2),
+                registration_url="https://example.test/paid",
+                is_free=False,
+            ),
+            CandidateEvent(
+                source=Source.PUBLIC_JSONLD,
+                source_event_id="unknown",
+                title="Future price unknown event",
+                start_at=now + timedelta(hours=3),
+                registration_url="https://example.test/unknown",
+            ),
+        ],
+        now=lambda: now,
+    )
+
+    events = await source.discover(RequestConstraints(budget_free=True))
+
+    assert [event.source_event_id for event in events] == ["free"]
+
+
+async def test_public_crawl_paces_repeated_fetches_for_the_same_host() -> None:
+    """The human-cadence floor applies across calls, not merely between one batch's seed URLs."""
+    current = 100.0
+    slept: list[float] = []
+
+    def clock() -> float:
+        return current
+
+    async def sleep(delay: float) -> None:
+        nonlocal current
+        slept.append(delay)
+        current += delay
+
+    source = PublicJsonLdSource(
+        user_agent="test",
+        min_interval_ms=1500,
+        clock=clock,
+        sleep=sleep,
+    )
+
+    await source._wait_for_host_slot("https://luma.com/genai-sf")
+    await source._wait_for_host_slot("https://luma.com/another-calendar")
+    await source._wait_for_host_slot("https://events.example.test/calendar")
+
+    assert slept == [1.5]
+
+
+async def test_catalog_fetch_rejects_an_unapproved_redirect_before_requesting_it() -> None:
+    """A reviewed source cannot bounce the crawler onto an unapproved platform origin (FR-10.3)."""
+    requested: list[str] = []
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        requested.append(str(request.url))
+        return httpx.Response(
+            302,
+            headers={"location": "https://unapproved.example.test/events"},
+            request=request,
+        )
+
+    source = PublicJsonLdSource(
+        user_agent="test",
+        min_interval_ms=1,
+        transport=httpx.MockTransport(handler),
+    )
+    catalog_source = CatalogSource(
+        source_key="reviewed-calendar",
+        display_name="Reviewed calendar",
+        publisher="Test publisher",
+        seed_url="https://events.example.test/calendar",
+        approved_origins=("https://events.example.test",),
+        region="bay_area_9_county",
+        mode=CatalogSourceMode.PUBLIC_JSONLD,
+        enabled=True,
+        reviewed_at=datetime(2026, 7, 16, 12, 0, tzinfo=UTC),
+        review_expires_at=None,
+        refresh_interval_minutes=60,
+        min_interval_ms=1,
+    )
+
+    events = await source.fetch(catalog_source)
+
+    assert events == []
+    assert requested == ["https://events.example.test/calendar"]
+
+
+def test_crawl_seed_setting_requires_explicit_owner_approved_urls() -> None:
+    settings = Settings(
+        crawl_seed_urls=" https://luma.com/genai-sf, https://events.example.test/calendar "
+    )
+
+    assert settings.crawl_seeds == [
+        "https://luma.com/genai-sf",
+        "https://events.example.test/calendar",
+    ]
+
+
+async def test_disabled_public_jsonld_source_never_fetches_a_populated_seed(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Excluding the source disables even an explicit live seed (FR-3.9/FR-10.1)."""
+
+    async def must_not_discover(
+        self: PublicJsonLdSource, constraints: RequestConstraints
+    ) -> list[CandidateEvent]:
+        del self, constraints
+        raise AssertionError("disabled public_jsonld source was invoked")
+
+    monkeypatch.setattr("events_concierge.composition.init_engine", lambda _: None)
+    monkeypatch.setattr(PublicJsonLdSource, "discover", must_not_discover)
+    container = build_container(
+        Settings(
+            discovery_sources="luma",
+            crawl_seed_urls="https://luma.com/genai-sf",
+        )
+    )
+
+    assert await container.discovery.discover(RequestConstraints()) == []

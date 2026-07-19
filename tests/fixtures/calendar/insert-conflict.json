@@ -1,0 +1,7 @@
+{
+  "error": {
+    "code": 409,
+    "message": "The requested identifier already exists.",
+    "status": "ALREADY_EXISTS"
+  }
+}

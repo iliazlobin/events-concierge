@@ -1,0 +1,18 @@
+{
+  "items": [
+    {
+      "id": "delta-event-one",
+      "etag": "\"delta-one-v2\"",
+      "status": "confirmed",
+      "summary": "Updated fixture event",
+      "start": {"dateTime": "2026-07-15T18:00:00Z"},
+      "end": {"dateTime": "2026-07-15T20:00:00Z"},
+      "extendedProperties": {
+        "private": {
+          "events_concierge.canonical_event_id": "11111111-1111-1111-1111-111111111111"
+        }
+      }
+    }
+  ],
+  "nextPageToken": "delta-page-two"
+}

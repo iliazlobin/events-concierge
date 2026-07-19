@@ -1,0 +1,112 @@
+[
+  {
+    "EventId": 6444,
+    "EventGuid": "A0A0A0A0-0000-4000-8000-000000006444",
+    "EventBodyName": "Public Art Commission",
+    "EventDate": "2026-07-20T00:00:00",
+    "EventTime": "6:00 PM",
+    "EventLocation": "City Hall Conference Room",
+    "EventComment": "Regular meeting",
+    "EventAgendaStatusName": "Final",
+    "EventInSiteURL": "https://Alameda.legistar.com/MeetingDetail.aspx?LEGID=6444&GID=12"
+  },
+  {
+    "EventId": 6445,
+    "EventGuid": "A0A0A0A0-0000-4000-8000-000000006445",
+    "EventBodyName": "Transportation Commission",
+    "EventDate": "2026-07-22T00:00:00",
+    "EventTime": "6:30 PM",
+    "EventLocation": "Online and Council Chambers, City Hall",
+    "EventComment": "Public hybrid meeting",
+    "EventAgendaStatusName": "Final",
+    "EventInSiteURL": "https://alameda.legistar.com/MeetingDetail.aspx?LEGID=6445&GID=12"
+  },
+  {
+    "EventId": 6446,
+    "EventGuid": "A0A0A0A0-0000-4000-8000-000000006446",
+    "EventBodyName": "Hidden Commission",
+    "EventDate": "2026-07-23T00:00:00",
+    "EventTime": "6:00 PM",
+    "EventLocation": "City Hall Council Chambers",
+    "EventComment": "Not publicly available",
+    "EventAgendaStatusName": "Hidden",
+    "EventInSiteURL": "https://alameda.legistar.com/MeetingDetail.aspx?LEGID=6446&GID=12"
+  },
+  {
+    "EventId": 6447,
+    "EventGuid": "A0A0A0A0-0000-4000-8000-000000006447",
+    "EventBodyName": "Board Meeting",
+    "EventDate": "2026-07-24T00:00:00",
+    "EventTime": "6:00 PM",
+    "EventLocation": "City Hall Council Chambers",
+    "EventComment": "Meeting cancelled",
+    "EventAgendaStatusName": "Final",
+    "EventInSiteURL": "https://alameda.legistar.com/MeetingDetail.aspx?LEGID=6447&GID=12"
+  },
+  {
+    "EventId": 6448,
+    "EventGuid": "A0A0A0A0-0000-4000-8000-000000006448",
+    "EventBodyName": "Virtual Commission",
+    "EventDate": "2026-07-24T00:00:00",
+    "EventTime": "6:00 PM",
+    "EventLocation": "Virtual Meeting - public webcast",
+    "EventComment": "Public meeting",
+    "EventAgendaStatusName": "Final",
+    "EventInSiteURL": "https://alameda.legistar.com/MeetingDetail.aspx?LEGID=6448&GID=12"
+  },
+  {
+    "EventId": 6449,
+    "EventGuid": "A0A0A0A0-0000-4000-8000-000000006449",
+    "EventBodyName": "Past Commission",
+    "EventDate": "2026-07-17T00:00:00",
+    "EventTime": "9:00 AM",
+    "EventLocation": "City Hall Conference Room",
+    "EventComment": "Regular meeting",
+    "EventAgendaStatusName": "Final",
+    "EventInSiteURL": "https://alameda.legistar.com/MeetingDetail.aspx?LEGID=6449&GID=12"
+  },
+  {
+    "EventId": 6450,
+    "EventGuid": "A0A0A0A0-0000-4000-8000-000000006450",
+    "EventBodyName": "Unsafe Handoff",
+    "EventDate": "2026-07-25T00:00:00",
+    "EventTime": "6:00 PM",
+    "EventLocation": "City Hall Conference Room",
+    "EventComment": "Regular meeting",
+    "EventAgendaStatusName": "Final",
+    "EventInSiteURL": "https://unapproved.example.test/MeetingDetail.aspx?LEGID=6450"
+  },
+  {
+    "EventId": 6451,
+    "EventGuid": "A0A0A0A0-0000-4000-8000-000000006451",
+    "EventBodyName": "City Council Closed Session",
+    "EventDate": "2026-07-25T00:00:00",
+    "EventTime": "6:00 PM",
+    "EventLocation": "City Hall Council Chambers",
+    "EventComment": "Closed session",
+    "EventAgendaStatusName": "Final",
+    "EventInSiteURL": "https://alameda.legistar.com/MeetingDetail.aspx?LEGID=6451&GID=12"
+  },
+  {
+    "EventId": -1,
+    "EventGuid": "A0A0A0A0-0000-4000-8000-000000000001",
+    "EventBodyName": "Malformed Identity",
+    "EventDate": "2026-07-26T00:00:00",
+    "EventTime": "6:00 PM",
+    "EventLocation": "City Hall Conference Room",
+    "EventComment": "Regular meeting",
+    "EventAgendaStatusName": "Final",
+    "EventInSiteURL": "https://alameda.legistar.com/MeetingDetail.aspx?LEGID=-1&GID=12"
+  },
+  {
+    "EventId": 6452,
+    "EventGuid": "A0A0A0A0-0000-4000-8000-000000006452",
+    "EventBodyName": "Malformed Time",
+    "EventDate": "2026-07-26T00:00:00",
+    "EventTime": "after lunch",
+    "EventLocation": "City Hall Conference Room",
+    "EventComment": "Regular meeting",
+    "EventAgendaStatusName": "Final",
+    "EventInSiteURL": "https://alameda.legistar.com/MeetingDetail.aspx?LEGID=6452&GID=12"
+  }
+]

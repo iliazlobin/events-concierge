@@ -1,0 +1,10 @@
+{
+  "items": [
+    {
+      "id": "provider-canonical-event",
+      "summary": "Fixture event",
+      "start": {"dateTime": "2026-07-15T18:00:00Z"},
+      "location": "Fixture venue"
+    }
+  ]
+}

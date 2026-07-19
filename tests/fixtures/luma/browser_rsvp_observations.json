@@ -1,0 +1,26 @@
+{
+  "not_present_free": {
+    "status": "not_present",
+    "price_cents": 0
+  },
+  "not_present_unknown_price": {
+    "status": "not_present",
+    "price_cents": null
+  },
+  "confirmed": {
+    "status": "confirmed",
+    "price_cents": 0
+  },
+  "ambiguous": {
+    "status": "ambiguous",
+    "price_cents": null
+  },
+  "login_required": {
+    "status": "login_required",
+    "price_cents": null
+  },
+  "paywall": {
+    "status": "paywall",
+    "price_cents": 2500
+  }
+}

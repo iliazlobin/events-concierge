@@ -1,0 +1,16 @@
+{
+  "kind": "calendar#freeBusy",
+  "calendars": {
+    "primary-fixture": {
+      "busy": [
+        {
+          "start": "2026-07-15T17:30:00Z",
+          "end": "2026-07-15T18:30:00Z"
+        }
+      ]
+    },
+    "events-concierge@group.calendar.google.com": {
+      "busy": []
+    }
+  }
+}

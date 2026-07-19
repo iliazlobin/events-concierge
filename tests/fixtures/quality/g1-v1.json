@@ -1,0 +1,203 @@
+{
+  "corpus_version": "g1-v1",
+  "scenarios": [
+    {
+      "id": "g1-member-meetup-autonomous",
+      "raw_text": "Find a free synthetic systems meetup this week.",
+      "membership": "member",
+      "events": [
+        {
+          "source": "meetup",
+          "source_event_key": "g1-meetup-member-primary",
+          "title": "Synthetic Systems Salon",
+          "price_status": "free"
+        }
+      ],
+      "expected_outcome": "registered",
+      "expected_source_mutation_count": 1,
+      "expected_calendar_count": 1,
+      "expected_notification_kind": "completion"
+    },
+    {
+      "id": "g1-free-luma-browser",
+      "raw_text": "Register me for a free synthetic Luma workshop.",
+      "events": [
+        {
+          "source": "luma",
+          "source_event_key": "g1-luma-browser-primary",
+          "title": "Synthetic Interface Workshop",
+          "price_status": "free"
+        }
+      ],
+      "expected_outcome": "registered",
+      "expected_source_mutation_count": 1,
+      "expected_calendar_count": 1,
+      "expected_notification_kind": "completion"
+    },
+    {
+      "id": "g1-public-free-crawl-handoff",
+      "raw_text": "Find a free public design talk.",
+      "events": [
+        {
+          "source": "public_jsonld",
+          "source_event_key": "g1-public-free-handoff",
+          "title": "Synthetic Civic Design Talk",
+          "price_status": "free"
+        }
+      ],
+      "expected_outcome": "handoff",
+      "expected_source_mutation_count": 0,
+      "expected_calendar_count": 0,
+      "expected_notification_kind": "handoff_available"
+    },
+    {
+      "id": "g1-nonmember-meetup-handoff",
+      "raw_text": "RSVP me to the synthetic members meetup.",
+      "membership": "non_member",
+      "events": [
+        {
+          "source": "meetup",
+          "source_event_key": "g1-meetup-nonmember-handoff",
+          "title": "Synthetic Members Forum",
+          "price_status": "free"
+        }
+      ],
+      "expected_outcome": "handoff",
+      "expected_source_mutation_count": 0,
+      "expected_calendar_count": 0,
+      "expected_notification_kind": "handoff_available"
+    },
+    {
+      "id": "g1-hard-conflict-backup-selected",
+      "raw_text": "Register me for a free synthetic reliability session.",
+      "membership": "member",
+      "events": [
+        {
+          "source": "meetup",
+          "source_event_key": "g1-conflict-primary",
+          "title": "Synthetic Reliability Primary",
+          "price_status": "free",
+          "conflict_role": "hard_conflict"
+        },
+        {
+          "source": "meetup",
+          "source_event_key": "g1-conflict-backup",
+          "title": "Synthetic Reliability Backup",
+          "price_status": "free",
+          "conflict_role": "backup_selected"
+        }
+      ],
+      "expected_outcome": "registered",
+      "expected_source_mutation_count": 1,
+      "expected_calendar_count": 1,
+      "expected_notification_kind": "completion"
+    },
+    {
+      "id": "g1-paid-unknown-visible-handoff",
+      "raw_text": "Find a synthetic arts event.",
+      "events": [
+        {
+          "source": "public_jsonld",
+          "source_event_key": "g1-visible-paid",
+          "title": "Synthetic Ticketed Arts Night",
+          "price_status": "paid"
+        },
+        {
+          "source": "public_jsonld",
+          "source_event_key": "g1-visible-unknown",
+          "title": "Synthetic Price Pending Showcase",
+          "price_status": "unknown"
+        }
+      ],
+      "expected_visibility": {
+        "free_only": false,
+        "visible_source_event_keys": [
+          "g1-visible-paid",
+          "g1-visible-unknown"
+        ]
+      },
+      "expected_outcome": "handoff",
+      "expected_source_mutation_count": 0,
+      "expected_calendar_count": 0,
+      "expected_notification_kind": "handoff_available"
+    },
+    {
+      "id": "g1-free-only-excludes-paid-unknown",
+      "raw_text": "Find only free synthetic art events.",
+      "free_only": true,
+      "events": [
+        {
+          "source": "public_jsonld",
+          "source_event_key": "g1-filtered-paid",
+          "title": "Synthetic Ticketed Art Lab",
+          "price_status": "paid"
+        },
+        {
+          "source": "public_jsonld",
+          "source_event_key": "g1-filtered-unknown",
+          "title": "Synthetic Price Pending Art Lab",
+          "price_status": "unknown"
+        }
+      ],
+      "expected_visibility": {
+        "free_only": true,
+        "visible_source_event_keys": []
+      },
+      "expected_outcome": "failed_no_candidate",
+      "expected_source_mutation_count": 0,
+      "expected_calendar_count": 0,
+      "expected_notification_kind": "no_result"
+    },
+    {
+      "id": "g1-empty-result-no-result",
+      "raw_text": "Find a synthetic event that does not exist.",
+      "events": [],
+      "expected_outcome": "failed_no_candidate",
+      "expected_source_mutation_count": 0,
+      "expected_calendar_count": 0,
+      "expected_notification_kind": "no_result"
+    }
+  ],
+  "expected_report": {
+    "corpus_version": "g1-v1",
+    "scenario_ids": [
+      "g1-member-meetup-autonomous",
+      "g1-free-luma-browser",
+      "g1-public-free-crawl-handoff",
+      "g1-nonmember-meetup-handoff",
+      "g1-hard-conflict-backup-selected",
+      "g1-paid-unknown-visible-handoff",
+      "g1-free-only-excludes-paid-unknown",
+      "g1-empty-result-no-result"
+    ],
+    "scenario_count": 8,
+    "outcomes": {
+      "registered": 3,
+      "handoff": 3,
+      "failed_no_candidate": 2
+    },
+    "source_mutation_count": 3,
+    "calendar_count": 3,
+    "selected_sources": {
+      "luma": 1,
+      "meetup": 3,
+      "public_jsonld": 2
+    },
+    "notification_kinds": {
+      "completion": 3,
+      "handoff_available": 3,
+      "no_result": 2
+    },
+    "notification_dedup_count": 8,
+    "action_audit_count": 9,
+    "action_audit_phases": {
+      "policy_precheck": 3,
+      "policy_pre_mutate": 3,
+      "source_rsvp_outcome": 3
+    },
+    "fault_overlays": {
+      "lost_source_ack": 1,
+      "duplicate_parent_start": 1
+    }
+  }
+}

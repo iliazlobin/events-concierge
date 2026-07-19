@@ -1,0 +1,10 @@
+{
+  "items": [
+    {
+      "id": "human-created-event",
+      "summary": "Fixture Event!",
+      "start": {"dateTime": "2026-07-15T18:12:00Z"},
+      "location": "The Fixture Venue, San Francisco"
+    }
+  ]
+}

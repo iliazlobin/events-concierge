@@ -1,0 +1,93 @@
+[project]
+name = "events-concierge"
+version = "0.1.0"
+description = "Multi-tenant events concierge: natural-language request to a confirmed, reconciled calendar entry."
+requires-python = ">=3.12"
+dependencies = [
+    "temporalio>=1.9",
+    "fastapi>=0.115",
+    "uvicorn[standard]>=0.32",
+    "sqlalchemy>=2.0.36",
+    "greenlet>=3.1",
+    "psycopg[binary]>=3.2",
+    "pgvector>=0.3.6",
+    "alembic>=1.14",
+    "pydantic>=2.10",
+    "pydantic-settings>=2.6",
+    "redis>=5.2",
+    "httpx>=0.28",
+    "selectolax>=0.3.27",
+    "structlog>=24.4",
+    "numpy>=2.1",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.3",
+    "pytest-asyncio>=0.24",
+    "ruff>=0.8",
+    "mypy>=1.13",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/events_concierge"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+src = ["src", "tests"]
+# This project lives inside a larger checkout whose global Git ignore rules hide it.
+# Lint the declared source roots regardless of that outer repository configuration.
+respect-gitignore = false
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "N", "UP", "B", "SIM", "RUF", "ASYNC", "TID", "PL", "C4"]
+ignore = [
+    "E501",  # Ruff's formatter owns layout; do not require unsafe/manual wrapping of prose and URLs.
+    "PLR0913",  # Allow rich constructors on domain aggregates.
+    "TID252",  # The package deliberately uses relative imports to make layer-local dependencies explicit.
+]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/*" = ["PLR2004", "S101"]
+"tests/integration/test_workflow.py" = ["SIM117"]  # Nested Temporal environments keep their lifetimes clear.
+"src/events_concierge/adapters/crawl/acl.py" = ["PLR0911"]  # Defensive JSON-LD parsing has explicit exit paths.
+"src/events_concierge/adapters/livewhale/source.py" = ["PLR0911", "PLR0912"]  # Defensive paginated source ACL exits safely on malformed/escaped input.
+"src/events_concierge/adapters/sf_gov/source.py" = ["PLR0911", "PLR0912"]  # Defensive civic API parsing exits safely on malformed/escaped input.
+"src/events_concierge/adapters/datasf/source.py" = ["PLR0911", "PLR0912"]  # Defensive Socrata parsing exits safely on malformed/escaped input.
+"src/events_concierge/adapters/bibliocommons/source.py" = ["PLR0911", "PLR0912"]  # Defensive RSS parsing exits safely on malformed/escaped input.
+"src/events_concierge/adapters/libcal/source.py" = ["PLR0912"]  # Defensive ICS envelope parsing keeps each malformed state explicit.
+"src/events_concierge/adapters/postgres/tenant_repos.py" = ["PLC0415"]  # Runtime-only imports avoid repository cycles.
+"src/events_concierge/api/app.py" = ["PLC0415"]  # Optional Temporal startup imports only when configured.
+"src/events_concierge/application/registration.py" = ["PLR0911"]  # Journaled saga branches are intentionally explicit.
+"src/events_concierge/application/reconciliation.py" = ["PLR0911", "PLR0912"]  # Journaled lifecycle branches are intentionally explicit.
+"src/events_concierge/application/catalog_paged_refresh.py" = ["PLR0911"]  # Lease/cursor outcomes stay explicit at P15b's source boundary.
+"src/events_concierge/composition.py" = ["PLC0415", "PLR0915"]  # The optional crawler adapter is lazy; composition keeps the full graph visible.
+"src/events_concierge/config.py" = ["PLW0603"]  # Settings are a deliberate process singleton.
+"src/events_concierge/domain/routing.py" = ["PLR0911"]  # Router order encodes the ADR-003 decision table.
+"src/events_concierge/infra/db.py" = ["PLW0603"]  # Engine/sessionmaker are deliberate process singletons.
+"src/events_concierge/workflows/activities.py" = ["PLW0603"]  # Worker startup injects one activity container.
+"src/events_concierge/workflows/workflows.py" = ["PLR0911", "PLR0912"]  # Durable workflow state branches are explicit.
+
+[tool.mypy]
+python_version = "3.12"
+strict = true
+plugins = ["pydantic.mypy"]
+mypy_path = "src"
+packages = ["events_concierge"]
+disallow_untyped_decorators = false  # temporalio decorators are untyped
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
+# Unit and integration suites intentionally share descriptive module basenames (for example,
+# ``test_outbox.py``); importlib mode prevents pytest's legacy module-name collision.
+addopts = "-ra -q --import-mode=importlib"
+markers = [
+    "integration: requires docker-compose services (postgres, redis, temporal)",
+    "quality_load: opt-in bounded synthetic repetition coverage; not a performance benchmark",
+]

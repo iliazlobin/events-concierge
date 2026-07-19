@@ -1,0 +1,1 @@
+"""Closed CivicEngage publisher adapters."""

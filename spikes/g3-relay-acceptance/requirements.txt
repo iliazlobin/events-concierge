@@ -1,0 +1,3 @@
+# imap backend uses only the Python stdlib (imaplib, email).
+# s3 backend (SES->S3 production shape) needs boto3; safe to install either way.
+boto3>=1.34

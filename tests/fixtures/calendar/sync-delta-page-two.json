@@ -1,0 +1,10 @@
+{
+  "items": [
+    {
+      "id": "delta-event-two",
+      "etag": "\"delta-two-v1\"",
+      "status": "cancelled"
+    }
+  ],
+  "nextSyncToken": "sync-token-after-delta"
+}

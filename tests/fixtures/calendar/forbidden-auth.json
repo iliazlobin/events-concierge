@@ -1,0 +1,13 @@
+{
+  "error": {
+    "code": 403,
+    "message": "The caller does not have permission.",
+    "errors": [
+      {
+        "domain": "global",
+        "reason": "authError"
+      }
+    ],
+    "status": "PERMISSION_DENIED"
+  }
+}

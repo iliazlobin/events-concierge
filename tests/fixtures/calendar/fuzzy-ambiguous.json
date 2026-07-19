@@ -1,0 +1,16 @@
+{
+  "items": [
+    {
+      "id": "human-created-event-one",
+      "summary": "Fixture Event",
+      "start": {"dateTime": "2026-07-15T18:05:00Z"},
+      "location": "Fixture venue"
+    },
+    {
+      "id": "human-created-event-two",
+      "summary": "Fixture Event",
+      "start": {"dateTime": "2026-07-15T18:10:00Z"},
+      "location": "Fixture venue"
+    }
+  ]
+}

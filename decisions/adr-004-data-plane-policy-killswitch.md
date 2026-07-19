@@ -1,0 +1,47 @@
+# ADR-004: Data-plane policy enforcement: pre-mutate guard as the kill-switch mechanism
+
+**Status:** accepted — with owner-ratification riders (see Consequences) · **Date:** 2026-07-10
+
+## Context
+
+The system is fully autonomous within a permitted surface — safety lives in configured policy, not interactive confirmation gates — so the policy layer is the only thing standing between the orchestrator and an unwanted RSVP, and the requirements bind it hard. FR-5.9 requires every register/RSVP activity to be preceded by a policy-engine evaluation (`automation_allowed` for the chosen modality, per-user limits, kill-switch) and requires an in-flight (user, event) workflow to short-circuit to human-handoff when the action is no longer permitted. FR-7.2 requires a data-plane kill-switch, per-user and global, that freezes all registration/RSVP actions **without a deploy** on engage and resumes normal policy evaluation on disengage. The hard problem is the dispatch race: a Temporal signal is only observed at a workflow-task boundary, so it can never stop an activity already dispatched to a worker — any design that hangs the freeze on signal fan-out is quietly wrong, and at scale the fan-out target is ~240k open lifecycle workflows.
+
+- **AC-50** (the mechanism's acceptance test): activating the global kill-switch freezes all in-flight RSVP actions within the data plane with no deploy; deactivating resumes normal policy evaluation.
+- **AC-40**: engaging the kill-switch mid-workflow short-circuits a pending RSVP to human-handoff with no register call (FR-5.9).
+- **NFR-15** (fail-safe): a source ban, credential revocation, injection detection, unexpected paywall, or pool saturation fails safe to human-handoff, never to a ToS-violating action; the kill-switch freezes actions without a deploy.
+- **FR-10.3 / AC-72, AC-44**: quarantine-on-ban must flip a source's `automation_allowed` and drain in-flight work to handoff with zero subsequent requests and no autonomous-lane SLA breach — the policy store is the quarantine circuit breaker's actuator, so it must accept a one-row flip with fast propagation.
+- Constraint from the store side: per-user RSVPs-per-period counters already live in Postgres, so any policy substrate that does not read Postgres duplicates the counters or adds a sync hop.
+
+## Options considered
+
+1. **OPA-sidecar fleet plus batch-signal fan-out (belt-and-suspenders: policy_check activity, batch drain signal, and an in-activity guard).** Rejected because the batch signal to ~240k open workflows is multi-second-to-minutes fan-out and, decisively, a signal is only observed at a workflow-task boundary — it cannot stop a dispatched activity, so it cannot carry AC-50; even this option's own analysis concedes the in-activity guard is the actual correctness mechanism. With the pre-mutate guard mandatory anyway, the sidecar fleet and signal machinery add deployment surface without adding a guarantee, while Postgres-backed policy data with LISTEN/NOTIFY and an in-process deterministic PDP reaches the same ≤2s guard effectiveness with the per-user counters already resident in Postgres. An optional drain signal may be added later as operational UX, not as the enforcement mechanism.
+
+2. **Policy as a workflow-plane concern only — policy_gate activity before register, kill-switch delivered as signals to in-flight workflows.** Rejected on the same dispatch race: the gate-then-execute window means a kill-switch engaged after policy_gate passes but before the register activity's wire call produces a post-engage mutation, violating AC-50's "freezes all in-flight actions." The gate is retained as a cheap early layer, but it is not the mechanism.
+
+3. **Consumer-side, data-plane guard inside every side-effecting activity, backed by a Postgres policy store with LISTEN/NOTIFY push.** Adopted. Engaging the kill-switch freezes every in-flight workflow at its next mutation attempt without enumerating or signaling a single workflow; a one-row flip is the entire engage procedure. All three candidate architectures independently converged on this guard being the only construct that survives the dispatch race, which is the strongest available evidence that it is the mechanism rather than a hedge.
+
+4. **Hard-stop semantics on kill-switch (immediate short-circuit to handoff, no grace).** Rejected as the default because it reads FR-5.9's short-circuit against FR-7.2's disengage-resumes: a brief engagement (an operator investigating a spike) would irreversibly dump every in-flight registration to handoff even when disengaged two minutes later. Freeze-then-handoff (park, bounded grace, then short-circuit) reconciles both clauses; the grace window is a ratifiable parameter, not a structural choice.
+
+## Decision
+
+We will enforce policy in the data plane, at the mutation boundary, with a deterministic non-LLM guard as the kill-switch mechanism.
+
+- **Policy store (Postgres).** One store holds `automation_allowed` per source × modality, per-user RSVPs-per-period limit counters, `paid_allowed`, and the kill-switch flags (global and per-user). Kill-switch engage is one row flip — no deploy, no workflow enumeration (FR-7.2). The quarantine circuit breaker (FR-10.3) actuates the same store: a ban/403 flips the source's `automation_allowed` row, and in-flight children fail their next policy check into handoff (AC-44, AC-72).
+- **PDP (in-process, deterministic).** Policy is evaluated by an in-process deterministic policy-decision point with an OPA/Cedar-compatible rule shape, reading a local cache fed by Postgres LISTEN/NOTIFY push with **≤2s propagation**. No network hop, no sidecar, no LLM anywhere in the decision path.
+- **Three layers, one mechanism.** (1) Parent pre-skip during candidate selection — advisory, keeps doomed work out of the pipeline. (2) A `policy_gate` activity before register in the child saga (FR-5.9) — authoritative for routing, evaluated against a fresh policy snapshot. (3) **The AC-50 mechanism**: a deterministic pre-mutate guard as the *first instruction of every mutating activity*, re-reading the policy cache immediately before the wire call and raising a non-retryable `policy_denied`. This is the only layer that closes the dispatch race — a signal cannot stop a dispatched activity; the guard fires inside it.
+- **Fail closed.** Evaluation error or policy-store outage = DENY; the workflow fails safe to human-handoff (NFR-15). The cache never serves a default-allow.
+- **Freeze-then-handoff kill-switch semantics.** On `policy_denied(killswitch)` the workflow PARKS on a durable timer, re-checking every **60s** for a bounded grace window (default **30 min**). Disengage within grace resumes normal policy evaluation (AC-40/AC-50 disengage direction); grace expiry short-circuits to handoff (FR-5.9, NFR-15). Zero mutations occur post-engage regardless of parking — the guard fires pre-wire-call.
+- **Launch parameters:** policy propagation ≤2s; kill-switch re-check interval 60s; kill-switch grace window 30 min; `policy_denied` is non-retryable so the engine never retries into a frozen surface.
+
+Invariants: no mutating wire call executes without a guard evaluation ≤2s stale; kill-switch engage requires no deploy and no per-workflow action; policy evaluation is deterministic and LLM-free; unavailability of the policy plane can only reduce autonomy, never extend it.
+
+## Consequences
+
+Easier: kill-switch engage/disengage is a single row flip with system-wide effect inside ~2s plus one activity boundary, testable without touching Temporal; AC-50 and AC-40 verify against the guard alone; quarantine (FR-10.3), per-user limits, and paid-gating all ride the same store, PDP, and guard, so one enforcement path covers FR-5.9, FR-7.2, FR-5.10, and FR-10.3; policy changes are data, not workflow code, so they never enter Temporal patch-versioning territory.
+
+Harder / risks accepted: every mutating activity author must open with the guard — a forgotten guard is a silent enforcement hole, so guard presence must be enforced by activity-template convention and a CI lint, and AC-50/AC-56-style fault-injection must cover the dispatched-activity race explicitly; fail-closed means a Postgres or LISTEN/NOTIFY outage converts the autonomous lanes into a handoff surge (accepted deliberately — the fail-safe direction is throttle/handoff, never proceed); the ≤2s propagation figure depends on healthy LISTEN/NOTIFY delivery and needs cache-staleness monitoring; parked kill-switch workflows accumulate durable timers for up to the grace window, a bounded but real drain-latency cost.
+
+Follow-ups committed: fault-injection suite cases for (a) kill-switch engage with a register activity already dispatched (assert zero post-engage mutations), (b) policy-store outage (assert DENY-to-handoff), (c) disengage inside grace (assert resume); CI lint asserting the pre-mutate guard is the first instruction of every mutating activity; an optional drain signal may be layered on later as operational UX only, never as the enforcement mechanism.
+
+**Owner-ratification riders:**
+- OWNER RATIFY: kill-switch grace window **30 min** freeze-before-handoff (with the 60s re-check interval). A shorter window drains to handoff faster; a longer one preserves more in-flight work across brief engagements. This number reconciles FR-7.2's disengage-resumes with FR-5.9's short-circuit and is a tuning choice only the owner can fix.

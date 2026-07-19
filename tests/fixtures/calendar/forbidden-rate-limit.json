@@ -1,0 +1,13 @@
+{
+  "error": {
+    "code": 403,
+    "message": "Calendar usage limits exceeded.",
+    "errors": [
+      {
+        "domain": "usageLimits",
+        "reason": "userRateLimitExceeded"
+      }
+    ],
+    "status": "RESOURCE_EXHAUSTED"
+  }
+}
