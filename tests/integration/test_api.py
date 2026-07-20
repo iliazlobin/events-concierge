@@ -354,7 +354,12 @@ async def test_api_temporal_timeout_returns_queued_without_false_acknowledgement
 async def test_api_tenant_comes_only_from_auth_context_and_rejects_body_spoofing(db: None) -> None:
     """A caller cannot select another tenant through JSON, even in the offline auth seam (FR-1.1/1.3)."""
     app = create_app()
+    starter = RecordingStarter()
     async with app.router.lifespan_context(app):
+        # This case exercises HTTP identity and persistence, not a durable engine. Keep its accepted
+        # request inside the fixture seam so a service-backed run cannot leave an unserved workflow
+        # on its one-off test task queue after the disposable PostgreSQL database is dropped.
+        app.state.request_starter = starter
         transport = ASGITransport(app=app)
         async with AsyncClient(transport=transport, base_url="http://test") as client:
             owner = (
@@ -382,6 +387,7 @@ async def test_api_tenant_comes_only_from_auth_context_and_rejects_body_spoofing
     assert accepted.status_code == 200
     assert owner_request is not None
     assert attacker_request is None
+    assert starter.effects == {(UUID(owner), request_id)}
 
 
 async def test_api_feedback_is_authenticated_replay_safe_and_server_controlled(db: None) -> None:

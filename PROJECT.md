@@ -4197,6 +4197,60 @@ wave or the next phase.
     quality corpora, managed infrastructure/restore/observability/on-call evidence, and external supply-chain
     review. These improvements harden and verify the local implementation; they do not claim production launch.
 
+- **2026-07-20 — P45 COMPLETE: bounded durable-start recovery and disposable integration state (production
+  launch not claimed).** Live recovery traced a visible ten-second workflow-task timeout to a local saturation
+  burst, not a deterministic workflow defect. Service tests had populated the persistent `ec` database; the
+  request-start relay then drained 156 due parents without a busy-cycle pause, amplifying them into hundreds of
+  registration children. The combined Temporal worker inherited broad SDK defaults while sharing a small
+  SQLAlchemy pool, producing hundreds of threads, pool checkout timeouts, late task completions, and deadlock
+  warnings. Only the workflow worker and request-start relay were paused during diagnosis; PostgreSQL, Temporal
+  history, and accepted work were preserved.
+  - **Backpressure and isolation:** the worker now validates and advertises explicit eight-workflow/eight-activity
+    defaults, owns an equally bounded workflow executor, and closes that executor after SDK shutdown. The durable
+    start relay claims five parents at most once every two seconds even while busy, while preserving lease,
+    retry, and reject-duplicate behavior. Integration, quality, bounded-load, and the two-pass vertical-slice
+    targets now create, migrate, and finally drop one exact UUID-named `ec_test_*` database; direct service tests
+    pointed at `ec` fail before fixtures run. URL guards reject libpq query options that could override
+    database/host/user/service identity. A fresh-database quality failure was corrected with a fixture-local
+    discovery policy; production's `public_jsonld` policy remains fail closed. An API identity test now uses its
+    recording starter instead of leaving an unserved workflow on the persistent Temporal test queue.
+  - **Read-path and scanner correctness:** the nightly invariant scan now spaces Temporal describes at a validated
+    default ten calls per second and stops issuing liveness RPCs after the first uncertain response while still
+    counting the complete PostgreSQL inventory as uninspectable. A recovery canary also exposed three independent
+    recommendation defects: singular `free technology event` wording was not an explicit price constraint,
+    elapsed durable catalog rows could re-enter an unbounded time window, and rehydrated workflow requests lost
+    the semantic embedding used by the API. The parser now recognizes only direct/known-category free-event noun
+    phrases (with availability and `gluten-free` negative guards), every catalog retrieval requires
+    `start_at >= CURRENT_TIMESTAMP`, and the discovery activity reconstructs the omitted intent vector without
+    putting request text or embeddings in Temporal history.
+  - **Live recovery evidence:** after a state-preserving Temporal server restart, the bounded worker started with
+    8/8 slots at roughly 99 MiB and single-digit process/thread count rather than hundreds. Three confirmed inert
+    test-queue workflows were terminated by exact workflow/run ID. The first recovery canary's 69-event parent
+    completed in **0.992 seconds** without a workflow/activity timeout or failure. After the recommendation fixes,
+    a second real API canary ran concurrently with the paced historical scan: it persisted `budget_free=true`,
+    returned only verified-free future rows, and the durable workflow attempted the API's exact top three IDs.
+    Its 68-event parent completed in **0.696 seconds** with no failed/timed-out history event; the retained handoff
+    remained correctly open with a future seven-day TTL rather than expiring immediately. The complete paced scan
+    finished in **14m40s** with **8,628 inspected, 1 open, 8,627 closed/missing, and 0 uninspectable**; one
+    watch-unregister projection visible in its start-of-scan snapshot had converged to zero on the current snapshot.
+    The API stayed ready, worker memory stayed near 102 MiB, and one isolated CLI health deadline did not reproduce
+    across nineteen immediate/spaced retries (`SERVING`). Live logs contain none of the prior `QueuePool`,
+    `Task not found`, `TMPRL1101`, deadlock, or workflow-task-timeout signatures.
+  - **Verification:** `make install`, `make up`, `make migrate`, `make lint`, `make typecheck`, `make test-unit`,
+    `make test-integration`, `make quality`, `make quality-load`, `make slice`, and `make build` pass. Final counts
+    are **706 unit passed** and **222 integration passed**; the quality matrix is **1 passed**, bounded quality
+    load is **1 passed, 1 deselected**, Ruff is clean, and strict mypy is clean across **205 source files**. Every
+    disposable database was removed, the final integration run created no persistent Temporal workflow, and the
+    runtime request/start/lifecycle aggregates were unchanged across isolated tests and the isolated slice.
+  - **Explicit remaining boundary:** forty-one pre-isolation fixture starts remain deliberately preserved in the
+    local runtime database, all marked with the integration retry fixture and scheduled for 2099, so the relay
+    correctly ignores them. A read-only provenance audit classified the scanner's pre-canary **8,664**
+    nonterminal lifecycle rows and 477 malformed identities as historical fixture-shaped residue rather than a
+    new live transition defect; no row-level deletion is safe without a complete dependent-table purge. Removing
+    broader historical local-test data is therefore a separate explicit reset/retention choice. P43/P44 production
+    gates remain open; this local recovery does not establish managed capacity, observability, restore, external
+    provider, or production-launch evidence.
+
 ## Session contract reminder
 
 Buildout phases run **Fable 5 / Opus at ultracode effort**. Orchestrate substantive phases with the Workflow

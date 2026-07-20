@@ -9,8 +9,27 @@ from collections.abc import AsyncIterator, Awaitable, Callable
 import pytest
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import create_async_engine
+from tests.support.integration_database import validate_isolated_test_environment
 
 from events_concierge.infra.db import dispose_engine, init_engine
+
+
+@pytest.fixture(scope="session", autouse=True)
+def require_isolated_integration_database() -> None:
+    """Reject service-backed tests pointed at a developer/runtime database.
+
+    A plain unit-test run has no service URLs and keeps the historical skip behavior.  Once a
+    database URL is supplied, however, both connections must name the randomized database created
+    by ``run_isolated_integration``.  This makes an accidentally direct pytest invocation fail
+    before it can enqueue durable request-start work in the local application's database.
+    """
+    configured = os.environ.get("EC_DATABASE_URL") or os.environ.get("EC_MIGRATION_URL")
+    if configured is None:
+        return
+    try:
+        validate_isolated_test_environment(os.environ)
+    except ValueError as exc:
+        raise pytest.UsageError(str(exc)) from exc
 
 
 @pytest.fixture

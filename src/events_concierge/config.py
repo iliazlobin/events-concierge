@@ -31,6 +31,14 @@ class Settings(BaseSettings):
     # limit prevents a deployment typo from turning durable intake or repair loops into minute-plus
     # socket waits; retryable work remains owned by its PostgreSQL queue.
     temporal_rpc_timeout_seconds: float = Field(default=5.0, ge=0.1, le=60.0)
+    # A combined workflow/activity worker must not inherit the SDK's broad adaptive defaults: one
+    # recovered durable backlog can otherwise create hundreds of Python threads and database
+    # waiters before a small deployment can apply backpressure. Keep workflow execution bounded by
+    # CPU and activities below the per-process SQLAlchemy connection budget; deployments may tune
+    # these values only after measuring both resources together.
+    # Temporal requires at least two workflow-task slots while its workflow cache is enabled.
+    temporal_worker_max_concurrent_workflow_tasks: int = Field(default=8, ge=2, le=64)
+    temporal_worker_max_concurrent_activities: int = Field(default=8, ge=1, le=64)
     # Cap the complete inbound body-read interval so a slow/dripping client cannot retain an API
     # request task indefinitely while remaining under the decoded-byte limit.
     request_body_timeout_seconds: float = Field(default=10.0, ge=0.1, le=60.0)
@@ -112,9 +120,12 @@ class Settings(BaseSettings):
 
     # ADR-003 durable parent-workflow start relay. The API makes a best-effort immediate lease;
     # this separate worker replays any Temporal outage without dropping the accepted request.
-    request_start_batch_size: int = 50
-    request_start_poll_seconds: float = 2.0
-    request_start_lease_seconds: int = 60
+    # The poll interval is also the minimum interval between non-empty relay passes. Without that
+    # bound a recovered queue loops at CPU speed and amplifies each parent into registration
+    # children faster than the workflow/activity worker can admit them.
+    request_start_batch_size: int = Field(default=5, ge=1, le=50)
+    request_start_poll_seconds: float = Field(default=2.0, ge=0.1, le=60.0)
+    request_start_lease_seconds: int = Field(default=60, ge=1, le=3600)
 
     # ADR-008 projects guarded lifecycle entry/exit records into the central watch registry, then
     # fanouts already-recorded organizer changes to Temporal.  This worker has no live detector;
@@ -131,8 +142,13 @@ class Settings(BaseSettings):
 
     # ADR-007/ADR-008 require a nightly, read-only proof that lifecycle rows, Temporal executions,
     # watches, and handoff expiry records still agree. This scanner deliberately has no repair
-    # lease: the existing guarded workflow and orphan-repair paths remain the only writers.
+    # lease: the existing guarded workflow and orphan-repair paths remain the only writers. Smooth
+    # Temporal describes at a conservative per-process rate so an inventory scan cannot starve
+    # workflow traffic or health probes.
     lifecycle_invariant_batch_size: int = Field(default=500, ge=1, le=1000)
+    lifecycle_invariant_liveness_calls_per_second: float = Field(
+        default=10.0, ge=1.0, le=20.0
+    )
     lifecycle_invariant_poll_seconds: float = Field(default=86_400.0, gt=0)
 
     @property

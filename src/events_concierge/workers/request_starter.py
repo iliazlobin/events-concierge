@@ -8,8 +8,11 @@ a fresh start confirms the deterministic parent workflow exists.
 from __future__ import annotations
 
 import asyncio
+from collections.abc import Awaitable, Callable
+from time import monotonic
+from typing import Protocol
 
-from ..application.request_start import RequestStartRelay
+from ..application.request_start import RequestStartRelay, RequestStartRelayStats
 from ..composition import build_container
 from ..config import Settings, get_settings
 from ..infra.logging import configure_logging, get_logger
@@ -18,6 +21,12 @@ from ..workflows.start import TemporalRequestWorkflowStarter
 from ..workflows.temporal_client import connect_temporal
 
 _log = get_logger(__name__)
+
+
+class _RequestStartRelayPort(Protocol):
+    """Minimal relay seam used by the paced worker loop and its offline tests."""
+
+    async def relay_once(self, *, limit: int = 50) -> RequestStartRelayStats: ...
 
 
 async def run_request_starter() -> None:
@@ -36,15 +45,49 @@ async def run_request_starter() -> None:
         batch_size=settings.request_start_batch_size,
         poll_seconds=settings.request_start_poll_seconds,
     )
+    await _run_request_start_relay(
+        relay,
+        batch_size=settings.request_start_batch_size,
+        minimum_cycle_seconds=settings.request_start_poll_seconds,
+    )
+
+
+async def _run_request_start_relay(
+    relay: _RequestStartRelayPort,
+    *,
+    batch_size: int,
+    minimum_cycle_seconds: float,
+    clock: Callable[[], float] = monotonic,
+    sleep: Callable[[float], Awaitable[None]] = asyncio.sleep,
+) -> None:
+    """Drain bounded batches at a stable cadence, including while backlog remains.
+
+    Measuring from the beginning of one pass to the beginning of the next avoids adding needless
+    latency when Temporal itself is slow.  A zero-second sleep is still awaited after an overrun,
+    yielding to cancellation and the rest of the event loop before another database claim.
+    """
+    if batch_size < 1:
+        raise ValueError("batch_size must be positive")
+    if minimum_cycle_seconds <= 0:
+        raise ValueError("minimum_cycle_seconds must be positive")
+
     while True:
+        cycle_started = clock()
         try:
-            stats = await relay.relay_once(limit=settings.request_start_batch_size)
+            stats = await relay.relay_once(limit=batch_size)
         except Exception as exc:
             _log.warning("request start relay poll failed", error=str(exc))
-            await asyncio.sleep(settings.request_start_poll_seconds)
-            continue
-        if stats.claimed == 0:
-            await asyncio.sleep(settings.request_start_poll_seconds)
+        else:
+            if stats.claimed:
+                _log.info(
+                    "request start relay cycle",
+                    claimed=stats.claimed,
+                    started=stats.started,
+                    retried=stats.retried,
+                    lost_leases=stats.lost_leases,
+                )
+        elapsed = max(clock() - cycle_started, 0.0)
+        await sleep(max(minimum_cycle_seconds - elapsed, 0.0))
 
 
 async def _connect_starter(

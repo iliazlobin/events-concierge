@@ -35,11 +35,13 @@ from events_concierge.adapters.luma.scripted_browser import (
 )
 from events_concierge.adapters.luma.source import LumaSource
 from events_concierge.adapters.mock.calendar import MockCalendar
+from events_concierge.adapters.mock.discovery_policy import MockDiscoveryPolicyReader
 from events_concierge.adapters.mock.notification_secrets import (
     DevelopmentNotificationSecretProtector,
 )
 from events_concierge.adapters.mock.notifier import MockNotifier
 from events_concierge.adapters.mock.sources import ConfirmingSource
+from events_concierge.adapters.policy.discovery import StoreBackedDiscoveryPolicyGate
 from events_concierge.application.outbox import OutboxRelay
 from events_concierge.composition import Container, build_container
 from events_concierge.config import get_settings
@@ -54,6 +56,7 @@ from events_concierge.domain.enums import (
 )
 from events_concierge.domain.events import CandidateEvent, CanonicalEvent
 from events_concierge.domain.ids import registration_workflow_id, request_workflow_id
+from events_concierge.domain.policy import SourcePolicy
 from events_concierge.domain.request import EventRequest, RequestConstraints, TimeWindow
 from events_concierge.infra.db import tenant_session_scope
 from events_concierge.ports.browser import BrowserRsvpObservation, BrowserRsvpStatus
@@ -517,6 +520,32 @@ def _membership_resolver(scenario: QualityScenario) -> Callable[[Source], GroupC
     return resolve
 
 
+def _fixture_discovery_policy_gate(
+    source: SourcePort | None,
+) -> StoreBackedDiscoveryPolicyGate:
+    """Authorize only this scenario's offline discovery adapter.
+
+    Production's durable policy deliberately keeps generic public/browser discovery disabled until
+    an operator enables it. The quality harness supplies its own fixture-only adapter, so it must
+    also supply the matching explicit fixture policy instead of relying on mutable database state.
+    Unknown adapters remain denied by the real fail-closed gate used here.
+    """
+    policies: dict[Source, SourcePolicy] = {}
+    if source is not None:
+        capability = source.capability
+        if capability.supports_api:
+            modality = Modality.API
+        elif capability.supports_browser_discovery:
+            modality = Modality.BROWSER
+        else:
+            raise ValueError("g1 fixture source must declare a discovery modality")
+        policies[capability.source] = SourcePolicy(
+            source=capability.source,
+            automation_allowed={modality: True},
+        )
+    return StoreBackedDiscoveryPolicyGate(MockDiscoveryPolicyReader(policies))
+
+
 async def _tenant_outbox_records(tenant_id: UUID) -> list[OutboxRecord]:
     """Read just this scenario's committed rows; the global relay queue remains untouched."""
     async with tenant_session_scope(tenant_id) as session:
@@ -714,6 +743,7 @@ async def _run_scenario(scenario: QualityScenario, scenario_index: int) -> Scena
         register_sources=ports.register_sources,
         membership_resolver=_membership_resolver(scenario),
         calendar=calendar,
+        discovery_policy_gate=_fixture_discovery_policy_gate(ports.discovery_source),
     )
     set_container(container)
 

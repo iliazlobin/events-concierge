@@ -55,32 +55,41 @@ typecheck: ## mypy strict
 test-unit: ## Fast unit tests (no external services)
 	$(UV) run pytest -m "not integration"
 
-test-integration: up migrate ## Integration tests against compose services
+test-integration: up ## Integration tests in a disposable database against compose services
 	EC_DATABASE_URL=postgresql+psycopg://ec_app:ec_app@localhost:5433/ec \
 	EC_MIGRATION_URL=postgresql+psycopg://ec:ec@localhost:5433/ec \
 	EC_TEMPORAL_TARGET=localhost:7234 \
 	EC_REDIS_URL=redis://localhost:6380/0 \
-	$(UV) run pytest -m "integration and not quality_load"
+	$(UV) run python -m tests.support.run_isolated_integration -- \
+		-m "integration and not quality_load"
 
-quality: up migrate ## Run the hermetic synthetic G1-style workflow quality matrix
+quality: up ## Run the hermetic synthetic G1-style workflow quality matrix in a disposable database
 	EC_DATABASE_URL=postgresql+psycopg://ec_app:ec_app@localhost:5433/ec \
 	EC_MIGRATION_URL=postgresql+psycopg://ec:ec@localhost:5433/ec \
+	EC_TEMPORAL_TARGET=localhost:7234 \
 	EC_REDIS_URL=redis://localhost:6380/0 \
-	$(UV) run pytest tests/integration/test_g1_quality_harness.py::test_g1_quality_harness_exercises_the_synthetic_workflow_matrix -m integration
+	$(UV) run python -m tests.support.run_isolated_integration -- \
+		tests/integration/test_g1_quality_harness.py::test_g1_quality_harness_exercises_the_synthetic_workflow_matrix \
+		-m integration
 
-quality-load: up migrate ## Run bounded offline P5b repetition coverage; not a benchmark
+quality-load: up ## Run bounded offline P5b repetition coverage in a disposable database
 	EC_DATABASE_URL=postgresql+psycopg://ec_app:ec_app@localhost:5433/ec \
 	EC_MIGRATION_URL=postgresql+psycopg://ec:ec@localhost:5433/ec \
+	EC_TEMPORAL_TARGET=localhost:7234 \
 	EC_REDIS_URL=redis://localhost:6380/0 \
 	EC_QUALITY_LOAD_REPEATS=5 \
-	$(UV) run pytest tests/integration/test_g1_quality_harness.py -m "integration and quality_load"
+	$(UV) run python -m tests.support.run_isolated_integration -- \
+		tests/integration/test_g1_quality_harness.py -m "integration and quality_load"
 
 test: test-unit ## Alias for the fast unit suite
 
-slice: up migrate ## Run the end-to-end vertical slice against mocks + compose
+slice: up ## Run the end-to-end vertical slice in a disposable database
 	EC_DATABASE_URL=postgresql+psycopg://ec_app:ec_app@localhost:5433/ec \
+	EC_MIGRATION_URL=postgresql+psycopg://ec:ec@localhost:5433/ec \
 	EC_REDIS_URL=redis://localhost:6380/0 \
-	$(UV) run python -m events_concierge.slice_demo
+	$(UV) run python -m tests.support.run_isolated_integration -- \
+		tests/integration/test_slice.py::test_documented_slice_demo_replays_against_a_persistent_catalog \
+		-m integration
 
 notifier: up migrate ## Run the durable outbox notifier worker against the configured NotificationPort
 	EC_DATABASE_URL=postgresql+psycopg://ec_app:ec_app@localhost:5433/ec \

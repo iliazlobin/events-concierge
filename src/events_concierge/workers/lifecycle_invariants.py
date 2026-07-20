@@ -48,6 +48,7 @@ async def run_lifecycle_invariants() -> None:
     _log.info(
         "lifecycle invariant scanner started",
         batch_size=settings.lifecycle_invariant_batch_size,
+        liveness_calls_per_second=settings.lifecycle_invariant_liveness_calls_per_second,
         poll_seconds=settings.lifecycle_invariant_poll_seconds,
     )
     while True:
@@ -62,6 +63,7 @@ async def run_lifecycle_invariants() -> None:
             report = await LifecycleInvariantScanner(
                 container.lifecycle_invariant_repo,
                 liveness,
+                liveness_calls_per_second=settings.lifecycle_invariant_liveness_calls_per_second,
             ).scan_once(batch_size=settings.lifecycle_invariant_batch_size)
         except Exception as error:
             # Error text can contain provider/transport details. Operational logging remains

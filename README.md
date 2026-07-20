@@ -80,7 +80,16 @@ make app-logs
 
 The full stack includes the API, Temporal workflow/activity worker, request-start relay, notifier
 outbox relay, change-delivery worker, handoff-expiry repair worker, and lifecycle-invariant
-scanner. They share the same claim-check volume and Redis pacing state.
+scanner. They share the same claim-check volume and Redis pacing state. The combined Temporal
+worker deliberately runs only eight workflow tasks and eight activities concurrently by default,
+the request-start relay drains at most five recovered starts every two seconds, and the nightly
+invariant scanner spaces Temporal liveness reads at ten calls per second per process. Override
+`EC_TEMPORAL_WORKER_MAX_CONCURRENT_WORKFLOW_TASKS`,
+`EC_TEMPORAL_WORKER_MAX_CONCURRENT_ACTIVITIES`, `EC_REQUEST_START_BATCH_SIZE`, and
+`EC_REQUEST_START_POLL_SECONDS` only after measuring CPU, database-pool, and child-workflow
+amplification together. Keep `EC_LIFECYCLE_INVARIANT_LIVENESS_CALLS_PER_SECOND` within its
+validated 1-20 range so a large read-only inventory does not crowd out Temporal health or workflow
+traffic.
 
 Ordinary shutdown preserves PostgreSQL, Temporal, and claim-check volumes:
 
@@ -108,7 +117,16 @@ make test-unit
 make test-integration
 make quality
 make quality-load
+make slice
 ```
+
+Each service-backed test target creates a randomized `ec_test_*` PostgreSQL database, migrates it,
+and drops only that allowlisted database on exit. The end-to-end `make slice` smoke uses the same
+runner, so its demo lifecycle rows are disposable too. Tests refuse the persistent `ec` runtime
+database; this prevents a later request-start worker from executing durable test fixtures. The
+dependency containers remain shared, while Temporal integration cases use isolated test
+environments/queues. Connection-routing query options are rejected so they cannot override the
+visibly isolated database path.
 
 GitHub Actions runs locked lint, strict type-checking, unit tests, the service-backed integration
 suite, bounded quality repetition coverage, Compose validation, and a non-root container build
@@ -150,6 +168,11 @@ A real deployment must also:
 - tune `EC_TEMPORAL_RPC_TIMEOUT_SECONDS` only within its validated 0.1–60 second range; the
   five-second default bounds eager connects, workflow starts, signals, and liveness reads while
   durable queues retain retries;
+- keep Temporal workflow/activity concurrency within the measured per-replica CPU and database
+  connection budget; the conservative defaults are eight of each, not the SDK's broad adaptive
+  worker defaults;
+- pace request-start recovery with a bounded batch and minimum cycle interval; a recovered parent
+  can fan out into several registration children, so start throughput is not child throughput;
 - keep `EC_REQUEST_BODY_TIMEOUT_SECONDS` within its validated 0.1–60 second range; the ten-second
   default bounds the complete decoded body read in addition to the 64 KiB request-size ceiling;
 - terminate TLS and enforce signed edge authentication before the API;

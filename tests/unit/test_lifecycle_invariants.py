@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from dataclasses import asdict
 from typing import cast
 
@@ -18,6 +19,10 @@ from events_concierge.ports.invariants import LifecycleInvariantRepository
 from events_concierge.ports.workflows import WorkflowLivenessInspector
 
 
+async def _no_sleep(_seconds: float) -> None:
+    """Keep count-only unit fixtures fast when cadence itself is not under test."""
+
+
 def _scanner(
     repository: MockLifecycleInvariantRepository,
     liveness: MockWorkflowLivenessInspector,
@@ -25,6 +30,7 @@ def _scanner(
     return LifecycleInvariantScanner(
         cast(LifecycleInvariantRepository, repository),
         cast(WorkflowLivenessInspector, liveness),
+        sleep=_no_sleep,
     )
 
 
@@ -108,6 +114,93 @@ async def test_scanner_rejects_a_nonpositive_batch_size() -> None:
         await _scanner(
             MockLifecycleInvariantRepository(), MockWorkflowLivenessInspector()
         ).scan_once(batch_size=1001)
+
+
+async def test_scanner_spaces_liveness_calls_at_the_configured_start_cadence() -> None:
+    """A large inventory cannot turn into a burst of back-to-back Temporal describes."""
+    workflow_ids = ("workflow-a", "workflow-b", "workflow-c")
+    repository = MockLifecycleInvariantRepository(workflow_ids=workflow_ids)
+    liveness = MockWorkflowLivenessInspector(dict.fromkeys(workflow_ids, True))
+    now = 100.0
+    sleeps: list[float] = []
+
+    def monotonic() -> float:
+        return now
+
+    async def sleep(seconds: float) -> None:
+        nonlocal now
+        sleeps.append(seconds)
+        now += seconds
+
+    report = await LifecycleInvariantScanner(
+        cast(LifecycleInvariantRepository, repository),
+        cast(WorkflowLivenessInspector, liveness),
+        liveness_calls_per_second=10.0,
+        monotonic=monotonic,
+        sleep=sleep,
+    ).scan_once(batch_size=2)
+
+    assert sleeps == pytest.approx([0.1, 0.1])
+    assert liveness.calls == list(workflow_ids)
+    assert report.open_nonterminal_workflows == 3
+
+
+async def test_scanner_stops_liveness_calls_after_first_error_but_counts_full_inventory() -> None:
+    """One transport failure fails closed without abandoning the full nightly DB inventory."""
+    workflow_ids = tuple(f"workflow-{index}" for index in range(5))
+    repository = MockLifecycleInvariantRepository(workflow_ids=workflow_ids)
+    liveness = MockWorkflowLivenessInspector(
+        {
+            workflow_ids[0]: True,
+            workflow_ids[1]: RuntimeError("Temporal unavailable"),
+        }
+    )
+
+    report = await _scanner(repository, liveness).scan_once(batch_size=2)
+
+    assert repository.calls == [
+        (None, 2),
+        (workflow_ids[1], 2),
+        (workflow_ids[3], 2),
+    ]
+    assert liveness.calls == list(workflow_ids[:2])
+    assert report.scanned_nonterminal_workflows == 5
+    assert report.open_nonterminal_workflows == 1
+    assert report.closed_nonterminal_workflows == 0
+    assert report.uninspectable_nonterminal_workflows == 4
+
+
+async def test_scanner_cancellation_interrupts_cadence_sleep_without_another_rpc() -> None:
+    """Worker shutdown remains prompt while a scan is waiting for its next liveness slot."""
+    workflow_ids = ("workflow-a", "workflow-b")
+    repository = MockLifecycleInvariantRepository(workflow_ids=workflow_ids)
+    liveness = MockWorkflowLivenessInspector(dict.fromkeys(workflow_ids, True))
+
+    async def cancelling_sleep(_seconds: float) -> None:
+        raise asyncio.CancelledError
+
+    scanner = LifecycleInvariantScanner(
+        cast(LifecycleInvariantRepository, repository),
+        cast(WorkflowLivenessInspector, liveness),
+        monotonic=lambda: 0.0,
+        sleep=cancelling_sleep,
+    )
+
+    with pytest.raises(asyncio.CancelledError):
+        await scanner.scan_once(batch_size=2)
+
+    assert liveness.calls == [workflow_ids[0]]
+
+
+def test_scanner_rejects_an_unsafe_liveness_cadence() -> None:
+    """Direct callers cannot bypass the same conservative per-process safety envelope."""
+    repository = cast(LifecycleInvariantRepository, MockLifecycleInvariantRepository())
+    liveness = cast(WorkflowLivenessInspector, MockWorkflowLivenessInspector())
+
+    with pytest.raises(ValueError, match="between 1 and 20"):
+        LifecycleInvariantScanner(repository, liveness, liveness_calls_per_second=0.9)
+    with pytest.raises(ValueError, match="between 1 and 20"):
+        LifecycleInvariantScanner(repository, liveness, liveness_calls_per_second=20.1)
 
 
 def _clean_report() -> LifecycleInvariantReport:

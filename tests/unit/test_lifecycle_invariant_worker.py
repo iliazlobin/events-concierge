@@ -23,6 +23,7 @@ def test_lifecycle_invariant_scanner_uses_a_bounded_nightly_cadence() -> None:
     settings = Settings()
 
     assert settings.lifecycle_invariant_batch_size == 500
+    assert settings.lifecycle_invariant_liveness_calls_per_second == 10.0
     assert settings.lifecycle_invariant_poll_seconds == 86_400.0
     with pytest.raises(ValueError):
         Settings(lifecycle_invariant_batch_size=0)
@@ -30,6 +31,10 @@ def test_lifecycle_invariant_scanner_uses_a_bounded_nightly_cadence() -> None:
         Settings(lifecycle_invariant_batch_size=1_001)
     with pytest.raises(ValueError):
         Settings(lifecycle_invariant_poll_seconds=0.0)
+    with pytest.raises(ValueError):
+        Settings(lifecycle_invariant_liveness_calls_per_second=0.9)
+    with pytest.raises(ValueError):
+        Settings(lifecycle_invariant_liveness_calls_per_second=20.1)
 
 
 async def test_temporal_outage_is_explicit_uncertainty_not_a_closed_workflow() -> None:

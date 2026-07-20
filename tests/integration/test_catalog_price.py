@@ -143,6 +143,43 @@ async def test_catalog_persists_all_price_states_and_retrieves_verified_free_onl
     }
 
 
+async def test_catalog_retrieval_does_not_resurface_an_elapsed_row(db: None) -> None:
+    """Catalog retention outlives an occurrence, but recommendation eligibility does not."""
+    tag = uuid4().hex
+    now = datetime.now(UTC).replace(microsecond=0)
+    past = CandidateEvent(
+        source=Source.PUBLIC_JSONLD,
+        source_event_id=f"elapsed-{tag}",
+        title=f"elapsed-catalog-row-{tag}",
+        start_at=now - timedelta(days=1),
+        registration_url=f"https://example.test/{tag}/elapsed",
+        is_free=True,
+    )
+    future = CandidateEvent(
+        source=Source.PUBLIC_JSONLD,
+        source_event_id=f"future-{tag}",
+        title=f"future-catalog-row-{tag}",
+        start_at=now + timedelta(days=1),
+        registration_url=f"https://example.test/{tag}/future",
+        is_free=True,
+    )
+    container = build_container(get_settings())
+    persisted = await container.catalog.upsert_candidates([past, future])
+    past_id, future_id = (event.canonical_event_id for event in persisted)
+
+    retrieved = await container.catalog.retrieve(
+        RequestConstraints(
+            time_window=TimeWindow(start=now - timedelta(days=2), end=now + timedelta(days=2))
+        ),
+        intent_embedding=None,
+        limit=10_000,
+    )
+    retrieved_ids = {event.canonical_event_id for event in retrieved}
+
+    assert past_id not in retrieved_ids
+    assert future_id in retrieved_ids
+
+
 async def test_catalog_keeps_conflicting_source_prices_unknown_until_all_links_are_free(
     db: None,
 ) -> None:

@@ -468,7 +468,10 @@ class PostgresCatalogRepository:
 
     @staticmethod
     def _constraint_sql(c: RequestConstraints) -> tuple[str, dict[str, object]]:
-        clauses = ["true"]
+        # Source adapters reject elapsed rows when they ingest them, but the durable catalog keeps
+        # those rows after wall time advances. Reapply the invariant at read time so an omitted
+        # request window can never surface—or attempt registration for—an elapsed event.
+        clauses = ["start_at >= CURRENT_TIMESTAMP"]
         params: dict[str, object] = {}
         if c.budget_free:
             clauses.append("price_status = :price_status")

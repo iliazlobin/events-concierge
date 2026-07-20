@@ -8,6 +8,7 @@ code, unlike workflow code, may call application services and adapters (FR-8.2/8
 
 from __future__ import annotations
 
+from dataclasses import replace
 from datetime import datetime
 from uuid import UUID
 
@@ -95,6 +96,15 @@ async def discover_and_rank(inp: RequestInput) -> DiscoverResult:
         # A malformed/orphaned opaque start cannot cause a cross-tenant read.  Let the parent
         # take its ordinary no-candidate terminal path, which is itself guarded and idempotent.
         return DiscoverResult()
+    if request.intent_embedding is None:
+        # The durable request row deliberately stores raw text and parsed constraints rather than
+        # a model-sized vector. Recreate the retrieval vector inside this PII-bearing activity so
+        # the workflow searches the same semantic pool as the intake API without putting either
+        # text or embedding into Temporal history (ADR-011, FR-4.1).
+        vectors = await c.embedding.embed([request.raw_text])
+        if len(vectors) != 1:
+            raise ValueError("embedding provider returned a vector count different from its input")
+        request = replace(request, intent_embedding=vectors[0])
     feed = await c.feed.build_feed(request, limit=inp.attempt_budget * 3)
     candidate_ids = [
         str(item.canonical_event.canonical_event_id)

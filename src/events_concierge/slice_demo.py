@@ -1,5 +1,6 @@
 """End-to-end vertical slice against real Postgres + mocked cloud: intake -> discover -> rank (feed)
--> select -> register/handoff -> calendar -> lifecycle. Run with `make slice` (needs `make up migrate`).
+-> select -> register/handoff -> calendar -> lifecycle. ``make slice`` provisions and later drops a
+fresh migrated database, so the smoke cannot leave demo lifecycle state in the local runtime database.
 
 Demonstrates both honest-split lanes: a Meetup member-group event registers autonomously and lands on
 the calendar; a free-crawl event routes to a pre-filled handoff task. Doubles as a smoke test."""

@@ -97,6 +97,14 @@ processes whose lease/idempotency contract permits concurrency.
 | Handoff-expiry repair | `python -m events_concierge.workers.handoff_expiry` | Repairs orphaned handoff TTL transitions after the Temporal grace period |
 | Lifecycle invariant scanner | `python -m events_concierge.workers.lifecycle_invariants` | Read-only lifecycle/watch/handoff/Temporal divergence scan |
 
+The lifecycle scanner spaces Temporal describe RPCs at the per-process
+`EC_LIFECYCLE_INVARIANT_LIVENESS_CALLS_PER_SECOND` cadence (10 calls/second by default, validated
+from 1 through 20). It still keyset-pages the full nightly PostgreSQL inventory and emits only
+aggregate counts. After the first uncertain Temporal response, it stops issuing liveness RPCs for
+that scan and counts every remaining nonterminal workflow as uninspectable; it never guesses that
+an execution is closed or invokes a repair path. Do not scale scanner replicas or raise the cadence
+without budgeting their aggregate load alongside workflow traffic and health probes.
+
 The catalog cadence dispatcher is a bounded, one-shot scheduled job:
 `python -m events_concierge.workers.catalog_refresh_dispatcher`. Source-specific refresh is also
 one-shot: `python -m events_concierge.workers.catalog_refresh SOURCE_KEY`. The scheduler, approved
@@ -146,6 +154,25 @@ Every eager connection, workflow start, signal, and execution-description read h
 validated `EC_TEMPORAL_RPC_TIMEOUT_SECONDS` bound (five seconds by default, 0.1–60 seconds). A start
 timeout is not an acknowledgement: the request remains in `request_start_outbox` for deterministic
 reject-duplicate replay after the engine or network recovers.
+
+The combined Temporal worker has explicit, validated workflow-task and activity slot limits
+(`EC_TEMPORAL_WORKER_MAX_CONCURRENT_WORKFLOW_TASKS` and
+`EC_TEMPORAL_WORKER_MAX_CONCURRENT_ACTIVITIES`, both eight by default). Workflow-task slots validate
+to 2–64 because Temporal caching requires at least two; activity slots validate to 1–64. Keep
+activity slots below the worker process's measured database connection budget and size the workflow
+executor to the workflow-task limit. The request-start relay waits at least
+`EC_REQUEST_START_POLL_SECONDS` between all passes, including non-empty ones, and claims at most
+`EC_REQUEST_START_BATCH_SIZE` parents per pass. That cadence is per relay process, so budget the
+aggregate rate across replicas. Account for each parent's registration-child fanout before raising
+either value. Do not mask worker saturation by increasing Temporal's workflow-task timeout:
+schedule-to-start latency, database checkout timeouts, late `Task not found` completions, or SDK
+deadlock warnings require backpressure or capacity correction.
+
+Service-backed tests must never target a runtime database. The Make targets create and destroy only
+randomized `ec_test_*` databases, and the integration fixture rejects any other database name. This
+prevents durable test start-outbox rows from being replayed when a runtime request-start worker is
+later enabled. Database/user/host/service query overrides are rejected before database creation so
+the driver cannot silently route around the checked URL path.
 
 API request bodies are capped at 64 KiB and must finish within the validated
 `EC_REQUEST_BODY_TIMEOUT_SECONDS` interval (ten seconds by default, 0.1–60 seconds). Safe
