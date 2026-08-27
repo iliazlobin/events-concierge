@@ -76,8 +76,17 @@ function runComponent(source: AdminSourceHealth): Component {
 
 function freshnessComponent(source: AdminSourceHealth): Component {
   const state = source.freshness_state;
+  // `not_scheduled` is not a failure. A paused source is not late; it is off, and grading it
+  // against a cadence it is not on is what turned this table into a wall of red.
+  if (state === "not_scheduled") {
+    return { key: "fresh", label: "fresh", value: "not scheduled", tone: "unk", degraded: false };
+  }
   const tone: Tone =
-    state === "down" || state === "never" ? "bad" : state === "late" ? "mid" : state === "warn" ? "mid" : "ok";
+    state === "down" || state === "never"
+      ? "bad"
+      : state === "late" || state === "warn"
+        ? "mid"
+        : "ok";
   return {
     key: "fresh",
     label: "fresh",
@@ -148,6 +157,7 @@ function age(iso: string | null): string {
  * timestamp, but only one is an outage.
  */
 function lateness(source: AdminSourceHealth): string {
+  if (source.freshness_state === "not_scheduled") return "—";
   const hours = source.hours_since_success;
   if (hours === null) return "never";
   const intervalHours = source.refresh_interval_minutes / 60;
@@ -228,6 +238,28 @@ export function FleetOverview({
         return (right.source.hours_since_success ?? 0) - (left.source.hours_since_success ?? 0);
       });
   }, [sources]);
+
+  /**
+   * Stopped, but still serving. The write path never deletes, so a paused or retired source keeps
+   * serving whatever it last published. That is a real condition and a different one from "a
+   * running source is broken" -- it belongs to catalog coverage, and it never takes the colour
+   * that means act now.
+   */
+  const stoppedButServing = useMemo(
+    () =>
+      sources
+        .filter(
+          (source) =>
+            source.freshness_state === "not_scheduled" && source.upcoming_events > 0,
+        )
+        .sort((left, right) => right.upcoming_events - left.upcoming_events),
+    [sources],
+  );
+
+  const strandedEvents = stoppedButServing.reduce(
+    (total, source) => total + source.upcoming_events,
+    0,
+  );
 
   const eventsAtRisk = attention.reduce(
     (total, row) => total + row.source.upcoming_events,
@@ -354,8 +386,9 @@ export function FleetOverview({
                       <td className={`${styles.num} ${styles.mono}`}>
                         <span
                           className={
-                            (source.hours_since_success ?? 0) * 60
-                            > 3 * source.refresh_interval_minutes
+                            source.freshness_state !== "not_scheduled"
+                            && (source.hours_since_success ?? 0) * 60
+                              > 3 * source.refresh_interval_minutes
                               ? styles.toneBad
                               : undefined
                           }
@@ -369,7 +402,10 @@ export function FleetOverview({
                       <td className={`${styles.num} ${styles.mono}`}>
                         <span
                           className={
-                            (source.hours_since_success ?? 0) > 168 ? styles.toneBad : undefined
+                            source.freshness_state !== "not_scheduled"
+                            && (source.hours_since_success ?? 0) > 168
+                              ? styles.toneBad
+                              : undefined
                           }
                         >
                           {age(source.last_success_at)}
@@ -428,7 +464,62 @@ export function FleetOverview({
         </div>
       </section>
 
-      {/* ---------- 3. Fleet activity ---------- */}
+      {/* ---------- 3. Stopped, still serving ---------- */}
+      {stoppedButServing.length ? (
+        <section className={styles.section}>
+          <div className={styles.sectionHead}>
+            <h2 className={styles.sectionTitle}>Stopped, still serving</h2>
+            <span className={styles.sectionScope}>
+              {stoppedButServing.length} sources · {integer(strandedEvents)} events with no
+              source refreshing them
+            </span>
+          </div>
+          <p className={styles.lead}>
+            These sources are paused or retired, so they are not late — they are off. Nothing
+            deletes what they already published, so their events keep being served. Each one is a
+            decision: bring the source back, or drop what it left behind.
+          </p>
+          <div className={styles.scroll}>
+            <table className={styles.table}>
+              <thead>
+                <tr>
+                  <th>Source</th>
+                  <th>Stopped</th>
+                  <th className={styles.num}>Last success</th>
+                  <th className={styles.num}>Still serving</th>
+                </tr>
+              </thead>
+              <tbody>
+                {stoppedButServing.map((source) => (
+                  <tr key={source.source_key}>
+                    <td>
+                      <button
+                        type="button"
+                        className={styles.rowButton}
+                        onClick={() => onOpenSource(source.source_key)}
+                      >
+                        {source.display_name}
+                      </button>
+                      <span className={styles.rowKey}>{source.source_key}</span>
+                    </td>
+                    <td className={styles.mono}>
+                      {source.retired_at ? "retired" : "paused"}
+                    </td>
+                    <td className={`${styles.num} ${styles.mono}`}>
+                      {age(source.last_success_at)}
+                    </td>
+                    <td className={`${styles.num} ${styles.mono}`}>
+                      {integer(source.upcoming_events)}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </section>
+      ) : null}
+
+      {/* ---------- 4. Fleet activity ---------- */}
       <section className={styles.section}>
         <div className={styles.sectionHead}>
           <h2 className={styles.sectionTitle}>Fleet activity</h2>

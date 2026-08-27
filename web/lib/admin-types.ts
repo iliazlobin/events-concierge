@@ -240,7 +240,7 @@ export interface AdminSourceHealth {
   page_limit: number;
   health: AdminSourceHealthToken;
   run_state: "never_run" | "failed" | "running" | "deferred" | "ok";
-  freshness_state: "never" | "down" | "late" | "warn" | "ok";
+  freshness_state: "never" | "down" | "late" | "warn" | "ok" | "not_scheduled";
   retry_state: "severe" | "elevated" | "ok";
   yield_state: "zero_yield" | "unknown" | "ok";
   last_attempt_at: string | null;

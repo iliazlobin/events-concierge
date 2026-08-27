@@ -250,7 +250,9 @@ class IngestionSourceHealthOut(_FromAttributesModel):
         "down", "never_succeeded", "late", "warn", "paused", "retired", "healthy"
     ]
     run_state: Literal["never_run", "failed", "running", "deferred", "ok"]
-    freshness_state: Literal["never", "down", "late", "warn", "ok"]
+    freshness_state: Literal[
+        "never", "down", "late", "warn", "ok", "not_scheduled"
+    ]
     retry_state: Literal["severe", "elevated", "ok"]
     yield_state: Literal["zero_yield", "unknown", "ok"]
     last_attempt_at: datetime | None
