@@ -17,47 +17,115 @@ import type {
 import styles from "./fleet-overview.module.css";
 
 /**
- * The Overview surface.
+ * The Overview surface: persistent sections, tables, no charts.
  *
- * Design rule, applied without exception: a number the operator cannot act on is noise. There are
- * four figures on this screen and each one is a control that opens the rows behind it. Everything
- * that used to be a static readout either became a drill-down or was removed.
+ * Charts were considered and rejected for this data shape. Typically 4-16 sources are unhealthy
+ * at once; below roughly fifteen marks a chart spends an axis, a scale and a legend to encode
+ * what text carries with more precision, and it loses the row affordance the operator actually
+ * needs, which is "open this source".
+ *
+ * Attention is derived from the four health COMPONENTS, never from the rolled-up `health` token.
+ * That distinction is the whole point: `health` collapses run/freshness/retry/yield into one word
+ * and reports lifecycle states (`paused`, `retired`) in the same field, so filtering on it hides
+ * exactly the sources that matter. Measured while writing this, filtering on the token surfaced
+ * four sources with no failed run, no freshness problem and no severe retry -- executions of
+ * 2 to 4, which is trivia -- while hiding twelve sources carrying every real defect in the fleet
+ * and serving 1,538 upcoming events, because their token happened to read `paused` or `retired`.
+ *
+ * A disabled source still serves whatever it last published: the write path never deletes. So
+ * lifecycle is a label on the row, never a reason to drop it.
  */
 
-type DrillKey = "attention" | "freshness" | "throughput" | "retries";
-
-type Tone = "ok" | "mid" | "bad" | "unk" | "neutral";
+type Tone = "ok" | "mid" | "bad" | "unk";
 
 const TONE_CLASS: Record<Tone, string> = {
   ok: styles.toneOk,
   mid: styles.toneMid,
   bad: styles.toneBad,
   unk: styles.toneUnk,
-  neutral: styles.toneNeutral,
 };
 
-const CHIP_CLASS: Record<string, string> = {
-  down: styles.chipBad,
-  never_succeeded: styles.chipBad,
-  late: styles.chipMid,
-  warn: styles.chipMid,
-  paused: styles.chipUnk,
-  retired: styles.chipUnk,
-  healthy: styles.chipOk,
+const CHIP_CLASS: Record<Tone, string> = {
+  ok: styles.chipOk,
+  mid: styles.chipMid,
+  bad: styles.chipBad,
+  unk: styles.chipUnk,
 };
 
-const CHIP_GLYPH: Record<string, string> = {
-  down: "✕",
-  never_succeeded: "✕",
-  late: "▲",
-  warn: "▲",
-  paused: "‒",
-  retired: "‒",
-  healthy: "✓",
-};
+/** One component's severity, and the words the operator sees. */
+interface Component {
+  key: "run" | "fresh" | "retry" | "yield";
+  label: string;
+  value: string;
+  tone: Tone;
+  /** True when this component is why the row is listed. */
+  degraded: boolean;
+}
 
-/** Health tokens that mean "someone has to do something". */
-const ACTIONABLE = new Set(["down", "never_succeeded", "late", "warn"]);
+function runComponent(source: AdminSourceHealth): Component {
+  const state = source.run_state;
+  const bad = state === "failed";
+  return {
+    key: "run",
+    label: "run",
+    value: state === "never_run" ? "never ran" : state,
+    tone: bad ? "bad" : state === "never_run" ? "unk" : "ok",
+    degraded: bad || state === "never_run",
+  };
+}
+
+function freshnessComponent(source: AdminSourceHealth): Component {
+  const state = source.freshness_state;
+  const tone: Tone =
+    state === "down" || state === "never" ? "bad" : state === "late" ? "mid" : state === "warn" ? "mid" : "ok";
+  return {
+    key: "fresh",
+    label: "fresh",
+    value: state === "ok" ? "on time" : state,
+    tone,
+    degraded: state !== "ok",
+  };
+}
+
+function retryComponent(source: AdminSourceHealth): Component {
+  const state = source.retry_state;
+  const count = source.latest_attempt_count ?? 0;
+  return {
+    key: "retry",
+    label: "retry",
+    // The ratio is what matters: a slot should be claimed once.
+    value: state === "ok" ? "1×" : `${count}×`,
+    tone: state === "severe" ? "bad" : state === "elevated" ? "mid" : "ok",
+    degraded: state !== "ok",
+  };
+}
+
+function yieldComponent(source: AdminSourceHealth): Component {
+  const state = source.yield_state;
+  return {
+    key: "yield",
+    label: "yield",
+    value: state === "zero_yield" ? "published 0" : state === "unknown" ? "unknown" : "ok",
+    tone: state === "zero_yield" ? "bad" : state === "unknown" ? "unk" : "ok",
+    degraded: state === "zero_yield",
+  };
+}
+
+function componentsOf(source: AdminSourceHealth): Component[] {
+  return [
+    runComponent(source),
+    freshnessComponent(source),
+    retryComponent(source),
+    yieldComponent(source),
+  ];
+}
+
+/** Lifecycle is a label, not an exclusion. */
+function lifecycleOf(source: AdminSourceHealth): { word: string; tone: Tone } | null {
+  if (source.retired_at) return { word: "retired", tone: "unk" };
+  if (!source.enabled) return { word: "paused", tone: "unk" };
+  return null;
+}
 
 function integer(value: number): string {
   return value.toLocaleString("en-US");
@@ -71,7 +139,29 @@ function age(iso: string | null): string {
   if (minutes < 60) return `${Math.max(0, Math.round(minutes))}m`;
   const hours = minutes / 60;
   if (hours < 48) return `${hours.toFixed(1)}h`;
-  return `${(hours / 24).toFixed(1)}d`;
+  return `${Math.round(hours / 24)}d`;
+}
+
+/**
+ * How many of its own cadence intervals a source is behind. This is the figure that separates
+ * "ran 4 hours ago on a 6-hour cadence" from "dark for 40 days" -- both read as a stale
+ * timestamp, but only one is an outage.
+ */
+function lateness(source: AdminSourceHealth): string {
+  const hours = source.hours_since_success;
+  if (hours === null) return "never";
+  const intervalHours = source.refresh_interval_minutes / 60;
+  if (!intervalHours) return "—";
+  const ratio = hours / intervalHours;
+  if (ratio < 1) return "on time";
+  return `${ratio < 10 ? ratio.toFixed(1) : Math.round(ratio)}\u00d7`;
+}
+
+function duration(ms: number | null): string {
+  if (ms === null) return "—";
+  if (ms >= 60_000) return `${(ms / 60_000).toFixed(1)} min`;
+  if (ms >= 1_000) return `${(ms / 1_000).toFixed(1)} s`;
+  return `${ms} ms`;
 }
 
 interface Snapshot {
@@ -98,7 +188,6 @@ export function FleetOverview({
   const [snapshot, setSnapshot] = useState<Snapshot | null>(null);
   const [failed, setFailed] = useState(false);
   const [loading, setLoading] = useState(true);
-  const [drill, setDrill] = useState<DrillKey | null>(null);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -111,7 +200,6 @@ export function FleetOverview({
       ]);
       setSnapshot({ fleet, freshness, health });
     } catch {
-      // A failed load is not an empty result and must never render as zeros.
       setFailed(true);
       setSnapshot(null);
     } finally {
@@ -125,38 +213,24 @@ export function FleetOverview({
 
   const sources = useMemo(() => snapshot?.health.sources ?? [], [snapshot]);
 
-  const attention = useMemo(
-    () =>
-      [...sources]
-        .filter((source) => ACTIONABLE.has(source.health))
-        .sort((left, right) => right.upcoming_events - left.upcoming_events),
-    [sources],
-  );
+  /**
+   * Actionable = any degraded component. Ranked by events currently being served, because that
+   * is the blast radius: a broken source nobody reads from can wait behind one that is feeding
+   * stale results to people right now.
+   */
+  const attention = useMemo(() => {
+    return sources
+      .map((source) => ({ source, components: componentsOf(source) }))
+      .filter((row) => row.components.some((component) => component.degraded))
+      .sort((left, right) => {
+        const events = right.source.upcoming_events - left.source.upcoming_events;
+        if (events !== 0) return events;
+        return (right.source.hours_since_success ?? 0) - (left.source.hours_since_success ?? 0);
+      });
+  }, [sources]);
 
-  const stale = useMemo(
-    () =>
-      [...sources]
-        .filter((source) => source.upcoming_events > 0 && source.freshness_state !== "ok")
-        .sort((left, right) => right.upcoming_events - left.upcoming_events),
-    [sources],
-  );
-
-  const retriers = useMemo(
-    () =>
-      [...sources]
-        .filter((source) => (source.latest_attempt_count ?? 0) > 1)
-        .sort(
-          (left, right) =>
-            (right.latest_attempt_count ?? 0) - (left.latest_attempt_count ?? 0),
-        ),
-    [sources],
-  );
-
-  // The card and its drill must read the same rows, or the figure cannot be explained by what
-  // opens beneath it. An earlier cut summed attempt_count across a 7-day window while the drill
-  // listed current slots: 17,232 above six rows totalling 306.
-  const worstAttempts = retriers.reduce(
-    (worst, source) => Math.max(worst, source.latest_attempt_count ?? 0),
+  const eventsAtRisk = attention.reduce(
+    (total, row) => total + row.source.upcoming_events,
     0,
   );
 
@@ -166,14 +240,12 @@ export function FleetOverview({
 
   if (failed || !snapshot) {
     return (
-      <div className={styles.shell}>
-        <div className={`${styles.state} ${styles.stateBad}`}>
-          Fleet data is unavailable. This is a load failure, not an empty fleet.
-          <div>
-            <button type="button" className={styles.action} onClick={() => void load()}>
-              Retry
-            </button>
-          </div>
+      <div className={styles.state + " " + styles.stateBad}>
+        Fleet data is unavailable — this is a load failure, not an empty fleet.
+        <div>
+          <button type="button" className={styles.action} onClick={() => void load()}>
+            Retry
+          </button>
         </div>
       </div>
     );
@@ -183,11 +255,6 @@ export function FleetOverview({
   const staleEvents = freshness.buckets
     .filter((bucket) => bucket.bucket !== "fresh")
     .reduce((total, bucket) => total + bucket.events, 0);
-  const stalePct = freshness.total_events
-    ? (staleEvents / freshness.total_events) * 100
-    : 0;
-
-  const toggle = (key: DrillKey) => setDrill((current) => (current === key ? null : key));
 
   return (
     <div className={styles.shell}>
@@ -196,7 +263,13 @@ export function FleetOverview({
           fleet <strong>{integer(snapshot.health.total)}</strong> sources
         </span>
         <span className={styles.statusItem}>
-          window <strong>7 days</strong>
+          <strong className={attention.length ? styles.toneBad : styles.toneOk}>
+            {attention.length}
+          </strong>{" "}
+          need attention
+        </span>
+        <span className={styles.statusItem}>
+          <strong>{integer(eventsAtRisk)}</strong> events at risk
         </span>
         <span className={styles.spacer} />
         <button
@@ -209,216 +282,177 @@ export function FleetOverview({
         </button>
       </div>
 
-      <div className={styles.signals}>
-        <SignalCard
-          question="Needs attention"
-          value={integer(attention.length)}
-          tone={attention.length ? "bad" : "ok"}
-          answer={
-            attention.length
-              ? `serving ${integer(
-                  attention.reduce((total, source) => total + source.upcoming_events, 0),
-                )} events people can see`
-              : "every source is inside its cadence"
-          }
-          open={drill === "attention"}
-          onClick={() => toggle("attention")}
-        />
-        <SignalCard
-          question="Catalog going stale"
-          value={`${stalePct.toFixed(1)}%`}
-          tone={stalePct > 5 ? "bad" : stalePct > 1 ? "mid" : "ok"}
-          answer={`${integer(staleEvents)} of ${integer(
-            freshness.total_events,
-          )} upcoming events`}
-          open={drill === "freshness"}
-          onClick={() => toggle("freshness")}
-        />
-        <SignalCard
-          question="Runs, last 7 days"
-          value={integer(fleet.runs)}
-          tone={fleet.failed ? "mid" : "ok"}
-          answer={`${integer(fleet.succeeded)} succeeded · ${integer(
-            fleet.failed,
-          )} failed · ${integer(fleet.paused)} deferred`}
-          open={drill === "throughput"}
-          onClick={() => toggle("throughput")}
-        />
-        <SignalCard
-          question="Slots re-claimed"
-          value={integer(retriers.length)}
-          tone={worstAttempts >= 20 ? "bad" : retriers.length ? "mid" : "ok"}
-          answer={
-            retriers.length
-              ? `worst has ${integer(worstAttempts)} executions on its current slot`
-              : "every slot ran once"
-          }
-          open={drill === "retries"}
-          onClick={() => toggle("retries")}
-        />
-      </div>
-
-      {drill === "attention" ? (
-        <SourceDrill
-          title="Sources needing attention"
-          scope="ranked by events people can currently see"
-          rows={attention}
-          onOpenSource={onOpenSource}
-          onClose={() => setDrill(null)}
-        />
-      ) : null}
-
-      {drill === "freshness" ? (
-        <SourceDrill
-          title="Sources serving stale events"
-          scope="graded by age of last successful fetch"
-          rows={stale}
-          onOpenSource={onOpenSource}
-          onClose={() => setDrill(null)}
-        />
-      ) : null}
-
-      {drill === "retries" ? (
-        <SourceDrill
-          title="Slots claimed more than once"
-          scope="worker executions on each source's current slot"
-          rows={retriers}
-          onOpenSource={onOpenSource}
-          onClose={() => setDrill(null)}
-        />
-      ) : null}
-
-      {drill === "throughput" ? (
-        <div className={styles.drill}>
-          <div className={styles.drillHead}>
-            <span className={styles.drillTitle}>Run outcomes</span>
-            <span className={styles.drillScope}>last 7 days</span>
-            <button type="button" className={styles.close} onClick={() => setDrill(null)}>
-              close ✕
-            </button>
-          </div>
-          <div className={styles.stub}>
-            <span className={styles.stubTag}>not built yet</span>
-            A run-outcome breakdown over time belongs here — failures by class, and which sources
-            they came from.{" "}
-            <button type="button" className={styles.rowButton} onClick={onOpenRuns}>
-              Open the Runs tab
-            </button>{" "}
-            for the raw ledger in the meantime.
-          </div>
+      {/* ---------- 1. Attention ---------- */}
+      <section className={styles.section}>
+        <div className={styles.sectionHead}>
+          <h2 className={styles.sectionTitle}>Needs attention</h2>
+          <span className={styles.sectionScope}>
+            {attention.length} of {snapshot.health.total} sources · ranked by events people can
+            currently see
+          </span>
         </div>
-      ) : null}
-    </div>
-  );
-}
 
-function SignalCard({
-  question,
-  value,
-  answer,
-  tone,
-  open,
-  onClick,
-}: {
-  question: string;
-  value: string;
-  answer: string;
-  tone: Tone;
-  open: boolean;
-  onClick: () => void;
-}): React.JSX.Element {
-  return (
-    <button
-      type="button"
-      className={open ? `${styles.card} ${styles.cardOpen}` : styles.card}
-      onClick={onClick}
-      aria-expanded={open}
-    >
-      <span className={styles.cardQuestion}>{question}</span>
-      <span className={`${styles.cardValue} ${TONE_CLASS[tone]}`}>{value}</span>
-      <span className={styles.cardAnswer}>{answer}</span>
-      <span className={styles.cardMore}>{open ? "hide ▲" : "show ▾"}</span>
-    </button>
-  );
-}
+        {attention.length === 0 ? (
+          <p className={styles.calm}>
+            Every source is inside its cadence, publishing, and claiming its slot once.
+          </p>
+        ) : (
+          <div className={styles.scroll}>
+            <table className={styles.table}>
+              <thead>
+                <tr>
+                  <th>Source</th>
+                  <th>Why</th>
+                  <th className={styles.num}>Behind</th>
+                  <th className={styles.num}>Last try</th>
+                  <th className={styles.num}>Last success</th>
+                  <th className={styles.num}>Serving</th>
+                </tr>
+              </thead>
+              <tbody>
+                {attention.map(({ source, components }) => {
+                  const lifecycle = lifecycleOf(source);
+                  return (
+                    <tr key={source.source_key}>
+                      <td>
+                        <button
+                          type="button"
+                          className={styles.rowButton}
+                          onClick={() => onOpenSource(source.source_key)}
+                        >
+                          {source.display_name}
+                        </button>
+                        <span className={styles.rowKey}>
+                          {source.source_key}
+                          {lifecycle ? (
+                            <span className={`${styles.lifecycle} ${TONE_CLASS[lifecycle.tone]}`}>
+                              {lifecycle.word}
+                            </span>
+                          ) : null}
+                        </span>
+                      </td>
+                      <td>
+                        {/* The quartet, not a single rolled-up word: a row failing only on retry
+                            and a row failing on retry AND yield route to different fixes. */}
+                        <span className={styles.quartet}>
+                          {components.map((component) => (
+                            <span
+                              key={component.key}
+                              className={
+                                component.degraded
+                                  ? `${styles.pill} ${CHIP_CLASS[component.tone]}`
+                                  : `${styles.pill} ${styles.pillMuted}`
+                              }
+                              title={`${component.label}: ${component.value}`}
+                            >
+                              <span className={styles.pillLabel}>{component.label}</span>
+                              <span className={styles.pillValue}>{component.value}</span>
+                            </span>
+                          ))}
+                        </span>
+                      </td>
+                      <td className={`${styles.num} ${styles.mono}`}>
+                        <span
+                          className={
+                            (source.hours_since_success ?? 0) * 60
+                            > 3 * source.refresh_interval_minutes
+                              ? styles.toneBad
+                              : undefined
+                          }
+                        >
+                          {lateness(source)}
+                        </span>
+                      </td>
+                      <td className={`${styles.num} ${styles.mono}`}>
+                        {age(source.last_attempt_at)}
+                      </td>
+                      <td className={`${styles.num} ${styles.mono}`}>
+                        <span
+                          className={
+                            (source.hours_since_success ?? 0) > 168 ? styles.toneBad : undefined
+                          }
+                        >
+                          {age(source.last_success_at)}
+                        </span>
+                      </td>
+                      <td className={`${styles.num} ${styles.mono}`}>
+                        {integer(source.upcoming_events)}
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </section>
 
-function SourceDrill({
-  title,
-  scope,
-  rows,
-  onOpenSource,
-  onClose,
-}: {
-  title: string;
-  scope: string;
-  rows: AdminSourceHealth[];
-  onOpenSource: (sourceKey: string) => void;
-  onClose: () => void;
-}): React.JSX.Element {
-  return (
-    <div className={styles.drill}>
-      <div className={styles.drillHead}>
-        <span className={styles.drillTitle}>{title}</span>
-        <span className={styles.drillScope}>
-          {rows.length} {rows.length === 1 ? "source" : "sources"} · {scope}
-        </span>
-        <button type="button" className={styles.close} onClick={onClose}>
-          close ✕
-        </button>
-      </div>
-      {rows.length === 0 ? (
-        <div className={styles.state}>Nothing here right now.</div>
-      ) : (
+      {/* ---------- 2. Catalog coverage ---------- */}
+      <section className={styles.section}>
+        <div className={styles.sectionHead}>
+          <h2 className={styles.sectionTitle}>Catalog coverage</h2>
+          <span className={styles.sectionScope}>what people can currently see</span>
+        </div>
+        <p className={styles.lead}>
+          <strong>{integer(freshness.total_events)}</strong> upcoming events are being served.{" "}
+          <strong className={staleEvents ? styles.toneBad : styles.toneOk}>
+            {integer(staleEvents)}
+          </strong>{" "}
+          of them come from a source that has not fetched successfully in over a day.
+        </p>
         <div className={styles.scroll}>
           <table className={styles.table}>
             <thead>
               <tr>
-                <th>Source</th>
-                <th>State</th>
-                <th className={styles.num}>Executions</th>
-                <th className={styles.num}>Last try</th>
-                <th className={styles.num}>Last success</th>
-                <th className={styles.num}>Serving</th>
+                <th>Freshness of origin</th>
+                <th className={styles.num}>Sources</th>
+                <th className={styles.num}>Events served</th>
+                <th className={styles.num}>Share</th>
               </tr>
             </thead>
             <tbody>
-              {rows.map((source) => (
-                <tr key={source.source_key}>
-                  <td>
-                    <button
-                      type="button"
-                      className={styles.rowButton}
-                      onClick={() => onOpenSource(source.source_key)}
-                    >
-                      {source.display_name}
-                    </button>
-                    <span className={styles.rowKey}>{source.source_key}</span>
-                  </td>
-                  <td>
-                    <span className={`${styles.chip} ${CHIP_CLASS[source.health]}`}>
-                      {CHIP_GLYPH[source.health]} {source.health.replaceAll("_", " ")}
-                    </span>
-                  </td>
-                  <td className={`${styles.num} ${styles.mono}`}>
-                    {source.latest_attempt_count === null
-                      ? "—"
-                      : integer(source.latest_attempt_count)}
-                  </td>
-                  <td className={`${styles.num} ${styles.mono}`}>
-                    {age(source.last_attempt_at)}
-                  </td>
-                  <td className={`${styles.num} ${styles.mono}`}>
-                    {age(source.last_success_at)}
-                  </td>
-                  <td className={`${styles.num} ${styles.mono}`}>
-                    {integer(source.upcoming_events)}
-                  </td>
-                </tr>
-              ))}
+              {freshness.buckets
+                .filter((bucket) => bucket.sources > 0 || bucket.events > 0)
+                .map((bucket) => (
+                  <tr key={bucket.bucket}>
+                    <td className={styles.mono}>{bucket.bucket}</td>
+                    <td className={`${styles.num} ${styles.mono}`}>{bucket.sources}</td>
+                    <td className={`${styles.num} ${styles.mono}`}>{integer(bucket.events)}</td>
+                    <td className={`${styles.num} ${styles.mono}`}>
+                      {bucket.pct === null ? "—" : `${bucket.pct}%`}
+                    </td>
+                  </tr>
+                ))}
             </tbody>
           </table>
         </div>
-      )}
+      </section>
+
+      {/* ---------- 3. Fleet activity ---------- */}
+      <section className={styles.section}>
+        <div className={styles.sectionHead}>
+          <h2 className={styles.sectionTitle}>Fleet activity</h2>
+          <span className={styles.sectionScope}>last 7 days</span>
+        </div>
+        <p className={styles.lead}>
+          <strong>{integer(fleet.runs)}</strong> refresh slots ran —{" "}
+          <span className={styles.toneOk}>{integer(fleet.succeeded)} succeeded</span>,{" "}
+          <span className={fleet.failed ? styles.toneBad : undefined}>
+            {integer(fleet.failed)} still failing
+          </span>
+          , {integer(fleet.paused)} waiting on pacing. Half finish within{" "}
+          {duration(fleet.duration_p50_ms)}; the slowest 5% take over{" "}
+          {duration(fleet.duration_p95_ms)}.{" "}
+          <button type="button" className={styles.rowButton} onClick={onOpenRuns}>
+            Open the run ledger
+          </button>
+        </p>
+        <p className={styles.footnote}>
+          Counted by each slot&rsquo;s final outcome, so a slot that failed and later succeeded
+          reads as succeeded. Recent days therefore look worse than settled ones — no trend is
+          drawn from this for that reason.
+        </p>
+      </section>
     </div>
   );
 }
