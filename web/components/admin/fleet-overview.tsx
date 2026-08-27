@@ -152,6 +152,14 @@ export function FleetOverview({
     [sources],
   );
 
+  // The card and its drill must read the same rows, or the figure cannot be explained by what
+  // opens beneath it. An earlier cut summed attempt_count across a 7-day window while the drill
+  // listed current slots: 17,232 above six rows totalling 306.
+  const worstAttempts = retriers.reduce(
+    (worst, source) => Math.max(worst, source.latest_attempt_count ?? 0),
+    0,
+  );
+
   if (loading && !snapshot) {
     return <div className={styles.state}>Loading fleet…</div>;
   }
@@ -237,10 +245,14 @@ export function FleetOverview({
           onClick={() => toggle("throughput")}
         />
         <SignalCard
-          question="Wasted retries"
-          value={integer(fleet.attempts - fleet.runs)}
-          tone={fleet.max_attempts > 20 ? "bad" : fleet.retrying_runs ? "mid" : "ok"}
-          answer={`worst slot claimed ${integer(fleet.max_attempts)} times`}
+          question="Slots re-claimed"
+          value={integer(retriers.length)}
+          tone={worstAttempts >= 20 ? "bad" : retriers.length ? "mid" : "ok"}
+          answer={
+            retriers.length
+              ? `worst has ${integer(worstAttempts)} executions on its current slot`
+              : "every slot ran once"
+          }
           open={drill === "retries"}
           onClick={() => toggle("retries")}
         />
@@ -268,8 +280,8 @@ export function FleetOverview({
 
       {drill === "retries" ? (
         <SourceDrill
-          title="Sources burning retries"
-          scope="attempts on the current slot"
+          title="Slots claimed more than once"
+          scope="worker executions on each source's current slot"
           rows={retriers}
           onOpenSource={onOpenSource}
           onClose={() => setDrill(null)}
@@ -363,7 +375,7 @@ function SourceDrill({
               <tr>
                 <th>Source</th>
                 <th>State</th>
-                <th className={styles.num}>Attempts</th>
+                <th className={styles.num}>Executions</th>
                 <th className={styles.num}>Last try</th>
                 <th className={styles.num}>Last success</th>
                 <th className={styles.num}>Serving</th>
