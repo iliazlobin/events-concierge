@@ -31,6 +31,9 @@ import {
 } from "lucide-react";
 import { Fragment, useCallback, useEffect, useMemo, useState } from "react";
 
+import { CommandsView } from "@/components/admin/commands-view";
+import { PipelineView } from "@/components/admin/pipeline-view";
+import { RunsView } from "@/components/admin/runs-view";
 import { SystemView } from "@/components/admin/system-view";
 import { RunExecutionEvidence } from "@/components/admin/run-execution-evidence";
 import { SourceDetail } from "@/components/admin/source-detail";
@@ -3739,24 +3742,12 @@ export function AdminConsole() {
             {tab === "overview" ? (
               <SystemView
                 onOpenSource={openSource}
-                onOpenExceptions={() => navigateAdmin("sources")}
+                onRefreshDue={() => void submitCommand("refresh_due", null)}
+                refreshSubmitting={submitting}
+                refreshDuePending={refreshDuePending}
               />
             ) : null}
-            {tab === "pipeline" ? (
-              <PipelinePanel
-                overview={overview}
-                page={pipelinePage}
-                sources={fleetSources}
-                metadata={metadata}
-                filters={pipelineFilters}
-                loading={pipelineLoading}
-                error={pipelineError}
-                onFiltersChange={setPipelineFilters}
-                onOpenSource={openSource}
-                onOpenSources={() => navigateAdmin("sources")}
-                onReviewFailures={reviewPipelineFailures}
-              />
-            ) : null}
+            {tab === "pipeline" ? <PipelineView /> : null}
             {tab === "sources" ? (
               <SourcesPanel
                 page={sourcePage}
@@ -3774,41 +3765,13 @@ export function AdminConsole() {
                 onSetSelectedEnabled={setSelectedSourcesEnabled}
               />
             ) : null}
-            {tab === "runs" ? (
-              <RunsPanel
-                page={runPage}
-                sources={fleetSources}
-                metadata={metadata}
-                filters={runFilters}
-                view={runView}
-                loading={runsLoading}
-                error={runError}
-                onFiltersChange={setRunFilters}
-                onViewChange={setRunView}
-                onOpenSource={openSource}
-              />
-            ) : null}
+            {tab === "runs" ? <RunsView onOpenSource={openSource} /> : null}
             {tab === "commands" ? (
-              <CommandsPanel
-                commands={commands}
-                sources={fleetSources}
-                sourceProjectionsReady={fleetSourcesReady}
-                loading={commandsLoading}
-                error={commandError}
-                policyAllowed={overview?.policy.allowed ?? false}
-                submitting={submitting}
+              <CommandsView
                 onOpenSource={openSource}
-                onOpenRuns={(command) => {
-                  setRunView("history");
-                  setRunFilters({
-                    ...DEFAULT_RUN_FILTERS,
-                    sourceKey: command.source_key ?? "",
-                    windowHours: 24,
-                  });
-                  navigateAdmin("runs");
-                  setReloadNonce((current) => current + 1);
-                }}
-                onLaunch={(action, source) => void submitCommand(action, source)}
+                onRefreshDue={() => void submitCommand("refresh_due", null)}
+                refreshSubmitting={submitting}
+                refreshDuePending={refreshDuePending}
               />
             ) : null}
           </>
