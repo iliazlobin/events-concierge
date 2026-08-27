@@ -20,6 +20,7 @@ from sqlalchemy.engine import RowMapping
 from ...domain.catalog_sources import CatalogRefreshDue, CatalogSource
 from ...domain.enums import CatalogSourceMode
 from ...domain.ingestion_admin import (
+    CatalogConcentrationEntry,
     CatalogFreshnessBucket,
     IngestionBuildIdentity,
     IngestionCommand,
@@ -33,6 +34,7 @@ from ...domain.ingestion_admin import (
     IngestionEffectiveStatus,
     IngestionFilterMetadata,
     IngestionFilterValue,
+    IngestionFleetShapeEntry,
     IngestionFleetSummary,
     IngestionHistoryBucket,
     IngestionHistorySummary,
@@ -53,11 +55,12 @@ from ...domain.ingestion_admin import (
     IngestionSourceConfigurationUpdate,
     IngestionSourceDetail,
     IngestionSourceEnabledBulkUpdate,
+    IngestionSourceHealth,
     IngestionSourcePage,
     IngestionSourceRevisionTarget,
-    IngestionSourceHealth,
     IngestionSourceStatus,
     IngestionStageSummaryEntry,
+    IngestionThroughputBucket,
     SafeCommandResult,
 )
 from ...infra.db import system_session_scope
@@ -87,6 +90,7 @@ _MIN_WINDOW_HOURS = 1
 _MAX_WINDOW_HOURS = 2_160
 _MAX_BUCKET_HOURS = 168
 _MAX_HISTORY_BUCKETS = 120
+_MAX_CONCENTRATION_ROWS = 200
 _MIN_LEASE_SECONDS = 300
 _MAX_LEASE_SECONDS = 21_600
 _MIN_RETRY_SECONDS = 1
@@ -236,6 +240,69 @@ class PostgresIngestionAdminRepository:
                 .all()
             )
         return [_source_health_from_row(row) for row in rows]
+
+    async def fleet_shape(self) -> list[IngestionFleetShapeEntry]:
+        """Return sources and served events per adapter mode."""
+        async with system_session_scope() as session:
+            rows = (
+                (
+                    await session.execute(
+                        text("SELECT * FROM public.fn_get_ingestion_fleet_shape_v1()")
+                    )
+                )
+                .mappings()
+                .all()
+            )
+        return [_fleet_shape_from_row(row) for row in rows]
+
+    async def throughput(
+        self,
+        *,
+        window_hours: int,
+        bucket_hours: int,
+    ) -> list[IngestionThroughputBucket]:
+        """Return gap-filled pipeline volume buckets."""
+        _validate_history_window(window_hours, bucket_hours)
+        async with system_session_scope() as session:
+            rows = (
+                (
+                    await session.execute(
+                        text(
+                            """
+                        SELECT *
+                        FROM public.fn_get_ingestion_throughput_v1(:hours, :bucket)
+                        """
+                        ),
+                        {"hours": window_hours, "bucket": bucket_hours},
+                    )
+                )
+                .mappings()
+                .all()
+            )
+        return [_throughput_from_row(row) for row in rows]
+
+    async def catalog_concentration(
+        self,
+        *,
+        limit: int,
+    ) -> list[CatalogConcentrationEntry]:
+        """Return per-source share of served upcoming events, ranked."""
+        if limit < 1 or limit > _MAX_CONCENTRATION_ROWS:
+            raise ValueError("catalog concentration limit is invalid")
+        async with system_session_scope() as session:
+            rows = (
+                (
+                    await session.execute(
+                        text(
+                            "SELECT * FROM public.fn_get_catalog_concentration_v1(:limit)"
+                        ),
+                        {"limit": limit},
+                    )
+                )
+                .mappings()
+                .all()
+            )
+        return [_concentration_from_row(row) for row in rows]
 
     async def list_sources(
         self,
@@ -1053,6 +1120,49 @@ class PostgresIngestionAdminRepository:
                 )
             ).scalar_one()
         return bool(failed)
+
+
+def _fleet_shape_from_row(row: RowMapping) -> IngestionFleetShapeEntry:
+    return IngestionFleetShapeEntry(
+        mode=str(row["mode"]),
+        sources=int(row["sources"]),
+        scheduled=int(row["scheduled"]),
+        paused=int(row["paused"]),
+        retired=int(row["retired"]),
+        upcoming_events=int(row["upcoming_events"]),
+        events_per_source=_optional_float(row.get("events_per_source")),
+        pct_of_sources=_optional_float(row.get("pct_of_sources")),
+        pct_of_events=_optional_float(row.get("pct_of_events")),
+    )
+
+
+def _throughput_from_row(row: RowMapping) -> IngestionThroughputBucket:
+    return IngestionThroughputBucket(
+        bucket_start=row["bucket_start"],
+        runs=int(row["runs"]),
+        succeeded=int(row["succeeded"]),
+        failed=int(row["failed"]),
+        deferred=int(row["deferred"]),
+        collected=int(row["collected"]),
+        published=int(row["published"]),
+        yield_pct=_optional_float(row.get("yield_pct")),
+        median_duration_ms=_optional_int(row.get("median_duration_ms")),
+    )
+
+
+def _concentration_from_row(row: RowMapping) -> CatalogConcentrationEntry:
+    return CatalogConcentrationEntry(
+        rank=int(row["rank"]),
+        source_key=str(row["source_key"]),
+        display_name=str(row["display_name"]),
+        mode=str(row["mode"]),
+        publisher=str(row["publisher"]),
+        upcoming_events=int(row["upcoming_events"]),
+        pct=_optional_float(row.get("pct")),
+        cumulative_pct=_optional_float(row.get("cumulative_pct")),
+        total_events=int(row["total_events"]),
+        total_sources=int(row["total_sources"]),
+    )
 
 
 def _source_health_from_row(row: RowMapping) -> IngestionSourceHealth:

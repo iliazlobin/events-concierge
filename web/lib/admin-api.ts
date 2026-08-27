@@ -7,10 +7,13 @@ import type {
   AdminCommandDetail,
   AdminCommandList,
   AdminCatalogFreshness,
+  AdminConcentration,
   AdminFilterMetadata,
+  AdminFleetShape,
   AdminFleetSummary,
   AdminOverview,
   AdminStageSummary,
+  AdminThroughput,
   AdminRunFilters,
   AdminRunPage,
   AdminSourceDetail,
@@ -69,6 +72,30 @@ export function getAdminSourceHealth(
 ): Promise<AdminSourceHealthList> {
   const query = new URLSearchParams({ include_fixtures: String(includeFixtures) });
   return api<AdminSourceHealthList>(`/admin/v1/ingestion/source-health?${query}`, {
+    cache: "no-store",
+  });
+}
+
+export function getAdminFleetShape(): Promise<AdminFleetShape> {
+  return api<AdminFleetShape>("/admin/v1/ingestion/shape", { cache: "no-store" });
+}
+
+export function getAdminThroughput(
+  windowHours: number,
+  bucketHours: number,
+): Promise<AdminThroughput> {
+  const query = new URLSearchParams({
+    window_hours: String(windowHours),
+    bucket_hours: String(bucketHours),
+  });
+  return api<AdminThroughput>(`/admin/v1/ingestion/throughput?${query}`, {
+    cache: "no-store",
+  });
+}
+
+export function getAdminConcentration(limit = 15): Promise<AdminConcentration> {
+  const query = new URLSearchParams({ limit: String(limit) });
+  return api<AdminConcentration>(`/admin/v1/ingestion/concentration?${query}`, {
     cache: "no-store",
   });
 }

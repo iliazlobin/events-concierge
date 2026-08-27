@@ -73,6 +73,12 @@ class _IngestionAdminService(Protocol):
 
     async def source_health(self, *, include_fixtures: bool) -> object: ...
 
+    async def fleet_shape(self) -> object: ...
+
+    async def throughput(self, *, window_hours: int, bucket_hours: int) -> object: ...
+
+    async def catalog_concentration(self, *, limit: int) -> object: ...
+
     async def list_sources(
         self,
         *,
@@ -232,6 +238,72 @@ class IngestionFleetSummaryOut(_FromAttributesModel):
         if self.retrying_runs > self.runs or self.zero_yield_runs > self.runs:
             raise ValueError("ingestion fleet summary run subsets exceed its run total")
         return self
+
+
+class IngestionFleetShapeEntryOut(_FromAttributesModel):
+    """One adapter mode's share of sources against its share of the served catalog."""
+
+    mode: str = Field(min_length=1, max_length=80, pattern=r"^[a-z0-9_]+$")
+    sources: int = Field(ge=0)
+    scheduled: int = Field(ge=0)
+    paused: int = Field(ge=0)
+    retired: int = Field(ge=0)
+    upcoming_events: int = Field(ge=0)
+    events_per_source: float | None = Field(default=None, ge=0.0)
+    pct_of_sources: float | None = Field(default=None, ge=0.0, le=100.0)
+    pct_of_events: float | None = Field(default=None, ge=0.0, le=100.0)
+
+    @model_validator(mode="after")
+    def lifecycle_partitions_the_mode(self) -> IngestionFleetShapeEntryOut:
+        """Every source in a mode is scheduled, paused or retired -- never double counted."""
+        if self.scheduled + self.paused + self.retired != self.sources:
+            raise ValueError("ingestion fleet shape lifecycle counts do not partition its sources")
+        return self
+
+
+class IngestionFleetShapeOut(_FromAttributesModel):
+    generated_at: datetime
+    total_sources: int = Field(ge=0)
+    total_events: int = Field(ge=0)
+    modes: tuple[IngestionFleetShapeEntryOut, ...]
+
+
+class IngestionThroughputBucketOut(_FromAttributesModel):
+    bucket_start: datetime
+    runs: int = Field(ge=0)
+    succeeded: int = Field(ge=0)
+    failed: int = Field(ge=0)
+    deferred: int = Field(ge=0)
+    collected: int = Field(ge=0)
+    published: int = Field(ge=0)
+    yield_pct: float | None = Field(default=None, ge=0.0, le=100.0)
+    median_duration_ms: int | None = Field(default=None, ge=0)
+
+
+class IngestionThroughputOut(_FromAttributesModel):
+    generated_at: datetime
+    window_hours: int = Field(ge=1, le=_MAX_SUMMARY_WINDOW_HOURS)
+    bucket_hours: int = Field(ge=1)
+    buckets: tuple[IngestionThroughputBucketOut, ...]
+
+
+class CatalogConcentrationEntryOut(_FromAttributesModel):
+    rank: int = Field(ge=1)
+    source_key: str = Field(min_length=1, max_length=80, pattern=_SOURCE_KEY_PATTERN)
+    display_name: str = Field(min_length=1, max_length=300)
+    mode: str = Field(min_length=1, max_length=80, pattern=r"^[a-z0-9_]+$")
+    publisher: str = Field(min_length=1, max_length=300)
+    upcoming_events: int = Field(ge=0)
+    pct: float | None = Field(default=None, ge=0.0, le=100.0)
+    cumulative_pct: float | None = Field(default=None, ge=0.0, le=100.0)
+
+
+class CatalogConcentrationOut(_FromAttributesModel):
+    generated_at: datetime
+    total_events: int = Field(ge=0)
+    total_sources: int = Field(ge=0)
+    shown: int = Field(ge=0)
+    sources: tuple[CatalogConcentrationEntryOut, ...]
 
 
 class IngestionSourceHealthOut(_FromAttributesModel):
@@ -1286,6 +1358,92 @@ def install_ingestion_admin_routes(app: FastAPI) -> None:  # noqa: PLR0915
                 generated_at=datetime.now(UTC),
                 total=len(graded),
                 sources=graded,
+            )
+        except HTTPException:
+            raise
+        except Exception as error:
+            raise _safe_http_error(error) from error
+
+    @app.get(
+        "/admin/v1/ingestion/shape",
+        response_model=IngestionFleetShapeOut,
+        include_in_schema=False,
+    )
+    async def ingestion_fleet_shape(
+        response: Response,
+        admin: LocalIngestionAdmin,
+    ) -> IngestionFleetShapeOut:
+        _no_store(response)
+        try:
+            rows = cast(Sequence[object], await admin.fleet_shape())
+            modes = tuple(IngestionFleetShapeEntryOut.model_validate(row) for row in rows)
+            return IngestionFleetShapeOut(
+                generated_at=datetime.now(UTC),
+                total_sources=sum(mode.sources for mode in modes),
+                total_events=sum(mode.upcoming_events for mode in modes),
+                modes=modes,
+            )
+        except HTTPException:
+            raise
+        except Exception as error:
+            raise _safe_http_error(error) from error
+
+    @app.get(
+        "/admin/v1/ingestion/throughput",
+        response_model=IngestionThroughputOut,
+        include_in_schema=False,
+    )
+    async def ingestion_throughput(
+        response: Response,
+        admin: LocalIngestionAdmin,
+        window_hours: Annotated[
+            int, Query(ge=1, le=_MAX_SUMMARY_WINDOW_HOURS)
+        ] = _DEFAULT_SUMMARY_WINDOW_HOURS,
+        bucket_hours: Annotated[int, Query(ge=1, le=168)] = 24,
+    ) -> IngestionThroughputOut:
+        _no_store(response)
+        try:
+            rows = cast(
+                Sequence[object],
+                await admin.throughput(
+                    window_hours=window_hours, bucket_hours=bucket_hours
+                ),
+            )
+            return IngestionThroughputOut(
+                generated_at=datetime.now(UTC),
+                window_hours=window_hours,
+                bucket_hours=bucket_hours,
+                buckets=tuple(
+                    IngestionThroughputBucketOut.model_validate(row) for row in rows
+                ),
+            )
+        except HTTPException:
+            raise
+        except Exception as error:
+            raise _safe_http_error(error) from error
+
+    @app.get(
+        "/admin/v1/ingestion/concentration",
+        response_model=CatalogConcentrationOut,
+        include_in_schema=False,
+    )
+    async def catalog_concentration(
+        response: Response,
+        admin: LocalIngestionAdmin,
+        limit: Annotated[int, Query(ge=1, le=200)] = 15,
+    ) -> CatalogConcentrationOut:
+        _no_store(response)
+        try:
+            raw = list(cast(Sequence[Any], await admin.catalog_concentration(limit=limit)))
+            entries = tuple(CatalogConcentrationEntryOut.model_validate(row) for row in raw)
+            # The totals describe the whole population, not the truncated page, so the share
+            # column stays honest when only the top N rows are shown.
+            return CatalogConcentrationOut(
+                generated_at=datetime.now(UTC),
+                total_events=int(getattr(raw[0], "total_events", 0)) if raw else 0,
+                total_sources=int(getattr(raw[0], "total_sources", 0)) if raw else 0,
+                shown=len(entries),
+                sources=entries,
             )
         except HTTPException:
             raise

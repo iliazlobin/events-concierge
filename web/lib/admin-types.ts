@@ -225,6 +225,63 @@ export interface AdminCatalogFreshness {
   buckets: AdminCatalogFreshnessBucket[];
 }
 
+export interface AdminFleetShapeEntry {
+  mode: string;
+  sources: number;
+  scheduled: number;
+  paused: number;
+  retired: number;
+  upcoming_events: number;
+  events_per_source: number | null;
+  pct_of_sources: number | null;
+  pct_of_events: number | null;
+}
+
+export interface AdminFleetShape {
+  generated_at: string;
+  total_sources: number;
+  total_events: number;
+  modes: AdminFleetShapeEntry[];
+}
+
+export interface AdminThroughputBucket {
+  bucket_start: string;
+  runs: number;
+  succeeded: number;
+  failed: number;
+  deferred: number;
+  collected: number;
+  published: number;
+  yield_pct: number | null;
+  median_duration_ms: number | null;
+}
+
+export interface AdminThroughput {
+  generated_at: string;
+  window_hours: number;
+  bucket_hours: number;
+  buckets: AdminThroughputBucket[];
+}
+
+export interface AdminConcentrationEntry {
+  rank: number;
+  source_key: string;
+  display_name: string;
+  mode: string;
+  publisher: string;
+  upcoming_events: number;
+  pct: number | null;
+  cumulative_pct: number | null;
+}
+
+export interface AdminConcentration {
+  generated_at: string;
+  total_events: number;
+  total_sources: number;
+  shown: number;
+  sources: AdminConcentrationEntry[];
+}
+
 export type AdminSourceHealthToken =
   | "down" | "never_succeeded" | "late" | "warn" | "paused" | "retired" | "healthy";
 

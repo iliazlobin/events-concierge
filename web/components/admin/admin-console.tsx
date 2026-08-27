@@ -31,7 +31,7 @@ import {
 } from "lucide-react";
 import { Fragment, useCallback, useEffect, useMemo, useState } from "react";
 
-import { FleetOverview } from "@/components/admin/fleet-overview";
+import { SystemView } from "@/components/admin/system-view";
 import { RunExecutionEvidence } from "@/components/admin/run-execution-evidence";
 import { SourceDetail } from "@/components/admin/source-detail";
 import {
@@ -159,9 +159,9 @@ const TABS: Array<{
   label: string;
   icon: typeof Activity;
 }> = [
-  { value: "overview", label: "Overview", icon: Activity },
-  { value: "pipeline", label: "Pipeline", icon: Workflow },
+  { value: "overview", label: "System", icon: Activity },
   { value: "sources", label: "Sources", icon: Layers3 },
+  { value: "pipeline", label: "Pipeline", icon: Workflow },
   { value: "runs", label: "Runs", icon: FileClock },
   { value: "commands", label: "Commands", icon: CommandIcon },
 ];
@@ -3737,12 +3737,9 @@ export function AdminConsole() {
         ) : (
           <>
             {tab === "overview" ? (
-              <FleetOverview
+              <SystemView
                 onOpenSource={openSource}
-                onOpenRuns={() => navigateAdmin("runs")}
-                onRefreshDue={() => void submitCommand("refresh_due", null)}
-                refreshSubmitting={submitting}
-                refreshDuePending={refreshDuePending}
+                onOpenExceptions={() => navigateAdmin("sources")}
               />
             ) : null}
             {tab === "pipeline" ? (

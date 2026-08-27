@@ -132,6 +132,61 @@ class IngestionFleetSummary:
 
 
 @dataclass(frozen=True, slots=True)
+class IngestionFleetShapeEntry:
+    """One adapter mode's share of the fleet against its share of the catalog.
+
+    These two distributions are not the same shape, and the difference is the most consequential
+    fact about how the fleet is built: a mode can be most of the source roster and almost none of
+    what people can see, while costing the same scheduler slot time to poll.
+    """
+
+    mode: str
+    sources: int
+    scheduled: int
+    paused: int
+    retired: int
+    upcoming_events: int
+    events_per_source: float | None
+    pct_of_sources: float | None
+    pct_of_events: float | None
+
+
+@dataclass(frozen=True, slots=True)
+class IngestionThroughputBucket:
+    """One gap-filled interval of pipeline volume.
+
+    A bucket with no runs is a fact about the fleet -- the scheduler was not dispatching -- so it
+    is returned with zeros rather than omitted from the series.
+    """
+
+    bucket_start: datetime
+    runs: int
+    succeeded: int
+    failed: int
+    deferred: int
+    collected: int
+    published: int
+    yield_pct: float | None
+    median_duration_ms: int | None
+
+
+@dataclass(frozen=True, slots=True)
+class CatalogConcentrationEntry:
+    """One source's share of served upcoming events, with a running cumulative."""
+
+    rank: int
+    source_key: str
+    display_name: str
+    mode: str
+    publisher: str
+    upcoming_events: int
+    pct: float | None
+    cumulative_pct: float | None
+    total_events: int
+    total_sources: int
+
+
+@dataclass(frozen=True, slots=True)
 class IngestionSourceHealth:
     """One registry row graded by four independently inspectable components.
 

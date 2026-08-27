@@ -8,6 +8,7 @@ from uuid import UUID
 
 from ..domain.catalog_sources import CatalogRefreshDue
 from ..domain.ingestion_admin import (
+    CatalogConcentrationEntry,
     CatalogFreshnessBucket,
     IngestionCommand,
     IngestionCommandAction,
@@ -15,6 +16,7 @@ from ..domain.ingestion_admin import (
     IngestionCommandLease,
     IngestionCommandRunTarget,
     IngestionFilterMetadata,
+    IngestionFleetShapeEntry,
     IngestionFleetSummary,
     IngestionOverview,
     IngestionRunExecutionDescriptor,
@@ -22,10 +24,11 @@ from ..domain.ingestion_admin import (
     IngestionSourceConfigurationUpdate,
     IngestionSourceDetail,
     IngestionSourceEnabledBulkUpdate,
-    IngestionSourcePage,
     IngestionSourceHealth,
+    IngestionSourcePage,
     IngestionSourceRevisionTarget,
     IngestionStageSummaryEntry,
+    IngestionThroughputBucket,
     SafeCommandResult,
 )
 
@@ -101,6 +104,21 @@ class IngestionAdminRepository(Protocol):
         *,
         include_fixtures: bool,
     ) -> list[IngestionSourceHealth]: ...
+
+    async def fleet_shape(self) -> list[IngestionFleetShapeEntry]: ...
+
+    async def throughput(
+        self,
+        *,
+        window_hours: int,
+        bucket_hours: int,
+    ) -> list[IngestionThroughputBucket]: ...
+
+    async def catalog_concentration(
+        self,
+        *,
+        limit: int,
+    ) -> list[CatalogConcentrationEntry]: ...
 
     async def list_sources(
         self,

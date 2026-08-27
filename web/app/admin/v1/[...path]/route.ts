@@ -98,6 +98,9 @@ function allowedPath(path: string[], method: AdminMethod): boolean {
       "stages",
       "catalog-freshness",
       "source-health",
+      "shape",
+      "throughput",
+      "concentration",
     ]).has(path[1]);
   }
   if (path.length === 3) {

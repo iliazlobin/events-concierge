@@ -1,0 +1,150 @@
+/*
+ * The system view.
+ *
+ * Structure comes from whitespace, hairlines and type scale — no cards, no panel borders, no
+ * shadows. A rule appears only where it marks a real boundary between rows.
+ */
+
+.shell {
+  --ok: #2e9068;
+  --mid: #b08a22;
+  --bad: #c9503f;
+  --cool: #5c8fd6;
+  --line: var(--admin-rule, #1b2029);
+  --line-2: var(--admin-rule-strong, #2a313c);
+  --ink: var(--admin-ink, #e8e6e1);
+  --dim: var(--admin-ink-2, #828a96);
+  --faint: var(--admin-ink-3, #4e5661);
+  --mono: var(--admin-mono, ui-monospace, SFMono-Regular, Menlo, monospace);
+
+  display: flex;
+  flex-direction: column;
+  gap: 4rem;
+  padding-bottom: 4rem;
+}
+
+/* ---------- section rhythm ---------- */
+
+.section { display: flex; flex-direction: column; gap: 1.1rem; }
+
+.head { display: flex; flex-direction: column; gap: .35rem; }
+.mark {
+  font-family: var(--mono);
+  font-size: .64rem;
+  letter-spacing: .2em;
+  text-transform: uppercase;
+  color: var(--faint);
+}
+.title {
+  margin: 0;
+  font-size: 1.4rem;
+  font-weight: 600;
+  letter-spacing: -.025em;
+  line-height: 1.1;
+}
+.lede { margin: 0; font-size: .93rem; color: var(--dim); max-width: 60ch; line-height: 1.6; }
+
+/* ---------- data run: no boxes, just figures on a rule ---------- */
+
+.run {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 1.8rem 3rem;
+  padding-top: 1.4rem;
+  border-top: 1px solid var(--line);
+}
+.datum { display: flex; flex-direction: column; gap: .25rem; }
+.datum .v {
+  font-size: 1.75rem;
+  font-weight: 600;
+  letter-spacing: -.03em;
+  line-height: 1;
+  font-variant-numeric: tabular-nums;
+}
+.datum .k {
+  font-family: var(--mono);
+  font-size: .6rem;
+  letter-spacing: .14em;
+  text-transform: uppercase;
+  color: var(--faint);
+}
+.vOk { color: var(--ok); } .vBad { color: var(--bad); } .vCool { color: var(--cool); }
+
+/* ---------- flow diagram ---------- */
+
+.flow { width: 100%; height: auto; display: block; overflow: visible; }
+.cap {
+  font-family: var(--mono);
+  font-size: .68rem;
+  color: var(--faint);
+  line-height: 1.7;
+  max-width: 72ch;
+  margin: 0;
+}
+.cap strong { color: var(--dim); font-weight: 500; }
+
+/* ---------- hairline tables ---------- */
+
+.tbl { width: 100%; border-collapse: collapse; font-size: .85rem; }
+.tbl th, .tbl td {
+  text-align: left;
+  padding: .62rem 1.1rem .62rem 0;
+  border-bottom: 1px solid var(--line);
+  vertical-align: middle;
+}
+.tbl thead th {
+  font-family: var(--mono);
+  font-size: .6rem;
+  letter-spacing: .14em;
+  text-transform: uppercase;
+  color: var(--faint);
+  font-weight: 400;
+}
+.tbl tbody tr:last-child td { border-bottom: 0; }
+.tbl td:first-child { font-family: var(--mono); font-size: .78rem; white-space: nowrap; }
+.num { text-align: right; font-family: var(--mono); font-variant-numeric: tabular-nums; font-size: .78rem; color: var(--dim); }
+.num strong { color: var(--ink); font-weight: 500; }
+.scroll { overflow-x: auto; }
+
+/* Paired bars live inside the table cell — the comparison is the row. */
+.pair { width: 30%; min-width: 7rem; padding-right: 0; }
+.bar { display: block; height: 5px; }
+.barSrc { background: var(--cool); }
+.barEvt { background: var(--ok); }
+.barTrack { background: var(--line-2); opacity: .4; }
+
+.rowBtn {
+  border: 0; background: none; padding: 0; font: inherit;
+  color: var(--admin-accent, #8aabff); cursor: pointer; text-align: left;
+}
+.rowBtn:hover { text-decoration: underline; }
+.rowBtn:focus-visible { outline: 1px solid var(--admin-accent, #8aabff); outline-offset: 2px; }
+.sub { display: block; font-family: var(--mono); font-size: .66rem; color: var(--faint); }
+
+/* ---------- volume series ---------- */
+
+.series { width: 100%; height: auto; display: block; overflow: visible; }
+
+/* ---------- exceptions: one line until it matters ---------- */
+
+.exception {
+  display: flex; flex-wrap: wrap; align-items: baseline; gap: .6rem 1.2rem;
+  padding-top: 1.4rem; border-top: 1px solid var(--line);
+  font-family: var(--mono); font-size: .78rem; color: var(--dim);
+}
+.exception strong { font-weight: 600; font-size: .95rem; }
+
+.state { padding: 3rem 0; font-size: .9rem; color: var(--dim); }
+.stateBad { color: var(--bad); }
+.retry {
+  margin-top: .8rem; font-family: var(--mono); font-size: .72rem;
+  padding: .38rem .8rem; border-radius: 3px;
+  border: 1px solid var(--admin-accent, #8aabff);
+  background: transparent; color: var(--admin-accent, #8aabff); cursor: pointer;
+}
+
+@media (max-width: 700px) {
+  .run { gap: 1.2rem 2rem; }
+  .datum .v { font-size: 1.4rem; }
+  .pair { display: none; }
+}

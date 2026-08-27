@@ -17,6 +17,7 @@ from ..domain.catalog_browse import CatalogBrowseCursor, CatalogBrowseEvent
 from ..domain.catalog_sources import CatalogSource
 from ..domain.enums import CatalogSourceMode
 from ..domain.ingestion_admin import (
+    CatalogConcentrationEntry,
     CatalogFreshnessBucket,
     IngestionBuildIdentity,
     IngestionCatalogEvent,
@@ -28,6 +29,7 @@ from ..domain.ingestion_admin import (
     IngestionCommandLease,
     IngestionCommandRunTarget,
     IngestionFilterMetadata,
+    IngestionFleetShapeEntry,
     IngestionFleetSummary,
     IngestionOverview,
     IngestionProcessReport,
@@ -35,10 +37,11 @@ from ..domain.ingestion_admin import (
     IngestionSourceConfigurationUpdate,
     IngestionSourceDetail,
     IngestionSourceEnabledBulkUpdate,
-    IngestionSourcePage,
     IngestionSourceHealth,
+    IngestionSourcePage,
     IngestionSourceRevisionTarget,
     IngestionStageSummaryEntry,
+    IngestionThroughputBucket,
     SafeCommandResult,
 )
 from ..ports.ingestion_admin import (
@@ -75,6 +78,8 @@ _MAX_WINDOW_HOURS = 2_160
 _MAX_BUCKET_HOURS = 168
 _MAX_HISTORY_BUCKETS = 120
 _DEFAULT_SUMMARY_WINDOW_HOURS = 168
+_MAX_CONCENTRATION_ROWS = 200
+_DEFAULT_CONCENTRATION_ROWS = 15
 _MIN_LEASE_SECONDS = 300
 _MAX_LEASE_SECONDS = 21_600
 _MAX_DEFERRED_ATTEMPTS = 5
@@ -205,6 +210,33 @@ class IngestionAdminService:
     ) -> list[IngestionSourceHealth]:
         """Return the whole registry graded, unpaginated -- a roster is a set, not a page."""
         return await self._repository.source_health(include_fixtures=include_fixtures)
+
+    async def fleet_shape(self) -> list[IngestionFleetShapeEntry]:
+        """Return each adapter mode's share of the fleet against its share of the catalog."""
+        return await self._repository.fleet_shape()
+
+    async def throughput(
+        self,
+        *,
+        window_hours: int = _DEFAULT_SUMMARY_WINDOW_HOURS,
+        bucket_hours: int = 24,
+    ) -> list[IngestionThroughputBucket]:
+        """Return gap-filled pipeline volume; an empty bucket is a fact, not a missing row."""
+        _validate_history_window(window_hours, bucket_hours)
+        return await self._repository.throughput(
+            window_hours=window_hours,
+            bucket_hours=bucket_hours,
+        )
+
+    async def catalog_concentration(
+        self,
+        *,
+        limit: int = _DEFAULT_CONCENTRATION_ROWS,
+    ) -> list[CatalogConcentrationEntry]:
+        """Return which sources actually carry the served catalog."""
+        if limit < 1 or limit > _MAX_CONCENTRATION_ROWS:
+            raise ValueError("catalog concentration limit is invalid")
+        return await self._repository.catalog_concentration(limit=limit)
 
     async def list_sources(
         self,
