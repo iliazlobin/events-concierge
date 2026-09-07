@@ -1,7 +1,7 @@
-"""Dedicated PostgreSQL LISTEN/NOTIFY wake-up adapter for the ADR-009 outbox relay.
+"""Dedicated PostgreSQL LISTEN/NOTIFY wake-up adapter for the ADR-009 outbox worker.
 
 The listener owns one autocommit psycopg connection rather than borrowing the SQLAlchemy request
-pool: PostgreSQL session-scoped LISTEN state must survive relay transactions.  It is advisory only;
+pool: PostgreSQL session-scoped LISTEN state must survive worker transactions.  It is advisory only;
 every transport or protocol failure returns a bounded poll-fallback result and never affects durable
 outbox correctness (FR-6.6/FR-8.9, ADR-009).
 """

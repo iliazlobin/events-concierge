@@ -1,7 +1,7 @@
-"""Loss-proof EventRequest intake and Temporal-start relay (FR-6.8, ADR-003).
+"""Loss-proof EventRequest intake and Temporal-start worker (FR-6.8, ADR-003).
 
 The HTTP/API edge atomically records a deterministic request plus an opaque start instruction.  A
-small relay owns the fallible engine call: a client timeout after Temporal accepted the start is
+small worker owns the fallible engine call: a client timeout after Temporal accepted the start is
 safe because the deterministic parent workflow ID rejects the replay as an already-started success.
 """
 
@@ -37,8 +37,8 @@ _START_RETRY_DELAYS = (
 
 
 @dataclass(frozen=True, slots=True)
-class RequestStartRelayStats:
-    """One bounded relay pass, suitable for worker metrics and deterministic tests."""
+class RequestStartWorkerStats:
+    """One bounded worker pass, suitable for worker metrics and deterministic tests."""
 
     claimed: int = 0
     started: int = 0
@@ -75,8 +75,8 @@ class RequestIntakeService:
         return request
 
 
-class RequestStartRelay:
-    """Relay pending starts to Temporal with leases and perpetual, bounded-backoff retry (ADR-003)."""
+class RequestStartWorker:
+    """Start pending workflows in Temporal with leases and perpetual, bounded-backoff retry (ADR-003)."""
 
     def __init__(
         self,
@@ -102,33 +102,33 @@ class RequestStartRelay:
         )
         self._tenant_effect_timeout_seconds = tenant_effect_timeout_seconds
 
-    async def relay_once(self, *, limit: int = 50) -> RequestStartRelayStats:
+    async def run_once(self, *, limit: int = 50) -> RequestStartWorkerStats:
         """Claim and attempt a bounded batch; the worker supplies the idle poll/reconnect loop."""
         if limit < 1:
             raise ValueError("limit must be positive")
         records = await self._requests.claim_start_batch(limit, self._lease_seconds)
-        stats = RequestStartRelayStats(claimed=len(records))
+        stats = RequestStartWorkerStats(claimed=len(records))
         for record in records:
-            stats = await self._relay_record(record, stats)
+            stats = await self._process_record(record, stats)
         return stats
 
-    async def relay_request(self, tenant_id: UUID, request_id: UUID) -> bool:
+    async def start_request(self, tenant_id: UUID, request_id: UUID) -> bool:
         """Try the just-accepted request immediately without racing the durable worker.
 
         A competing lease is not an error: the persisted status tells the caller whether another
-        relay has already acknowledged the same deterministic Temporal workflow.
+        worker has already acknowledged the same deterministic Temporal workflow.
         """
         record = await self._requests.claim_start(tenant_id, request_id, self._lease_seconds)
         if record is not None:
-            await self._relay_record(record, RequestStartRelayStats(claimed=1))
+            await self._process_record(record, RequestStartWorkerStats(claimed=1))
         return await self._requests.start_has_started(tenant_id, request_id)
 
-    async def _relay_record(
-        self, record: RequestStartRecord, stats: RequestStartRelayStats
-    ) -> RequestStartRelayStats:
+    async def _process_record(
+        self, record: RequestStartRecord, stats: RequestStartWorkerStats
+    ) -> RequestStartWorkerStats:
         try:
             if not await self._requests.has_live_start_lease(record):
-                # A fresh relay may now own the start row. Do not reach Temporal, acknowledge,
+                # A fresh worker may now own the start row. Do not reach Temporal, acknowledge,
                 # or reschedule under the observed stale token; the durable queue recovers it.
                 return _with(stats, lost_leases=stats.lost_leases + 1)
             # Acquire the erasure lock before re-reading the exact database-clock queue lease.
@@ -175,8 +175,8 @@ class RequestStartRelay:
         return _with(stats, started=stats.started + 1)
 
     async def _retry(
-        self, record: RequestStartRecord, stats: RequestStartRelayStats, error: str
-    ) -> RequestStartRelayStats:
+        self, record: RequestStartRecord, stats: RequestStartWorkerStats, error: str
+    ) -> RequestStartWorkerStats:
         delay = _retry_delay(record.attempt_count)
         if not await self._requests.reschedule_start(
             record,
@@ -211,9 +211,9 @@ def _retry_delay(attempt_count: int) -> timedelta:
     return _START_RETRY_DELAYS[min(attempt_count, len(_START_RETRY_DELAYS) - 1)]
 
 
-def _with(stats: RequestStartRelayStats, **changes: int) -> RequestStartRelayStats:
-    """Return a new immutable relay statistic without shared mutable worker counters."""
-    return RequestStartRelayStats(
+def _with(stats: RequestStartWorkerStats, **changes: int) -> RequestStartWorkerStats:
+    """Return a new immutable worker statistic without shared mutable worker counters."""
+    return RequestStartWorkerStats(
         claimed=changes.get("claimed", stats.claimed),
         started=changes.get("started", stats.started),
         retried=changes.get("retried", stats.retried),

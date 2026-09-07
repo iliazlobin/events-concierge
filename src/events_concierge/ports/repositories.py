@@ -34,7 +34,7 @@ from ..domain.request import EventRequest, RequestConstraints
 
 @dataclass(frozen=True, slots=True)
 class OutboxRecord:
-    """A leased outbox row handed to one relay attempt (FR-8.9, ADR-009)."""
+    """A leased outbox row handed to one worker attempt (FR-8.9, ADR-009)."""
 
     outbox_id: int
     tenant_id: UUID
@@ -46,10 +46,10 @@ class OutboxRecord:
 
 @dataclass(frozen=True, slots=True)
 class OutboxQueueSnapshot:
-    """A point-in-time, transport-agnostic view of relay backlog (FR-8.9, ADR-009).
+    """A point-in-time, transport-agnostic view of worker backlog (FR-8.9, ADR-009).
 
     ``pending`` excludes terminal rows, ``ready`` is immediately claimable, and ``leased`` is
-    actively owned by another relay. ``oldest_ready_at`` supports lag observability without
+    actively owned by another worker. ``oldest_ready_at`` supports lag observability without
     exposing any tenant payload from the global control queue.
     """
 
@@ -222,7 +222,7 @@ class RequestRepository(Protocol):
         ...
 
     async def mark_start_started(self, record: RequestStartRecord) -> bool:
-        """Acknowledge a Temporal start only while this relay still owns its lease."""
+        """Acknowledge a Temporal start only while this worker still owns its lease."""
         ...
 
     async def reschedule_start(
@@ -359,7 +359,7 @@ class HandoffRepository(Protocol):
 
 
 class OutboxRepository(Protocol):
-    """Durable lease + notification-ledger operations for the ADR-009 relay."""
+    """Durable lease + notification-ledger operations for the ADR-009 worker."""
 
     async def queue_snapshot(self) -> OutboxQueueSnapshot:
         """Report queue pressure using the same eligibility rules as ``claim_batch`` (FR-8.9)."""
@@ -370,7 +370,7 @@ class OutboxRepository(Protocol):
         ...
 
     async def mark_delivered(self, record: OutboxRecord) -> bool:
-        """Acknowledge a row only if this relay still owns its lease."""
+        """Acknowledge a row only if this worker still owns its lease."""
         ...
 
     async def reschedule(

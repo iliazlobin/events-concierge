@@ -124,6 +124,8 @@ Refined at **2026-07-02** after research wave 1 surfaced the risk profile — HA
 
 ## Conventions
 
+- **Worker terminology (agreed 2026-09-07):** name background processes by their job: request-start worker, notification worker, change-delivery worker, watch-projection worker, and ingestion-command worker. Use these names consistently in code, logs, tests, diagrams and living documentation. Preserve historical evidence and proper provider names.
+
 - **Code references (agreed 2026-09-07):** publish reviewed source changes to the approved GitHub repository before citing them in living Notion documentation. Use commit-pinned `blob/<full-commit-sha>/<path>` links for files and `tree/<full-commit-sha>/<path>` for directories; use verified line anchors when they clarify a specific mechanism. Display concise repository-relative labels rather than workstation paths. Verify each referenced path exists at that remote revision. Keep experimental branches and test dates distinct from deployed behavior; preserve dated historical evidence. If source is not yet published, label the reference pending instead of inventing a URL or linking an older revision as current. Preserve unrelated work and keep commits scoped; committing and pushing do not imply merging, deployment or migration.
 
 - Arc/scaffold + persistence: `/project-kickoff` skill.

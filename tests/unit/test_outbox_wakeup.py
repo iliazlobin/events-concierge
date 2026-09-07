@@ -130,7 +130,7 @@ async def test_listener_loss_closes_stale_connection_and_reconnects_on_the_next_
 
 @pytest.mark.parametrize("timeout_seconds", [0.0, -1.0, float("inf"), float("nan")])
 async def test_listener_rejects_an_unbounded_poll_interval(timeout_seconds: float) -> None:
-    """The advisory path cannot turn an idle relay cycle into an unbounded wait."""
+    """The advisory path cannot turn an idle worker cycle into an unbounded wait."""
     wakeup = PostgresOutboxWakeup("postgresql+psycopg://ec_app:secret@db:5433/ec")
 
     with pytest.raises(ValueError, match="finite and positive"):

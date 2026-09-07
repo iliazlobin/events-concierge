@@ -1,6 +1,6 @@
-"""At-least-once transactional-outbox relay with durable notification deduplication.
+"""At-least-once transactional-outbox worker with durable notification deduplication.
 
-The relay is a projection: lifecycle transitions remain the source of truth, while leased outbox
+The worker is a projection: lifecycle transitions remain the source of truth, while leased outbox
 rows are rendered to ``NotificationPort`` only after the transition transaction commits (FR-6.6,
 FR-8.9, ADR-007/009). A provider call and database commit cannot be one atomic effect. The stable
 ledger key enables provider-side suppression when the channel offers it; SES does not, so its
@@ -55,8 +55,8 @@ _log = get_logger(__name__)
 
 
 @dataclass(frozen=True, slots=True)
-class RelayStats:
-    """One poll's observable relay outcomes for worker metrics and focused tests."""
+class NotificationDeliveryStats:
+    """One poll's observable worker outcomes for worker metrics and focused tests."""
 
     claimed: int = 0
     acknowledged: int = 0
@@ -76,7 +76,7 @@ class _NotificationDraft:
     dedup_key: str
 
 
-class OutboxRelay:
+class NotificationDeliveryWorker:
     """Deliver notification-worthy outbox rows with leased at-least-once semantics (ADR-009)."""
 
     def __init__(
@@ -105,27 +105,29 @@ class OutboxRelay:
         )
         self._tenant_effect_timeout_seconds = tenant_effect_timeout_seconds
 
-    async def relay_once(self, *, limit: int = 50) -> RelayStats:
+    async def run_once(self, *, limit: int = 50) -> NotificationDeliveryStats:
         """Claim and process one bounded batch; the notifier worker supplies the idle poll loop."""
         if limit < 1:
             raise ValueError("limit must be positive")
         records = await self._outbox.claim_batch(limit, self._lease_seconds)
-        stats = RelayStats(claimed=len(records))
+        stats = NotificationDeliveryStats(claimed=len(records))
         for record in records:
-            stats = await self._relay_record(record, stats)
+            stats = await self._process_record(record, stats)
         return stats
 
-    async def _relay_record(self, record: OutboxRecord, stats: RelayStats) -> RelayStats:
+    async def _process_record(
+        self, record: OutboxRecord, stats: NotificationDeliveryStats
+    ) -> NotificationDeliveryStats:
         prepared = await self._prepare_notification(record, stats)
-        if isinstance(prepared, RelayStats):
+        if isinstance(prepared, NotificationDeliveryStats):
             return prepared
-        return await self._relay_notification(record, prepared, stats)
+        return await self._deliver_notification(record, prepared, stats)
 
     async def _prepare_notification(
         self,
         record: OutboxRecord,
-        stats: RelayStats,
-    ) -> _NotificationDraft | RelayStats:
+        stats: NotificationDeliveryStats,
+    ) -> _NotificationDraft | NotificationDeliveryStats:
         """Classify one projection before acquiring any notification-ledger state."""
         if "completion_url" in record.payload:
             return await self._quarantine_projection(
@@ -145,12 +147,12 @@ class OutboxRelay:
             )
         return _notification_draft(record, kind)
 
-    async def _relay_notification(
+    async def _deliver_notification(
         self,
         record: OutboxRecord,
         draft: _NotificationDraft,
-        stats: RelayStats,
-    ) -> RelayStats:
+        stats: NotificationDeliveryStats,
+    ) -> NotificationDeliveryStats:
         """Acquire authority, reveal any secret just in time, and settle one visible send."""
         claim_outcome = await self._claim_notification_authority(record, draft, stats)
         if claim_outcome is not None:
@@ -169,7 +171,7 @@ class OutboxRelay:
         except Exception:
             await self._outbox.release_notification(record, dedup_key=draft.dedup_key)
             # Provider/protector exceptions are untrusted and may echo the URL or bearer. Keep
-            # persisted relay errors and structured logs independent of exception text.
+            # persisted worker errors and structured logs independent of exception text.
             return await self._schedule_failure(
                 record,
                 stats,
@@ -211,8 +213,8 @@ class OutboxRelay:
         self,
         record: OutboxRecord,
         draft: _NotificationDraft,
-        stats: RelayStats,
-    ) -> RelayStats | None:
+        stats: NotificationDeliveryStats,
+    ) -> NotificationDeliveryStats | None:
         """Settle non-send claim outcomes and return ``None`` only for an authorized send."""
         claim = await self._outbox.claim_notification(
             record,
@@ -226,7 +228,7 @@ class OutboxRelay:
             return await self._reschedule_contention(
                 record,
                 stats,
-                "notification ledger is leased by another relay",
+                "notification ledger is leased by another worker",
             )
         if claim is NotificationClaim.LEASE_LOST:
             # A delayed claimant must never send after another worker reclaimed or terminalized
@@ -275,9 +277,9 @@ class OutboxRelay:
     async def _quarantine_projection(
         self,
         record: OutboxRecord,
-        stats: RelayStats,
+        stats: NotificationDeliveryStats,
         error: str,
-    ) -> RelayStats:
+    ) -> NotificationDeliveryStats:
         """Terminalize an unclassified or insecure row instead of silently dropping it."""
         quarantined = await self._outbox.reschedule(
             record,
@@ -294,8 +296,8 @@ class OutboxRelay:
         return _with(stats, failed=stats.failed + int(quarantined))
 
     async def _schedule_failure(
-        self, record: OutboxRecord, stats: RelayStats, error: str
-    ) -> RelayStats:
+        self, record: OutboxRecord, stats: NotificationDeliveryStats, error: str
+    ) -> NotificationDeliveryStats:
         """Consume one retry only after a known NotificationPort send failure (ADR-009)."""
         message = error[:1000]
         next_attempt = record.attempt_count + 1
@@ -330,8 +332,8 @@ class OutboxRelay:
         return _with(stats, retried=stats.retried + 1)
 
     async def _reschedule_contention(
-        self, record: OutboxRecord, stats: RelayStats, error: str
-    ) -> RelayStats:
+        self, record: OutboxRecord, stats: NotificationDeliveryStats, error: str
+    ) -> NotificationDeliveryStats:
         """Defer a ledger-contention or lease-loss retry without spending the send budget (ADR-009)."""
         await self._outbox.reschedule(
             record,
@@ -452,9 +454,9 @@ def _render_notification(
     return rendered
 
 
-def _with(stats: RelayStats, **changes: int) -> RelayStats:
+def _with(stats: NotificationDeliveryStats, **changes: int) -> NotificationDeliveryStats:
     """Return updated immutable stats without exposing a mutable counter to the worker loop."""
-    return RelayStats(
+    return NotificationDeliveryStats(
         claimed=changes.get("claimed", stats.claimed),
         acknowledged=changes.get("acknowledged", stats.acknowledged),
         sent=changes.get("sent", stats.sent),
@@ -464,7 +466,7 @@ def _with(stats: RelayStats, **changes: int) -> RelayStats:
 
 
 async def _complete_started_provider_call(send: Awaitable[None]) -> None:
-    """Drain an accepted provider call before propagating relay cancellation.
+    """Drain an accepted provider call before propagating worker cancellation.
 
     SES uses a blocking SDK call in an executor. Cancelling the coroutine cannot stop that thread;
     releasing the account-erasure advisory lock at that point would let erasure begin while the

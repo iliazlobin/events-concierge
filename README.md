@@ -236,19 +236,19 @@ processes:
 
 ```bash
 make api       # FastAPI smoke only; durable workers and Next.js remain stopped
-make stack     # Next.js, API, Temporal worker, relays/scanners, and dependencies
+make stack     # Next.js, API, Temporal worker, workers/scanners, and dependencies
 make ps
 make app-logs
 ```
 
 The full stack includes the Next.js frontend, API, Temporal workflow/activity worker, request-start
-relay, notifier outbox relay, account-erasure convergence worker, change-delivery worker,
-handoff-expiry repair worker, lifecycle-invariant scanner, and local ingestion-command relay. They
+worker, notifier outbox worker, account-erasure convergence worker, change-delivery worker,
+handoff-expiry repair worker, lifecycle-invariant scanner, and local ingestion-command worker. They
 share the same claim-check volume and Redis pacing state. Local Compose retains one compatibility
 worker process by default; the production Helm profile instead runs distinct transactional and
 catalog worker roles on separate task queues, with immutable Temporal Worker Deployment build
 identities. Each configured worker role has explicit workflow-task and activity limits (eight of
-each by default), the request-start relay drains at most five recovered starts every two seconds,
+each by default), the request-start worker drains at most five recovered starts every two seconds,
 and the nightly invariant scanner spaces Temporal liveness reads at ten calls per second per
 process. Override
 `EC_TEMPORAL_WORKER_MAX_CONCURRENT_WORKFLOW_TASKS`,
@@ -405,10 +405,10 @@ Ports-and-adapters (hexagonal): dependencies point inward, and the domain has no
 src/events_concierge/
   domain/        pure entities, value objects, enums, and policy logic
   ports/         typed protocols implemented at the system boundary
-  application/   use cases and durable relay services
+  application/   use cases and durable worker services
   adapters/      PostgreSQL, crawl, ranking, policy, provider, and local mock adapters
   workflows/     Temporal parent/child workflows and activities
-  workers/       durable relays, repair loops, and invariant scans
+  workers/       durable workers, repair loops, and invariant scans
   api/           same-origin consumer web app plus FastAPI intake/read/action contracts
   runtime.py     validated deployment-owned production provider graph
   composition.py dependency injection and fail-closed runtime selection

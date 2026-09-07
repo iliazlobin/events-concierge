@@ -9,7 +9,7 @@ from uuid import UUID
 class RequestWorkflowStarter(Protocol):
     """Start one parent EventRequest workflow, treating engine duplicate rejection as success.
 
-    The application relay owns durability and retry.  This narrow port owns only the external
+    The application worker owns durability and retry.  This narrow port owns only the external
     engine call so tests can prove lost-ack recovery without a live Temporal namespace (AC-48).
     """
 
