@@ -1240,7 +1240,7 @@ class RegistrationService:
 
         The registration is factual and valuable, so ADR-007 requires a manual calendar-recovery
         task rather than an automatic source compensation that could withdraw a valid RSVP. The
-        task and outbox record commit together; the lifecycle truth remains ``REGISTERED``.
+        task and notification outbox record commit together; the lifecycle truth remains ``REGISTERED``.
         """
         lifecycle = await self._lifecycle.get_or_create(
             tenant_id, event.canonical_event_id, workflow_id
