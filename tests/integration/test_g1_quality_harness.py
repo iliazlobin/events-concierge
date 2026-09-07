@@ -42,7 +42,7 @@ from events_concierge.adapters.mock.notification_secrets import (
 from events_concierge.adapters.mock.notifier import MockNotifier
 from events_concierge.adapters.mock.sources import ConfirmingSource
 from events_concierge.adapters.policy.discovery import StoreBackedDiscoveryPolicyGate
-from events_concierge.application.outbox import OutboxRelay
+from events_concierge.application.outbox import NotificationDeliveryWorker
 from events_concierge.composition import Container, build_container
 from events_concierge.config import get_settings
 from events_concierge.domain.conflict import BusyBlock
@@ -271,7 +271,7 @@ class ScenarioPorts:
 
 
 class ScenarioOutbox:
-    """Tenant-only replay queue for exercising OutboxRelay without claiming global DB rows."""
+    """Tenant-only replay queue for exercising NotificationDeliveryWorker without claiming global DB rows."""
 
     def __init__(self, batches: list[list[OutboxRecord]]) -> None:
         self._batches = batches
@@ -551,7 +551,7 @@ def _fixture_discovery_policy_gate(
 
 
 async def _tenant_outbox_records(tenant_id: UUID) -> list[OutboxRecord]:
-    """Read just this scenario's committed rows; the global relay queue remains untouched."""
+    """Read just this scenario's committed rows; the global worker queue remains untouched."""
     async with tenant_session_scope(tenant_id) as session:
         rows = (
             await session.execute(
@@ -590,23 +590,25 @@ async def _tenant_action_audit_phase_counts(tenant_id: UUID) -> dict[str, int]:
     return {str(row.phase): int(row.audit_count) for row in rows}
 
 
-async def _relay_tenant_records(records: list[OutboxRecord]) -> tuple[tuple[str, ...], int]:
-    """Replay only copied tenant records so the real relay/rendering path proves visible dedup."""
+async def _deliver_tenant_records(records: list[OutboxRecord]) -> tuple[tuple[str, ...], int]:
+    """Replay only copied tenant records so the real worker/rendering path proves visible dedup."""
     replay = [
         replace(record, lease_token=f"quality-replay-{index}")
         for index, record in enumerate(records)
     ]
     outbox = ScenarioOutbox([records, replay])
     notifier = MockNotifier()
-    relay = OutboxRelay(outbox, notifier, DevelopmentNotificationSecretProtector())
-    await relay.relay_once()
-    await relay.relay_once()
+    delivery = NotificationDeliveryWorker(
+        outbox, notifier, DevelopmentNotificationSecretProtector()
+    )
+    await delivery.run_once()
+    await delivery.run_once()
     kinds = tuple(sorted(notification.kind.value for notification in notifier.sent))
     dedup_count = len({notification.dedup_key for notification in notifier.sent})
     if dedup_count != len(notifier.sent):
-        raise AssertionError("quality relay emitted duplicate visible notifications")
+        raise AssertionError("quality worker emitted duplicate visible notifications")
     if len(outbox.notification_claims) != 2 * dedup_count:
-        raise AssertionError("quality relay did not replay every visible tenant notification")
+        raise AssertionError("quality worker did not replay every visible tenant notification")
     return kinds, dedup_count
 
 
@@ -787,7 +789,7 @@ async def _run_scenario(scenario: QualityScenario, scenario_index: int) -> Scena
     action_audit_phases = await _tenant_action_audit_phase_counts(tenant_id)
     action_audit_count = sum(action_audit_phases.values())
     records = await _tenant_outbox_records(tenant_id)
-    notification_kinds, notification_dedup_count = await _relay_tenant_records(records)
+    notification_kinds, notification_dedup_count = await _deliver_tenant_records(records)
     assert result.outcome == scenario.expected_outcome
     assert ports.source_mutations() == scenario.expected_source_mutation_count
     assert len(calendar.entries(tenant_id)) == scenario.expected_calendar_count

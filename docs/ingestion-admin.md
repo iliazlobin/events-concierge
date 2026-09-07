@@ -317,9 +317,9 @@ make stack
 ## Operations
 
 ```bash
-make stack                 # includes command relay + local cadence scheduler
+make stack                 # includes command worker + local cadence scheduler
 make app-logs              # includes API, command-worker, and scheduler logs
-make ingestion-commands    # run the relay outside Compose
+make ingestion-commands    # run the worker outside Compose
 make ingestion-cadence     # run the local enqueue-only cadence scheduler
 make catalog-refresh SOURCE_KEY=luma-sf
 make catalog-refresh SOURCE_KEY=luma-nyc

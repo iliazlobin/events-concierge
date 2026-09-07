@@ -35,7 +35,7 @@ Repository-owned, offline-validated implementation now includes:
   PostgreSQL/Redis, GCS/KMS, Artifact Registry, workload identity, observability, and secret
   containers;
 - a Helm chart for the Next.js frontend, internal FastAPI API, split/versioned Temporal workers,
-  relays, one-shot CronJobs, migration and application-role-rotation Jobs, Secret Manager CSI
+  workers, one-shot CronJobs, migration and application-role-rotation Jobs, Secret Manager CSI
   mounts, Cloud SQL Auth Proxy sidecars, policy, monitoring, and immutable image digests;
 - strict mounted-secret loading, explicit database pool budgets, and separate validation for
   direct TLS versus Pod-local Cloud SQL Auth Proxy connections;
@@ -55,7 +55,7 @@ by these offline checks.
 ## Goals
 
 1. Produce a reproducible GCP environment without long-lived cloud keys.
-2. Deploy immutable API, frontend, worker, relay, and scheduled-job images.
+2. Deploy immutable API, frontend, worker, worker, and scheduled-job images.
 3. Preserve the current PostgreSQL outbox and Temporal durability properties.
 4. Keep every durable data layer outside Kubernetes at launch.
 5. Establish least-privilege workload identities, private data-plane networking, encrypted
@@ -229,7 +229,7 @@ flowchart TD
     API --> Redis[Memorystore Redis]
     API --> Temporal[Temporal Cloud]
 
-    Starter[Request-start relay] --> SQL
+    Starter[Request-start worker] --> SQL
     Starter --> Temporal
     Worker[Temporal workflow/activity workers] --> Temporal
     Worker --> SQL
@@ -237,17 +237,17 @@ flowchart TD
     Worker --> GCS[GCS claim-check bucket]
     Worker --> Providers[Calendar, email, OIDC,<br/>event and registration providers]
 
-    Relays[Notifier, erasure, change,<br/>expiry and invariant workers] --> SQL
-    Relays --> Temporal
-    Relays --> Redis
-    Relays --> GCS
+    Workers[Notifier, erasure, change,<br/>expiry and invariant workers] --> SQL
+    Workers --> Temporal
+    Workers --> Redis
+    Workers --> GCS
 
     API --> Secrets[Secret Manager and Cloud KMS]
     Worker --> Secrets
-    Relays --> Secrets
+    Workers --> Secrets
     Identity[Workload Identity Federation] --> API
     Identity --> Worker
-    Identity --> Relays
+    Identity --> Workers
 ```
 
 ### GKE foundation
@@ -392,10 +392,10 @@ must be replaced with staging measurements before enabling broad autoscaling.
 | Frontend | 100m | 128 MiB | 500m / 512 MiB |
 | API | 250m | 256 MiB | 1 CPU / 512–768 MiB |
 | Temporal worker role | 250m | 384 MiB | 2 CPU / 1 GiB |
-| Relays and scanners | 100m | 192 MiB | 500m / 384–512 MiB |
+| Workers and scanners | 100m | 192 MiB | 500m / 384–512 MiB |
 
 The API and frontend may initially scale on CPU and latency. Temporal workers should eventually
-scale on task-queue backlog or schedule-to-start latency rather than CPU alone. Relays should not be
+scale on task-queue backlog or schedule-to-start latency rather than CPU alone. Workers should not be
 autoscaled until their lease and provider-rate behavior has been load-tested.
 
 ## Infrastructure and deployment ownership
@@ -430,7 +430,7 @@ all release phases with immutable image digests. It is staging scaffolding, not 
 cluster rollout. Helm owns namespaced Kubernetes application resources:
 
 - Kubernetes namespace and service accounts;
-- frontend/API, relay, and split Temporal-worker Deployments plus Services;
+- frontend/API, worker, and split Temporal-worker Deployments plus Services;
 - Gateway/HTTPRoute resources or the chosen GKE ingress integration;
 - separate migration and disabled-by-default `ec_app` password-rotation Jobs;
 - catalog, handoff-expiry, and lifecycle-invariant one-shot CronJobs;

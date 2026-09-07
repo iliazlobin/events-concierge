@@ -257,15 +257,15 @@ class Settings(BaseSettings):
     handoff_ttl_days: int = 7
     kill_switch: bool = False
 
-    # ADR-009 transactional-outbox relay. A poll is the durable local fallback when PostgreSQL
+    # ADR-009 transactional-outbox worker. A poll is the durable local fallback when PostgreSQL
     # LISTEN/NOTIFY is unavailable or a notifier process reconnects.
     outbox_batch_size: int = 50
     outbox_poll_seconds: float = 2.0
     outbox_lease_seconds: int = 60
 
-    # ADR-003 durable parent-workflow start relay. The API makes a best-effort immediate lease;
+    # ADR-003 durable parent-workflow start worker. The API makes a best-effort immediate lease;
     # this separate worker replays any Temporal outage without dropping the accepted request.
-    # The poll interval is also the minimum interval between non-empty relay passes. Without that
+    # The poll interval is also the minimum interval between non-empty worker passes. Without that
     # bound a recovered queue loops at CPU speed and amplifies each parent into registration
     # children faster than the workflow/activity worker can admit them.
     request_start_batch_size: int = Field(default=5, ge=1, le=50)
@@ -273,7 +273,7 @@ class Settings(BaseSettings):
     request_start_lease_seconds: int = Field(default=60, ge=1, le=3600)
 
     # FR-10.5 erasure is initiated by an authenticated browser command but completed by a
-    # durable cross-tenant relay. A short initial delay lets the request path finish immediately;
+    # durable cross-tenant worker. A short initial delay lets the request path finish immediately;
     # the worker then resumes every pending tombstone after crashes or provider outages.
     account_erasure_batch_size: int = Field(default=10, ge=1, le=100)
     account_erasure_poll_seconds: float = Field(default=30.0, ge=0.5, le=300.0)

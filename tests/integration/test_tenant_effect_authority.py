@@ -22,7 +22,7 @@ from events_concierge.adapters.postgres.tenant_repos import (
     PostgresRequestRepository,
     PostgresTenantRepository,
 )
-from events_concierge.application.request_start import RequestStartRelay
+from events_concierge.application.request_start import RequestStartWorker
 from events_concierge.domain.credentials import Tenant
 from events_concierge.domain.ids import request_workflow_id
 from events_concierge.domain.request import EventRequest, RequestConstraints
@@ -222,7 +222,7 @@ async def test_guarded_request_start_reenters_for_threshold_forced_claim_check(
             del tenant_id, claimed_request_id
 
     starter = ClaimCheckingStarter()
-    relay = RequestStartRelay(
+    delivery = RequestStartWorker(
         requests,
         starter,
         tenant_effect_authority=authority,
@@ -230,7 +230,7 @@ async def test_guarded_request_start_reenters_for_threshold_forced_claim_check(
     )
 
     assert await asyncio.wait_for(
-        relay.relay_request(tenant.tenant_id, request_id),
+        delivery.start_request(tenant.tenant_id, request_id),
         timeout=2.0,
     )
     assert starter.claim_count >= 1

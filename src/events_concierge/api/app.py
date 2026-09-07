@@ -36,7 +36,7 @@ from ..application.feed import MAX_FEED_OFFSET
 from ..application.ingestion_admin import IngestionAdminService
 from ..application.profile_media import AvatarRejectedError, normalize_avatar
 from ..application.ranking_feedback import UnknownFeedbackEventError
-from ..application.request_start import RequestIntakeService, RequestStartRelay
+from ..application.request_start import RequestIntakeService, RequestStartWorker
 from ..composition import Container, build_container
 from ..config import Settings, get_settings
 from ..domain.account_erasure import AccountErasureStatus
@@ -2099,7 +2099,7 @@ async def _configure_temporal(app: FastAPI, settings: Settings, container: Conta
     app.state.lifecycle_signaler = None
     # Configuration is a deployment invariant and fails startup even when the engine is down.
     # Reachability is different: the database outbox is the durable outage boundary, so a valid
-    # deployment keeps accepting durable intake while the request-start relay waits for recovery.
+    # deployment keeps accepting durable intake while the request-start worker waits for recovery.
     validate_temporal_settings(settings)
     try:
         from ..workflows.start import (
@@ -3075,14 +3075,14 @@ def create_app() -> FastAPI:
         started = False
         starter = app.state.request_starter
         if starter is not None:
-            relay = RequestStartRelay(
+            delivery = RequestStartWorker(
                 container.request_repo,
                 starter,
                 lease_seconds=settings.request_start_lease_seconds,
                 tenant_effect_authority=container.tenant_effect_authority,
                 tenant_effect_timeout_seconds=settings.tenant_effect_timeout_seconds,
             )
-            started = await relay.relay_request(tenant_id, request.request_id)
+            started = await delivery.start_request(tenant_id, request.request_id)
         return RequestAccepted(
             request_id=request.request_id,
             workflow_started=started,

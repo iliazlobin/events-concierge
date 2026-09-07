@@ -11,7 +11,7 @@ import asyncio
 from datetime import UTC, datetime
 
 from ..application.notifier import NotifierWorker
-from ..application.outbox import OutboxRelay
+from ..application.outbox import NotificationDeliveryWorker
 from ..composition import build_container
 from ..config import get_settings
 from ..infra.logging import configure_logging, get_logger
@@ -21,11 +21,11 @@ _log = get_logger(__name__)
 
 
 async def run_notifier() -> None:
-    """Relay durable rows, draining backlog immediately and polling safely after idle wake-up loss."""
+    """Process durable rows, draining backlog immediately and polling safely after idle wake-up loss."""
     settings = get_settings()
     configure_logging(settings.log_level, local=settings.env == "local")
     container = build_container(settings)
-    relay = OutboxRelay(
+    delivery = NotificationDeliveryWorker(
         container.outbox_repo,
         container.notifier,
         container.notification_secret_protector,
@@ -34,7 +34,7 @@ async def run_notifier() -> None:
         tenant_effect_timeout_seconds=settings.tenant_effect_timeout_seconds,
     )
     worker = NotifierWorker(
-        relay,
+        delivery,
         container.outbox_repo,
         container.outbox_wakeup,
         batch_size=settings.outbox_batch_size,
@@ -53,7 +53,7 @@ async def run_notifier() -> None:
             cycle = await worker.run_cycle()
             snapshot = cycle.queue_snapshot
             _log.info(
-                "notifier relay cycle",
+                "notifier worker cycle",
                 duration_seconds=cycle.duration_seconds,
                 ready=cycle.health.ready,
                 wakeup_mode=cycle.health.wakeup_mode.value,
@@ -62,11 +62,11 @@ async def run_notifier() -> None:
                 queue_ready=snapshot.ready if snapshot is not None else None,
                 queue_leased=snapshot.leased if snapshot is not None else None,
                 oldest_ready_age_seconds=_oldest_ready_age_seconds(snapshot),
-                relay_claimed=cycle.relay.claimed,
-                relay_acknowledged=cycle.relay.acknowledged,
-                notifier_port_sends=cycle.relay.sent,
-                relay_retried=cycle.relay.retried,
-                relay_failed=cycle.relay.failed,
+                delivery_claimed=cycle.delivery.claimed,
+                delivery_acknowledged=cycle.delivery.acknowledged,
+                notifier_port_sends=cycle.delivery.sent,
+                delivery_retried=cycle.delivery.retried,
+                delivery_failed=cycle.delivery.failed,
                 listener_failures=cycle.health.listener_failures,
                 wakeups=cycle.health.wakeups,
                 poll_fallbacks=cycle.health.poll_fallbacks,

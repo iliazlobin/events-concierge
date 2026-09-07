@@ -7,7 +7,7 @@ from datetime import UTC, datetime
 from uuid import uuid4
 
 from events_concierge.application.watch_projection import (
-    LifecycleWatchProjectionRelay,
+    LifecycleWatchProjectionWorker,
     WatchProjectionStats,
 )
 from events_concierge.domain.enums import Source
@@ -126,7 +126,7 @@ class _WatchRegistry:
         return True
 
     async def list_watches(self) -> list[WatchedEvent]:
-        """The relay never reads registry rows; retain a complete protocol surface."""
+        """The worker never reads registry rows; retain a complete protocol surface."""
         return []
 
 
@@ -163,10 +163,10 @@ async def test_projection_ack_loss_replays_idempotently_then_acknowledges() -> N
     record = _record()
     outbox = _ProjectionOutbox(record, lose_delivery_ack_once=True)
     watches = _WatchRegistry()
-    relay = LifecycleWatchProjectionRelay(outbox, watches, lease_seconds=45)
+    delivery = LifecycleWatchProjectionWorker(outbox, watches, lease_seconds=45)
 
-    first = await relay.relay_once()
-    recovered = await relay.relay_once()
+    first = await delivery.run_once()
+    recovered = await delivery.run_once()
 
     expected_watch = _watch(record)
     assert first == WatchProjectionStats(claimed=1, applied=1)
@@ -189,9 +189,9 @@ async def test_projection_skips_a_stale_pre_registry_lease_until_a_fresh_claim()
     record = _record()
     outbox = _ProjectionOutbox(record, lose_live_lease_once=True)
     watches = _WatchRegistry()
-    relay = LifecycleWatchProjectionRelay(outbox, watches, lease_seconds=45)
+    delivery = LifecycleWatchProjectionWorker(outbox, watches, lease_seconds=45)
 
-    first = await relay.relay_once()
+    first = await delivery.run_once()
 
     assert first == WatchProjectionStats(claimed=1, lost_leases=1)
     assert watches.register_calls == []
@@ -201,7 +201,7 @@ async def test_projection_skips_a_stale_pre_registry_lease_until_a_fresh_claim()
     assert outbox.rescheduled == []
     assert outbox.pending is True
 
-    recovered = await relay.relay_once()
+    recovered = await delivery.run_once()
 
     assert recovered == WatchProjectionStats(claimed=1, applied=1, acknowledged=1)
     assert watches.register_calls == [_watch(record)]
@@ -223,9 +223,9 @@ async def test_projection_registry_error_reschedules_the_exact_lease_without_a_w
     record = _record()
     outbox = _ProjectionOutbox(record)
     watches = _WatchRegistry(register_error=RuntimeError("registry unavailable"))
-    relay = LifecycleWatchProjectionRelay(outbox, watches, lease_seconds=45)
+    delivery = LifecycleWatchProjectionWorker(outbox, watches, lease_seconds=45)
 
-    result = await relay.relay_once()
+    result = await delivery.run_once()
 
     [claimed] = outbox.claimed
     assert result == WatchProjectionStats(claimed=1, retried=1)
@@ -242,9 +242,9 @@ async def test_projection_error_with_a_lost_retry_lease_is_not_reported_as_a_ret
     record = _record()
     outbox = _ProjectionOutbox(record, lose_reschedule_lease_once=True)
     watches = _WatchRegistry(register_error=RuntimeError("registry unavailable"))
-    relay = LifecycleWatchProjectionRelay(outbox, watches, lease_seconds=45)
+    delivery = LifecycleWatchProjectionWorker(outbox, watches, lease_seconds=45)
 
-    result = await relay.relay_once()
+    result = await delivery.run_once()
 
     assert result == WatchProjectionStats(claimed=1, lost_leases=1)
     assert watches.register_calls == [_watch(record)]

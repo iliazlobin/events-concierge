@@ -38,7 +38,7 @@ class _ProjectionOutcome(StrEnum):
     LEASE_LOST = "lease_lost"
 
 
-class LifecycleWatchProjectionRelay:
+class LifecycleWatchProjectionWorker:
     """Drain lifecycle watch instructions without coupling notification delivery to detection.
 
     A delayed register can legitimately find that a later terminal transition already closed the
@@ -60,7 +60,7 @@ class LifecycleWatchProjectionRelay:
         self._watches = watches
         self._lease_seconds = lease_seconds
 
-    async def relay_once(self, *, limit: int = 50) -> WatchProjectionStats:
+    async def run_once(self, *, limit: int = 50) -> WatchProjectionStats:
         """Apply one bounded batch and retain failed records for durable retry (ADR-008)."""
         if limit < 1:
             raise ValueError("limit must be positive")

@@ -8,9 +8,9 @@ from collections.abc import Callable
 import pytest
 from pydantic import ValidationError
 
-from events_concierge.application.request_start import RequestStartRelayStats
+from events_concierge.application.request_start import RequestStartWorkerStats
 from events_concierge.config import Settings
-from events_concierge.workers.request_starter import _run_request_start_relay
+from events_concierge.workers.request_starter import _run_request_start_worker
 
 
 def test_request_start_cadence_defaults_are_bounded() -> None:
@@ -33,12 +33,12 @@ class _StopLoopError(Exception):
     """End the otherwise perpetual worker immediately after an observed test sleep."""
 
 
-class _FakeRelay:
-    def __init__(self, outcomes: list[RequestStartRelayStats | Exception]) -> None:
+class _FakeDeliveryWorker:
+    def __init__(self, outcomes: list[RequestStartWorkerStats | Exception]) -> None:
         self._outcomes = outcomes
         self.limits: list[int] = []
 
-    async def relay_once(self, *, limit: int = 50) -> RequestStartRelayStats:
+    async def run_once(self, *, limit: int = 50) -> RequestStartWorkerStats:
         self.limits.append(limit)
         outcome = self._outcomes.pop(0)
         if isinstance(outcome, Exception):
@@ -52,7 +52,7 @@ def _scripted_clock(*values: float) -> Callable[[], float]:
 
 
 async def _run_one_cycle(
-    relay: _FakeRelay,
+    delivery: _FakeDeliveryWorker,
     *,
     clock: Callable[[], float],
     minimum_cycle_seconds: float = 2.0,
@@ -64,8 +64,8 @@ async def _run_one_cycle(
         raise _StopLoopError
 
     with pytest.raises(_StopLoopError):
-        await _run_request_start_relay(
-            relay,
+        await _run_request_start_worker(
+            delivery,
             batch_size=5,
             minimum_cycle_seconds=minimum_cycle_seconds,
             clock=clock,
@@ -75,29 +75,29 @@ async def _run_one_cycle(
 
 
 async def test_busy_backlog_waits_for_the_remaining_cycle_interval() -> None:
-    relay = _FakeRelay([RequestStartRelayStats(claimed=5, started=5)])
+    delivery = _FakeDeliveryWorker([RequestStartWorkerStats(claimed=5, started=5)])
 
-    sleeps = await _run_one_cycle(relay, clock=_scripted_clock(100.0, 100.25))
+    sleeps = await _run_one_cycle(delivery, clock=_scripted_clock(100.0, 100.25))
 
-    assert relay.limits == [5]
+    assert delivery.limits == [5]
     assert sleeps == [pytest.approx(1.75)]
 
 
 async def test_slow_backlog_pass_still_yields_before_the_next_claim() -> None:
-    relay = _FakeRelay([RequestStartRelayStats(claimed=5, started=5)])
+    delivery = _FakeDeliveryWorker([RequestStartWorkerStats(claimed=5, started=5)])
 
-    sleeps = await _run_one_cycle(relay, clock=_scripted_clock(100.0, 102.5))
+    sleeps = await _run_one_cycle(delivery, clock=_scripted_clock(100.0, 102.5))
 
-    assert relay.limits == [5]
+    assert delivery.limits == [5]
     assert sleeps == [0.0]
 
 
 async def test_failed_pass_uses_the_same_bounded_cadence() -> None:
-    relay = _FakeRelay([RuntimeError("Temporal unavailable")])
+    delivery = _FakeDeliveryWorker([RuntimeError("Temporal unavailable")])
 
-    sleeps = await _run_one_cycle(relay, clock=_scripted_clock(20.0, 20.5))
+    sleeps = await _run_one_cycle(delivery, clock=_scripted_clock(20.0, 20.5))
 
-    assert relay.limits == [5]
+    assert delivery.limits == [5]
     assert sleeps == [pytest.approx(1.5)]
 
 
@@ -108,20 +108,20 @@ async def test_failed_pass_uses_the_same_bounded_cadence() -> None:
 async def test_invalid_cadence_is_rejected_before_a_queue_claim(
     batch_size: int, minimum_cycle_seconds: float
 ) -> None:
-    relay = _FakeRelay([RequestStartRelayStats()])
+    delivery = _FakeDeliveryWorker([RequestStartWorkerStats()])
 
     with pytest.raises(ValueError):
-        await _run_request_start_relay(
-            relay,
+        await _run_request_start_worker(
+            delivery,
             batch_size=batch_size,
             minimum_cycle_seconds=minimum_cycle_seconds,
         )
 
-    assert relay.limits == []
+    assert delivery.limits == []
 
 
 async def test_sleep_is_interruptible_for_fast_worker_shutdown() -> None:
-    relay = _FakeRelay([RequestStartRelayStats(claimed=5, started=5)])
+    delivery = _FakeDeliveryWorker([RequestStartWorkerStats(claimed=5, started=5)])
     sleeping = asyncio.Event()
 
     async def block_in_sleep(seconds: float) -> None:
@@ -130,8 +130,8 @@ async def test_sleep_is_interruptible_for_fast_worker_shutdown() -> None:
         await asyncio.Event().wait()
 
     worker = asyncio.create_task(
-        _run_request_start_relay(
-            relay,
+        _run_request_start_worker(
+            delivery,
             batch_size=5,
             minimum_cycle_seconds=2.0,
             clock=lambda: 0.0,
@@ -144,4 +144,4 @@ async def test_sleep_is_interruptible_for_fast_worker_shutdown() -> None:
     with pytest.raises(asyncio.CancelledError):
         await worker
 
-    assert relay.limits == [5]
+    assert delivery.limits == [5]

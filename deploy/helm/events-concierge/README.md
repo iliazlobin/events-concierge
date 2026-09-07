@@ -1,7 +1,7 @@
 # Events Concierge Helm chart
 
 The chart packages the public Next.js frontend, internal FastAPI API, separately versioned
-transactional and catalog Temporal workers, durable relay Deployments, one-shot repair/scanner
+transactional and catalog Temporal workers, durable worker Deployments, one-shot repair/scanner
 CronJobs, a schema migration Job, a bounded catalog dispatcher CronJob, and an opt-in one-source
 operational Job. PostgreSQL, Redis, Temporal Server, and shared filesystem volumes are intentionally
 absent.

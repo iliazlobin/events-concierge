@@ -15,7 +15,7 @@ from temporalio.client import Client
 
 from ..application.calendar_repair import ClosedWorkflowCalendarRepairWorker
 from ..application.change_detection import ChangeDetectionService
-from ..application.watch_projection import LifecycleWatchProjectionRelay
+from ..application.watch_projection import LifecycleWatchProjectionWorker
 from ..composition import build_container
 from ..config import Settings, get_settings
 from ..infra.logging import configure_logging, get_logger
@@ -31,7 +31,7 @@ async def run_change_delivery() -> None:
     settings = get_settings()
     configure_logging(settings.log_level, local=settings.env == "local")
     container = build_container(settings)
-    projection = LifecycleWatchProjectionRelay(
+    projection = LifecycleWatchProjectionWorker(
         container.watch_projection_outbox,
         container.change_detection_repo,
         lease_seconds=settings.change_delivery_lease_seconds,
@@ -50,7 +50,7 @@ async def run_change_delivery() -> None:
     )
     while True:
         try:
-            projected = await projection.relay_once(limit=settings.change_delivery_batch_size)
+            projected = await projection.run_once(limit=settings.change_delivery_batch_size)
         except Exception as exc:
             _log.warning("lifecycle watch projection failed", error=str(exc))
             await asyncio.sleep(settings.change_delivery_poll_seconds)

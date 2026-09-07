@@ -1,4 +1,4 @@
-"""Postgres-backed ADR-009 relay coverage for atomic outbox delivery and deduplication."""
+"""Postgres-backed ADR-009 worker coverage for atomic outbox delivery and deduplication."""
 
 from __future__ import annotations
 
@@ -17,7 +17,7 @@ from events_concierge.adapters.mock.notification_secrets import (
     DevelopmentNotificationSecretProtector,
 )
 from events_concierge.adapters.postgres.tenant_repos import PostgresOutboxRepository
-from events_concierge.application.outbox import OutboxRelay
+from events_concierge.application.outbox import NotificationDeliveryWorker
 from events_concierge.composition import Container, build_container
 from events_concierge.config import get_settings
 from events_concierge.domain.credentials import Tenant
@@ -81,7 +81,7 @@ class _NotificationLedgerState:
 
 
 def _isolated_outbox_ids(count: int) -> list[int]:
-    """Reserve highly negative IDs so a bounded real relay claim touches only this fixture."""
+    """Reserve highly negative IDs so a bounded real worker claim touches only this fixture."""
     start = -9_223_000_000_000_000_000 + (uuid4().int % 1_000_000_000)
     return [start + index for index in range(count)]
 
@@ -392,7 +392,7 @@ async def _recover_notification_failure(
 
 
 async def _create_handoff_outbox(container: Container) -> tuple[UUID, str, str]:
-    """Persist one uniquely addressable handoff projection for relay integration cases."""
+    """Persist one uniquely addressable handoff projection for worker integration cases."""
     tag = uuid4().hex
     tenant_id = uuid4()
     await container.tenant_repo.add(
@@ -413,7 +413,7 @@ async def _create_handoff_outbox(container: Container) -> tuple[UUID, str, str]:
                     start_at=datetime.now(UTC).replace(microsecond=0) + timedelta(days=2),
                     registration_url=f"https://example.test/events/outbox-{tag}",
                     city="New York",
-                    description="relay fixture",
+                    description="worker fixture",
                     is_free=True,
                 )
             ]
@@ -432,7 +432,7 @@ async def _create_handoff_outbox(container: Container) -> tuple[UUID, str, str]:
     return tenant_id, workflow_id, tag
 
 
-async def test_relay_delivers_atomic_handoff_outbox_once_with_durable_ledger(db: None) -> None:
+async def test_worker_delivers_atomic_handoff_outbox_once_with_durable_ledger(db: None) -> None:
     """A real guarded transition becomes one durable, deduplicated notification (ADR-007/009)."""
     settings = get_settings()
     container = build_container(settings, register_sources={})
@@ -467,20 +467,20 @@ async def test_relay_delivers_atomic_handoff_outbox_once_with_durable_ledger(db:
         raise AssertionError("outbox projection retained a plaintext completion capability")
 
     # The development database intentionally persists integration fixtures. A large bounded batch
-    # lets this real relay reach this test's fresh row without relying on global outbox ordering.
-    relay = OutboxRelay(
+    # lets this real worker reach this test's fresh row without relying on global outbox ordering.
+    delivery = NotificationDeliveryWorker(
         container.outbox_repo,
         container.notifier,
         container.notification_secret_protector,
     )
-    await relay.relay_once(limit=10_000)
+    await delivery.run_once(limit=10_000)
     first_delivery = [item for item in container.notifier.sent if item.tenant_id == tenant_id]
     assert len(first_delivery) == 1
     assert first_delivery[0].deep_link == f"https://example.test/events/outbox-{tag}"
     assert first_delivery[0].dedup_key.startswith(f"{workflow_id}:handoff_available:")
 
     # A second poll must not create a second user-visible notification for the same committed row.
-    await relay.relay_once(limit=10_000)
+    await delivery.run_once(limit=10_000)
     assert [
         item for item in container.notifier.sent if item.tenant_id == tenant_id
     ] == first_delivery
@@ -506,7 +506,7 @@ async def test_relay_delivers_atomic_handoff_outbox_once_with_durable_ledger(db:
     assert "protected_completion_url" not in row.payload
 
 
-async def test_relay_busy_ledger_deferral_does_not_consume_retry_budget(db: None) -> None:
+async def test_worker_busy_ledger_deferral_does_not_consume_retry_budget(db: None) -> None:
     """A durable ledger lease defers a real row without spending a provider-failure attempt."""
     settings = get_settings()
     container = build_container(settings, register_sources={})
@@ -531,7 +531,7 @@ async def test_relay_busy_ledger_deferral_does_not_consume_retry_budget(db: None
             text(
                 """INSERT INTO notification_ledger
                        (dedup_key, outbox_id, tenant_id, state, lease_token, lease_expires_at)
-                   VALUES (:dedup_key, :outbox_id, :tenant_id, 'sending', 'other-relay',
+                   VALUES (:dedup_key, :outbox_id, :tenant_id, 'sending', 'other-worker',
                            now() + INTERVAL '10 minutes')"""
             ),
             {
@@ -543,12 +543,12 @@ async def test_relay_busy_ledger_deferral_does_not_consume_retry_budget(db: None
 
     # The persistent development database can contain old fixtures; a large bounded batch reliably
     # reaches this test's fresh row without relying on global outbox ordering.
-    relay = OutboxRelay(
+    delivery = NotificationDeliveryWorker(
         container.outbox_repo,
         container.notifier,
         container.notification_secret_protector,
     )
-    await relay.relay_once(limit=10_000)
+    await delivery.run_once(limit=10_000)
 
     async with system_session_scope() as session:
         deferred = (
@@ -564,7 +564,7 @@ async def test_relay_busy_ledger_deferral_does_not_consume_retry_budget(db: None
     assert int(deferred.attempt_count) == 0
     assert deferred.delivered_at is None
     assert deferred.lease_token is None
-    assert deferred.last_error == "notification ledger is leased by another relay"
+    assert deferred.last_error == "notification ledger is leased by another worker"
     assert [item for item in container.notifier.sent if item.tenant_id == tenant_id] == []
 
     # Do not leave a deliberately deferred row to be re-leased by unrelated integration cases.
@@ -583,19 +583,19 @@ async def test_relay_busy_ledger_deferral_does_not_consume_retry_budget(db: None
         )
 
 
-async def test_relay_reopened_outbox_uses_durable_ledger_without_a_second_send(db: None) -> None:
+async def test_worker_reopened_outbox_uses_durable_ledger_without_a_second_send(db: None) -> None:
     """A lost outbox acknowledgement cannot repeat a completed provider notification (FR-6.6, ADR-009)."""
     settings = get_settings()
     container = build_container(settings, register_sources={})
     tenant_id, _, _ = await _create_handoff_outbox(container)
     notifier = TenantCountingNotifier(tenant_id)
-    relay = OutboxRelay(
+    delivery = NotificationDeliveryWorker(
         container.outbox_repo,
         notifier,
         container.notification_secret_protector,
     )
 
-    await relay.relay_once(limit=10_000)
+    await delivery.run_once(limit=10_000)
     assert notifier.calls == 1
     assert len(notifier.notifications) == 1
     async with system_session_scope() as session:
@@ -629,7 +629,7 @@ async def test_relay_reopened_outbox_uses_durable_ledger_without_a_second_send(d
             {"outbox_id": outbox_id},
         )
 
-    stats = await relay.relay_once(limit=10_000)
+    stats = await delivery.run_once(limit=10_000)
 
     assert stats.acknowledged >= 1
     assert notifier.calls == 1

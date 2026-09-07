@@ -18,7 +18,7 @@ from enum import StrEnum
 
 from ..ports.outbox import OutboxWakeupPort, OutboxWakeupResult, OutboxWakeupStatus
 from ..ports.repositories import OutboxQueueSnapshot, OutboxRepository
-from .outbox import OutboxRelay, RelayStats
+from .outbox import NotificationDeliveryStats, NotificationDeliveryWorker
 
 
 class NotifierWakeupMode(StrEnum):
@@ -53,11 +53,11 @@ class NotifierHealth:
 class NotifierCycle:
     """One bounded worker iteration for logs, readiness probes, and deterministic tests.
 
-    ``relay`` counts accepted hand-offs to ``NotificationPort``; it does not prove a provider's
+    ``delivery`` counts accepted hand-offs to ``NotificationPort``; it does not prove a provider's
     downstream delivery to a person.  Provider delivery events remain an adapter concern.
     """
 
-    relay: RelayStats
+    delivery: NotificationDeliveryStats
     queue_snapshot: OutboxQueueSnapshot | None
     wakeup: OutboxWakeupResult | None
     duration_seconds: float
@@ -65,7 +65,7 @@ class NotifierCycle:
 
 
 class NotifierWorker:
-    """Run a loss-proof push-wakeup/poll loop around ``OutboxRelay`` (ADR-009).
+    """Run a loss-proof push-wakeup/poll loop around ``NotificationDeliveryWorker`` (ADR-009).
 
     The caller owns the outer process lifetime and calls :meth:`run_cycle` repeatedly.  A cycle
     that claimed rows returns without an idle wait, so the caller drains backlog immediately.  An
@@ -75,7 +75,7 @@ class NotifierWorker:
 
     def __init__(
         self,
-        relay: OutboxRelay,
+        delivery: NotificationDeliveryWorker,
         outbox: OutboxRepository,
         wakeup: OutboxWakeupPort,
         *,
@@ -89,7 +89,7 @@ class NotifierWorker:
             raise ValueError("batch_size must be positive")
         if not math.isfinite(poll_seconds) or poll_seconds <= 0:
             raise ValueError("poll_seconds must be finite and positive")
-        self._relay = relay
+        self._delivery = delivery
         self._outbox = outbox
         self._wakeup = wakeup
         self._batch_size = batch_size
@@ -144,29 +144,29 @@ class NotifierWorker:
         snapshot = await self._queue_snapshot_or_wait()
         if snapshot is None:
             return self._cycle(
-                relay=RelayStats(),
+                delivery=NotificationDeliveryStats(),
                 queue_snapshot=None,
                 wakeup=None,
                 started_at=started_at,
             )
 
         try:
-            relay = await self._relay.relay_once(limit=self._batch_size)
+            delivery = await self._delivery.run_once(limit=self._batch_size)
         except Exception as exc:
             self._last_error = _error_detail(exc)
             # The durable queue probe is still a successful readiness check.  Back off one bounded
-            # interval before retrying the relay instead of terminating and leaving a lease storm.
+            # interval before retrying the worker instead of terminating and leaving a lease storm.
             await self._sleep(self._poll_seconds)
             return self._cycle(
-                relay=RelayStats(),
+                delivery=NotificationDeliveryStats(),
                 queue_snapshot=snapshot,
                 wakeup=None,
                 started_at=started_at,
             )
 
-        if relay.claimed > 0:
+        if delivery.claimed > 0:
             return self._cycle(
-                relay=relay,
+                delivery=delivery,
                 queue_snapshot=snapshot,
                 wakeup=None,
                 started_at=started_at,
@@ -174,7 +174,7 @@ class NotifierWorker:
 
         wakeup = await self._wait_for_wakeup()
         return self._cycle(
-            relay=relay,
+            delivery=delivery,
             queue_snapshot=snapshot,
             wakeup=wakeup,
             started_at=started_at,
@@ -252,7 +252,7 @@ class NotifierWorker:
     def _cycle(
         self,
         *,
-        relay: RelayStats,
+        delivery: NotificationDeliveryStats,
         queue_snapshot: OutboxQueueSnapshot | None,
         wakeup: OutboxWakeupResult | None,
         started_at: float,
@@ -261,7 +261,7 @@ class NotifierWorker:
         self._cycles += 1
         duration_seconds = max(0.0, self._monotonic() - started_at)
         return NotifierCycle(
-            relay=relay,
+            delivery=delivery,
             queue_snapshot=queue_snapshot,
             wakeup=wakeup,
             duration_seconds=duration_seconds,

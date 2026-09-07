@@ -204,7 +204,7 @@ lifecycle-invariants: up migrate ## Read-only nightly lifecycle/watch/handoff di
 	EC_TEMPORAL_TARGET=localhost:7234 \
 	$(UV) run python -m events_concierge.workers.lifecycle_invariants
 
-ingestion-commands: up migrate ## Relay durable local ingestion-admin commands
+ingestion-commands: up migrate ## Process durable local ingestion-admin commands
 	EC_DATABASE_URL=postgresql+psycopg://ec_app:ec_app@localhost:5433/ec \
 	EC_REDIS_URL=redis://localhost:6380/0 \
 	EC_TEMPORAL_TARGET=localhost:7234 \
