@@ -6,8 +6,8 @@ from uuid import uuid4
 
 import pytest
 
-from events_concierge.adapters.mock.auth import HeaderAuthContext
-from events_concierge.composition import _build_auth_context
+from events_concierge.adapters.mock.auth import HeaderAuthContext, LocalHeaderCsrfProtection
+from events_concierge.composition import _build_auth_context, _build_csrf_protection
 from events_concierge.config import Settings
 from events_concierge.ports.auth import AuthenticationFailedError
 
@@ -47,3 +47,14 @@ def test_non_mock_composition_requires_an_injected_oidc_bff_auth_context() -> No
     """The test header cannot silently become a production authentication mechanism (FR-1.1)."""
     with pytest.raises(ValueError, match="must inject a provisioned AuthContextPort"):
         _build_auth_context(Settings(mock_cloud=False))
+
+
+async def test_local_header_auth_has_no_ambient_cookie_csrf_requirement() -> None:
+    """The explicit local tenant header preserves existing mock mutation behavior."""
+    await LocalHeaderCsrfProtection().verify_state_change(uuid4(), {})
+
+
+def test_non_mock_composition_requires_an_injected_csrf_boundary() -> None:
+    """Production cannot infer anti-CSRF semantics independently from its session adapter."""
+    with pytest.raises(ValueError, match="must inject a provisioned CsrfProtectionPort"):
+        _build_csrf_protection(Settings(mock_cloud=False))

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import math
 from dataclasses import replace
 from datetime import UTC, datetime
 from pathlib import Path
@@ -22,6 +23,8 @@ from events_concierge.adapters.google_calendar.calendar import (
 from events_concierge.ports.calendar import CalendarEntry
 from events_concierge.ports.google_calendar import (
     GOOGLE_CALENDAR_CANONICAL_EVENT_ID_KEY,
+    GOOGLE_CALENDAR_OWNER_KEY,
+    GOOGLE_CALENDAR_OWNER_VALUE,
     GOOGLE_CALENDAR_SCOPES,
     GoogleCalendarAccess,
     GoogleCalendarBinding,
@@ -118,6 +121,45 @@ async def test_google_free_busy_uses_explicit_bound_calendar_ids() -> None:
     assert blocks[0].end == datetime(2026, 7, 15, 18, 30, tzinfo=UTC)
 
 
+async def test_injected_google_client_gets_an_explicit_finite_request_timeout() -> None:
+    seen_timeout: object = None
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal seen_timeout
+        seen_timeout = request.extensions.get("timeout")
+        return httpx.Response(
+            200,
+            json={"calendars": {calendar_id: {"busy": []} for calendar_id in _FREE_BUSY_IDS}},
+        )
+
+    async with httpx.AsyncClient(
+        transport=httpx.MockTransport(handler), timeout=None
+    ) as client:
+        calendar = GoogleCalendarAdapter(
+            FixtureAccess(),
+            FixtureBindings(_binding()),
+            client=client,
+            timeout_s=2.5,
+        )
+        await calendar.free_busy(
+            uuid4(),
+            datetime(2026, 7, 15, 17, 0, tzinfo=UTC),
+            datetime(2026, 7, 15, 18, 0, tzinfo=UTC),
+        )
+
+    assert seen_timeout == {"connect": 2.5, "read": 2.5, "write": 2.5, "pool": 2.5}
+
+
+@pytest.mark.parametrize("timeout_s", (0.0, 0.09, 60.01, math.inf, math.nan))
+def test_google_timeout_must_be_bounded_and_finite(timeout_s: float) -> None:
+    with pytest.raises(ValueError, match="finite and between"):
+        GoogleCalendarAdapter(
+            FixtureAccess(),
+            FixtureBindings(_binding()),
+            timeout_s=timeout_s,
+        )
+
+
 async def test_google_upsert_inserts_then_patches_only_on_conflict() -> None:
     requests: list[httpx.Request] = []
     entry = _entry()
@@ -178,6 +220,7 @@ async def test_google_upsert_inserts_then_patches_only_on_conflict() -> None:
     }
     assert payload["extendedProperties"]["private"] == {
         GOOGLE_CALENDAR_CANONICAL_EVENT_ID_KEY: str(entry.canonical_event_id),
+        GOOGLE_CALENDAR_OWNER_KEY: GOOGLE_CALENDAR_OWNER_VALUE,
         "events_concierge.registration_state": "registered",
         "events_concierge.source_event_ids": '["meetup:fixture-event"]',
     }
@@ -332,6 +375,137 @@ async def test_google_delete_treats_not_found_as_idempotent_success() -> None:
             FixtureAccess(), FixtureBindings(_binding()), client=client
         )
         await calendar.delete_event(uuid4(), "0123456789abcdefghijklmnopqrstuv")
+
+
+async def test_google_erasure_paginates_filters_valid_owner_schema_and_accepts_delete_404() -> None:
+    requests: list[httpx.Request] = []
+    canonical_ids = (uuid4(), uuid4())
+
+    def owned(event_id: str, canonical_id: object, *, marker: str = "v1") -> dict[str, object]:
+        return {
+            "id": event_id,
+            "extendedProperties": {
+                "private": {
+                    GOOGLE_CALENDAR_OWNER_KEY: marker,
+                    GOOGLE_CALENDAR_CANONICAL_EVENT_ID_KEY: canonical_id,
+                }
+            },
+        }
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        if request.method == "DELETE":
+            return httpx.Response(404 if request.url.path.endswith("/owned-second") else 204)
+        assert request.method == "GET"
+        assert request.url.params["privateExtendedProperty"] == (
+            f"{GOOGLE_CALENDAR_OWNER_KEY}={GOOGLE_CALENDAR_OWNER_VALUE}"
+        )
+        page_token = request.url.params.get("pageToken")
+        get_count = sum(item.method == "GET" for item in requests)
+        if get_count == 1:
+            assert page_token is None
+            return httpx.Response(
+                200,
+                json={
+                    "items": [
+                        owned("owned-first", str(canonical_ids[0])),
+                        owned("foreign", str(uuid4()), marker="some-other-product"),
+                        owned("invalid-schema", "not-a-uuid"),
+                    ],
+                    "nextPageToken": "page-two",
+                },
+            )
+        if get_count == 2:
+            assert page_token == "page-two"
+            return httpx.Response(
+                200,
+                json={"items": [owned("owned-second", str(canonical_ids[1]))]},
+            )
+        assert get_count == 3
+        assert page_token is None
+        return httpx.Response(200, json={"items": []})
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        calendar = GoogleCalendarAdapter(
+            FixtureAccess(), FixtureBindings(_binding()), client=client
+        )
+        await calendar.delete_tenant_events(uuid4())
+
+    deleted = [request.url.path.rsplit("/", 1)[-1] for request in requests if request.method == "DELETE"]
+    assert deleted == ["owned-first", "owned-second"]
+
+
+async def test_google_erasure_rejects_a_repeated_page_token() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert request.method == "GET"
+        return httpx.Response(200, json={"items": [], "nextPageToken": "cycle"})
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        calendar = GoogleCalendarAdapter(
+            FixtureAccess(), FixtureBindings(_binding()), client=client
+        )
+        with pytest.raises(GoogleCalendarError, match="repeated a token"):
+            await calendar.delete_tenant_events(uuid4())
+
+
+async def test_google_erasure_keeps_bounded_remote_progress_across_retries(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An oversized owner-only calendar shrinks on each capped pass instead of restarting forever."""
+    monkeypatch.setattr(
+        "events_concierge.adapters.google_calendar.calendar._MAX_ERASURE_PAGES",
+        2,
+    )
+    remaining = {
+        f"owned-{index}": str(uuid4())
+        for index in range(5)
+    }
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.method == "DELETE":
+            remaining.pop(request.url.path.rsplit("/", 1)[-1])
+            return httpx.Response(204)
+        items = [
+            {
+                "id": event_id,
+                "extendedProperties": {
+                    "private": {
+                        GOOGLE_CALENDAR_OWNER_KEY: GOOGLE_CALENDAR_OWNER_VALUE,
+                        GOOGLE_CALENDAR_CANONICAL_EVENT_ID_KEY: canonical_id,
+                    }
+                },
+            }
+            for event_id, canonical_id in tuple(remaining.items())[:2]
+        ]
+        return httpx.Response(200, json={"items": items})
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        calendar = GoogleCalendarAdapter(
+            FixtureAccess(), FixtureBindings(_binding()), client=client
+        )
+        with pytest.raises(GoogleCalendarError, match="bounded progress"):
+            await calendar.delete_tenant_events(uuid4())
+        assert len(remaining) == 1
+        await calendar.delete_tenant_events(uuid4())
+
+    assert remaining == {}
+
+
+async def test_google_erasure_propagates_provider_list_failure_without_deleting() -> None:
+    requests: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        return httpx.Response(500, json={"error": {"status": "INTERNAL"}})
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        calendar = GoogleCalendarAdapter(
+            FixtureAccess(), FixtureBindings(_binding()), client=client
+        )
+        with pytest.raises(GoogleCalendarError, match="request failed"):
+            await calendar.delete_tenant_events(uuid4())
+
+    assert [request.method for request in requests] == ["GET"]
 
 
 async def test_google_delete_resolves_the_canonical_match_before_deterministic_fallback() -> None:
@@ -521,6 +695,13 @@ async def test_google_missing_binding_fails_before_a_remote_call() -> None:
             datetime(2026, 7, 15, 17, 0, tzinfo=UTC),
             datetime(2026, 7, 15, 19, 0, tzinfo=UTC),
         )
+
+
+async def test_google_erasure_missing_expected_binding_fails_closed() -> None:
+    calendar = GoogleCalendarAdapter(FixtureAccess(), FixtureBindings(None))
+
+    with pytest.raises(GoogleCalendarBindingNotFoundError):
+        await calendar.delete_tenant_events(uuid4())
 
 
 def test_google_scope_contract_is_calendar_family_only() -> None:

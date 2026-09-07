@@ -15,7 +15,12 @@ from typing import Any
 from selectolax.parser import HTMLParser
 
 from ...domain.enums import Source
-from ...domain.events import CandidateEvent, GeoPoint, aggregate_price_status
+from ...domain.events import (
+    CandidateEvent,
+    GeoPoint,
+    aggregate_price_range,
+    aggregate_price_status,
+)
 from ...infra.logging import get_logger
 
 _log = get_logger("crawl.acl")
@@ -83,10 +88,31 @@ def _deduplicate_source_ids(events: list[CandidateEvent]) -> list[CandidateEvent
         existing = out[index]
         preferred = event if _metadata_score(event) > _metadata_score(existing) else existing
         price_status = aggregate_price_status((existing.price_status, event.price_status))
+        price_range = (
+            aggregate_price_range(
+                (
+                    (
+                        existing.price_min_cents,
+                        existing.price_max_cents,
+                        existing.price_currency,
+                    ),
+                    (
+                        event.price_min_cents,
+                        event.price_max_cents,
+                        event.price_currency,
+                    ),
+                )
+            )
+            if price_status.value == "paid"
+            else (None, None, None)
+        )
         out[index] = replace(
             preferred,
             is_free=price_status.is_free,
             price_status=price_status,
+            price_min_cents=price_range[0],
+            price_max_cents=price_range[1],
+            price_currency=price_range[2],
         )
     return out
 

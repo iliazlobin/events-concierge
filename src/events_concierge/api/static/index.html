@@ -1,0 +1,881 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+    <meta name="theme-color" content="#f4f6f7">
+    <meta name="description" content="One brief. Focused event picks. Honest handoffs. Your calendar stays true.">
+    <title>Events Concierge</title>
+    <link rel="icon" href="/favicon.svg" type="image/svg+xml">
+    <link rel="manifest" href="/manifest.webmanifest">
+    <link rel="stylesheet" href="/assets/leaflet.css">
+    <link rel="stylesheet" href="/assets/app.css">
+    <script src="/assets/leaflet.js" defer></script>
+    <script type="module" src="/assets/app.js"></script>
+  </head>
+  <body>
+    <div class="paper-grain" aria-hidden="true"></div>
+
+    <div id="boot-screen" class="boot-screen" aria-live="polite" aria-atomic="true">
+      <img class="boot-mark" src="/assets/mark.svg" alt="">
+      <p>Preparing your concierge…</p>
+    </div>
+
+    <main id="welcome-view" class="welcome" hidden>
+      <a class="skip-link" href="#welcome-content">Skip to account setup</a>
+      <div class="welcome-art" aria-hidden="true">
+        <div class="welcome-orbit welcome-orbit-one"></div>
+        <div class="welcome-orbit welcome-orbit-two"></div>
+        <p class="welcome-art-copy">A little more life<br>in your calendar.</p>
+        <div class="mini-invite mini-invite-one">
+          <span>FRI</span>
+          <strong>Jazz after dark</strong>
+          <small>7:30 PM · Oakland</small>
+        </div>
+        <div class="mini-invite mini-invite-two">
+          <span>SUN</span>
+          <strong>Open studio walk</strong>
+          <small>2:00 PM · Mission</small>
+        </div>
+      </div>
+
+      <div id="welcome-content" class="welcome-panel" tabindex="-1">
+        <header class="welcome-brand">
+          <img src="/assets/mark.svg" alt="" width="42" height="42">
+          <span>Events Concierge</span>
+        </header>
+
+        <div class="welcome-copy">
+          <p class="eyebrow">Your plans, handled</p>
+          <h1>One brief.<br><em>Something worth going to.</em></h1>
+          <p id="welcome-description" class="welcome-description">
+            Tell me what sounds good. I’ll find a few focused options, explain why they fit,
+            and—when you ask—start a durable registration request.
+          </p>
+        </div>
+
+        <form id="onboarding-form" class="onboarding-form" novalidate>
+          <div id="local-onboarding-fields">
+            <label class="field-label" for="onboarding-email">Which email should this local demo use?</label>
+            <div class="email-field">
+              <input
+                id="onboarding-email"
+                name="email"
+                type="email"
+                inputmode="email"
+                autocomplete="email"
+                placeholder="you@example.com"
+                maxlength="320"
+                aria-describedby="demo-disclosure welcome-error"
+                required
+              >
+              <span aria-hidden="true">↗</span>
+            </div>
+
+            <fieldset class="taste-fieldset">
+              <legend>A quick read on your taste <span>Optional · pick a few</span></legend>
+              <div id="onboarding-interests" class="chip-cloud" aria-label="Event interests">
+                <button type="button" class="choice-chip" data-interest="live music" aria-pressed="false">Live music</button>
+                <button type="button" class="choice-chip" data-interest="art" aria-pressed="false">Art &amp; design</button>
+                <button type="button" class="choice-chip" data-interest="technology" aria-pressed="false">Tech &amp; ideas</button>
+                <button type="button" class="choice-chip" data-interest="comedy" aria-pressed="false">Comedy</button>
+                <button type="button" class="choice-chip" data-interest="outdoors" aria-pressed="false">Outdoors</button>
+                <button type="button" class="choice-chip" data-interest="food" aria-pressed="false">Food</button>
+                <button type="button" class="choice-chip" data-interest="community" aria-pressed="false">Community</button>
+                <button type="button" class="choice-chip" data-interest="wellness" aria-pressed="false">Wellness</button>
+              </div>
+            </fieldset>
+          </div>
+
+          <div id="production-login" class="production-login" hidden>
+            <p>Your account provider will securely bring you back here after sign-in.</p>
+          </div>
+
+          <div id="welcome-error" class="form-error" role="alert" hidden></div>
+          <button id="onboarding-submit" class="button button-primary button-wide" type="submit" aria-describedby="demo-disclosure">
+            <span>Meet my concierge</span>
+            <span aria-hidden="true">→</span>
+          </button>
+          <p id="demo-disclosure" class="form-note">
+            Local demo · your browser keeps the temporary account reference.
+          </p>
+        </form>
+      </div>
+    </main>
+
+    <main id="erasure-view" class="erasure-view" hidden aria-labelledby="erasure-accepted-title">
+      <section class="erasure-accepted-card">
+        <img src="/assets/mark.svg" alt="" width="48" height="48">
+        <p class="eyebrow">Request accepted</p>
+        <h1 id="erasure-accepted-title" tabindex="-1">Account erasure is underway.</h1>
+        <p>
+          Your account is fenced and this browser has been signed out. The durable erasure worker
+          will keep cancelling concierge work and removing account data even if you close this page.
+        </p>
+        <p class="form-note">
+          This is an acceptance receipt, not a claim that every provider has finished deleting data.
+        </p>
+      </section>
+    </main>
+
+    <div id="product-shell" class="product-shell" hidden>
+      <a class="skip-link" href="#main-content">Skip to main content</a>
+      <aside class="side-rail" aria-label="Primary navigation">
+        <button class="brand-lockup nav-trigger" type="button" data-view="concierge" aria-label="Events Concierge home">
+          <img src="/assets/mark.svg" alt="" width="38" height="38">
+          <span>Events Concierge</span>
+        </button>
+
+        <button id="new-chat" class="rail-new-chat" type="button">
+          <span aria-hidden="true">＋</span>
+          <span>New chat</span>
+        </button>
+
+        <nav class="desktop-nav" aria-label="Main">
+          <button class="nav-item active" type="button" data-view="concierge" aria-current="page">
+            <span class="nav-glyph" aria-hidden="true">◈</span>
+            <span>Chat</span>
+          </button>
+          <button class="nav-item" type="button" data-view="catalog">
+            <span class="nav-glyph" aria-hidden="true">☷</span>
+            <span>Events</span>
+          </button>
+          <button class="nav-item" type="button" data-view="map">
+            <span class="nav-glyph" aria-hidden="true">⌖</span>
+            <span>Map</span>
+          </button>
+          <button class="nav-item" type="button" data-view="calendar">
+            <span class="nav-glyph" aria-hidden="true">□</span>
+            <span>Calendar</span>
+          </button>
+          <button class="nav-item" type="button" data-view="plans">
+            <span class="nav-glyph" aria-hidden="true">◌</span>
+            <span>Plans</span>
+            <span id="plans-count" class="nav-count" hidden>0</span>
+          </button>
+          <button class="nav-item" type="button" data-view="tasks">
+            <span class="nav-glyph" aria-hidden="true">✓</span>
+            <span>To do</span>
+            <span id="tasks-count" class="nav-count" hidden>0</span>
+          </button>
+          <button class="nav-item" type="button" data-view="settings">
+            <span class="nav-glyph" aria-hidden="true">⌁</span>
+            <span>Settings</span>
+          </button>
+        </nav>
+
+        <section class="rail-history" aria-labelledby="recent-title">
+          <div class="rail-history-heading">
+            <h2 id="recent-title">Saved briefs</h2>
+            <button id="refresh-activity" class="rail-icon-button" type="button" aria-label="Refresh saved briefs">↻</button>
+          </div>
+          <div id="recent-requests" class="recent-requests">
+            <div class="mini-skeleton"></div>
+            <div class="mini-skeleton short"></div>
+          </div>
+        </section>
+
+        <div class="rail-footer">
+          <div id="service-status" class="service-status" role="status">
+            <span class="status-dot"></span>
+            <span>Checking service</span>
+          </div>
+          <button id="rail-profile" class="rail-profile nav-trigger" type="button" data-view="settings">
+            <span id="profile-initial" class="profile-initial">E</span>
+            <span class="profile-copy">
+              <strong id="profile-short-email">Your account</strong>
+              <small>View settings</small>
+            </span>
+          </button>
+        </div>
+      </aside>
+
+      <header class="mobile-header">
+        <button class="mobile-brand nav-trigger" type="button" data-view="concierge" aria-label="Events Concierge home">
+          <img src="/assets/mark.svg" alt="" width="34" height="34">
+          <span>Events Concierge</span>
+        </button>
+        <div class="mobile-header-actions">
+          <button class="mobile-new-chat" type="button" aria-label="Start a new chat">＋</button>
+          <div id="mobile-status" class="mobile-status" role="status" aria-live="polite" aria-label="Checking service status">Checking</div>
+        </div>
+      </header>
+
+      <main id="main-content" class="main-content" tabindex="-1">
+        <section
+          id="concierge-page"
+          class="page page-concierge"
+          data-page="concierge"
+          data-workspace-mode="chat"
+        >
+          <header class="workspace-topbar">
+            <nav class="workspace-switcher" aria-label="Recommendation workspace">
+              <button
+                id="chat-workspace-tab"
+                class="workspace-tab active"
+                type="button"
+                aria-current="page"
+                data-workspace-view="chat"
+              >Chat</button>
+              <button
+                id="catalog-workspace-tab"
+                class="workspace-tab"
+                type="button"
+                data-workspace-view="catalog"
+              >Events</button>
+              <button
+                id="map-workspace-tab"
+                class="workspace-tab"
+                type="button"
+                data-workspace-view="map"
+              >Map</button>
+              <button
+                id="calendar-workspace-tab"
+                class="workspace-tab"
+                type="button"
+                data-workspace-view="calendar"
+              >Calendar</button>
+            </nav>
+            <button class="topbar-task-link" type="button" data-view="tasks">
+              To-dos <span id="topbar-task-count" aria-hidden="true"></span>
+            </button>
+          </header>
+
+          <div class="concierge-layout">
+            <div class="concierge-primary">
+              <section class="chat-intro" aria-labelledby="greeting">
+                <p id="today-label" class="eyebrow">Recommendations</p>
+                <h1 id="greeting">What sounds good?</h1>
+                <p>Describe the kind of event you want. I’ll search the current catalog and show a few grounded options.</p>
+              </section>
+
+              <header class="catalog-header">
+                <div>
+                  <p class="eyebrow">Recommended for you</p>
+                  <h1>Upcoming events</h1>
+                  <p>Soonest first from the latest loaded recommendation set.</p>
+                </div>
+                <button id="browse-current-events" class="button button-secondary" type="button">
+                  <span aria-hidden="true">↻</span>
+                  Refresh
+                </button>
+              </header>
+
+              <header class="map-header">
+                <div>
+                  <p class="eyebrow">Explore by place</p>
+                  <h1 id="map-title">Event map</h1>
+                  <p>Move around the loaded recommendations, then narrow the radius from the map center.</p>
+                </div>
+                <button id="refresh-map-events" class="button button-secondary" type="button">
+                  <span aria-hidden="true">↻</span>
+                  Refresh
+                </button>
+              </header>
+
+              <header class="calendar-header">
+                <div>
+                  <p class="eyebrow">Explore by date</p>
+                  <h1 id="calendar-title">Event calendar</h1>
+                  <p>See the loaded catalog by day, then open a date for its compact agenda.</p>
+                </div>
+                <button id="calendar-today" class="button button-secondary" type="button">
+                  Today
+                </button>
+              </header>
+
+              <form id="ask-form" class="ask-card chat-composer" novalidate>
+                <div class="ask-heading">
+                  <span class="spark" aria-hidden="true">✦</span>
+                  <label for="ask-input">Tell me what you’re in the mood for</label>
+                </div>
+                <textarea
+                  id="ask-input"
+                  name="request"
+                  rows="1"
+                  maxlength="2000"
+                  aria-describedby="ask-hint ask-error"
+                  placeholder="Ask for an event…"
+                  required
+                ></textarea>
+
+                <div class="prompt-examples" aria-label="Example requests">
+                  <button type="button" class="prompt-chip" data-prompt="A free art or design event this weekend">Art this weekend</button>
+                  <button type="button" class="prompt-chip" data-prompt="Live music Friday evening after 7">Friday live music</button>
+                  <button type="button" class="prompt-chip" data-prompt="A thoughtful technology talk next week">A good tech talk</button>
+                </div>
+
+                <section
+                  id="discovery-console"
+                  class="discovery-console event-filter-bar catalog-filter-state-shell"
+                  aria-label="Event filters"
+                  aria-describedby="discovery-note"
+                  hidden
+                >
+                  <div id="catalog-filter-state" class="catalog-filter-state">
+                  <div class="discovery-grid" role="group" aria-label="Filter current events">
+                    <div class="facet-control" data-filter-control="when">
+                      <label class="visually-hidden" for="filter-when">Date</label>
+                      <select id="filter-when" name="when" aria-label="Date">
+                        <option value="any" selected>Any date</option>
+                        <option value="today">Today</option>
+                        <option value="tomorrow">Tomorrow</option>
+                        <option value="weekend">This weekend</option>
+                        <option value="7d">Next 7 days</option>
+                        <option value="30d">Next 30 days</option>
+                      </select>
+                      <button class="facet-remove" type="button" data-remove-filter="when" aria-label="Remove date filter" hidden>×</button>
+                    </div>
+                    <div class="facet-control" data-filter-control="city">
+                      <label class="visually-hidden" for="filter-city">City</label>
+                      <select id="filter-city" name="city" aria-label="City">
+                        <option value="any" selected>Any city</option>
+                      </select>
+                      <button class="facet-remove" type="button" data-remove-filter="city" aria-label="Remove city filter" hidden>×</button>
+                    </div>
+                    <div class="facet-control" data-filter-control="price">
+                      <label class="visually-hidden" for="filter-price">Price</label>
+                      <select id="filter-price" name="price" aria-label="Price">
+                        <option value="any" selected>Any price</option>
+                        <option value="free">Free</option>
+                        <option value="paid">Paid</option>
+                        <option value="listed">Price listed</option>
+                      </select>
+                      <button class="facet-remove" type="button" data-remove-filter="price" aria-label="Remove price filter" hidden>×</button>
+                    </div>
+                    <div class="facet-control" data-filter-control="source">
+                      <label class="visually-hidden" for="filter-source">Provider</label>
+                      <select id="filter-source" name="source" aria-label="Provider">
+                        <option value="any" selected>Any provider</option>
+                      </select>
+                      <button class="facet-remove" type="button" data-remove-filter="source" aria-label="Remove provider filter" hidden>×</button>
+                    </div>
+                    <div class="facet-control map-radius-control" data-filter-control="radius">
+                      <label class="visually-hidden" for="filter-radius">Radius from map center</label>
+                      <select id="filter-radius" name="radius" aria-label="Radius from map center">
+                        <option value="any" selected>Any distance</option>
+                        <option value="5">Within 5 mi</option>
+                        <option value="10">Within 10 mi</option>
+                        <option value="25">Within 25 mi</option>
+                        <option value="50">Within 50 mi</option>
+                      </select>
+                      <button class="facet-remove" type="button" data-remove-filter="radius" aria-label="Remove radius filter" hidden>×</button>
+                    </div>
+                    <div class="facet-control facet-sort" data-filter-control="sort">
+                      <label class="visually-hidden" for="filter-sort">Sort events</label>
+                      <select id="filter-sort" name="sort" aria-label="Sort events">
+                        <option value="soonest" selected>Sort · Soonest</option>
+                        <option value="relevance">Sort · Recommended</option>
+                        <option value="score">Sort · Top ranked</option>
+                        <option value="free">Free first</option>
+                      </select>
+                    </div>
+                    <button id="clear-discovery-filters" class="filter-reset" type="button" hidden>
+                      Clear
+                    </button>
+                  </div>
+                  <div class="quick-filter-row" aria-label="Quick filters">
+                    <span>Quick</span>
+                    <button type="button" class="quick-filter" data-quick-filter="weekend" aria-pressed="false">This weekend</button>
+                    <button type="button" class="quick-filter" data-quick-filter="free" aria-pressed="false">Free</button>
+                    <span id="provider-quick-filters"></span>
+                  </div>
+                  <p id="discovery-note" class="discovery-note">
+                    Choosing a provider loads its complete current catalog within a safety cap.
+                    Date, place, price, and search refine those results; use Chat for recommendations.
+                  </p>
+                  </div>
+                </section>
+
+                <fieldset class="mode-picker">
+                  <legend>Request mode</legend>
+                  <label class="mode-option selected">
+                    <input type="radio" name="ask-mode" value="preview" checked>
+                    <span>
+                      <strong>Preview</strong>
+                      <small>Read only</small>
+                    </span>
+                    <span class="radio-mark" aria-hidden="true"></span>
+                  </label>
+                  <label class="mode-option">
+                    <input type="radio" name="ask-mode" value="handle">
+                    <span>
+                      <strong>Handle</strong>
+                      <small>May take action</small>
+                    </span>
+                    <span class="radio-mark" aria-hidden="true"></span>
+                  </label>
+                </fieldset>
+
+                <div id="ask-error" class="form-error" role="alert" hidden></div>
+                <div class="ask-footer">
+                  <p id="ask-hint">Preview searches are read only. Take action saves a durable request.</p>
+                  <div class="ask-actions">
+                    <button id="ask-submit" class="button button-primary" type="submit">
+                      <span>Find matching events</span>
+                      <span aria-hidden="true">→</span>
+                    </button>
+                  </div>
+                </div>
+              </form>
+
+              <section id="map-workspace" class="map-workspace" aria-labelledby="map-title">
+                <div class="map-canvas-shell">
+                  <div id="events-map" class="events-map" role="region" aria-label="Interactive map of loaded events"></div>
+                  <div class="map-float-controls">
+                    <button id="map-search-area" class="map-search-area" type="button" hidden>Search this area</button>
+                    <span id="map-status" class="map-status" role="status" aria-live="polite">Load events to use the map.</span>
+                  </div>
+                </div>
+                <aside class="map-results" aria-labelledby="map-results-title">
+                  <header>
+                    <div>
+                      <p class="eyebrow">In this view</p>
+                      <h2 id="map-results-title">Nearby events</h2>
+                    </div>
+                    <span id="map-result-count">0 mapped</span>
+                  </header>
+                  <div id="map-event-list" class="map-event-list" role="list"></div>
+                </aside>
+              </section>
+
+              <section
+                id="calendar-workspace"
+                class="calendar-workspace"
+                aria-labelledby="calendar-title"
+              >
+                <section class="calendar-month-panel" aria-labelledby="calendar-current-month">
+                  <header class="calendar-month-toolbar">
+                    <h2
+                      id="calendar-current-month"
+                      tabindex="-1"
+                      aria-live="polite"
+                      aria-atomic="true"
+                    >Current month</h2>
+                    <div class="calendar-month-controls" role="group" aria-label="Change month">
+                      <button
+                        id="calendar-prev-month"
+                        type="button"
+                        aria-label="Previous month"
+                      >←</button>
+                      <button
+                        id="calendar-next-month"
+                        type="button"
+                        aria-label="Next month"
+                      >→</button>
+                    </div>
+                  </header>
+                  <p id="calendar-grid-help" class="visually-hidden">
+                    Choose a date to show that day’s events in the agenda.
+                  </p>
+                  <div class="calendar-grid-scroll">
+                    <div
+                      id="calendar-weekday-header"
+                      class="calendar-weekdays"
+                      role="row"
+                      aria-hidden="true"
+                    >
+                      <span role="columnheader"><abbr title="Sunday">Sun</abbr></span>
+                      <span role="columnheader"><abbr title="Monday">Mon</abbr></span>
+                      <span role="columnheader"><abbr title="Tuesday">Tue</abbr></span>
+                      <span role="columnheader"><abbr title="Wednesday">Wed</abbr></span>
+                      <span role="columnheader"><abbr title="Thursday">Thu</abbr></span>
+                      <span role="columnheader"><abbr title="Friday">Fri</abbr></span>
+                      <span role="columnheader"><abbr title="Saturday">Sat</abbr></span>
+                    </div>
+                    <div
+                      id="event-calendar-grid"
+                      class="event-calendar-grid"
+                      role="grid"
+                      aria-labelledby="calendar-current-month"
+                      aria-describedby="calendar-grid-help"
+                      aria-rowcount="6"
+                      aria-colcount="7"
+                      aria-live="polite"
+                    ></div>
+                  </div>
+                </section>
+
+                <aside class="calendar-agenda" aria-labelledby="calendar-agenda-heading">
+                  <header class="calendar-agenda-header">
+                    <div>
+                      <p class="eyebrow">Selected day</p>
+                      <h2 id="calendar-agenda-heading" tabindex="-1">Choose a date</h2>
+                    </div>
+                    <span id="calendar-agenda-count" role="status" aria-live="polite">0 events</span>
+                  </header>
+                  <div
+                    id="calendar-agenda-list"
+                    class="calendar-agenda-list"
+                    role="list"
+                    aria-live="polite"
+                  >
+                    <div id="calendar-agenda-empty" class="calendar-agenda-empty">
+                      <span aria-hidden="true">□</span>
+                      <strong>No day selected</strong>
+                      <p>Choose a date to see its events here.</p>
+                    </div>
+                  </div>
+                </aside>
+              </section>
+
+              <section
+                class="recommendation-thread"
+                aria-labelledby="recommendation-thread-title"
+              >
+                <div class="thread-heading visually-hidden">
+                  <div>
+                    <p class="eyebrow">This session</p>
+                    <h2 id="recommendation-thread-title">Conversation</h2>
+                  </div>
+                  <span class="thread-session-label">This tab only</span>
+                </div>
+                <details class="thread-about">
+                  <summary>About this chat</summary>
+                  <p class="thread-disclosure">
+                    Responses summarize catalog records returned in this session. They are separate
+                    from durable Saved briefs and are not claims of autonomous or LLM reasoning.
+                    Each brief is standalone—prior turns are not sent with it; use “Refine this
+                    brief” to carry wording forward.
+                  </p>
+                </details>
+                <div
+                  id="recommendation-messages"
+                  class="recommendation-messages"
+                  role="log"
+                  aria-live="polite"
+                  aria-relevant="additions text"
+                >
+                  <div class="thread-empty">
+                    <p>Start a chat to see recommendations here.</p>
+                  </div>
+                </div>
+              </section>
+
+              <section id="request-progress" class="request-progress" aria-live="polite" aria-atomic="true" hidden>
+                <div class="progress-emblem" aria-hidden="true"><span></span></div>
+                <div>
+                  <p class="eyebrow">Saved and working</p>
+                  <h2>Your concierge has the brief.</h2>
+                  <p id="request-progress-copy">
+                    I’ll keep going in the background and move safely to a clear handoff when a site needs you.
+                  </p>
+                </div>
+                <button type="button" class="text-button" data-view="plans">Track my plans →</button>
+              </section>
+
+              <section id="picks-section" class="picks-section" aria-labelledby="picks-title">
+                <div class="section-heading">
+                  <div>
+                    <p class="eyebrow">Loaded results</p>
+                    <h2 id="picks-title" tabindex="-1">Events</h2>
+                  </div>
+                  <button id="next-picks" class="quiet-action" type="button" hidden>
+                    Load more <span aria-hidden="true">↓</span>
+                  </button>
+                </div>
+                <div id="understanding-chips" class="understanding-chips" aria-label="What the concierge understood"></div>
+                <div id="results-toolbar" class="results-toolbar" aria-live="polite">
+                  <div>
+                    <strong id="results-count">No catalog response yet</strong>
+                    <span id="results-scope">Submit a brief or browse to load current events.</span>
+                  </div>
+                  <div id="active-result-filters" class="active-result-filters" aria-label="Active result filters"></div>
+                </div>
+                <div id="picks-list" class="picks-list" role="list" aria-live="polite">
+                  <div class="empty-state concierge-empty">
+                    <span class="empty-symbol" aria-hidden="true">✦</span>
+                    <h3>No events loaded yet</h3>
+                    <p>Open Events to load the latest ranked catalog response.</p>
+                  </div>
+                </div>
+              </section>
+            </div>
+            <aside
+              id="workspace-context-rail"
+              class="workspace-context-rail"
+              aria-labelledby="workspace-context-title"
+            >
+              <header class="workspace-context-header">
+                <p class="eyebrow">Context</p>
+                <h2 id="workspace-context-title">Filters</h2>
+                <p>Search and filters follow you across Chat, Events, Map, and Calendar.</p>
+              </header>
+
+              <div class="catalog-search-shell">
+                <label class="catalog-search" for="catalog-search">
+                  <span aria-hidden="true">⌕</span>
+                  <input
+                    id="catalog-search"
+                    type="search"
+                    role="combobox"
+                    maxlength="160"
+                    placeholder="Search events or add a filter"
+                    autocomplete="off"
+                    aria-autocomplete="list"
+                    aria-haspopup="listbox"
+                    aria-expanded="false"
+                    aria-controls="catalog-filter-suggestions"
+                    aria-label="Search events or add a filter"
+                  >
+                  <kbd aria-hidden="true">/</kbd>
+                </label>
+                <div
+                  id="catalog-active-filters"
+                  class="catalog-active-filters"
+                  role="group"
+                  aria-label="Active event filters"
+                ></div>
+                <div id="catalog-filter-menu" class="catalog-filter-menu" hidden>
+                  <div class="catalog-filter-menu-heading">
+                    <span>Suggested filters</span>
+                    <small>Enter to apply · Esc to close</small>
+                  </div>
+                  <div
+                    id="catalog-filter-suggestions"
+                    class="catalog-filter-suggestions"
+                    role="listbox"
+                    aria-label="Suggested event filters"
+                  ></div>
+                  <div
+                    id="catalog-date-range-row"
+                    class="catalog-date-range-row"
+                    role="group"
+                    aria-label="Choose date range"
+                    hidden
+                  >
+                    <div class="catalog-date-presets" role="group" aria-label="Quick date ranges">
+                      <button type="button" data-date-preset="today">Today</button>
+                      <button type="button" data-date-preset="tomorrow">Tomorrow</button>
+                      <button type="button" data-date-preset="weekend">Weekend</button>
+                      <button type="button" data-date-preset="7d">Next 7 days</button>
+                    </div>
+                    <div class="catalog-date-fields">
+                      <label for="catalog-date-start">
+                        <span>From</span>
+                        <input id="catalog-date-start" type="date">
+                      </label>
+                      <span class="catalog-date-separator" aria-hidden="true">→</span>
+                      <label for="catalog-date-end">
+                        <span>To</span>
+                        <input id="catalog-date-end" type="date">
+                      </label>
+                    </div>
+                    <div class="catalog-date-actions">
+                      <button id="catalog-date-cancel" type="button">Cancel</button>
+                      <button id="catalog-date-apply" type="button">Apply dates</button>
+                    </div>
+                  </div>
+                </div>
+                <p
+                  id="catalog-filter-status"
+                  class="visually-hidden"
+                  role="status"
+                  aria-live="polite"
+                ></p>
+              </div>
+            </aside>
+          </div>
+        </section>
+
+        <section id="plans-page" class="page" data-page="plans" hidden>
+          <header class="page-topline plans-topline">
+            <div>
+              <p class="eyebrow">Your calendar, kept honest</p>
+              <h1>Plans</h1>
+              <p class="page-intro">Confirmed, in progress, and changed events—all from durable lifecycle truth.</p>
+            </div>
+            <button id="refresh-plans" class="button button-secondary" type="button">Refresh plans</button>
+          </header>
+          <div id="plans-summary" class="metric-strip" aria-label="Plan summary"></div>
+          <div id="plans-list" class="agenda-list" aria-live="polite"></div>
+        </section>
+
+        <section id="tasks-page" class="page" data-page="tasks" hidden>
+          <header class="page-topline plans-topline">
+            <div>
+              <p class="eyebrow">The honest handoff</p>
+              <h1 id="tasks-title" tabindex="-1">A step from you</h1>
+              <p class="page-intro">When a source requires a human login or final click, I’ll show the safest available path and wait for your confirmation.</p>
+            </div>
+            <button id="refresh-tasks" class="button button-secondary" type="button">Refresh to-dos</button>
+          </header>
+          <div class="handoff-explainer">
+            <span aria-hidden="true">↗</span>
+            <p><strong>A handoff is a normal outcome, not a failure.</strong> You step in only where the source requires a person.</p>
+          </div>
+          <div id="tasks-list" class="task-list" aria-live="polite"></div>
+        </section>
+
+        <section id="settings-page" class="page" data-page="settings" hidden>
+          <header class="page-topline plans-topline">
+            <div>
+              <p class="eyebrow">Make it yours</p>
+              <h1>Settings</h1>
+              <p class="page-intro">Tune the signals I use and keep the boundary between previewing and taking action clear.</p>
+            </div>
+          </header>
+
+          <div class="settings-grid">
+            <section class="settings-card" aria-labelledby="taste-title">
+              <div class="settings-card-heading">
+                <span class="settings-icon" aria-hidden="true">✦</span>
+                <div>
+                  <p class="eyebrow">Taste</p>
+                  <h2 id="taste-title">What should I notice?</h2>
+                </div>
+              </div>
+              <p>These are a starting signal, not a filter. Your feedback keeps refining the order.</p>
+              <div id="settings-interests" class="chip-cloud settings-chips" aria-label="Saved interests">
+                <button type="button" class="choice-chip" data-interest="live music" aria-pressed="false">Live music</button>
+                <button type="button" class="choice-chip" data-interest="art" aria-pressed="false">Art &amp; design</button>
+                <button type="button" class="choice-chip" data-interest="technology" aria-pressed="false">Tech &amp; ideas</button>
+                <button type="button" class="choice-chip" data-interest="comedy" aria-pressed="false">Comedy</button>
+                <button type="button" class="choice-chip" data-interest="outdoors" aria-pressed="false">Outdoors</button>
+                <button type="button" class="choice-chip" data-interest="food" aria-pressed="false">Food</button>
+                <button type="button" class="choice-chip" data-interest="community" aria-pressed="false">Community</button>
+                <button type="button" class="choice-chip" data-interest="wellness" aria-pressed="false">Wellness</button>
+              </div>
+              <div id="preferences-error" class="form-error" role="alert" hidden></div>
+              <button id="save-preferences" class="button button-primary" type="button">Save my taste</button>
+            </section>
+
+            <section class="settings-card" aria-labelledby="account-title">
+              <div class="settings-card-heading">
+                <span class="settings-icon" aria-hidden="true">@</span>
+                <div>
+                  <p class="eyebrow">Account</p>
+                  <h2 id="account-title">Your current session</h2>
+                </div>
+              </div>
+              <dl class="account-facts">
+                <div><dt>Email on file</dt><dd id="settings-email">—</dd></div>
+                <div><dt>Session</dt><dd id="settings-session">—</dd></div>
+                <div><dt>Environment</dt><dd id="settings-environment">—</dd></div>
+              </dl>
+              <button id="sign-out" class="button button-quiet-danger" type="button">Leave this session</button>
+              <p id="sign-out-note" class="form-note">This only removes the local browser reference; it does not erase server data.</p>
+            </section>
+
+            <section class="settings-card settings-card-wide" aria-labelledby="control-title">
+              <div class="settings-card-heading">
+                <span class="settings-icon" aria-hidden="true">◎</span>
+                <div>
+                  <p class="eyebrow">Control</p>
+                  <h2 id="control-title">You choose how far I go</h2>
+                </div>
+              </div>
+              <div class="control-explainer">
+                <div>
+                  <span class="control-step">01</span>
+                  <h3>Show me options</h3>
+                  <p>A read-only preview. I learn from what catches your eye, but register nothing.</p>
+                </div>
+                <div>
+                  <span class="control-step">02</span>
+                  <h3>Find and handle it</h3>
+                  <p>A durable request. I may act inside allowed free-RSVP lanes and safely hand off the rest.</p>
+                </div>
+                <div>
+                  <span class="control-step">03</span>
+                  <h3>Your calendar stays true</h3>
+                  <p>Confirmed registrations are reconciled when organizers change plans or you withdraw.</p>
+                </div>
+              </div>
+            </section>
+
+            <section class="settings-card settings-card-wide danger-zone" aria-labelledby="danger-title">
+              <div class="settings-card-heading">
+                <span class="settings-icon" aria-hidden="true">!</span>
+                <div>
+                  <p class="eyebrow">Danger zone</p>
+                  <h2 id="danger-title">Erase this account</h2>
+                </div>
+              </div>
+              <p>
+                This permanently fences your account, cancels concierge work, removes concierge-owned
+                calendar entries, revokes browser sessions and credentials, and starts deletion from
+                account-scoped storage. The operation cannot be undone.
+              </p>
+              <button id="open-erasure-dialog" class="button button-quiet-danger" type="button">Erase my account…</button>
+              <p id="erasure-policy-note" class="form-note">
+                Production accounts require a fresh sign-in before this command is accepted.
+              </p>
+            </section>
+          </div>
+        </section>
+      </main>
+
+      <nav class="mobile-nav" aria-label="Main">
+        <button class="mobile-nav-item active" type="button" data-view="concierge" aria-current="page"><span aria-hidden="true">◈</span><span>Chat</span></button>
+        <button class="mobile-nav-item" type="button" data-view="catalog"><span aria-hidden="true">☷</span><span>Events</span></button>
+        <button class="mobile-nav-item" type="button" data-view="map"><span aria-hidden="true">⌖</span><span>Map</span></button>
+        <button class="mobile-nav-item" type="button" data-view="calendar"><span aria-hidden="true">□</span><span>Calendar</span></button>
+        <button class="mobile-nav-item" type="button" data-view="plans"><span aria-hidden="true">◌</span><span>Plans</span></button>
+        <button class="mobile-nav-item" type="button" data-view="tasks"><span aria-hidden="true">✓</span><span>To do</span><span id="mobile-task-count" class="mobile-badge" hidden>0</span></button>
+        <button class="mobile-nav-item" type="button" data-view="settings"><span aria-hidden="true">⌁</span><span>Settings</span></button>
+      </nav>
+    </div>
+
+    <div id="toast" class="toast" role="status" aria-live="polite" aria-atomic="true" hidden>
+      <span id="toast-icon" class="toast-icon" aria-hidden="true">✓</span>
+      <span id="toast-message"></span>
+      <button id="toast-close" type="button" aria-label="Dismiss message">×</button>
+    </div>
+
+    <dialog id="completion-dialog" class="completion-dialog" aria-labelledby="completion-title" aria-describedby="completion-copy">
+      <form method="dialog">
+        <button class="dialog-close" value="cancel" aria-label="Close">×</button>
+        <span class="dialog-symbol" aria-hidden="true">✓</span>
+        <p class="eyebrow">One last check</p>
+        <h2 id="completion-title">Did you finish on the event site?</h2>
+        <p id="completion-copy">I’ll verify the registration before changing your calendar.</p>
+        <div class="dialog-actions">
+          <button class="button button-secondary" value="cancel">Not yet</button>
+          <button id="completion-confirm" class="button button-primary" value="confirm">Yes, verify it</button>
+        </div>
+      </form>
+    </dialog>
+
+    <dialog id="account-erasure-dialog" class="completion-dialog danger-dialog" aria-labelledby="account-erasure-title" aria-describedby="account-erasure-copy">
+      <form id="account-erasure-form" novalidate>
+        <button id="account-erasure-close" class="dialog-close" type="button" aria-label="Close">×</button>
+        <span class="dialog-symbol" aria-hidden="true">!</span>
+        <p class="eyebrow">Irreversible action</p>
+        <h2 id="account-erasure-title">Erase your Events Concierge account?</h2>
+        <p id="account-erasure-copy">
+          Active work will be cancelled and account data will be removed from the concierge and its
+          configured providers. Retained compliance records may keep non-PII facts under policy.
+        </p>
+        <label class="field-label" for="account-erasure-confirmation">
+          Type <strong>DELETE MY ACCOUNT</strong> to continue
+        </label>
+        <input
+          id="account-erasure-confirmation"
+          class="destructive-confirmation"
+          name="confirmation"
+          type="text"
+          autocomplete="off"
+          autocapitalize="characters"
+          spellcheck="false"
+          aria-describedby="account-erasure-error"
+          required
+        >
+        <div id="account-erasure-error" class="form-error" role="alert" hidden></div>
+        <button id="account-erasure-reauth" class="button button-secondary button-wide" type="button" hidden>
+          Sign in again to continue
+        </button>
+        <div class="dialog-actions">
+          <button id="account-erasure-cancel" class="button button-secondary" type="button">Keep my account</button>
+          <button id="account-erasure-confirm" class="button button-quiet-danger" type="submit" disabled>Erase account</button>
+        </div>
+      </form>
+    </dialog>
+
+    <noscript>
+      <div class="noscript-notice" role="alert">
+        Events Concierge needs JavaScript for its interactive local demo. Enable JavaScript and reload this page.
+      </div>
+    </noscript>
+  </body>
+</html>

@@ -104,16 +104,18 @@ export function PageHead({
 }
 
 export function Section({
+  id,
   title,
   scope,
   children,
 }: {
+  id?: string;
   title: string;
   scope?: string;
   children: ReactNode;
 }): React.JSX.Element {
   return (
-    <section className={styles.section}>
+    <section className={styles.section} id={id}>
       <div className={styles.sectionHead}>
         <h2 className={styles.sectionTitle}>{title}</h2>
         {scope ? <span className={styles.sectionScope}>{scope}</span> : null}
@@ -199,6 +201,8 @@ export interface MetricSpec {
   value: string;
   note?: string;
   tone?: Tone;
+  /** Only metrics that change the current view should render as controls. */
+  interactive?: boolean;
 }
 
 export function Metrics({
@@ -213,6 +217,7 @@ export function Metrics({
   return (
     <div className={styles.metrics}>
       {items.map((item) => {
+        const interactive = Boolean(onSelect && item.interactive);
         const body = (
           <>
             <span className="k">{item.label}</span>
@@ -221,20 +226,21 @@ export function Metrics({
           </>
         );
         // A metric is only a control when selecting it actually filters something.
-        return onSelect ? (
+        return interactive ? (
           <button
             key={item.key}
             type="button"
             className={`${styles.metric} ${styles.metricBtn} ${
               selected === item.key ? styles.metricOn : ""
             }`}
-            onClick={() => onSelect(item.key)}
+            data-tone={item.tone ?? "neutral"}
+            onClick={() => onSelect?.(item.key)}
             aria-pressed={selected === item.key}
           >
             {body}
           </button>
         ) : (
-          <div key={item.key} className={styles.metric}>
+          <div key={item.key} className={styles.metric} data-tone={item.tone ?? "neutral"}>
             {body}
           </div>
         );

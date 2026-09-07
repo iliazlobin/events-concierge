@@ -1,0 +1,174 @@
+name: Deployment validation
+
+on:
+  pull_request:
+    paths:
+      - "infra/**"
+      - "deploy/**"
+      - ".github/workflows/deployment-validation.yml"
+  push:
+    branches: [main]
+    paths:
+      - "infra/**"
+      - "deploy/**"
+      - ".github/workflows/deployment-validation.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: deployment-validation-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  terraform:
+    name: OpenTofu static validation
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Check out source
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+
+      - name: Install OpenTofu
+        uses: opentofu/setup-opentofu@000eeb8522f0572907c393e8151076c205fdba1b # v1.0.6
+        with:
+          tofu_version: 1.9.1
+          tofu_wrapper: false
+
+      - name: Check formatting
+        run: tofu fmt -check -recursive infra/terraform
+
+      - name: Initialize without remote state
+        working-directory: infra/terraform/environments/staging
+        run: tofu init -backend=false -input=false
+
+      - name: Validate modules and staging composition
+        working-directory: infra/terraform/environments/staging
+        run: tofu validate -no-color
+
+  helm:
+    name: Helm lint and render
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Check out source
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+
+      - name: Install Helm
+        uses: azure/setup-helm@1a275c3b69536ee54be43f2070a358922e12c8d4 # v4.3.1
+        with:
+          version: v3.17.3
+
+      - name: Install checksum-verified kubeconform
+        env:
+          KUBECONFORM_ARCHIVE_SHA256: 9bc2bffbf71f261128533edaf912153948b7ff238f9a531ae6d34466ec287883
+          KUBECONFORM_VERSION: v0.8.0
+        run: |
+          archive="${RUNNER_TEMP}/kubeconform-linux-amd64.tar.gz"
+          install_dir="${RUNNER_TEMP}/kubeconform-${KUBECONFORM_VERSION}"
+          curl --fail --show-error --silent --location \
+            "https://github.com/yannh/kubeconform/releases/download/${KUBECONFORM_VERSION}/kubeconform-linux-amd64.tar.gz" \
+            --output "${archive}"
+          echo "${KUBECONFORM_ARCHIVE_SHA256}  ${archive}" | sha256sum --check --strict
+          mkdir -p "${install_dir}"
+          tar -xzf "${archive}" -C "${install_dir}" kubeconform
+          echo "${install_dir}" >> "${GITHUB_PATH}"
+
+      - name: Lint the structurally enabled staging render
+        run: |
+          helm lint --strict deploy/helm/events-concierge \
+            --values deploy/helm/events-concierge/values-staging.example.yaml \
+            --set global.runtimeProviderReady=true
+
+      - name: Prove unsafe deployment inputs fail closed
+        run: |
+          chart=deploy/helm/events-concierge
+          values=deploy/helm/events-concierge/values-staging.example.yaml
+          zero=sha256:0000000000000000000000000000000000000000000000000000000000000000
+          expect_failure() {
+            if "$@" >/dev/null 2>&1; then
+              echo "Expected Helm render to fail: $*" >&2
+              exit 1
+            fi
+          }
+          expect_failure helm template events-concierge "$chart"
+          expect_failure helm template events-concierge "$chart" --values "$values"
+          expect_failure helm template events-concierge "$chart" --values "$values" \
+            --set global.runtimeProviderReady=true --set secretManager.enabled=false
+          expect_failure helm template events-concierge "$chart" --values "$values" \
+            --set global.runtimeProviderReady=true --set cloudSqlProxy.enabled=false
+          expect_failure helm template events-concierge "$chart" --values "$values" \
+            --set global.runtimeProviderReady=true --set-string global.appImage.digest="$zero"
+          expect_failure helm template events-concierge "$chart" --values "$values" \
+            --set global.runtimeProviderReady=true --set-string global.frontendImage.digest="$zero"
+          expect_failure helm template events-concierge "$chart" --values "$values" \
+            --set global.runtimeProviderReady=true --set-string cloudSqlProxy.image.digest="$zero"
+          expect_failure helm template events-concierge "$chart" --values "$values" \
+            --set global.releasePhase=all --set global.runtimeProviderReady=true
+
+      - name: Render each release phase without a cluster
+        run: |
+          helm template events-concierge deploy/helm/events-concierge \
+            --namespace events-concierge-staging \
+            --values deploy/helm/events-concierge/values-staging.example.yaml \
+            --set global.releasePhase=migration \
+            > /tmp/events-concierge-migration.yaml
+          helm template events-concierge deploy/helm/events-concierge \
+            --namespace events-concierge-staging \
+            --values deploy/helm/events-concierge/values-staging.example.yaml \
+            --set global.releasePhase=application \
+            --set global.runtimeProviderReady=true \
+            --set gateway.enabled=true \
+            --set gateway.tlsSecretName=validation-edge-tls \
+            > /tmp/events-concierge-application.yaml
+          helm template events-concierge deploy/helm/events-concierge \
+            --namespace events-concierge-staging \
+            --values deploy/helm/events-concierge/values-staging.example.yaml \
+            --set global.releasePhase=operations \
+            --set global.runtimeProviderReady=true \
+            --set jobs.catalogRefresh.enabled=true \
+            --set jobs.catalogRefresh.sourceKey=reviewed-source \
+            > /tmp/events-concierge-operations.yaml
+          helm template events-concierge deploy/helm/events-concierge \
+            --namespace events-concierge-staging \
+            --values deploy/helm/events-concierge/values-staging.example.yaml \
+            --set global.releasePhase=role-rotation \
+            --set jobs.roleRotation.enabled=true \
+            > /tmp/events-concierge-role-rotation.yaml
+
+      - name: Enforce deployment invariants
+        run: |
+          grep -q '^kind: Job$' /tmp/events-concierge-migration.yaml
+          ! grep -q '^kind: Deployment$' /tmp/events-concierge-migration.yaml
+          grep -q '^kind: Deployment$' /tmp/events-concierge-application.yaml
+          grep -q 'EC_TEMPORAL_WORKER_ROLE' /tmp/events-concierge-application.yaml
+          grep -q 'value: "transactional"' /tmp/events-concierge-application.yaml
+          grep -q 'value: "catalog"' /tmp/events-concierge-application.yaml
+          grep -q '^kind: Gateway$' /tmp/events-concierge-application.yaml
+          grep -q -- '--once' /tmp/events-concierge-application.yaml
+          grep -q '^kind: Job$' /tmp/events-concierge-operations.yaml
+          grep -q 'initContainers:' /tmp/events-concierge-migration.yaml
+          grep -q 'restartPolicy: Always' /tmp/events-concierge-migration.yaml
+          grep -q 'initContainers:' /tmp/events-concierge-operations.yaml
+          grep -q 'restartPolicy: Always' /tmp/events-concierge-operations.yaml
+          grep -q 'rotate-app-role-password' /tmp/events-concierge-role-rotation.yaml
+          grep -q 'restartPolicy: Always' /tmp/events-concierge-role-rotation.yaml
+          ! grep -R -E 'ingestion-(commands|cadence)' deploy/helm/events-concierge
+          ! grep -R -E '^[[:space:]]*kind:[[:space:]]+Secret[[:space:]]*$' /tmp/events-concierge-*.yaml
+          if grep -h -E '^[[:space:]]*image:' /tmp/events-concierge-*.yaml | grep -v '@sha256:'; then
+            echo 'Every rendered image must be pinned by sha256 digest.' >&2
+            exit 1
+          fi
+
+      - name: Validate built-in Kubernetes resource schemas
+        run: >-
+          kubeconform -strict -summary -ignore-missing-schemas
+          /tmp/events-concierge-migration.yaml
+          /tmp/events-concierge-application.yaml
+          /tmp/events-concierge-operations.yaml
+          /tmp/events-concierge-role-rotation.yaml

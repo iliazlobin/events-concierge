@@ -2,20 +2,26 @@
 
 from __future__ import annotations
 
+import asyncio
+from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime, timedelta
 from uuid import uuid4
+
+import pytest
 
 from events_concierge.adapters.mock.notification_secrets import (
     DevelopmentNotificationSecretProtector,
 )
 from events_concierge.adapters.mock.notifier import MockNotifier
 from events_concierge.application.outbox import OutboxRelay, RelayStats
+from events_concierge.application.tenant_effects import settle_tenant_effect
 from events_concierge.ports.notifications import Notification, NotificationKind
 from events_concierge.ports.repositories import (
     NotificationClaim,
     OutboxQueueSnapshot,
     OutboxRecord,
 )
+from events_concierge.ports.tenant_effects import TenantEffectRequest
 
 _SECRETS = DevelopmentNotificationSecretProtector()
 
@@ -108,6 +114,41 @@ class EchoingFailNotifier:
     async def send(self, notification: Notification) -> None:
         raise RuntimeError(notification.body)
 
+
+class _CancellationResistantNotifier:
+    """Model an executor-backed provider call that remains active after relay cancellation."""
+
+    def __init__(self) -> None:
+        self.entered = asyncio.Event()
+        self.release = asyncio.Event()
+        self.completed = False
+
+    async def send(self, notification: Notification) -> None:
+        del notification
+        self.entered.set()
+        await self.release.wait()
+        self.completed = True
+
+
+class _RecordingTenantEffectAuthority:
+    """Expose the actual authority lifetime while retaining cancellation-safe settlement."""
+
+    def __init__(self) -> None:
+        self.scope_active = False
+
+    async def run[T](
+        self,
+        request: TenantEffectRequest,
+        effect: Callable[[], Awaitable[T]],
+    ) -> T:
+        self.scope_active = True
+        try:
+            return await settle_tenant_effect(
+                effect(),
+                timeout_seconds=request.timeout_seconds,
+            )
+        finally:
+            self.scope_active = False
 
 def _record(*, attempt_count: int, lease_token: str) -> OutboxRecord:
     return OutboxRecord(
@@ -481,6 +522,34 @@ async def test_relay_rechecks_send_authority_after_a_successful_ledger_claim() -
     assert fake.rescheduled == []
     assert fake.ledger_marked == []
     assert fake.released == []
+
+
+async def test_relay_cancellation_drains_provider_before_releasing_erasure_guard() -> None:
+    """Shutdown cannot let erasure pass a still-running executor-backed provider call."""
+    fake = FakeOutbox([[_record(attempt_count=0, lease_token="shutdown")]])
+    notifier = _CancellationResistantNotifier()
+    authority = _RecordingTenantEffectAuthority()
+    relay = OutboxRelay(
+        fake,
+        notifier,
+        _SECRETS,
+        tenant_effect_authority=authority,
+    )
+
+    relay_task = asyncio.create_task(relay.relay_once())
+    await asyncio.wait_for(notifier.entered.wait(), timeout=1)
+    assert authority.scope_active is True
+
+    relay_task.cancel()
+    await asyncio.sleep(0)
+    assert relay_task.done() is False
+    assert authority.scope_active is True
+
+    notifier.release.set()
+    with pytest.raises(asyncio.CancelledError):
+        await asyncio.wait_for(relay_task, timeout=1)
+    assert notifier.completed is True
+    assert authority.scope_active is False
 
 
 async def test_relay_lost_ledger_lease_defers_without_consuming_delivery_budget() -> None:

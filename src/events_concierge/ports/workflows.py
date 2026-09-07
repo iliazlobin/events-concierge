@@ -17,6 +17,10 @@ class RequestWorkflowStarter(Protocol):
         """Ensure the deterministic parent workflow exists or raise a retryable engine error."""
         ...
 
+    async def cancel(self, tenant_id: UUID, request_id: UUID) -> None:
+        """Cancel and await closure of an exact parent that lost a post-start erasure race."""
+        ...
+
 
 class CatalogRefreshWorkflowStarter(Protocol):
     """Start P15a's one-GET catalog continuation without exposing a Temporal client.

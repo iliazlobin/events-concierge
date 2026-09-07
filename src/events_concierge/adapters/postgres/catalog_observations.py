@@ -35,14 +35,19 @@ class PostgresCatalogObservationRepository:
                     """
                     INSERT INTO catalog_event_observations
                         (source_key, source, source_event_id, canonical_event_id, registration_url,
-                         price_status, content_hash, first_seen_at, last_seen_at, last_run_key)
+                         price_status, price_min_cents, price_max_cents, price_currency,
+                         content_hash, first_seen_at, last_seen_at, last_run_key)
                     VALUES
                         (:source_key, :source, :source_event_id, :canonical_event_id, :registration_url,
-                         :price_status, :content_hash, now(), now(), :run_key)
+                         :price_status, :price_min_cents, :price_max_cents, :price_currency,
+                         :content_hash, now(), now(), :run_key)
                     ON CONFLICT (source_key, source, source_event_id) DO UPDATE SET
                         canonical_event_id = EXCLUDED.canonical_event_id,
                         registration_url = EXCLUDED.registration_url,
                         price_status = EXCLUDED.price_status,
+                        price_min_cents = EXCLUDED.price_min_cents,
+                        price_max_cents = EXCLUDED.price_max_cents,
+                        price_currency = EXCLUDED.price_currency,
                         content_hash = EXCLUDED.content_hash,
                         last_seen_at = now(),
                         last_run_key = EXCLUDED.last_run_key
@@ -55,6 +60,9 @@ class PostgresCatalogObservationRepository:
                     "canonical_event_id": observation.canonical_event_id,
                     "registration_url": observation.registration_url,
                     "price_status": observation.price_status.value,
+                    "price_min_cents": observation.price_min_cents,
+                    "price_max_cents": observation.price_max_cents,
+                    "price_currency": observation.price_currency,
                     "content_hash": observation.content_hash,
                     "run_key": run_key,
                 },
@@ -85,6 +93,9 @@ def _observation_from_row(row: Row[Any]) -> CatalogSourceObservation:
         canonical_event_id=row.canonical_event_id,
         registration_url=row.registration_url,
         price_status=PriceStatus(row.price_status),
+        price_min_cents=getattr(row, "price_min_cents", None),
+        price_max_cents=getattr(row, "price_max_cents", None),
+        price_currency=getattr(row, "price_currency", None),
         content_hash=row.content_hash,
         first_seen_at=row.first_seen_at,
         last_seen_at=row.last_seen_at,

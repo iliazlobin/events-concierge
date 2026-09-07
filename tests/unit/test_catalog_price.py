@@ -36,6 +36,9 @@ def test_feed_api_projects_the_explicit_price_status() -> None:
         title="Paid Bay Area conference",
         start_at=datetime(2026, 8, 1, 18, 0, tzinfo=UTC),
         price_status=PriceStatus.PAID,
+        price_min_cents=2_500,
+        price_max_cents=5_000,
+        price_currency="USD",
     )
     request = EventRequest(
         request_id=uuid4(),
@@ -59,3 +62,6 @@ def test_feed_api_projects_the_explicit_price_status() -> None:
     output = _feed_out(feed)
 
     assert output.items[0].price_status == "paid"
+    assert output.items[0].price_min_cents == 2_500
+    assert output.items[0].price_max_cents == 5_000
+    assert output.items[0].price_currency == "USD"

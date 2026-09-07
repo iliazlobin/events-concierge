@@ -9,7 +9,7 @@ without changing its idempotency semantics (FR-3.3/FR-3.9, NFR-1/NFR-8, ADR-001/
 
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Protocol
@@ -33,6 +33,15 @@ class CatalogCadenceFailure:
     source_key: str
     run_key: str
     error_type: str
+
+
+@dataclass(frozen=True, slots=True)
+class CatalogCadencePlannedRun:
+    """Stable source/slot identity selected for one bounded cadence pass."""
+
+    position: int
+    source_key: str
+    run_key: str
 
 
 @dataclass(frozen=True, slots=True)
@@ -78,15 +87,31 @@ class CatalogCadenceDispatcher:
         self._batch_size = batch_size
         self._now = now or (lambda: datetime.now(UTC))
 
-    async def dispatch_once(self) -> CatalogCadenceDispatchReport:
+    async def dispatch_once(
+        self,
+        *,
+        on_plan: Callable[[tuple[CatalogCadencePlannedRun, ...]], Awaitable[None]] | None = None,
+    ) -> CatalogCadenceDispatchReport:
         """Invoke one deterministic run key for every due source selected in this bounded pass."""
         now = _utc(self._now())
         due = await self._due_sources.list_due_refreshes(now, limit=self._batch_size)
         ordered_due = sorted(due, key=lambda item: (item.due_at, item.source.source_key))
+        plan = tuple(
+            CatalogCadencePlannedRun(
+                position=position,
+                source_key=item.source.source_key,
+                run_key=item.run_key(),
+            )
+            for position, item in enumerate(ordered_due)
+        )
+        if on_plan is not None:
+            # The observer commits the complete plan before the first provider boundary.  A
+            # failure aborts this pass, preventing an unobservable child refresh.
+            await on_plan(plan)
         results: list[CatalogRefreshResult] = []
         failures: list[CatalogCadenceFailure] = []
-        for item in ordered_due:
-            run_key = item.run_key()
+        for item, planned in zip(ordered_due, plan, strict=True):
+            run_key = planned.run_key
             try:
                 results.append(await self._refresh.refresh(item.source.source_key, run_key))
             except Exception as error:

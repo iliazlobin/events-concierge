@@ -2,9 +2,12 @@
 
 from __future__ import annotations
 
+import asyncio
 from datetime import timedelta
 from uuid import UUID
 
+from temporalio.api.common.v1 import WorkflowExecution as ProtoWorkflowExecution
+from temporalio.api.workflowservice.v1 import DeleteWorkflowExecutionRequest
 from temporalio.client import Client, WorkflowExecutionStatus
 from temporalio.common import WorkflowIDReusePolicy
 from temporalio.exceptions import WorkflowAlreadyStartedError
@@ -35,6 +38,7 @@ from .dto import (
 from .workflows import CatalogPagedRefreshWorkflow, CatalogRefreshWorkflow, EventRequestWorkflow
 
 _log = get_logger("worker_start")
+_MAX_ERASURE_HISTORY_RUNS = 100
 
 
 class TemporalRequestWorkflowStarter:
@@ -68,6 +72,55 @@ class TemporalRequestWorkflowStarter:
             )
         except WorkflowAlreadyStartedError:
             _log.info("request workflow already started", workflow_id=workflow_id)
+
+    async def cancel(self, tenant_id: UUID, request_id: UUID) -> None:
+        """Close, delete, and verify every run of a parent that lost the erasure postcheck race."""
+        workflow_id = request_workflow_id(tenant_id, request_id)
+        async with asyncio.timeout(max(10.0, self._rpc_timeout.total_seconds() * 6)):
+            for _ in range(_MAX_ERASURE_HISTORY_RUNS):
+                handle = self._client.get_workflow_handle(workflow_id)
+                try:
+                    description = await handle.describe(rpc_timeout=self._rpc_timeout)
+                except RPCError as error:
+                    if error.status is RPCStatusCode.NOT_FOUND:
+                        return
+                    raise
+                if description.status is WorkflowExecutionStatus.RUNNING:
+                    await handle.cancel(rpc_timeout=self._rpc_timeout)
+                    while True:
+                        description = await handle.describe(rpc_timeout=self._rpc_timeout)
+                        if description.status is not WorkflowExecutionStatus.RUNNING:
+                            break
+                        await asyncio.sleep(0.1)
+                await self._delete_erasure_history(workflow_id, description.run_id)
+            raise RuntimeError("request workflow erasure history run limit exceeded")
+
+    async def _delete_erasure_history(self, workflow_id: str, run_id: str) -> None:
+        """Request deletion of one exact run and verify it is no longer addressable."""
+        try:
+            await self._client.workflow_service.delete_workflow_execution(
+                DeleteWorkflowExecutionRequest(
+                    namespace=self._client.namespace,
+                    workflow_execution=ProtoWorkflowExecution(
+                        workflow_id=workflow_id,
+                        run_id=run_id,
+                    ),
+                ),
+                timeout=self._rpc_timeout,
+            )
+        except RPCError as error:
+            if error.status is not RPCStatusCode.NOT_FOUND:
+                raise
+        while True:
+            try:
+                await self._client.get_workflow_handle(
+                    workflow_id, run_id=run_id
+                ).describe(rpc_timeout=self._rpc_timeout)
+            except RPCError as error:
+                if error.status is RPCStatusCode.NOT_FOUND:
+                    return
+                raise
+            await asyncio.sleep(0.1)
 
 
 class TemporalCatalogRefreshStarter(CatalogRefreshWorkflowStarter):

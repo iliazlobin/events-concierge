@@ -19,8 +19,8 @@ from ...domain.catalog_sources import (
     catalog_candidate_content_hash,
     observation_for,
 )
-from ...domain.enums import PriceStatus, Source
-from ...domain.events import CandidateEvent
+from ...domain.enums import PriceStatus, RegistrationStatus, Source
+from ...domain.events import CandidateEvent, event_entity_profiles_from_payload
 from ...infra.db import system_session_scope
 from .catalog import PostgresCatalogRepository
 from .catalog_observations import PostgresCatalogObservationRepository
@@ -89,6 +89,14 @@ class PostgresCatalogPagedRefreshPromoter:
             ).scalar_one()
             if not promoted:
                 raise RuntimeError("catalog paged refresh stage could not be promoted")
+            await session.execute(
+                text("SELECT public.fn_refresh_catalog_entity_index_v3(:source_key)"),
+                {"source_key": source_key},
+            )
+            await session.execute(
+                text("SELECT public.fn_prune_catalog_entity_index_v1(:source_key)"),
+                {"source_key": source_key},
+            )
         return CatalogPagedRefreshPromotion(len(current), canonical_count)
 
     async def _read_stage(
@@ -117,7 +125,7 @@ class PostgresCatalogPagedRefreshPromoter:
             await session.execute(
                 text(
                     """
-                    SELECT * FROM public.fn_read_paged_catalog_refresh_stage(
+                    SELECT * FROM public.fn_read_paged_catalog_refresh_stage_v4(
                         :source_key, :run_key, :lease_token, :source_revision
                     )
                     """
@@ -146,6 +154,16 @@ def _candidate_from_stage_row(row: Row[Any]) -> CandidateEvent:
         city=row.city,
         description=row.description,
         price_status=PriceStatus(row.price_status),
+        price_min_cents=row.price_min_cents,
+        price_max_cents=row.price_max_cents,
+        price_currency=row.price_currency,
+        organizer_name=row.organizer_name,
+        host_names=tuple(row.host_names),
+        speaker_names=tuple(row.speaker_names),
+        partner_names=tuple(row.partner_names),
+        entity_profiles=event_entity_profiles_from_payload(row.entity_profiles),
+        attendance_count=row.attendance_count,
+        registration_status=RegistrationStatus(row.registration_status),
     )
     if catalog_candidate_content_hash(candidate) != row.content_hash:
         raise RuntimeError(

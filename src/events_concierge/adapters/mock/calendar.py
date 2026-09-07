@@ -69,6 +69,10 @@ class MockCalendar:
         del canonical_event_id
         self._entries.get(tenant_id, {}).pop(calendar_event_id, None)
 
+    async def delete_tenant_events(self, tenant_id: UUID) -> None:
+        """Remove the complete tenant partition, including entries absent from lifecycle state."""
+        self._entries.pop(tenant_id, None)
+
     def entries(self, tenant_id: UUID) -> list[CalendarEntry]:
         """Expose the current entries for a tenant (test/slice inspection)."""
         return list(self._entries.get(tenant_id, {}).values())

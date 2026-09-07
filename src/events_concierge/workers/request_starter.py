@@ -17,6 +17,7 @@ from ..composition import build_container
 from ..config import Settings, get_settings
 from ..infra.logging import configure_logging, get_logger
 from ..ports.object_store import ObjectStorePort
+from ..ports.tenant_effects import TenantEffectAuthority
 from ..workflows.start import TemporalRequestWorkflowStarter
 from ..workflows.temporal_client import connect_temporal
 
@@ -34,11 +35,17 @@ async def run_request_starter() -> None:
     settings = get_settings()
     configure_logging(settings.log_level, local=settings.env == "local")
     container = build_container(settings)
-    starter = await _connect_starter(settings, container.object_store)
+    starter = await _connect_starter(
+        settings,
+        container.object_store,
+        container.tenant_effect_authority,
+    )
     relay = RequestStartRelay(
         container.request_repo,
         starter,
         lease_seconds=settings.request_start_lease_seconds,
+        tenant_effect_authority=container.tenant_effect_authority,
+        tenant_effect_timeout_seconds=settings.tenant_effect_timeout_seconds,
     )
     _log.info(
         "request start worker started",
@@ -91,12 +98,18 @@ async def _run_request_start_relay(
 
 
 async def _connect_starter(
-    settings: Settings, object_store: ObjectStorePort
+    settings: Settings,
+    object_store: ObjectStorePort,
+    tenant_effect_authority: TenantEffectAuthority,
 ) -> TemporalRequestWorkflowStarter:
     """Retry initial Temporal connectivity; queue rows remain authoritative during an outage."""
     while True:
         try:
-            client = await connect_temporal(settings, object_store)
+            client = await connect_temporal(
+                settings,
+                object_store,
+                tenant_effect_authority=tenant_effect_authority,
+            )
             return TemporalRequestWorkflowStarter(client, settings)
         except Exception as exc:
             _log.warning("temporal unavailable for request starts; retrying", error=str(exc))

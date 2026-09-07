@@ -1,0 +1,19 @@
+{
+  "id": "/app",
+  "name": "Events Concierge",
+  "short_name": "Concierge",
+  "description": "One brief. Every source. Your calendar stays true.",
+  "start_url": "/app",
+  "scope": "/",
+  "display": "standalone",
+  "background_color": "#f6f7f5",
+  "theme_color": "#f4f6f7",
+  "icons": [
+    {
+      "src": "/assets/mark.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}

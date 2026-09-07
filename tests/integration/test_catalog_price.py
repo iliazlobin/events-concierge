@@ -11,6 +11,7 @@ from sqlalchemy import text
 
 from events_concierge.composition import build_container
 from events_concierge.config import get_settings
+from events_concierge.domain import dedup
 from events_concierge.domain.enums import PriceStatus, Source
 from events_concierge.domain.events import CandidateEvent, GeoPoint
 from events_concierge.domain.request import RequestConstraints, TimeWindow
@@ -231,6 +232,100 @@ async def test_catalog_keeps_conflicting_source_prices_unknown_until_all_links_a
     assert {link.price_status for link in all_free.source_links} == {PriceStatus.FREE}
 
 
+async def test_free_text_fallback_never_asserts_a_second_deduplicated_source_is_free(
+    db: None,
+) -> None:
+    """Unambiguous text may fill one link, but shared provenance requires structured pricing."""
+    tag = uuid4().hex
+    common = {
+        "source": Source.PUBLIC_JSONLD,
+        "title": f"single-source-free-text-{tag}",
+        "description": "COST: FREE! Public program.",
+        "start_at": datetime.now(UTC).replace(microsecond=0) + timedelta(days=65),
+        "city": f"single-source-price-city-{tag}",
+    }
+    first = CandidateEvent(
+        source_event_id=f"first-{tag}",
+        registration_url=f"https://example.test/{tag}/first",
+        **common,
+    )
+    second = CandidateEvent(
+        source_event_id=f"second-{tag}",
+        registration_url=f"https://example.test/{tag}/second",
+        **common,
+    )
+    catalog = build_container(get_settings()).catalog
+
+    single_source = (await catalog.upsert_candidates([first]))[0]
+    assert single_source.price_status is PriceStatus.FREE
+    assert single_source.source_links[0].price_status is PriceStatus.FREE
+
+    shared = (await catalog.upsert_candidates([second]))[0]
+    assert shared.canonical_event_id == single_source.canonical_event_id
+    assert shared.price_status is PriceStatus.UNKNOWN
+    assert {link.source_event_id: link.price_status for link in shared.source_links} == {
+        first.source_event_id: PriceStatus.FREE,
+        second.source_event_id: PriceStatus.UNKNOWN,
+    }
+
+
+async def test_catalog_publishes_an_exact_range_only_while_all_paid_sources_agree(
+    db: None,
+) -> None:
+    tag = uuid4().hex
+    start = datetime.now(UTC).replace(microsecond=0) + timedelta(days=75)
+    common = {
+        "source": Source.PUBLIC_JSONLD,
+        "title": f"exact-price-range-{tag}",
+        "start_at": start,
+        "city": f"price-range-{tag}",
+        "price_status": PriceStatus.PAID,
+    }
+
+    def candidate(source_event_id: str, minimum: int | None) -> CandidateEvent:
+        return CandidateEvent(
+            source_event_id=f"{source_event_id}-{tag}",
+            registration_url=f"https://example.test/{tag}/{source_event_id}",
+            price_min_cents=minimum,
+            price_max_cents=5_000 if minimum is not None else None,
+            price_currency="USD" if minimum is not None else None,
+            **common,
+        )
+
+    container = build_container(get_settings())
+    first = (await container.catalog.upsert_candidates([candidate("one", 2_500)]))[0]
+    assert (
+        first.price_status,
+        first.price_min_cents,
+        first.price_max_cents,
+        first.price_currency,
+    ) == (PriceStatus.PAID, 2_500, 5_000, "USD")
+
+    agreed = (await container.catalog.upsert_candidates([candidate("two", 2_500)]))[0]
+    assert agreed.canonical_event_id == first.canonical_event_id
+    assert (
+        agreed.price_min_cents,
+        agreed.price_max_cents,
+        agreed.price_currency,
+    ) == (2_500, 5_000, "USD")
+
+    conflicted = (await container.catalog.upsert_candidates([candidate("three", 3_000)]))[0]
+    assert conflicted.canonical_event_id == first.canonical_event_id
+    assert conflicted.price_status is PriceStatus.PAID
+    assert (
+        conflicted.price_min_cents,
+        conflicted.price_max_cents,
+        conflicted.price_currency,
+    ) == (None, None, None)
+
+    restored = (await container.catalog.upsert_candidates([candidate("three", 2_500)]))[0]
+    assert (
+        restored.price_min_cents,
+        restored.price_max_cents,
+        restored.price_currency,
+    ) == (2_500, 5_000, "USD")
+
+
 async def test_catalog_enriches_absent_metadata_on_a_repeat_source_observation(db: None) -> None:
     """A richer retry fills blanks without reminting or rewriting the canonical identity (FR-3.8)."""
     tag = uuid4().hex
@@ -264,26 +359,35 @@ async def test_catalog_enriches_absent_metadata_on_a_repeat_source_observation(d
 
 
 async def test_catalog_replay_outside_fuzzy_window_reuses_exact_source_identity(db: None) -> None:
-    """A rescheduled source event refreshes its canonical instead of leaking an orphan."""
+    """One publisher's moved occurrence authoritatively refreshes its exclusive canonical."""
     tag = uuid4().hex
     start = datetime.now(UTC).replace(microsecond=0) + timedelta(days=120)
     common = {
         "source": Source.PUBLIC_JSONLD,
         "source_event_id": f"rescheduled-{tag}",
-        "title": f"catalog-source-identity-{tag}",
-        "city": f"identity-city-{tag}",
     }
     initial = CandidateEvent(
+        title=f"Original catalog source identity {tag}",
         start_at=start,
+        end_at=start + timedelta(hours=1),
         registration_url=f"https://example.test/{tag}/initial",
+        venue_name="Original venue",
+        geo=GeoPoint(lat=37.7749, lon=-122.4194),
+        city="San Francisco",
         description="Initial listing.",
         is_free=True,
         **common,
     )
+    moved_start = start + timedelta(days=7)
     moved = CandidateEvent(
-        start_at=start + timedelta(days=7),
+        title=f"Renamed and rescheduled source identity {tag}",
+        start_at=moved_start,
+        end_at=moved_start + timedelta(hours=3),
         registration_url=f"https://example.test/{tag}/moved",
-        description="A richer description published after this event was rescheduled.",
+        venue_name="Replacement venue",
+        geo=GeoPoint(lat=37.3382, lon=-121.8863),
+        city="San Jose",
+        description="Updated.",
         is_free=False,
         **common,
     )
@@ -292,17 +396,98 @@ async def test_catalog_replay_outside_fuzzy_window_reuses_exact_source_identity(
     first = (await container.catalog.upsert_candidates([initial]))[0]
     replay = (await container.catalog.upsert_candidates([moved]))[0]
     canonical_count, link_count, orphan_count, linked_canonical_id = await _catalog_identity_counts(
-        candidate=initial
+        candidate=moved
     )
 
     assert replay.canonical_event_id == first.canonical_event_id == linked_canonical_id
-    assert replay.start_at == initial.start_at
+    assert replay.title == moved.title
+    assert replay.start_at == moved.start_at
+    assert replay.end_at == moved.end_at
+    assert replay.venue_name == moved.venue_name
+    assert replay.geo == moved.geo
+    assert replay.city_norm == "sanjose"
     assert replay.description == moved.description
     assert replay.price_status is PriceStatus.PAID
     assert len(replay.source_links) == 1
     assert replay.source_links[0].registration_url == moved.registration_url
     assert replay.source_links[0].price_status is PriceStatus.PAID
     assert (canonical_count, link_count, orphan_count) == (1, 1, 0)
+
+
+async def test_catalog_moved_source_splits_from_shared_canonical_without_rewriting_other_link(
+    db: None,
+) -> None:
+    """A moved provider link is re-deduped while another provider keeps the old occurrence."""
+    tag = uuid4().hex
+    start = datetime.now(UTC).replace(microsecond=0) + timedelta(days=135)
+    original_title = f"Shared occurrence {tag}"
+    public = CandidateEvent(
+        source=Source.PUBLIC_JSONLD,
+        source_event_id=f"public-shared-{tag}",
+        title=original_title,
+        start_at=start,
+        end_at=start + timedelta(hours=1),
+        registration_url=f"https://example.test/{tag}/public",
+        venue_name="Shared venue",
+        geo=GeoPoint(lat=37.7749, lon=-122.4194),
+        city="San Francisco",
+        description="Original shared occurrence.",
+        is_free=True,
+    )
+    meetup = CandidateEvent(
+        source=Source.MEETUP,
+        source_event_id=f"meetup-shared-{tag}",
+        title=original_title,
+        start_at=start,
+        end_at=start + timedelta(hours=1),
+        registration_url=f"https://meetup.test/{tag}",
+        venue_name="Shared venue",
+        geo=public.geo,
+        city="San Francisco",
+        description=public.description,
+        is_free=True,
+    )
+    moved_start = start + timedelta(days=8)
+    moved_public = CandidateEvent(
+        source=public.source,
+        source_event_id=public.source_event_id,
+        title=f"Moved occurrence {tag}",
+        start_at=moved_start,
+        end_at=moved_start + timedelta(hours=2),
+        registration_url=f"https://example.test/{tag}/public-moved",
+        venue_name="Moved venue",
+        geo=GeoPoint(lat=37.3382, lon=-121.8863),
+        city="San Jose",
+        description="The public listing moved; Meetup still asserts the original occurrence.",
+        is_free=False,
+    )
+    container = build_container(get_settings())
+
+    public_event, meetup_event = await container.catalog.upsert_candidates([public, meetup])
+    moved_event = (await container.catalog.upsert_candidates([moved_public]))[0]
+    original_event = await container.catalog.get(public_event.canonical_event_id)
+
+    assert meetup_event.canonical_event_id == public_event.canonical_event_id
+    assert moved_event.canonical_event_id != public_event.canonical_event_id
+    assert original_event is not None
+    assert original_event.title == original_title
+    assert original_event.start_at == start
+    assert original_event.venue_name == "Shared venue"
+    assert original_event.geo == public.geo
+    assert original_event.price_status is PriceStatus.FREE
+    assert [(link.source, link.source_event_id) for link in original_event.source_links] == [
+        (Source.MEETUP, meetup.source_event_id)
+    ]
+    assert moved_event.title == moved_public.title
+    assert moved_event.start_at == moved_public.start_at
+    assert moved_event.end_at == moved_public.end_at
+    assert moved_event.venue_name == moved_public.venue_name
+    assert moved_event.geo == moved_public.geo
+    assert moved_event.city_norm == "sanjose"
+    assert moved_event.price_status is PriceStatus.PAID
+    assert [(link.source, link.source_event_id) for link in moved_event.source_links] == [
+        (Source.PUBLIC_JSONLD, public.source_event_id)
+    ]
 
 
 async def test_catalog_exact_source_identity_wins_before_fuzzy_dedup(db: None) -> None:
@@ -485,9 +670,7 @@ async def test_catalog_crossed_fuzzy_batches_lock_canonicals_in_one_order(
             city=city,
         )
         batches.append(
-            [first_refresh, second_refresh]
-            if index % 2 == 0
-            else [second_refresh, first_refresh]
+            [first_refresh, second_refresh] if index % 2 == 0 else [second_refresh, first_refresh]
         )
 
     refreshed = await asyncio.wait_for(
@@ -511,7 +694,7 @@ async def test_catalog_crossed_fuzzy_batches_lock_canonicals_in_one_order(
 async def test_catalog_crossed_exact_refreshes_lock_drifted_canonicals_in_one_order(
     db: None,
 ) -> None:
-    """Rescheduled identities outside their old fuzzy domains cannot invert canonical row locks."""
+    """Crossed provider splits outside old fuzzy domains cannot invert canonical row locks."""
     tag = uuid4().hex
     start = datetime.now(UTC).replace(microsecond=0) + timedelta(days=270)
     first_title = f"crossed-drift-first-{tag}"
@@ -584,9 +767,17 @@ async def test_catalog_crossed_exact_refreshes_lock_drifted_canonicals_in_one_or
         timeout=10,
     )
 
-    assert [[event.canonical_event_id for event in batch] for batch in crossed] == [
-        [first_id, second_id],
-        [second_id, first_id],
-    ]
-    assert await _catalog_title_counts(first_title) == (1, 2, 0)
-    assert await _catalog_title_counts(second_title) == (1, 2, 0)
+    input_batches = [first_then_second, second_then_first]
+    for candidates, events in zip(input_batches, crossed, strict=True):
+        for candidate, event in zip(candidates, events, strict=True):
+            assert event.title == candidate.title
+            assert event.start_at == candidate.start_at
+            assert event.city_norm == dedup.normalize_city(candidate.city)
+            assert [(link.source, link.source_event_id) for link in event.source_links] == [
+                (candidate.source, candidate.source_event_id)
+            ]
+    result_ids = {event.canonical_event_id for batch in crossed for event in batch}
+    assert len(result_ids) == 4
+    assert {first_id, second_id} <= result_ids
+    assert await _catalog_title_counts(first_title) == (2, 2, 0)
+    assert await _catalog_title_counts(second_title) == (2, 2, 0)

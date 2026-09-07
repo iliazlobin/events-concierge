@@ -1,0 +1,349 @@
+nameOverride: ""
+fullnameOverride: ""
+
+namespace:
+  create: false
+  labels: {}
+
+global:
+  # Safe bootstrap default: render only migration infrastructure, and still reject placeholders.
+  releasePhase: migration
+  # Set true only after full non-structural production validation succeeds with deployed secrets.
+  runtimeProviderReady: false
+  environment: staging
+  releaseRevision: development
+  appImage:
+    repository: us-west1-docker.pkg.dev/replace-me/ec-stg-containers/events-concierge
+    digest: sha256:0000000000000000000000000000000000000000000000000000000000000000
+    pullPolicy: IfNotPresent
+  frontendImage:
+    repository: us-west1-docker.pkg.dev/replace-me/ec-stg-containers/events-concierge-web
+    digest: sha256:0000000000000000000000000000000000000000000000000000000000000000
+    pullPolicy: IfNotPresent
+
+frontend:
+  apiOrigin: http://events-concierge-api:8000
+
+applicationConfig:
+  EC_ENV: staging
+  EC_LOG_LEVEL: info
+  EC_PUBLIC_BASE_URL: https://staging.concierge.example
+  EC_UI_AUTH_START_URL: /auth/login
+  EC_API_BIND_ADDRESS: 0.0.0.0
+  EC_DATABASE_URL_FILE: /var/run/secrets/events-concierge/EC_DATABASE_URL
+  EC_REDIS_URL_FILE: /var/run/secrets/events-concierge/EC_REDIS_URL
+  EC_PACER_BACKEND: redis
+  EC_TEMPORAL_TARGET: replace-me.tmprl.cloud:7233
+  EC_TEMPORAL_NAMESPACE: events-staging
+  EC_TEMPORAL_TASK_QUEUE: events-concierge-catalog
+  EC_TEMPORAL_TRANSACTIONAL_TASK_QUEUE: events-concierge-transactional
+  EC_TEMPORAL_CATALOG_TASK_QUEUE: events-concierge-catalog
+  EC_TEMPORAL_WORKER_VERSIONING_ENABLED: "true"
+  EC_TEMPORAL_TLS_ENABLED: "true"
+  EC_TEMPORAL_TLS_DOMAIN: replace-me.tmprl.cloud
+  EC_TEMPORAL_API_KEY_FILE: /var/run/secrets/events-concierge/EC_TEMPORAL_API_KEY
+  EC_TEMPORAL_RPC_TIMEOUT_SECONDS: "5"
+  EC_TEMPORAL_WORKER_MAX_CONCURRENT_WORKFLOW_TASKS: "8"
+  EC_TEMPORAL_WORKER_MAX_CONCURRENT_ACTIVITIES: "8"
+  EC_MOCK_CLOUD: "false"
+  EC_DATABASE_CONNECTION_MODE: cloud_sql_proxy
+  EC_DATABASE_POOL_SIZE: "8"
+  EC_DATABASE_MAX_OVERFLOW: "0"
+  EC_RUNTIME_PROVIDER_FACTORY: events_concierge.deployment.gcp_runtime:build_runtime_ports
+  EC_GCP_PROJECT: replace-me
+  EC_GCS_CLAIM_CHECK_BUCKET: replace-me-claim-check
+  EC_GCS_CLAIM_CHECK_PREFIX: events-concierge/claim-check/v1
+  EC_ADMIN_INGESTION_ENABLED: "false"
+  EC_CATALOG_INGESTION_SCHEDULER_ENABLED: "false"
+  EC_OIDC_BFF_ENABLED: "true"
+  EC_OIDC_ISSUER: https://identity.example.com/
+  EC_OIDC_AUTHORIZATION_URL: https://identity.example.com/authorize
+  EC_OIDC_TOKEN_URL: https://identity.example.com/oauth/token
+  EC_OIDC_JWKS_URL: https://identity.example.com/.well-known/jwks.json
+  EC_OIDC_CLIENT_ID: events-concierge-staging
+  EC_OIDC_CLIENT_SECRET_FILE: /var/run/secrets/events-concierge/EC_OIDC_CLIENT_SECRET
+  EC_OIDC_TENANT_CLAIM: https://concierge.example/tenant_id
+  EC_OIDC_ALGORITHMS: RS256
+
+cloudSqlProxy:
+  enabled: true
+  instanceConnectionName: replace-me:us-west1:ec-stg-postgres
+  privateIp: true
+  image:
+    repository: gcr.io/cloud-sql-connectors/cloud-sql-proxy
+    digest: sha256:0000000000000000000000000000000000000000000000000000000000000000
+    pullPolicy: IfNotPresent
+  resources:
+    requests:
+      cpu: 50m
+      memory: 64Mi
+    limits:
+      cpu: 250m
+      memory: 256Mi
+
+secretManager:
+  enabled: true
+  projectId: replace-me
+  runtimeSecrets:
+    - fileName: EC_DATABASE_URL
+      secretName: ec-stg-database-url
+      version: "1"
+    - fileName: EC_REDIS_URL
+      secretName: ec-stg-redis-url
+      version: "1"
+    - fileName: REDIS_CA_CERTIFICATE
+      secretName: ec-stg-redis-ca-certificate
+      version: "1"
+    - fileName: EC_TEMPORAL_API_KEY
+      secretName: ec-stg-temporal-api-key
+      version: "1"
+    - fileName: EC_OIDC_CLIENT_SECRET
+      secretName: ec-stg-oidc-client-secret
+      version: "1"
+    - fileName: EC_EMAIL_PROVIDER_TOKEN
+      secretName: ec-stg-email-provider-token
+      version: "1"
+  migrationSecrets:
+    - fileName: EC_MIGRATION_URL
+      secretName: ec-stg-migration-url
+      version: "1"
+    - fileName: EC_APP_ROLE_PASSWORD
+      secretName: ec-stg-app-role-password
+      version: "1"
+
+serviceAccounts:
+  frontend:
+    name: events-concierge-frontend
+    gcpServiceAccount: ""
+  api:
+    name: events-concierge-api
+    gcpServiceAccount: ""
+  temporal-transactional:
+    name: events-concierge-temporal-transactional
+    gcpServiceAccount: ""
+  temporal-catalog:
+    name: events-concierge-temporal-catalog
+    gcpServiceAccount: ""
+  request-starter:
+    name: events-concierge-request-starter
+    gcpServiceAccount: ""
+  notifier:
+    name: events-concierge-notifier
+    gcpServiceAccount: ""
+  account-erasure:
+    name: events-concierge-account-erasure
+    gcpServiceAccount: ""
+  change-delivery:
+    name: events-concierge-change-delivery
+    gcpServiceAccount: ""
+  handoff-expiry:
+    name: events-concierge-handoff-expiry
+    gcpServiceAccount: ""
+  lifecycle-invariants:
+    name: events-concierge-lifecycle-invariants
+    gcpServiceAccount: ""
+  catalog-jobs:
+    name: events-concierge-catalog-jobs
+    gcpServiceAccount: ""
+  migration:
+    name: events-concierge-migration
+    gcpServiceAccount: ""
+
+workloads:
+  frontend:
+    enabled: true
+    replicas: 2
+    serviceAccount: frontend
+    needsIdentity: false
+    database: false
+    runtimeSecrets: false
+    probeType: frontend
+    port: 3000
+    pdb:
+      enabled: true
+      minAvailable: 1
+    resources:
+      requests: {cpu: 100m, memory: 128Mi}
+      limits: {cpu: 500m, memory: 512Mi}
+  api:
+    enabled: true
+    replicas: 2
+    serviceAccount: api
+    needsIdentity: true
+    database: true
+    runtimeSecrets: true
+    probeType: api
+    port: 8000
+    command: [uvicorn, "events_concierge.api.app:app", --host, 0.0.0.0, --port, "8000", --no-server-header, --no-access-log]
+    pdb:
+      enabled: true
+      minAvailable: 1
+    resources:
+      requests: {cpu: 250m, memory: 256Mi}
+      limits: {cpu: "1", memory: 768Mi}
+  temporal-transactional:
+    enabled: true
+    replicas: 2
+    serviceAccount: temporal-transactional
+    needsIdentity: true
+    database: true
+    runtimeSecrets: true
+    probeType: worker
+    command: [python, -m, events_concierge.workflows.worker]
+    env:
+      EC_TEMPORAL_WORKER_ROLE: transactional
+    pdb:
+      enabled: true
+      minAvailable: 1
+    resources:
+      requests: {cpu: 250m, memory: 384Mi}
+      limits: {cpu: "2", memory: 1Gi}
+  temporal-catalog:
+    enabled: true
+    replicas: 2
+    serviceAccount: temporal-catalog
+    needsIdentity: true
+    database: true
+    runtimeSecrets: true
+    probeType: worker
+    command: [python, -m, events_concierge.workflows.worker]
+    env:
+      EC_TEMPORAL_WORKER_ROLE: catalog
+    pdb:
+      enabled: true
+      minAvailable: 1
+    resources:
+      requests: {cpu: 250m, memory: 384Mi}
+      limits: {cpu: "2", memory: 1Gi}
+  request-starter:
+    enabled: true
+    replicas: 2
+    serviceAccount: request-starter
+    needsIdentity: true
+    database: true
+    runtimeSecrets: true
+    probeType: worker
+    command: [python, -m, events_concierge.workers.request_starter]
+    pdb:
+      enabled: true
+      minAvailable: 1
+    resources:
+      requests: {cpu: 100m, memory: 192Mi}
+      limits: {cpu: 500m, memory: 512Mi}
+  notifier:
+    enabled: true
+    replicas: 1
+    serviceAccount: notifier
+    needsIdentity: true
+    database: true
+    runtimeSecrets: true
+    probeType: worker
+    command: [python, -m, events_concierge.workers.notifier]
+    pdb: {enabled: false, minAvailable: 1}
+    resources:
+      requests: {cpu: 100m, memory: 192Mi}
+      limits: {cpu: 500m, memory: 512Mi}
+  account-erasure:
+    enabled: true
+    replicas: 1
+    serviceAccount: account-erasure
+    needsIdentity: true
+    database: true
+    runtimeSecrets: true
+    probeType: worker
+    command: [python, -m, events_concierge.workers.account_erasure]
+    pdb: {enabled: false, minAvailable: 1}
+    resources:
+      requests: {cpu: 100m, memory: 192Mi}
+      limits: {cpu: 500m, memory: 512Mi}
+  change-delivery:
+    enabled: true
+    replicas: 1
+    serviceAccount: change-delivery
+    needsIdentity: true
+    database: true
+    runtimeSecrets: true
+    probeType: worker
+    command: [python, -m, events_concierge.workers.change_detection]
+    pdb: {enabled: false, minAvailable: 1}
+    resources:
+      requests: {cpu: 100m, memory: 192Mi}
+      limits: {cpu: 500m, memory: 512Mi}
+services:
+  frontend:
+    port: 80
+    targetPort: 3000
+  api:
+    port: 8000
+    targetPort: 8000
+
+jobs:
+  migration:
+    enabled: true
+    backoffLimit: 1
+    activeDeadlineSeconds: 900
+    ttlSecondsAfterFinished: 86400
+  roleRotation:
+    enabled: false
+    backoffLimit: 1
+    activeDeadlineSeconds: 600
+    ttlSecondsAfterFinished: 86400
+  catalogRefresh:
+    enabled: false
+    sourceKey: ""
+    runKey: ""
+    activeDeadlineSeconds: 1800
+
+catalogDispatcher:
+  enabled: true
+  schedule: "17 * * * *"
+  startingDeadlineSeconds: 600
+  activeDeadlineSeconds: 1800
+
+maintenanceCronJobs:
+  handoff-expiry:
+    enabled: true
+    schedule: "*/15 * * * *"
+    serviceAccount: handoff-expiry
+    command: [python, -m, events_concierge.workers.handoff_expiry, --once]
+    startingDeadlineSeconds: 300
+    activeDeadlineSeconds: 600
+  lifecycle-invariants:
+    enabled: true
+    schedule: "23 8 * * *"
+    serviceAccount: lifecycle-invariants
+    command: [python, -m, events_concierge.workers.lifecycle_invariants, --once]
+    startingDeadlineSeconds: 3600
+    activeDeadlineSeconds: 7200
+
+gateway:
+  enabled: false
+  className: gke-l7-global-external-managed
+  hostname: staging.concierge.example
+  tlsSecretName: ""
+
+podMonitoring:
+  enabled: true
+  interval: 30s
+
+networkPolicy:
+  enabled: true
+  # Google Front End health-check and data-plane ranges for a global external GKE Gateway.
+  frontendIngressCidrs:
+    - 130.211.0.0/22
+    - 35.191.0.0/16
+  privateCidrs:
+    - 10.0.0.0/8
+    - 172.16.0.0/12
+
+autoscaling:
+  frontend:
+    enabled: false
+    minReplicas: 2
+    maxReplicas: 5
+    targetCPUUtilizationPercentage: 70
+  api:
+    enabled: false
+    minReplicas: 2
+    maxReplicas: 6
+    targetCPUUtilizationPercentage: 65

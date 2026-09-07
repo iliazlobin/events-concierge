@@ -14,6 +14,8 @@ from ..domain.catalog_sources import (
     CatalogRefreshCommit,
     CatalogRefreshDue,
     CatalogRefreshRun,
+    CatalogRunExecutionEvidence,
+    CatalogRunStageEvidence,
     CatalogSource,
     CatalogSourceObservation,
     CatalogSourcePage,
@@ -27,6 +29,24 @@ class CatalogRefreshDueReader(Protocol):
     async def list_due_refreshes(self, now: datetime, *, limit: int) -> list[CatalogRefreshDue]:
         """Return eligible sources in stable due-time/source-key order (NFR-1/NFR-8)."""
         ...
+
+
+class CatalogRunEvidenceRecorder(Protocol):
+    """Persist only bounded resource aggregates and typed stage observations."""
+
+    async def record_run_execution(
+        self,
+        source_key: str,
+        run_key: str,
+        evidence: CatalogRunExecutionEvidence,
+    ) -> bool: ...
+
+    async def record_run_stage(
+        self,
+        source_key: str,
+        run_key: str,
+        evidence: CatalogRunStageEvidence,
+    ) -> bool: ...
 
 
 class CatalogSourceRepository(CatalogRefreshDueReader, Protocol):
@@ -82,6 +102,17 @@ class CatalogSourceRepository(CatalogRefreshDueReader, Protocol):
         error: str,
     ) -> bool:
         """Record a retryable database-timestamped failure only while the caller owns the lease."""
+        ...
+
+    async def pause_refresh(
+        self,
+        source_key: str,
+        run_key: str,
+        *,
+        lease_token: UUID,
+        error: str,
+    ) -> bool:
+        """Release a no-egress deferred run without classifying it as a source failure."""
         ...
 
     async def get_refresh_run(self, source_key: str, run_key: str) -> CatalogRefreshRun | None: ...

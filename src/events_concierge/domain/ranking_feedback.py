@@ -32,6 +32,7 @@ class FeedbackSignalKind(StrEnum):
     SCROLL = "scroll"
     DWELL = "dwell"
     CLICK = "click"
+    LIKE = "like"
     DISMISS = "dismiss"
 
 
@@ -40,6 +41,7 @@ _SIGNAL_TOTAL_DELTAS: Mapping[FeedbackSignalKind, float] = MappingProxyType(
         FeedbackSignalKind.SCROLL: 0.25,
         FeedbackSignalKind.DWELL: 0.75,
         FeedbackSignalKind.CLICK: 1.0,
+        FeedbackSignalKind.LIKE: 1.0,
         FeedbackSignalKind.DISMISS: -1.0,
     }
 )

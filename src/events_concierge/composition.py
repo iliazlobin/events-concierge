@@ -19,39 +19,57 @@ import httpx
 
 from .adapters.berkeley_rep.source import BerkeleyRepCatalogFetcher
 from .adapters.calperformances.source import CalPerformancesCatalogFetcher
+from .adapters.entity_intelligence.public_sources import (
+    GitHubOrganizationSource,
+    OfficialWebsiteSource,
+    SafePublicHttpClient,
+    WikidataSource,
+)
 from .adapters.google_calendar.calendar import GoogleCalendarAdapter
+from .adapters.local_media import LocalFilesystemMediaStore
 from .adapters.luma.source import LumaSource
-from .adapters.mock.auth import HeaderAuthContext
+from .adapters.mock.auth import HeaderAuthContext, LocalHeaderCsrfProtection
 from .adapters.mock.calendar import MockCalendar
 from .adapters.mock.notification_secrets import DevelopmentNotificationSecretProtector
 from .adapters.mock.notifier import MockNotifier
 from .adapters.mock.object_store import MockFilesystemObjectStore
 from .adapters.mock.vault import MockVault
+from .adapters.oidc.session import OidcBffSessionAdapter
 from .adapters.policy.browser_admission import InMemoryBrowserAdmission, RedisBrowserAdmission
 from .adapters.policy.discovery import StoreBackedDiscoveryPolicyGate
 from .adapters.policy.engine import StoreBackedPolicyEngine
 from .adapters.policy.pacer import InMemoryPacer, RedisPacer, default_source_budgets
+from .adapters.postgres.account_erasure import PostgresAccountErasureRepository
+from .adapters.postgres.api_keys import PostgresApiKeyRepository
 from .adapters.postgres.audit import PostgresRegistrationActionAuditRepository
 from .adapters.postgres.budget import PostgresBudgetLedger
 from .adapters.postgres.calendar_bindings import PostgresGoogleCalendarBindings
 from .adapters.postgres.calendar_repair import PostgresClosedWorkflowCalendarRepairRepository
 from .adapters.postgres.catalog import PostgresCatalogRepository
+from .adapters.postgres.catalog_entities import PostgresCatalogEntityRepository
+from .adapters.postgres.catalog_entity_social_links import PostgresCatalogEntitySocialLinks
 from .adapters.postgres.catalog_observations import PostgresCatalogObservationRepository
 from .adapters.postgres.catalog_paged_promotion import PostgresCatalogPagedRefreshPromoter
 from .adapters.postgres.catalog_refresh_commit import PostgresCatalogRefreshCommitter
 from .adapters.postgres.catalog_sources import PostgresCatalogSourceRepository
 from .adapters.postgres.change_detection import PostgresChangeDetectionRepository
 from .adapters.postgres.consent import PostgresRegistrationConsentEvidenceRepository
+from .adapters.postgres.consumer import PostgresConsumerReadRepository
 from .adapters.postgres.discovery_policy import PostgresDiscoveryPolicyReader
 from .adapters.postgres.handoff_expiry import PostgresHandoffExpiryRepository
+from .adapters.postgres.ingestion_admin import PostgresIngestionAdminRepository
 from .adapters.postgres.invariants import PostgresLifecycleInvariantRepository
 from .adapters.postgres.outbox_wakeup import PostgresOutboxWakeup
 from .adapters.postgres.policy import (
     PostgresPolicySnapshotRepository,
     PostgresSourceQuarantineRepository,
 )
+from .adapters.postgres.profile_avatar import PostgresProfileAvatarRepository
 from .adapters.postgres.ranking import PostgresRankingProfileRepository
 from .adapters.postgres.ranking_feedback import PostgresRankingFeedbackRepository
+from .adapters.postgres.saved_catalog_filters import PostgresSavedCatalogFilterRepository
+from .adapters.postgres.tenant_effects import PostgresTenantEffectAuthority
+from .adapters.postgres.tenant_profile import PostgresTenantProfileRepository
 from .adapters.postgres.tenant_repos import (
     PostgresHandoffRepository,
     PostgresLifecycleRepository,
@@ -59,6 +77,7 @@ from .adapters.postgres.tenant_repos import (
     PostgresRequestRepository,
     PostgresTenantRepository,
 )
+from .adapters.postgres.tenant_roles import PostgresTenantRoleRepository
 from .adapters.postgres.watch_projection import PostgresLifecycleWatchProjectionOutbox
 from .adapters.ranking.cohere import CohereRerankCrossEncoder
 from .adapters.ranking.embedding import DeterministicEmbedding
@@ -69,9 +88,11 @@ from .adapters.ranking.ranker import (
 )
 from .adapters.usfca.source import UsfcaCatalogFetcher
 from .adapters.ybca.source import YbcaCatalogFetcher
+from .application.catalog_execution_descriptors import CatalogExecutionDescriptorRegistry
 from .application.catalog_paged_refresh import PagedCatalogRefreshService
 from .application.catalog_refresh import CatalogRefreshService
 from .application.discovery import DiscoveryService
+from .application.entity_intelligence import EntityIntelligenceService
 from .application.feed import FeedService, MembershipResolver
 from .application.handoff_reminder import HandoffReminderService
 from .application.parsing import HeuristicRequestParser
@@ -85,24 +106,33 @@ from .domain.enums import CatalogSourceMode, Source
 from .domain.policy import SourcePolicy
 from .infra.db import init_engine
 from .policies import default_source_policies
+from .ports.account_erasure import AccountErasureRepository
+from .ports.api_keys import ApiKeyRepository
 from .ports.audit import RegistrationActionAuditPort
-from .ports.auth import AuthContextPort
+from .ports.auth import AuthContextPort, BrowserSessionLifecyclePort, CsrfProtectionPort
 from .ports.browser_admission import BrowserAdmissionPort
 from .ports.calendar import CalendarPort
 from .ports.catalog_sources import CatalogPagedSourceFetcher, CatalogSourceFetcher
 from .ports.consent import RegistrationConsentEvidencePort
+from .ports.consumer import ConsumerReadPort
 from .ports.credentials import CredentialVault
 from .ports.discovery_policy import DiscoveryPolicyGate
 from .ports.google_calendar import GoogleCalendarAccessPort, GoogleCalendarBindingPort
 from .ports.invariants import LifecycleInvariantRepository
+from .ports.media_store import MediaStorePort
 from .ports.notification_secrets import NotificationSecretProtector
 from .ports.notifications import NotificationPort
 from .ports.object_store import ObjectStorePort
 from .ports.outbox import OutboxWakeupPort
 from .ports.policy import Pacer, PolicyEngine, SourceQuarantinePort
+from .ports.profile_avatar import ProfileAvatarRepository
 from .ports.ranking import RankerPort, RankingProfileRepository
 from .ports.ranking_feedback import RankingFeedbackRepository
+from .ports.saved_catalog_filters import SavedCatalogFilterRepository
 from .ports.sources import SourcePort
+from .ports.tenant_effects import TenantEffectAuthority, TenantEffectAuthorityConfig
+from .ports.tenant_profile import TenantProfileRepository
+from .ports.tenant_roles import TenantRoleRepository
 from .ports.withdrawal import RegistrationWithdrawalPort
 from .runtime import RuntimePorts, load_runtime_ports
 
@@ -112,11 +142,16 @@ class Container:
     settings: Settings
     embedding: DeterministicEmbedding
     catalog: PostgresCatalogRepository
+    catalog_entities: PostgresCatalogEntityRepository
+    entity_intelligence: EntityIntelligenceService
     catalog_observation_repo: PostgresCatalogObservationRepository
     catalog_source_repo: PostgresCatalogSourceRepository
+    ingestion_admin_repo: PostgresIngestionAdminRepository
     budget_ledger: PostgresBudgetLedger
     action_audit: RegistrationActionAuditPort
+    account_erasure_repo: AccountErasureRepository
     tenant_repo: PostgresTenantRepository
+    consumer: ConsumerReadPort
     request_repo: PostgresRequestRepository
     lifecycle_repo: PostgresLifecycleRepository
     handoff_repo: PostgresHandoffRepository
@@ -128,6 +163,12 @@ class Container:
     watch_projection_outbox: PostgresLifecycleWatchProjectionOutbox
     calendar_repair_repo: PostgresClosedWorkflowCalendarRepairRepository
     ranking_profiles: RankingProfileRepository
+    tenant_profiles: TenantProfileRepository
+    profile_avatars: ProfileAvatarRepository
+    media_store: MediaStorePort
+    tenant_roles: TenantRoleRepository
+    api_keys: ApiKeyRepository
+    saved_catalog_filters: SavedCatalogFilterRepository
     ranking_feedback_repo: RankingFeedbackRepository
     ranking_feedback: RankingFeedbackService
     ranker: RankerPort
@@ -143,6 +184,8 @@ class Container:
     browser_admission: BrowserAdmissionPort
     object_store: ObjectStorePort
     auth_context: AuthContextPort
+    csrf_protection: CsrfProtectionPort
+    browser_session: BrowserSessionLifecyclePort | None
     parser: HeuristicRequestParser
     discovery: DiscoveryService
     catalog_refresh: CatalogRefreshService
@@ -154,6 +197,7 @@ class Container:
     handoff_reminders: HandoffReminderService
     request_terminal: RequestTerminalService
     source_policies: dict[Source, SourcePolicy]
+    tenant_effect_authority: TenantEffectAuthority
 
 
 def build_container(
@@ -167,6 +211,12 @@ def build_container(
     browser_admission: BrowserAdmissionPort | None = None,
     outbox_wakeup: OutboxWakeupPort | None = None,
     ranking_profiles: RankingProfileRepository | None = None,
+    tenant_profiles: TenantProfileRepository | None = None,
+    profile_avatars: ProfileAvatarRepository | None = None,
+    media_store: MediaStorePort | None = None,
+    tenant_roles: TenantRoleRepository | None = None,
+    api_keys: ApiKeyRepository | None = None,
+    saved_catalog_filters: SavedCatalogFilterRepository | None = None,
     ranking_feedback_repo: RankingFeedbackRepository | None = None,
     ranker: RankerPort | None = None,
     cohere_client: httpx.AsyncClient | None = None,
@@ -176,6 +226,8 @@ def build_container(
     google_calendar_client: httpx.AsyncClient | None = None,
     object_store: ObjectStorePort | None = None,
     auth_context: AuthContextPort | None = None,
+    csrf_protection: CsrfProtectionPort | None = None,
+    browser_session: BrowserSessionLifecyclePort | None = None,
     action_audit: RegistrationActionAuditPort | None = None,
     registration_consent: RegistrationConsentEvidencePort | None = None,
     policy_engine: PolicyEngine | None = None,
@@ -214,9 +266,10 @@ def build_container(
             else None
         )
     )
-    membership_resolver = (
-        membership_resolver if membership_resolver is not None else provisioned.membership_resolver
-    )
+    # This injection remains an offline/test seam only. A Source-only resolver cannot establish
+    # the tenant-and-event-specific Meetup fact required by production routing, so RuntimePorts is
+    # intentionally unable to provision one. The execution workflow performs the fresh guarded
+    # read through RegistrationService before any autonomous mutation.
     calendar = calendar if calendar is not None else provisioned.calendar
     google_calendar_access = (
         google_calendar_access
@@ -230,6 +283,12 @@ def build_container(
     )
     object_store = object_store if object_store is not None else provisioned.object_store
     auth_context = auth_context if auth_context is not None else provisioned.auth_context
+    csrf_protection = (
+        csrf_protection if csrf_protection is not None else provisioned.csrf_protection
+    )
+    browser_session = (
+        browser_session if browser_session is not None else provisioned.browser_session
+    )
     notifier = notifier if notifier is not None else provisioned.notifier
     notification_secret_protector = (
         notification_secret_protector
@@ -245,16 +304,41 @@ def build_container(
         if registration_consent is not None
         else provisioned.registration_consent
     )
-    init_engine(settings.database_url)
+    init_engine(
+        settings.database_url,
+        pool_size=settings.database_pool_size,
+        max_overflow=settings.database_max_overflow,
+        pool_timeout_seconds=settings.database_pool_timeout_seconds,
+        pool_recycle_seconds=settings.database_pool_recycle_seconds,
+        work_mem=settings.database_work_mem,
+    )
+    tenant_effect_authority = PostgresTenantEffectAuthority(
+        TenantEffectAuthorityConfig(
+            lock_timeout_seconds=settings.tenant_effect_lock_timeout_seconds
+        )
+    )
 
     embedding = DeterministicEmbedding()
     catalog = PostgresCatalogRepository(embedding)
+    catalog_entities = PostgresCatalogEntityRepository()
+    entity_source_http = SafePublicHttpClient(user_agent=settings.crawl_user_agent)
+    entity_intelligence = EntityIntelligenceService(
+        catalog_entities,
+        official_website=OfficialWebsiteSource(entity_source_http),
+        github=GitHubOrganizationSource(entity_source_http),
+        wikidata=WikidataSource(entity_source_http),
+    )
     catalog_observation_repo, catalog_source_repo = (
         PostgresCatalogObservationRepository(),
         PostgresCatalogSourceRepository(),
     )
+    ingestion_admin_repo = PostgresIngestionAdminRepository(
+        CatalogExecutionDescriptorRegistry(settings.temporal_task_queue)
+    )
     catalog_paged_promoter = PostgresCatalogPagedRefreshPromoter(catalog, catalog_observation_repo)
-    catalog_refresh_committer = PostgresCatalogRefreshCommitter(catalog, catalog_observation_repo)
+    catalog_refresh_committer = PostgresCatalogRefreshCommitter(
+        catalog, catalog_observation_repo, PostgresCatalogEntitySocialLinks()
+    )
     tenant_repo, request_repo, lifecycle_repo, handoff_repo, outbox_repo = (
         PostgresTenantRepository(),
         PostgresRequestRepository(),
@@ -262,6 +346,7 @@ def build_container(
         PostgresHandoffRepository(),
         PostgresOutboxRepository(),
     )
+    consumer = PostgresConsumerReadRepository()
     handoff_expiry_repo, lifecycle_invariant_repo = (
         PostgresHandoffExpiryRepository(),
         PostgresLifecycleInvariantRepository(),
@@ -290,9 +375,18 @@ def build_container(
         google_calendar_bindings,
         google_calendar_client,
     )
-    configured_object_store, configured_auth_context = (
-        object_store if object_store is not None else _build_object_store(settings),
-        auth_context if auth_context is not None else _build_auth_context(settings),
+    configured_object_store = (
+        object_store if object_store is not None else _build_object_store(settings)
+    )
+    (
+        configured_auth_context,
+        configured_csrf_protection,
+        configured_browser_session,
+    ) = _build_identity_boundaries(
+        settings,
+        auth_context,
+        csrf_protection,
+        browser_session,
     )
     (
         configured_notifier,
@@ -350,6 +444,9 @@ def build_container(
         from .adapters.libcal.source import LibCalIcsCatalogFetcher
         from .adapters.livewhale.source import LiveWhaleCatalogFetcher
         from .adapters.localist.source import LocalistCatalogFetcher
+        from .adapters.luma_calendar.source import LumaCalendarCatalogFetcher
+        from .adapters.luma_discover.source import LumaDiscoverCatalogFetcher
+        from .adapters.meetup_city.source import MeetupCityCatalogFetcher
         from .adapters.midpen.source import MidpenCatalogFetcher
         from .adapters.oakland.source import OaklandCatalogFetcher
         from .adapters.sf_gov.source import SfGovCatalogFetcher
@@ -405,6 +502,15 @@ def build_container(
                 CatalogSourceMode.OAKLAND_HTML: OaklandCatalogFetcher(
                     user_agent=settings.crawl_user_agent,
                 ),
+                CatalogSourceMode.LUMA_CALENDAR_JSON: LumaCalendarCatalogFetcher(
+                    user_agent=settings.crawl_user_agent,
+                ),
+                CatalogSourceMode.LUMA_DISCOVER_JSON: LumaDiscoverCatalogFetcher(
+                    user_agent=settings.crawl_user_agent,
+                ),
+                CatalogSourceMode.MEETUP_CITY_JSONLD: MeetupCityCatalogFetcher(
+                    user_agent=settings.crawl_user_agent,
+                ),
             }
         )
         legistar_fetcher = LegistarCatalogFetcher(
@@ -448,6 +554,7 @@ def build_container(
         configured_pacer,
         configured_discovery_policy_gate,
         configured_source_quarantine,
+        catalog_source_repo,
         lease_seconds=settings.catalog_refresh_lease_seconds,
     )
     catalog_paged_refresh = PagedCatalogRefreshService(
@@ -458,6 +565,7 @@ def build_container(
         configured_pacer,
         configured_discovery_policy_gate,
         configured_source_quarantine,
+        catalog_source_repo,
         lease_seconds=settings.catalog_refresh_lease_seconds,
     )
     feed = FeedService(
@@ -483,17 +591,24 @@ def build_container(
         handoff_completion_base_url=settings.public_base_url,
         require_https_completion_links=not settings.mock_cloud,
         notification_secret_protector=configured_notification_secret_protector,
+        tenant_effect_authority=tenant_effect_authority,
+        tenant_effect_timeout_seconds=settings.tenant_effect_timeout_seconds,
     )
     request_terminal = RequestTerminalService(request_repo)
     return Container(
         settings=settings,
         embedding=embedding,
         catalog=catalog,
+        catalog_entities=catalog_entities,
+        entity_intelligence=entity_intelligence,
         catalog_observation_repo=catalog_observation_repo,
         catalog_source_repo=catalog_source_repo,
+        ingestion_admin_repo=ingestion_admin_repo,
         budget_ledger=budget_ledger,
         action_audit=configured_action_audit,
+        account_erasure_repo=PostgresAccountErasureRepository(),
         tenant_repo=tenant_repo,
+        consumer=consumer,
         request_repo=request_repo,
         lifecycle_repo=lifecycle_repo,
         handoff_repo=handoff_repo,
@@ -505,6 +620,14 @@ def build_container(
         watch_projection_outbox=watch_projection_outbox,
         calendar_repair_repo=calendar_repair_repo,
         ranking_profiles=configured_ranking_profiles,
+        tenant_profiles=tenant_profiles or PostgresTenantProfileRepository(),
+        profile_avatars=profile_avatars or PostgresProfileAvatarRepository(),
+        media_store=media_store or LocalFilesystemMediaStore(Path(settings.media_local_root)),
+        tenant_roles=tenant_roles or PostgresTenantRoleRepository(),
+        api_keys=api_keys or PostgresApiKeyRepository(),
+        saved_catalog_filters=(
+            saved_catalog_filters or PostgresSavedCatalogFilterRepository()
+        ),
         ranking_feedback_repo=configured_ranking_feedback_repo,
         ranking_feedback=ranking_feedback,
         ranker=configured_ranker,
@@ -520,6 +643,8 @@ def build_container(
         browser_admission=configured_browser_admission,
         object_store=configured_object_store,
         auth_context=configured_auth_context,
+        csrf_protection=configured_csrf_protection,
+        browser_session=configured_browser_session,
         parser=parser,
         discovery=discovery,
         catalog_refresh=catalog_refresh,
@@ -537,11 +662,14 @@ def build_container(
             configured_vault,
             configured_browser_admission,
             configured_source_quarantine,
+            tenant_effect_authority,
+            settings.tenant_effect_timeout_seconds,
             settings.handoff_ttl_days,
         ),
         handoff_reminders=HandoffReminderService(handoff_repo),
         request_terminal=request_terminal,
         source_policies=source_policies,
+        tenant_effect_authority=tenant_effect_authority,
     )
 
 
@@ -555,6 +683,8 @@ def _build_reconciliation(
     vault: CredentialVault,
     browser_admission: BrowserAdmissionPort,
     source_quarantine: SourceQuarantinePort,
+    tenant_effect_authority: TenantEffectAuthority,
+    tenant_effect_timeout_seconds: float,
     handoff_ttl_days: int,
 ) -> LifecycleReconciliationService:
     """Keep post-booking lifecycle wiring at the composition boundary (FR-8.7/8.8)."""
@@ -568,6 +698,8 @@ def _build_reconciliation(
         credential_vault=vault,
         browser_admission=browser_admission,
         source_quarantine=source_quarantine,
+        tenant_effect_authority=tenant_effect_authority,
+        tenant_effect_timeout_seconds=tenant_effect_timeout_seconds,
         handoff_ttl_days=handoff_ttl_days,
     )
 
@@ -718,6 +850,7 @@ def _build_pacer(settings: Settings) -> Pacer:
             rate_per_sec=settings.pacer_rate_per_second,
             burst=settings.pacer_burst,
             unavailable_retry_seconds=settings.pacer_unavailable_retry_seconds,
+            state_retention_seconds=settings.pacer_state_retention_seconds,
             source_budgets=default_source_budgets(),
             meetup_app_quota_scope=(settings.meetup_app_quota_scope if meetup_app_mode else None),
             meetup_app_degrade_after_seconds=settings.meetup_app_degrade_after_seconds,
@@ -760,6 +893,74 @@ def _build_object_store(settings: Settings) -> ObjectStorePort:
     return MockFilesystemObjectStore(Path(settings.claim_check_local_root))
 
 
+def _build_identity_boundaries(
+    settings: Settings,
+    auth_context: AuthContextPort | None,
+    csrf_protection: CsrfProtectionPort | None,
+    browser_session: BrowserSessionLifecyclePort | None,
+) -> tuple[AuthContextPort, CsrfProtectionPort, BrowserSessionLifecyclePort | None]:
+    """Select one coherent auth/CSRF/session graph and reject mixed authorities.
+
+    A lifecycle adapter is necessarily both the authentication and CSRF authority for its opaque
+    cookie. Allowing separately injected implementations beside it would let the tenant and CSRF
+    checks resolve different sessions, so identity comparison is deliberately by object identity.
+    """
+    if browser_session is not None:
+        if auth_context is not None and auth_context is not browser_session:
+            raise ValueError("browser session must be the configured AuthContextPort")
+        if csrf_protection is not None and csrf_protection is not browser_session:
+            raise ValueError("browser session must be the configured CsrfProtectionPort")
+        return browser_session, browser_session, browser_session
+
+    if settings.oidc_bff_enabled:
+        if auth_context is not None or csrf_protection is not None:
+            raise ValueError("built-in OIDC BFF cannot be combined with injected auth boundaries")
+        configured = _build_oidc_bff_session(settings)
+        return configured, configured, configured
+
+    return (
+        auth_context if auth_context is not None else _build_auth_context(settings),
+        csrf_protection if csrf_protection is not None else _build_csrf_protection(settings),
+        None,
+    )
+
+
+def _build_oidc_bff_session(settings: Settings) -> OidcBffSessionAdapter:
+    """Build the repository-owned production BFF only from a complete validated settings set."""
+    values = (
+        settings.oidc_issuer,
+        settings.oidc_authorization_url,
+        settings.oidc_token_url,
+        settings.oidc_jwks_url,
+        settings.oidc_client_id,
+        settings.oidc_tenant_claim,
+    )
+    if any(value is None for value in values) or settings.oidc_client_secret is None:
+        # Settings normally rejects this first; keep direct composition calls fail closed too.
+        raise ValueError("built-in OIDC BFF requires complete provider configuration")
+    issuer, authorization_url, token_url, jwks_url, client_id, tenant_claim = cast(
+        "tuple[str, str, str, str, str, str]", values
+    )
+    public_origin = settings.public_base_url.rstrip("/")
+    return OidcBffSessionAdapter(
+        issuer=issuer,
+        authorization_url=authorization_url,
+        token_url=token_url,
+        jwks_url=jwks_url,
+        client_id=client_id,
+        client_secret=settings.oidc_client_secret.get_secret_value().strip(),
+        tenant_claim=tenant_claim,
+        redirect_uri=f"{public_origin}/auth/callback",
+        trusted_origin=public_origin,
+        redis_url=settings.redis_url,
+        algorithms=settings.oidc_algorithm_allowlist,
+        login_ttl_seconds=settings.oidc_login_ttl_seconds,
+        session_ttl_seconds=settings.oidc_session_ttl_seconds,
+        http_timeout_seconds=settings.oidc_http_timeout_seconds,
+        store_timeout_seconds=settings.oidc_session_store_timeout_seconds,
+    )
+
+
 def _build_auth_context(settings: Settings) -> AuthContextPort:
     """Select the local header seam only for mock deployments (FR-1.1, AC-1/AC-2).
 
@@ -769,6 +970,17 @@ def _build_auth_context(settings: Settings) -> AuthContextPort:
     if not settings.mock_cloud:
         raise ValueError("non-mock deployments must inject a provisioned AuthContextPort")
     return HeaderAuthContext()
+
+
+def _build_csrf_protection(settings: Settings) -> CsrfProtectionPort:
+    """Select a no-op only when authentication itself is the explicit local request header.
+
+    Production cookie/session semantics are deployment-owned, so non-mock composition must inject
+    the matching verifier instead of guessing token names, session formats, or origin policy here.
+    """
+    if not settings.mock_cloud:
+        raise ValueError("non-mock deployments must inject a provisioned CsrfProtectionPort")
+    return LocalHeaderCsrfProtection()
 
 
 def _build_notifier(settings: Settings) -> NotificationPort:

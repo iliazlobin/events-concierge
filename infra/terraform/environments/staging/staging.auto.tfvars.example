@@ -1,0 +1,8 @@
+# Copy to a local, ignored staging.auto.tfvars file and replace only non-secret identifiers.
+# Secret payloads must be added directly to Secret Manager after apply.
+project_id              = "replace-with-staging-project-id"
+claim_check_bucket_name = "replace-with-globally-unique-claim-check-bucket"
+notification_email      = "replace-with-staging-oncall@example.com"
+
+# The default private control-plane endpoint requires a deploy runner connected to this VPC.
+enable_private_endpoint = true

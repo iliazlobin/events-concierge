@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import replace
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
 import httpx
 import pytest
@@ -105,6 +105,32 @@ def _occurrence(
     )
 
 
+def _daily_occurrences(start: datetime, count: int) -> str:
+    occurrences: list[str] = []
+    for offset in range(count):
+        occurrence_start = start + timedelta(days=offset)
+        occurrence_end = occurrence_start + timedelta(hours=1)
+        occurrences.append(
+            _occurrence(
+                start=(
+                    occurrence_start.year,
+                    occurrence_start.month,
+                    occurrence_start.day,
+                    occurrence_start.hour,
+                    occurrence_start.minute,
+                ),
+                end=(
+                    occurrence_end.year,
+                    occurrence_end.month,
+                    occurrence_end.day,
+                    occurrence_end.hour,
+                    occurrence_end.minute,
+                ),
+            )
+        )
+    return "".join(occurrences)
+
+
 def _physical_location(
     *,
     venue_name: str = "Oakland Main Library",
@@ -118,6 +144,23 @@ def _physical_location(
             f'<div class="gmap-address">{address}</div>',
             f'<div class="gmap-latlong">{coordinates}</div>',
             '<div class="gmap-title">This title is deliberately ignored</div>',
+            "</div>",
+        )
+    )
+
+
+def _address_only_location(
+    *,
+    address: str = "2633 Telegraph Ave, Suite #109, Oakland, CA 94612",
+    coordinates: str = "37.8155572,-122.2682634",
+) -> str:
+    return "".join(
+        (
+            '<div class="gmap-marker">',
+            f'<div class="gmap-address">{address}</div>',
+            f'<div class="gmap-latlong">{coordinates}</div>',
+            f'<div class="gmap-info"><p>{address}</p></div>',
+            '<div class="gmap-title">Event title is not a venue name</div>',
             "</div>",
         )
     )
@@ -249,6 +292,330 @@ async def test_oakland_keeps_an_explicit_non_oakland_bay_area_city_without_assum
     assert candidate.registration_url == event_url
     assert candidate.city == "Berkeley"
     assert candidate.venue_name == "Berkeley Community Center"
+
+
+async def test_oakland_skips_expired_detail_before_requiring_current_location_markup() -> None:
+    """A stale sitemap detail cannot fail a current run solely because its old venue markup drifted."""
+    stale_event = "https://www.oaklandca.gov/Event-Calendar/EMSD/OFD-157"
+    past = _occurrence(
+        start=(2026, 3, 13, 17, 0),
+        end=(2026, 3, 13, 20, 0),
+    )
+    incomplete_location = "".join(
+        (
+            '<div class="gmap-marker">',
+            '<div class="gmap-info"><p>150 Frank H. Ogawa Plaza</p></div>',
+            '<div class="gmap-address">150 Frank H. Ogawa Plaza, Oakland, CA 94612</div>',
+            '<div class="gmap-latlong">37.8055,-122.2727</div>',
+            "</div>",
+        )
+    )
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        if str(request.url) == _SEED_URL:
+            return httpx.Response(200, text=_sitemap(stale_event), request=request)
+        if str(request.url) == stale_event:
+            return httpx.Response(
+                200,
+                text=_detail(
+                    title="Expired Oakland fire event",
+                    canonical_url=stale_event,
+                    occurrences=past,
+                    location=incomplete_location,
+                ),
+                request=request,
+            )
+        raise AssertionError(f"unexpected request: {request.url}")
+
+    candidates = await OaklandCatalogFetcher(
+        user_agent="test",
+        now=lambda: _NOW,
+        transport=httpx.MockTransport(handler),
+    ).fetch(_source())
+
+    assert candidates == []
+
+
+async def test_oakland_keeps_address_only_physical_location_without_guessing_venue() -> None:
+    """An explicit address and coordinate establish place without promoting the event title to venue."""
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        if str(request.url) == _SEED_URL:
+            return httpx.Response(200, text=_sitemap(_EVENT_ONE), request=request)
+        if str(request.url) == _EVENT_ONE:
+            return httpx.Response(
+                200,
+                text=_detail(
+                    title="Future Oakland event",
+                    canonical_url=_EVENT_ONE,
+                    occurrences=_occurrence(),
+                    location=_address_only_location(),
+                ),
+                request=request,
+            )
+        raise AssertionError(f"unexpected request: {request.url}")
+
+    [candidate] = await OaklandCatalogFetcher(
+        user_agent="test",
+        now=lambda: _NOW,
+        transport=httpx.MockTransport(handler),
+    ).fetch(_source())
+
+    assert candidate.venue_name is None
+    assert candidate.city == "Oakland"
+    assert candidate.geo is not None
+    assert (candidate.geo.lat, candidate.geo.lon) == (37.8155572, -122.2682634)
+    assert candidate.raw["venue_name"] is None
+    assert candidate.raw["address"] == "2633 Telegraph Ave, Suite #109, Oakland, CA 94612"
+
+
+async def test_oakland_keeps_incomplete_address_only_marker_fail_closed() -> None:
+    """Omitting the coordinate from an address-only marker cannot silently establish a physical event."""
+    incomplete_location = "".join(
+        (
+            '<div class="gmap-marker">',
+            '<div class="gmap-address">2633 Telegraph Ave, Oakland, CA 94612</div>',
+            '<div class="gmap-info"><p>2633 Telegraph Ave, Oakland, CA 94612</p></div>',
+            "</div>",
+        )
+    )
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        if str(request.url) == _SEED_URL:
+            return httpx.Response(200, text=_sitemap(_EVENT_ONE), request=request)
+        if str(request.url) == _EVENT_ONE:
+            return httpx.Response(
+                200,
+                text=_detail(
+                    title="Future Oakland event",
+                    canonical_url=_EVENT_ONE,
+                    occurrences=_occurrence(),
+                    location=incomplete_location,
+                ),
+                request=request,
+            )
+        raise AssertionError(f"unexpected request: {request.url}")
+
+    with pytest.raises(OaklandFetchError, match="physical-location contract"):
+        await OaklandCatalogFetcher(
+            user_agent="test",
+            now=lambda: _NOW,
+            transport=httpx.MockTransport(handler),
+        ).fetch(_source())
+
+
+async def test_oakland_bounds_raw_scan_separately_from_future_candidate_emission() -> None:
+    """Historical recurrences may expand the scan, while the emitted future set remains capped."""
+    event_url = (
+        "https://www.oaklandca.gov/Event-Calendar/Public-Works/KONO-Ambassador-Neighborhood-Cleanup"
+    )
+    occurrences = _daily_occurrences(datetime(2026, 4, 6, 7, 0), 102) + _daily_occurrences(
+        datetime(2026, 7, 18, 7, 0), 153
+    )
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        if str(request.url) == _SEED_URL:
+            return httpx.Response(200, text=_sitemap(event_url), request=request)
+        if str(request.url) == event_url:
+            return httpx.Response(
+                200,
+                text=_detail(
+                    title="KONO Ambassador Neighborhood Cleanup",
+                    canonical_url=event_url,
+                    occurrences=occurrences,
+                    location=_address_only_location(),
+                ),
+                request=request,
+            )
+        raise AssertionError(f"unexpected request: {request.url}")
+
+    async def no_sleep(_: float) -> None:
+        return None
+
+    candidates = await OaklandCatalogFetcher(
+        user_agent="test",
+        now=lambda: _NOW,
+        clock=lambda: 0.0,
+        sleep=no_sleep,
+        transport=httpx.MockTransport(handler),
+    ).fetch(_source())
+
+    assert len(candidates) == 153
+    assert candidates[0].start_at.isoformat() == "2026-07-18T07:00:00-07:00"
+    assert candidates[-1].start_at.isoformat() == "2026-12-17T07:00:00-08:00"
+
+
+@pytest.mark.parametrize(
+    ("occurrences", "expected_error"),
+    (
+        (_daily_occurrences(datetime(2025, 1, 1, 7, 0), 401), "400 raw-occurrence"),
+        (_daily_occurrences(datetime(2026, 7, 18, 7, 0), 201), "200 future-occurrence"),
+    ),
+)
+async def test_oakland_rejects_raw_scan_or_future_candidate_overflow(
+    occurrences: str,
+    expected_error: str,
+) -> None:
+    """The larger scan allowance does not make either input work or candidate output unbounded."""
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        if str(request.url) == _SEED_URL:
+            return httpx.Response(200, text=_sitemap(_EVENT_ONE), request=request)
+        if str(request.url) == _EVENT_ONE:
+            return httpx.Response(
+                200,
+                text=_detail(
+                    title="Bounded recurring event",
+                    canonical_url=_EVENT_ONE,
+                    occurrences=occurrences,
+                    location=_physical_location(),
+                ),
+                request=request,
+            )
+        raise AssertionError(f"unexpected request: {request.url}")
+
+    async def no_sleep(_: float) -> None:
+        return None
+
+    with pytest.raises(OaklandFetchError, match=expected_error):
+        await OaklandCatalogFetcher(
+            user_agent="test",
+            now=lambda: _NOW,
+            clock=lambda: 0.0,
+            sleep=no_sleep,
+            transport=httpx.MockTransport(handler),
+        ).fetch(_source())
+
+
+async def test_oakland_skips_text_only_calendar_landing_without_dropping_one_segment_event() -> (
+    None
+):
+    """A sitemap category stub is empty, while a real one-segment event still produces a candidate."""
+    landing_url = "https://www.oaklandca.gov/Event-Calendar/EWD"
+    nested_landing_url = (
+        "https://www.oaklandca.gov/Event-Calendar/Police/Recruiting-Background-Unit"
+    )
+    event_url = "https://www.oaklandca.gov/Event-Calendar/GPU-D1-Workshop"
+    requested: list[str] = []
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        requested.append(str(request.url))
+        if str(request.url) == _SEED_URL:
+            return httpx.Response(
+                200,
+                text=_sitemap(landing_url, nested_landing_url, event_url),
+                request=request,
+            )
+        if str(request.url) == landing_url:
+            return httpx.Response(
+                200,
+                text=(
+                    "<html><head>"
+                    f'<link rel="canonical" href="{landing_url}">'
+                    "</head><body>"
+                    '<div id="main-content" class="main-container clearfix">'
+                    "<!-- OC Layout Element Content Template -->"
+                    "<!--normalTemplateStart-->EWD<!--normalTemplateEnd-->"
+                    "</div></body></html>"
+                ),
+                request=request,
+            )
+        if str(request.url) == nested_landing_url:
+            return httpx.Response(
+                200,
+                text=(
+                    "<html><head>"
+                    f'<link rel="canonical" href="{nested_landing_url}">'
+                    "</head><body>"
+                    '<div id="main-content" class="main-container clearfix">'
+                    "<!-- OC Layout Element Content Template -->"
+                    "<!--normalTemplateStart-->"
+                    "Recruiting &amp; Background Unit"
+                    "<!--normalTemplateEnd-->"
+                    "</div></body></html>"
+                ),
+                request=request,
+            )
+        if str(request.url) == event_url:
+            return httpx.Response(
+                200,
+                text=_detail(
+                    title="District 1 General Plan Update Community Workshop",
+                    canonical_url=event_url,
+                    occurrences=_occurrence(),
+                    location=_physical_location(),
+                ),
+                request=request,
+            )
+        raise AssertionError(f"unexpected request: {request.url}")
+
+    async def no_sleep(_: float) -> None:
+        return None
+
+    candidates = await OaklandCatalogFetcher(
+        user_agent="test",
+        now=lambda: _NOW,
+        clock=lambda: 0.0,
+        sleep=no_sleep,
+        transport=httpx.MockTransport(handler),
+    ).fetch(_source())
+
+    assert [candidate.title for candidate in candidates] == [
+        "District 1 General Plan Update Community Workshop"
+    ]
+    assert requested == [_SEED_URL, landing_url, nested_landing_url, event_url]
+
+
+async def test_oakland_keeps_structured_title_occurrence_drift_fail_closed() -> None:
+    """Missing event selectors are skippable only for the exact text-only calendar-root shape."""
+    landing_url = "https://www.oaklandca.gov/Event-Calendar/EWD"
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        if str(request.url) == _SEED_URL:
+            return httpx.Response(200, text=_sitemap(landing_url), request=request)
+        if str(request.url) == landing_url:
+            return httpx.Response(
+                200,
+                text=(
+                    '<html><body><div id="main-content"><section>EWD</section></div></body></html>'
+                ),
+                request=request,
+            )
+        raise AssertionError(f"unexpected request: {request.url}")
+
+    with pytest.raises(OaklandFetchError, match="title/occurrence contract"):
+        await OaklandCatalogFetcher(
+            user_agent="test",
+            now=lambda: _NOW,
+            transport=httpx.MockTransport(handler),
+        ).fetch(_source())
+
+
+async def test_oakland_keeps_text_only_landing_word_mismatch_fail_closed() -> None:
+    """Punctuation may differ from a slug, but an extra factual word cannot be discarded."""
+    landing_url = "https://www.oaklandca.gov/Event-Calendar/Police/Recruiting-Background-Unit"
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        if str(request.url) == _SEED_URL:
+            return httpx.Response(200, text=_sitemap(landing_url), request=request)
+        if str(request.url) == landing_url:
+            return httpx.Response(
+                200,
+                text=(
+                    "<html><body>"
+                    '<div id="main-content">Recruiting and Background Unit</div>'
+                    "</body></html>"
+                ),
+                request=request,
+            )
+        raise AssertionError(f"unexpected request: {request.url}")
+
+    with pytest.raises(OaklandFetchError, match="title/occurrence contract"):
+        await OaklandCatalogFetcher(
+            user_agent="test",
+            now=lambda: _NOW,
+            transport=httpx.MockTransport(handler),
+        ).fetch(_source())
 
 
 async def test_oakland_fails_closed_before_detail_requests_on_cap_redirect_or_malformed_sitemap() -> (

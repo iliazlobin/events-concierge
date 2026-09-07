@@ -2,20 +2,30 @@
 
 The relay is a projection: lifecycle transitions remain the source of truth, while leased outbox
 rows are rendered to ``NotificationPort`` only after the transition transaction commits (FR-6.6,
-FR-8.9, ADR-007/009). A provider call and database commit cannot be one atomic effect, so the
-stable ledger key plus port idempotency makes crash redelivery at-most-once user-visible.
+FR-8.9, ADR-007/009). A provider call and database commit cannot be one atomic effect. The stable
+ledger key enables provider-side suppression when the channel offers it; SES does not, so its
+post-send/pre-ledger-ACK ambiguity remains an explicit launch decision rather than an exactly-once
+claim.
 """
 
 from __future__ import annotations
 
-from collections.abc import Callable
+import asyncio
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
+from uuid import UUID
 
 from ..infra.logging import get_logger
 from ..ports.notification_secrets import NotificationSecretProtector
 from ..ports.notifications import Notification, NotificationKind, NotificationPort
 from ..ports.repositories import NotificationClaim, OutboxRecord, OutboxRepository
+from ..ports.tenant_effects import (
+    TenantEffectAuthority,
+    TenantEffectKind,
+    TenantEffectRequest,
+)
+from .tenant_effects import DirectTenantEffectAuthority
 
 _RETRY_DELAYS = (
     timedelta(seconds=30),
@@ -77,6 +87,8 @@ class OutboxRelay:
         *,
         now: Callable[[], datetime] | None = None,
         lease_seconds: int = 60,
+        tenant_effect_authority: TenantEffectAuthority | None = None,
+        tenant_effect_timeout_seconds: float = 30.0,
     ) -> None:
         if lease_seconds < 1:
             raise ValueError("lease_seconds must be positive")
@@ -85,6 +97,13 @@ class OutboxRelay:
         self._secret_protector = secret_protector
         self._now = now or (lambda: datetime.now(UTC))
         self._lease_seconds = lease_seconds
+        self._tenant_effects = tenant_effect_authority or DirectTenantEffectAuthority()
+        TenantEffectRequest(
+            tenant_id=UUID(int=0),
+            kind=TenantEffectKind.NOTIFICATION,
+            timeout_seconds=tenant_effect_timeout_seconds,
+        )
+        self._tenant_effect_timeout_seconds = tenant_effect_timeout_seconds
 
     async def relay_once(self, *, limit: int = 50) -> RelayStats:
         """Claim and process one bounded batch; the notifier worker supplies the idle poll loop."""
@@ -137,8 +156,16 @@ class OutboxRelay:
         if claim_outcome is not None:
             return claim_outcome
         try:
-            notification = await self._materialize_notification(record, draft)
-            await self._notifier.send(notification)
+            authorized = await self._tenant_effects.run(
+                TenantEffectRequest(
+                    tenant_id=record.tenant_id,
+                    kind=TenantEffectKind.NOTIFICATION,
+                    timeout_seconds=self._tenant_effect_timeout_seconds,
+                ),
+                lambda: self._send_if_current(record, draft),
+            )
+            if not authorized:
+                return stats
         except Exception:
             await self._outbox.release_notification(record, dedup_key=draft.dedup_key)
             # Provider/protector exceptions are untrusted and may echo the URL or bearer. Keep
@@ -154,7 +181,8 @@ class OutboxRelay:
         )
         if not ledger_recorded:
             # A send may already be visible. Do not acknowledge the outbox: lease expiry will retry
-            # with the same key, which NotificationPort must deduplicate (FR-6.6, AC-46).
+            # with the same key. A deduplicating channel suppresses it; a non-idempotent channel
+            # such as SES can duplicate it, which ADR-009 deliberately holds for owner resolution.
             return await self._reschedule_contention(
                 record, stats, "notification ledger lease was lost"
             )
@@ -164,6 +192,20 @@ class OutboxRelay:
             acknowledged=stats.acknowledged + int(acknowledged),
             sent=stats.sent + 1,
         )
+
+    async def _send_if_current(
+        self,
+        record: OutboxRecord,
+        draft: _NotificationDraft,
+    ) -> bool:
+        """Re-read exact queue/ledger leases under tenant authority, then settle one send."""
+        if not await self._outbox.has_notification_send_authority(
+            record, dedup_key=draft.dedup_key
+        ):
+            return False
+        notification = await self._materialize_notification(record, draft)
+        await _complete_started_provider_call(self._notifier.send(notification))
+        return True
 
     async def _claim_notification_authority(
         self,
@@ -199,10 +241,6 @@ class OutboxRelay:
                 stats,
                 "completion-capable handoff has no protected completion URL",
             )
-        if not await self._outbox.has_notification_send_authority(
-            record, dedup_key=draft.dedup_key
-        ):
-            return stats
         return None
 
     async def _materialize_notification(
@@ -423,3 +461,29 @@ def _with(stats: RelayStats, **changes: int) -> RelayStats:
         retried=changes.get("retried", stats.retried),
         failed=changes.get("failed", stats.failed),
     )
+
+
+async def _complete_started_provider_call(send: Awaitable[None]) -> None:
+    """Drain an accepted provider call before propagating relay cancellation.
+
+    SES uses a blocking SDK call in an executor. Cancelling the coroutine cannot stop that thread;
+    releasing the account-erasure advisory lock at that point would let erasure begin while the
+    provider request was still in flight. Shield the child task and absorb repeated shutdown
+    cancellation until the bounded adapter call really settles, then preserve cancellation as the
+    caller's outcome.
+    """
+    task = asyncio.ensure_future(send)
+    cancelled = False
+    while True:
+        try:
+            await asyncio.shield(task)
+        except asyncio.CancelledError:
+            cancelled = True
+            continue
+        except Exception:
+            if cancelled:
+                raise asyncio.CancelledError from None
+            raise
+        if cancelled:
+            raise asyncio.CancelledError
+        return

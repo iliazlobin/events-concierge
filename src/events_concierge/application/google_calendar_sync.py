@@ -27,6 +27,12 @@ from ..ports.google_calendar import (
     GoogleCalendarWatchRequest,
     GoogleCalendarWebhookNotification,
 )
+from ..ports.tenant_effects import (
+    TenantEffectAuthority,
+    TenantEffectKind,
+    TenantEffectRequest,
+)
+from .tenant_effects import DirectTenantEffectAuthority
 
 
 class GoogleCalendarSyncBindingNotFoundError(RuntimeError):
@@ -226,6 +232,8 @@ class GoogleCalendarChannelRenewalWorker:
         provider: GoogleCalendarSyncPort,
         channel_factory: Callable[[], GoogleCalendarWatchRequest],
         *,
+        tenant_effect_authority: TenantEffectAuthority | None = None,
+        tenant_effect_timeout_seconds: float = 30.0,
         renewal_lead: timedelta = timedelta(minutes=15),
         now: Callable[[], datetime] | None = None,
     ) -> None:
@@ -235,6 +243,13 @@ class GoogleCalendarChannelRenewalWorker:
         self._states = states
         self._provider = provider
         self._channel_factory = channel_factory
+        self._tenant_effects = tenant_effect_authority or DirectTenantEffectAuthority()
+        TenantEffectRequest(
+            tenant_id=UUID(int=0),
+            kind=TenantEffectKind.CALENDAR_WATCH,
+            timeout_seconds=tenant_effect_timeout_seconds,
+        )
+        self._tenant_effect_timeout_seconds = tenant_effect_timeout_seconds
         self._renewal_lead = renewal_lead
         self._now = now or (lambda: datetime.now(UTC))
 
@@ -259,7 +274,14 @@ class GoogleCalendarChannelRenewalWorker:
                 )
 
         request = self._channel_factory()
-        watch = await self._provider.watch_events(tenant_id, calendar_id, request)
+        watch = await self._tenant_effects.run(
+            TenantEffectRequest(
+                tenant_id=tenant_id,
+                kind=TenantEffectKind.CALENDAR_WATCH,
+                timeout_seconds=self._tenant_effect_timeout_seconds,
+            ),
+            lambda: self._provider.watch_events(tenant_id, calendar_id, request),
+        )
         replacement = GoogleCalendarChannelState.from_watch(request, watch)
         await self._states.store_channel(tenant_id, calendar_id, replacement)
         return GoogleCalendarChannelRenewalResult(

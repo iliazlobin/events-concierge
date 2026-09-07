@@ -4,7 +4,7 @@ version = "0.1.0"
 description = "Multi-tenant events concierge: natural-language request to a confirmed, reconciled calendar entry."
 requires-python = ">=3.12"
 dependencies = [
-    "temporalio>=1.9",
+    "temporalio>=1.30",
     "fastapi>=0.115",
     "uvicorn[standard]>=0.32",
     "sqlalchemy>=2.0.36",
@@ -21,10 +21,15 @@ dependencies = [
     "selectolax>=0.3.27",
     "structlog>=24.4",
     "numpy>=2.1",
+    "google-cloud-storage>=3.13.1",
+    # Avatar uploads are decoded and re-encoded server side; the re-encode is what strips
+    # EXIF and neutralizes polyglots, so this is request-path security code.
+    "pillow>=11.0,<13",
 ]
 
 [project.optional-dependencies]
 dev = [
+    "playwright>=1.44",
     "pytest>=8.3",
     "pytest-asyncio>=0.24",
     "ruff>=0.8",
@@ -64,6 +69,13 @@ ignore = [
 "src/events_concierge/adapters/bibliocommons/source.py" = ["PLR0911", "PLR0912"]  # Defensive RSS parsing exits safely on malformed/escaped input.
 "src/events_concierge/adapters/libcal/source.py" = ["PLR0912"]  # Defensive ICS envelope parsing keeps each malformed state explicit.
 "src/events_concierge/adapters/postgres/tenant_repos.py" = ["PLC0415"]  # Runtime-only imports avoid repository cycles.
+"src/events_concierge/agent/tools/catalog.py" = ["PLR0911"]  # Each rejected argument shape returns its own actionable hint.
+"src/events_concierge/agent/blocks.py" = ["PLR0911", "PLR0912"]  # One explicit branch per tool keeps the block mapping readable as a table.
+"src/events_concierge/agent/tools/entities.py" = ["PLR0912"]  # One explicit branch per publishable field keeps the unknown/omitted split auditable.
+"src/events_concierge/agent/tools/projections.py" = ["PLR0912"]  # One explicit branch per publishable field keeps the unknown/omitted split auditable.
+"src/events_concierge/agent/routes.py" = ["PLR0915"]  # One SSE turn reads best as a single sequence.
+"src/events_concierge/agent/_devkit/repl.py" = ["PLR0915"]  # Local harness; the turn loop stays readable as one sequence.
+"src/events_concierge/adapters/agent_runtime/openrouter/runtime.py" = ["PLR0912", "PLR0915"]  # One linear tool-use loop; splitting it would hide the control flow.
 "src/events_concierge/api/app.py" = ["PLC0415", "PLR0915"]  # Route composition stays visible; optional Temporal startup imports are local.
 "src/events_concierge/application/registration.py" = ["PLR0911"]  # Journaled saga branches are intentionally explicit.
 "src/events_concierge/application/reconciliation.py" = ["PLR0911", "PLR0912"]  # Journaled lifecycle branches are intentionally explicit.
@@ -90,6 +102,7 @@ testpaths = ["tests"]
 # ``test_outbox.py``); importlib mode prevents pytest's legacy module-name collision.
 addopts = "-ra -q --import-mode=importlib"
 markers = [
+    "browser_e2e: hermetic Chromium coverage for the same-origin consumer product",
     "integration: requires docker-compose services (postgres, redis, temporal)",
     "quality_load: opt-in bounded synthetic repetition coverage; not a performance benchmark",
 ]

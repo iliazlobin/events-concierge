@@ -46,35 +46,8 @@ class LostAcknowledgementStarter:
         self.effects.add(identity)
         raise RuntimeError("simulated Temporal acknowledgement loss")
 
-
-class _ExpireLeaseAfterVisibleTemporalStart:
-    """Expire the first relay lease only after the real Temporal parent has been created."""
-
-    def __init__(self, delegate: TemporalRequestWorkflowStarter) -> None:
-        self._delegate = delegate
-        self.records: list[RequestStartRecord] = []
-
-    async def start(self, tenant_id: UUID, request_id: UUID) -> None:
-        """Create/replay the deterministic parent, then lose only the first DB ACK authority."""
-        probe = RequestStartRecord(
-            request_id=request_id,
-            tenant_id=tenant_id,
-            attempt_count=0,
-            lease_token="probe",
-        )
-        state = await _owner_start_outbox_state(probe)
-        if state.lease_token is None:
-            raise RuntimeError("request-start fixture expected an active relay lease")
-        record = RequestStartRecord(
-            request_id=request_id,
-            tenant_id=tenant_id,
-            attempt_count=state.attempt_count,
-            lease_token=state.lease_token,
-        )
-        self.records.append(record)
-        await self._delegate.start(tenant_id, request_id)
-        if len(self.records) == 1:
-            await _owner_expire_start_lease(record)
+    async def cancel(self, tenant_id: UUID, request_id: UUID) -> None:
+        self.effects.discard((tenant_id, request_id))
 
 
 def _request(tenant_id: UUID, request_id: UUID, raw_text: str) -> EventRequest:
@@ -222,14 +195,20 @@ async def test_start_outbox_reclaims_stale_post_start_ack_lease_without_second_p
     )
 
     async with await WorkflowEnvironment.start_time_skipping() as environment:
-        starter = _ExpireLeaseAfterVisibleTemporalStart(
-            TemporalRequestWorkflowStarter(environment.client, settings)
-        )
+        starter = TemporalRequestWorkflowStarter(environment.client, settings)
         relay = RequestStartRelay(repository, starter)
 
-        assert await relay.relay_request(tenant_id, request_id) is False
-        assert len(starter.records) == 1
-        first_state = await _owner_start_outbox_state(starter.records[0])
+        # Model a process loss in the only real ACK gap: the guarded Temporal call returned and
+        # released its erasure-ordering lock, but mark_start_started was never attempted. Trying to
+        # expire the row from inside the guard would correctly block on that same write fence.
+        first = await repository.claim_start(tenant_id, request_id, lease_seconds=60)
+        assert first is not None
+        async with repository.request_start_guard(first) as authorized:
+            assert authorized is True
+            await starter.start(tenant_id, request_id)
+        await _owner_expire_start_lease(first)
+
+        first_state = await _owner_start_outbox_state(first)
         assert first_state.started_at is None
         assert first_state.lease_expired is True
         assert first_state.attempt_count == 0
@@ -243,11 +222,7 @@ async def test_start_outbox_reclaims_stale_post_start_ack_lease_without_second_p
 
         assert await relay.relay_request(tenant_id, request_id) is True
 
-    assert len(starter.records) == 2
-    assert starter.records[1].lease_token != starter.records[0].lease_token
-    assert all(record.request_id == request_id for record in starter.records)
-    assert all(record.tenant_id == tenant_id for record in starter.records)
-    final_state = await _owner_start_outbox_state(starter.records[1])
+    final_state = await _owner_start_outbox_state(first)
     assert final_state.started_at is not None
     assert final_state.lease_token is None
     assert final_state.attempt_count == 0

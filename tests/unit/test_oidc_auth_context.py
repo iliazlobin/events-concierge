@@ -73,11 +73,14 @@ def _token(
     expires_delta: timedelta = timedelta(minutes=5),
     algorithm: str = "RS256",
     key_id: str = _KEY_ID,
+    subject: object = "oidc|fixture-user",
+    nonce: str | None = None,
+    auth_time: object | None = None,
 ) -> str:
     now = datetime.now(UTC)
     claims: dict[str, object] = {
         "iss": issuer,
-        "sub": "oidc|fixture-user",
+        "sub": subject,
         "aud": audience,
         "iat": now,
         "exp": now + expires_delta,
@@ -85,6 +88,10 @@ def _token(
     }
     if authorized_party is not None:
         claims["azp"] = authorized_party
+    if nonce is not None:
+        claims["nonce"] = nonce
+    if auth_time is not None:
+        claims["auth_time"] = auth_time
     key: object = _PRIVATE_KEY
     if algorithm == "HS256":
         key = "fixture-symmetric-key-that-must-never-be-trusted"
@@ -102,6 +109,50 @@ async def test_oidc_auth_context_resolves_only_the_signed_tenant_claim() -> None
     )
 
     assert resolved == tenant_id
+
+
+async def test_oidc_identity_verification_binds_subject_and_exact_transaction_nonce() -> None:
+    tenant_id = uuid4()
+    token = _token(tenant_id, nonce="fixture-nonce")
+
+    identity = await _adapter().verify_identity_token(
+        token,
+        expected_nonce="fixture-nonce",
+    )
+
+    assert identity.tenant_id == tenant_id
+    assert identity.subject == "oidc|fixture-user"
+    with pytest.raises(AuthenticationFailedError):
+        await _adapter().verify_identity_token(token, expected_nonce="other-nonce")
+    with pytest.raises(AuthenticationFailedError):
+        await _adapter().verify_identity_token(
+            _token(tenant_id),
+            expected_nonce="fixture-nonce",
+        )
+    with pytest.raises(AuthenticationFailedError):
+        await _adapter().verify_identity_token(
+            _token(tenant_id, subject="bad\nsubject"),
+        )
+
+
+async def test_oidc_step_up_requires_a_numeric_provider_auth_time() -> None:
+    tenant_id = uuid4()
+    authenticated_at = int(datetime.now(UTC).timestamp())
+
+    identity = await _adapter().verify_identity_token(
+        _token(tenant_id, nonce="step-up", auth_time=authenticated_at),
+        expected_nonce="step-up",
+        require_auth_time=True,
+    )
+
+    assert identity.authenticated_at == authenticated_at
+    for invalid_auth_time in (None, True, "123"):
+        with pytest.raises(AuthenticationFailedError):
+            await _adapter().verify_identity_token(
+                _token(tenant_id, nonce="step-up", auth_time=invalid_auth_time),
+                expected_nonce="step-up",
+                require_auth_time=True,
+            )
 
 
 @pytest.mark.parametrize(
@@ -179,9 +230,7 @@ async def test_oidc_auth_context_single_flights_and_rate_limits_unknown_key_refr
     tenant_id = uuid4()
     concurrent_initial = await asyncio.gather(
         *[
-            adapter.resolve_tenant_id(
-                {"Authorization": f"Bearer {_token(tenant_id)}"}
-            )
+            adapter.resolve_tenant_id({"Authorization": f"Bearer {_token(tenant_id)}"})
             for _ in range(16)
         ]
     )
@@ -192,11 +241,7 @@ async def test_oidc_auth_context_single_flights_and_rate_limits_unknown_key_refr
     attempted = await asyncio.gather(
         *[
             adapter.resolve_tenant_id(
-                {
-                    "Authorization": (
-                        f"Bearer {_token(tenant_id, key_id=f'attacker-key-{index}')}"
-                    )
-                }
+                {"Authorization": (f"Bearer {_token(tenant_id, key_id=f'attacker-key-{index}')}")}
             )
             for index in range(64)
         ],
@@ -235,9 +280,7 @@ async def test_oidc_auth_context_accepts_a_rotated_key_after_bounded_cooldown(
     assert jwks_client.fetch_calls == 1
 
     clock.advance(31)
-    resolved = await adapter.resolve_tenant_id(
-        {"Authorization": f"Bearer {rotated_token}"}
-    )
+    resolved = await adapter.resolve_tenant_id({"Authorization": f"Bearer {rotated_token}"})
 
     assert resolved == tenant_id
     assert jwks_client.fetch_calls == 2

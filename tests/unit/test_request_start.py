@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 from datetime import UTC, datetime, timedelta
 from uuid import UUID, uuid4
 
@@ -28,12 +30,21 @@ class FakeRequestRepository:
         self.rescheduled: list[tuple[RequestStartRecord, datetime, str]] = []
         self.live_lease_checks: list[RequestStartRecord] = []
         self._lease_sequence = 0
+        self.workflow_targets: dict[UUID, set[str]] = {}
+        self.erasure_fenced = False
 
     async def add(self, request: EventRequest) -> None:
         self.requests.setdefault((request.tenant_id, request.request_id), request)
 
     async def get(self, tenant_id: UUID, request_id: UUID) -> EventRequest | None:
         return self.requests.get((tenant_id, request_id))
+
+    async def register_workflow_targets(
+        self,
+        tenant_id: UUID,
+        workflow_ids: tuple[str, ...],
+    ) -> None:
+        self.workflow_targets.setdefault(tenant_id, set()).update(workflow_ids)
 
     async def add_and_enqueue_start(self, request: EventRequest, dedup_key: str) -> None:
         existing = self.dedup.get(dedup_key)
@@ -66,6 +77,15 @@ class FakeRequestRepository:
         self.live_lease_checks.append(record)
         return True
 
+    @asynccontextmanager
+    async def request_start_guard(self, record: RequestStartRecord) -> AsyncIterator[bool]:
+        del record
+        yield not self.erasure_fenced
+
+    async def account_erasure_fenced(self, tenant_id: UUID) -> bool:
+        del tenant_id
+        return self.erasure_fenced
+
     async def mark_start_started(self, record: RequestStartRecord) -> bool:
         self.started.add((record.tenant_id, record.request_id))
         return True
@@ -88,6 +108,12 @@ class FakeRequestRepository:
     async def start_has_started(self, tenant_id: UUID, request_id: UUID) -> bool:
         return (tenant_id, request_id) in self.started
 
+    async def mark_failed_no_candidate(
+        self, tenant_id: UUID, request_id: UUID, transition_id: str
+    ) -> bool:
+        del tenant_id, request_id, transition_id
+        return True
+
 
 class LostAcknowledgementStarter:
     """Temporal seam: the first start creates the workflow but loses its client acknowledgement."""
@@ -104,6 +130,9 @@ class LostAcknowledgementStarter:
             return
         self.effects.add(identity)
         raise RuntimeError("simulated Temporal start acknowledgement loss")
+
+    async def cancel(self, tenant_id: UUID, request_id: UUID) -> None:
+        self.effects.discard((tenant_id, request_id))
 
 
 class _StaleStartAckLeaseRepository(FakeRequestRepository):
@@ -217,6 +246,24 @@ class _DuplicateAcceptingStarter:
     async def start(self, tenant_id: UUID, request_id: UUID) -> None:
         self.calls += 1
         self.effects.add((tenant_id, request_id))
+
+    async def cancel(self, tenant_id: UUID, request_id: UUID) -> None:
+        self.effects.discard((tenant_id, request_id))
+
+
+class _FenceAfterStartStarter(_DuplicateAcceptingStarter):
+    def __init__(self, repository: FakeRequestRepository) -> None:
+        super().__init__()
+        self._repository = repository
+        self.cancelled: list[tuple[UUID, UUID]] = []
+
+    async def start(self, tenant_id: UUID, request_id: UUID) -> None:
+        await super().start(tenant_id, request_id)
+        self._repository.erasure_fenced = True
+
+    async def cancel(self, tenant_id: UUID, request_id: UUID) -> None:
+        self.cancelled.append((tenant_id, request_id))
+        await super().cancel(tenant_id, request_id)
 
 
 async def test_intake_replays_normalized_text_to_one_request_and_start_instruction() -> None:
@@ -350,3 +397,17 @@ async def test_start_relay_does_not_report_a_lost_retry_lease_as_scheduled() -> 
     assert starter.calls == 1
     assert starter.effects == {(tenant_id, request_id)}
     assert repository.rescheduled == []
+
+
+async def test_start_relay_cancels_parent_when_erasure_commits_before_postcheck() -> None:
+    tenant_id, request_id = uuid4(), uuid4()
+    record = RequestStartRecord(request_id, tenant_id, 0, "erasure-race-lease")
+    repository = FakeRequestRepository([record])
+    starter = _FenceAfterStartStarter(repository)
+
+    result = await RequestStartRelay(repository, starter).relay_once()
+
+    assert result == RequestStartRelayStats(claimed=1, lost_leases=1)
+    assert starter.cancelled == [(tenant_id, request_id)]
+    assert starter.effects == set()
+    assert repository.started == set()

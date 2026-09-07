@@ -1,0 +1,19 @@
+{{- $root := . -}}
+{{- if or (eq .Values.global.releasePhase "all") (eq .Values.global.releasePhase "application") }}
+{{- range $name, $workload := .Values.workloads }}
+{{- if and $workload.enabled $workload.pdb.enabled }}
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: {{ include "events-concierge.fullname" $root }}-{{ $name }}
+  labels:
+    {{- include "events-concierge.labels" (dict "root" $root "component" $name) | nindent 4 }}
+spec:
+  minAvailable: {{ $workload.pdb.minAvailable }}
+  selector:
+    matchLabels:
+      {{- include "events-concierge.selectorLabels" (dict "root" $root "component" $name) | nindent 6 }}
+{{- end }}
+{{- end }}
+{{- end }}

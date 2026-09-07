@@ -16,6 +16,7 @@ from ...domain.catalog_sources import CatalogRefreshCommit, observation_for
 from ...domain.events import CandidateEvent
 from ...infra.db import system_session_scope
 from .catalog import PostgresCatalogRepository
+from .catalog_entity_social_links import CatalogEntitySocialLinkWriter
 from .catalog_observations import PostgresCatalogObservationRepository
 
 
@@ -30,9 +31,11 @@ class PostgresCatalogRefreshCommitter:
         self,
         catalog: PostgresCatalogRepository,
         observations: PostgresCatalogObservationRepository,
+        social_links: CatalogEntitySocialLinkWriter | None = None,
     ) -> None:
         self._catalog = catalog
         self._observations = observations
+        self._social_links = social_links
 
     async def commit_refresh(
         self,
@@ -81,6 +84,34 @@ class PostgresCatalogRefreshCommitter:
                 ).scalar_one()
                 if not completed:
                     raise _CatalogRefreshLeaseLostError
+                # Rebuild only this source's public entity mentions after the refresh becomes the
+                # admitted latest-success projection.  Keeping this in the publication transaction
+                # prevents the entity explorer from ever observing a newer event catalog with a
+                # stale role index.
+                await session.execute(
+                    text("SELECT public.fn_refresh_catalog_entity_index_v3(:source_key)"),
+                    {"source_key": source_key},
+                )
+                await session.execute(
+                    text("SELECT public.fn_prune_catalog_entity_index_v1(:source_key)"),
+                    {"source_key": source_key},
+                )
+                # Social profiles the source published about the roles it displayed enter the
+                # separate enrichment plane, never `canonical_events.entity_profiles`: FR-19.13
+                # keeps the renderer's producer-verified metadata to LinkedIn and explicit
+                # websites.  This runs after the entity index rebuild above so every link hangs on
+                # a mention this transaction has already resolved -- no entity is invented here,
+                # and a link whose mention did not resolve is dropped rather than guessed at.
+                if self._social_links is not None:
+                    for candidate in candidates:
+                        if not candidate.entity_social_links:
+                            continue
+                        await self._social_links.record_in_session(
+                            session,
+                            source_key=source_key,
+                            source_event_id=candidate.source_event_id,
+                            links=candidate.entity_social_links,
+                        )
         except _CatalogRefreshLeaseLostError:
             return None
         return CatalogRefreshCommit(len(candidates), canonical_count)

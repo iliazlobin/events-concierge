@@ -8,7 +8,7 @@ from types import ModuleType
 
 import pytest
 
-from events_concierge.adapters.mock.auth import HeaderAuthContext
+from events_concierge.adapters.mock.auth import HeaderAuthContext, LocalHeaderCsrfProtection
 from events_concierge.adapters.mock.calendar import MockCalendar
 from events_concierge.adapters.mock.notification_secrets import (
     DevelopmentNotificationSecretProtector,
@@ -33,6 +33,7 @@ def _settings(**overrides: object) -> Settings:
 def _runtime(tmp_path: Path, **overrides: object) -> RuntimePorts:
     values: dict[str, object] = {
         "auth_context": HeaderAuthContext(),
+        "csrf_protection": LocalHeaderCsrfProtection(),
         "object_store": MockFilesystemObjectStore(tmp_path),
         "notifier": MockNotifier(),
         "notification_secret_protector": DevelopmentNotificationSecretProtector(),
@@ -46,7 +47,7 @@ def _runtime(tmp_path: Path, **overrides: object) -> RuntimePorts:
 
 
 def _without_engine(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr("events_concierge.composition.init_engine", lambda _: None)
+    monkeypatch.setattr("events_concierge.composition.init_engine", lambda _, **kwargs: None)
 
 
 def test_runtime_provider_factory_supplies_non_mock_composition(
@@ -71,6 +72,7 @@ def test_runtime_provider_factory_supplies_non_mock_composition(
 
     assert seen == [settings]
     assert container.auth_context is runtime.auth_context
+    assert container.csrf_protection is runtime.csrf_protection
     assert container.object_store is runtime.object_store
     assert container.notifier is runtime.notifier
     assert container.notification_secret_protector is runtime.notification_secret_protector
@@ -113,6 +115,15 @@ def test_non_mock_composition_requires_https_user_capability_links(
                 object_store=MockFilesystemObjectStore(Path("/tmp/runtime-test-store")),
                 auth_context=HeaderAuthContext(),
             ),
+            "CsrfProtectionPort",
+        ),
+        (
+            RuntimePorts(
+                calendar=MockCalendar(),
+                object_store=MockFilesystemObjectStore(Path("/tmp/runtime-test-store")),
+                auth_context=HeaderAuthContext(),
+                csrf_protection=LocalHeaderCsrfProtection(),
+            ),
             "NotificationPort",
         ),
         (
@@ -120,6 +131,7 @@ def test_non_mock_composition_requires_https_user_capability_links(
                 calendar=MockCalendar(),
                 object_store=MockFilesystemObjectStore(Path("/tmp/runtime-test-store")),
                 auth_context=HeaderAuthContext(),
+                csrf_protection=LocalHeaderCsrfProtection(),
                 notifier=MockNotifier(),
             ),
             "NotificationSecretProtector",
@@ -129,6 +141,7 @@ def test_non_mock_composition_requires_https_user_capability_links(
                 calendar=MockCalendar(),
                 object_store=MockFilesystemObjectStore(Path("/tmp/runtime-test-store")),
                 auth_context=HeaderAuthContext(),
+                csrf_protection=LocalHeaderCsrfProtection(),
                 notifier=MockNotifier(),
                 notification_secret_protector=DevelopmentNotificationSecretProtector(),
             ),
@@ -139,6 +152,7 @@ def test_non_mock_composition_requires_https_user_capability_links(
                 calendar=MockCalendar(),
                 object_store=MockFilesystemObjectStore(Path("/tmp/runtime-test-store")),
                 auth_context=HeaderAuthContext(),
+                csrf_protection=LocalHeaderCsrfProtection(),
                 notifier=MockNotifier(),
                 notification_secret_protector=DevelopmentNotificationSecretProtector(),
                 credential_vault=MockVault(),
@@ -150,6 +164,7 @@ def test_non_mock_composition_requires_https_user_capability_links(
                 calendar=MockCalendar(),
                 object_store=MockFilesystemObjectStore(Path("/tmp/runtime-test-store")),
                 auth_context=HeaderAuthContext(),
+                csrf_protection=LocalHeaderCsrfProtection(),
                 notifier=MockNotifier(),
                 notification_secret_protector=DevelopmentNotificationSecretProtector(),
                 credential_vault=MockVault(),

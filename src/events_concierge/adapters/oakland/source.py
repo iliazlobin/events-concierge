@@ -28,7 +28,8 @@ from ...domain.events import CandidateEvent, GeoPoint
 _FETCH_TIMEOUT_S = 15.0
 _MAX_SITEMAP_RESPONSE_BYTES = 4_000_000
 _MAX_DETAIL_RESPONSE_BYTES = 1_000_000
-_OCCURRENCE_LIMIT = 200
+_RAW_OCCURRENCE_LIMIT = 400
+_FUTURE_OCCURRENCE_LIMIT = 200
 _CONTROL_CHARACTER_LIMIT = 32
 _SITEMAP_NAMESPACE = "http://www.sitemaps.org/schemas/sitemap/0.9"
 _LOCAL_TIME_ZONE = ZoneInfo("America/Los_Angeles")
@@ -67,7 +68,7 @@ class _OaklandPublisher:
 class _PhysicalLocation:
     """One explicit, local map marker; no venue or city is inferred from other page text (FR-3.7)."""
 
-    venue_name: str
+    venue_name: str | None
     address: str
     geo: GeoPoint
     city: str | None
@@ -437,6 +438,15 @@ def _candidates_from_detail(
     main = main_nodes[0]
     title_nodes = main.css("h1.oc-page-title")
     occurrence_lists = main.css("ul.multi-date-list.future-events-list")
+    if (
+        not title_nodes
+        and not occurrence_lists
+        and _is_text_only_calendar_landing(main, requested_url)
+    ):
+        # Oakland's sitemap mixes real details with category roots such as /Event-Calendar/EWD.
+        # Those roots render only their path label inside #main-content. Keep genuine one-segment
+        # event details, while treating this exact non-event shape as an empty catalog page.
+        return []
     if len(title_nodes) != 1 or len(occurrence_lists) != 1:
         raise OaklandFetchError(
             f"Oakland detail no longer matches its reviewed title/occurrence contract for {source.source_key}"
@@ -445,26 +455,40 @@ def _candidates_from_detail(
     if title is None:
         raise OaklandFetchError(f"Oakland detail returned an invalid title for {source.source_key}")
     occurrence_nodes = main.css("ul.multi-date-list.future-events-list > li.multi-date-item")
-    if len(occurrence_nodes) >= _OCCURRENCE_LIMIT:
+    if len(occurrence_nodes) > _RAW_OCCURRENCE_LIMIT:
         raise OaklandFetchError(
-            f"Oakland detail reached its reviewed {_OCCURRENCE_LIMIT}-occurrence cap for {source.source_key}"
+            "Oakland detail exceeded its reviewed "
+            f"{_RAW_OCCURRENCE_LIMIT} raw-occurrence scan limit for {source.source_key}"
         )
+    parsed_occurrences = [_occurrence_times(occurrence) for occurrence in occurrence_nodes]
+    future_occurrences: list[tuple[datetime, datetime | None]] = [
+        (start_at, end_at)
+        for start_at, end_at in parsed_occurrences
+        if start_at is not None and start_at > now
+    ]
+    if len(future_occurrences) > _FUTURE_OCCURRENCE_LIMIT:
+        raise OaklandFetchError(
+            "Oakland detail exceeded its reviewed "
+            f"{_FUTURE_OCCURRENCE_LIMIT} future-occurrence emission limit "
+            f"for {source.source_key}"
+        )
+    if any(start_at is not None for start_at, _ in parsed_occurrences) and not future_occurrences:
+        # The sitemap can retain expired detail pages after their final occurrence. Do not require
+        # today's location markup for a page that cannot emit a current catalog candidate.
+        return []
     canonical_url = _canonical_url(document, source, publisher, requested_url)
     location = _physical_location(main, source.source_key)
     if location is None:
         return []
-    if (
-        _VIRTUAL_OR_ONLINE.search(title) is not None
-        or _VIRTUAL_OR_ONLINE.search(location.venue_name) is not None
+    if _VIRTUAL_OR_ONLINE.search(title) is not None or (
+        location.venue_name is not None
+        and _VIRTUAL_OR_ONLINE.search(location.venue_name) is not None
     ):
         return []
     cost = _cost(main, source.source_key)
     categories = _categories(main)
     candidates: list[CandidateEvent] = []
-    for occurrence in occurrence_nodes:
-        start_at, end_at = _occurrence_times(occurrence)
-        if start_at is None or start_at <= now:
-            continue
+    for start_at, end_at in future_occurrences:
         raw: dict[str, object] = {
             "canonical_url": canonical_url,
             "venue_name": location.venue_name,
@@ -493,6 +517,28 @@ def _candidates_from_detail(
             )
         )
     return candidates
+
+
+def _is_text_only_calendar_landing(main: Node, requested_url: str) -> bool:
+    """Recognize only Oakland's empty calendar-root shape, never a structured detail redesign."""
+    if any(node.tag != "_comment" for node in main.iter(include_text=False)):
+        return False
+    label = _node_text(main)
+    try:
+        path = urlsplit(requested_url).path.rstrip("/")
+    except ValueError:
+        return False
+    slug = unquote(path.rsplit("/", 1)[-1]) if path else ""
+    expected_label = _text(slug.replace("-", " "))
+    if label is None or expected_label is None:
+        return False
+    label_tokens = _calendar_landing_label_tokens(label)
+    return bool(label_tokens) and label_tokens == _calendar_landing_label_tokens(expected_label)
+
+
+def _calendar_landing_label_tokens(value: str) -> tuple[str, ...]:
+    """Ignore punctuation separators, but preserve every factual word when matching a path label."""
+    return tuple(token.casefold() for token in re.findall(r"[^\W_]+", value))
 
 
 def _canonical_url(
@@ -526,7 +572,7 @@ def _canonical_url(
 
 
 def _physical_location(main: Node, source_key: str) -> _PhysicalLocation | None:
-    """Require one explicit Bay Area map marker; city is sourced only from its address (FR-3.7)."""
+    """Require one explicit Bay Area marker; its venue may remain honestly unknown (FR-3.7)."""
     markers = main.css(".gmap-marker")
     if not markers:
         return None
@@ -536,14 +582,14 @@ def _physical_location(main: Node, source_key: str) -> _PhysicalLocation | None:
     venue_nodes = marker.css(".gmap-info > h2")
     address_nodes = marker.css(".gmap-address")
     coordinate_nodes = marker.css(".gmap-latlong")
-    if len(venue_nodes) != 1 or len(address_nodes) != 1 or len(coordinate_nodes) != 1:
+    if len(venue_nodes) > 1 or len(address_nodes) != 1 or len(coordinate_nodes) != 1:
         raise OaklandFetchError(
             f"Oakland detail no longer matches its reviewed physical-location contract for {source_key}"
         )
-    venue_name = _node_text(venue_nodes[0])
+    venue_name = _node_text(venue_nodes[0]) if venue_nodes else None
     address = _node_text(address_nodes[0])
     geo = _coordinates(_node_text(coordinate_nodes[0]))
-    if venue_name is None or address is None or geo is None:
+    if (venue_nodes and venue_name is None) or address is None or geo is None:
         raise OaklandFetchError(
             f"Oakland detail returned invalid physical-location fields for {source_key}"
         )

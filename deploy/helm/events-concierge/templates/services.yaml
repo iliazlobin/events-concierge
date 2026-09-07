@@ -1,0 +1,21 @@
+{{- if or (eq .Values.global.releasePhase "all") (eq .Values.global.releasePhase "application") }}
+{{- $root := . -}}
+{{- range $name, $service := .Values.services }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "events-concierge.fullname" $root }}-{{ $name }}
+  labels:
+    {{- include "events-concierge.labels" (dict "root" $root "component" $name) | nindent 4 }}
+spec:
+  type: ClusterIP
+  selector:
+    {{- include "events-concierge.selectorLabels" (dict "root" $root "component" $name) | nindent 4 }}
+  ports:
+    - name: http
+      port: {{ $service.port }}
+      targetPort: {{ $service.targetPort }}
+      protocol: TCP
+{{- end }}
+{{- end }}

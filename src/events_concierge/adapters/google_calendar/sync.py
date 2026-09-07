@@ -8,6 +8,7 @@ setup occurs here.
 
 from __future__ import annotations
 
+import math
 from collections.abc import Mapping
 from datetime import UTC, datetime
 from typing import Final
@@ -32,6 +33,8 @@ from .calendar import raise_for_google_calendar_error
 
 _DEFAULT_BASE_URL: Final = "https://www.googleapis.com/calendar/v3"
 _SYNC_PAGE_SIZE: Final = "2500"
+_MIN_TIMEOUT_SECONDS: Final = 0.1
+_MAX_TIMEOUT_SECONDS: Final = 60.0
 
 
 class GoogleCalendarSyncAdapter(GoogleCalendarSyncPort):
@@ -47,8 +50,14 @@ class GoogleCalendarSyncAdapter(GoogleCalendarSyncPort):
     ) -> None:
         if not base_url.startswith("https://"):
             raise ValueError("Google Calendar base URL must use HTTPS")
-        if timeout_s <= 0.0:
-            raise ValueError("Google Calendar timeout must be positive")
+        if (
+            isinstance(timeout_s, bool)
+            or not math.isfinite(timeout_s)
+            or not _MIN_TIMEOUT_SECONDS <= timeout_s <= _MAX_TIMEOUT_SECONDS
+        ):
+            raise ValueError(
+                "Google Calendar timeout must be finite and between 0.1 and 60 seconds"
+            )
         self._access = access
         self._client = client
         self._base_url = base_url.rstrip("/")
@@ -124,7 +133,12 @@ class GoogleCalendarSyncAdapter(GoogleCalendarSyncPort):
         headers = {"Authorization": f"Bearer {access.bearer_token}"}
         if self._client is not None:
             return await self._client.request(
-                method, url, headers=headers, params=params, json=json_body
+                method,
+                url,
+                headers=headers,
+                params=params,
+                json=json_body,
+                timeout=self._timeout_s,
             )
         async with httpx.AsyncClient(timeout=self._timeout_s) as client:
             return await client.request(method, url, headers=headers, params=params, json=json_body)

@@ -9,8 +9,10 @@ is moved off the event loop.
 from __future__ import annotations
 
 import asyncio
+import hmac
 from collections import OrderedDict
 from collections.abc import Awaitable, Callable, Mapping
+from dataclasses import dataclass
 from time import monotonic
 from unicodedata import category
 from urllib.parse import urlsplit
@@ -28,12 +30,23 @@ _MAX_CLAIM_NAME_LENGTH = 256
 _MAX_URL_LENGTH = 2048
 _MAX_URL_PORT = 65535
 _MAX_KEY_ID_BYTES = 256
+_MAX_SUBJECT_BYTES = 1024
+_MAX_NONCE_BYTES = 256
 _MAX_LEEWAY_SECONDS = 300
 _MAX_JWKS_TIMEOUT_SECONDS = 30
 _JWKS_CACHE_LIFETIME_SECONDS = 300.0
 _JWKS_REFRESH_COOLDOWN_SECONDS = 30.0
 _NEGATIVE_KEY_CACHE_SIZE = 256
 _ALLOWED_ALGORITHMS = frozenset({"RS256", "RS384", "RS512", "ES256", "ES384", "ES512"})
+
+
+@dataclass(frozen=True, slots=True)
+class OidcIdentity:
+    """Canonical identity claims returned only after complete signature/claim verification."""
+
+    tenant_id: UUID
+    subject: str
+    authenticated_at: int | None = None
 
 
 class _BoundedJwksResolver:
@@ -101,8 +114,7 @@ class _BoundedJwksResolver:
 
     def _snapshot_is_fresh(self, now: float) -> bool:
         return (
-            self._fetched_at is not None
-            and now - self._fetched_at < _JWKS_CACHE_LIFETIME_SECONDS
+            self._fetched_at is not None and now - self._fetched_at < _JWKS_CACHE_LIFETIME_SECONDS
         )
 
     def _is_negative(self, key_id: str, now: float) -> bool:
@@ -187,8 +199,36 @@ class OidcJwtAuthContext:
     async def resolve_tenant_id(self, headers: Mapping[str, str]) -> UUID:
         """Verify the bearer token and return its canonical, issuer-owned tenant claim."""
         token = _bearer_token(headers)
+        identity = await self.verify_identity_token(token)
+        return identity.tenant_id
+
+    async def verify_identity_token(
+        self,
+        token: str,
+        *,
+        expected_nonce: str | None = None,
+        require_auth_time: bool = False,
+    ) -> OidcIdentity:
+        """Verify an OIDC identity token and return only bounded authorization claims.
+
+        ``auth_time`` is optional for an ordinary authorization-code login. A step-up transaction
+        sets ``require_auth_time`` so the caller can prove an actual provider authentication took
+        place recently instead of treating a new callback as fresh authentication.
+        """
         try:
             signing_key = await self._resolve_signing_key(token)
+            required_claims = [
+                "iss",
+                "sub",
+                "aud",
+                "exp",
+                "iat",
+                self._tenant_claim,
+            ]
+            if expected_nonce is not None:
+                required_claims.append("nonce")
+            if require_auth_time:
+                required_claims.append("auth_time")
             claims = decode(
                 token,
                 signing_key,
@@ -197,26 +237,51 @@ class OidcJwtAuthContext:
                 issuer=self._issuer,
                 leeway=self._leeway_seconds,
                 options={
-                    "require": [
-                        "iss",
-                        "sub",
-                        "aud",
-                        "exp",
-                        "iat",
-                        self._tenant_claim,
-                    ]
+                    "require": required_claims,
                 },
             )
             _validate_authorized_party(claims, self._audience)
+            raw_subject = claims["sub"]
+            if (
+                not isinstance(raw_subject, str)
+                or not raw_subject
+                or len(raw_subject.encode("utf-8")) > _MAX_SUBJECT_BYTES
+                or any(category(character) in {"Cc", "Cf"} for character in raw_subject)
+            ):
+                raise ValueError("subject claim must be a bounded printable string")
             raw_tenant_id = claims[self._tenant_claim]
             if not isinstance(raw_tenant_id, str):
                 raise ValueError("tenant claim must be a string")
             tenant_id = UUID(raw_tenant_id)
             if raw_tenant_id != str(tenant_id):
                 raise ValueError("tenant claim must be canonical")
+            if expected_nonce is not None:
+                raw_nonce = claims["nonce"]
+                if (
+                    not isinstance(raw_nonce, str)
+                    or not raw_nonce
+                    or len(raw_nonce.encode("utf-8")) > _MAX_NONCE_BYTES
+                    or not hmac.compare_digest(raw_nonce, expected_nonce)
+                ):
+                    raise ValueError("identity token nonce does not match the login transaction")
+            raw_authenticated_at = claims.get("auth_time")
+            if raw_authenticated_at is None:
+                authenticated_at = None
+            elif (
+                isinstance(raw_authenticated_at, bool)
+                or not isinstance(raw_authenticated_at, int)
+                or raw_authenticated_at < 0
+            ):
+                raise ValueError("auth_time claim must be a non-negative integer NumericDate")
+            else:
+                authenticated_at = raw_authenticated_at
         except (KeyError, PyJWTError, TypeError, ValueError) as error:
             raise AuthenticationFailedError("valid tenant authentication is required") from error
-        return tenant_id
+        return OidcIdentity(
+            tenant_id=tenant_id,
+            subject=raw_subject,
+            authenticated_at=authenticated_at,
+        )
 
 
 def _bearer_token(headers: Mapping[str, str]) -> str:
@@ -229,12 +294,7 @@ def _bearer_token(headers: Mapping[str, str]) -> str:
     if len(values) != 1 or not isinstance(values[0], str):
         raise AuthenticationFailedError("valid tenant authentication is required")
     value = values[0]
-    if (
-        not value.startswith("Bearer ")
-        or value.count(" ") != 1
-        or "," in value
-        or "\t" in value
-    ):
+    if not value.startswith("Bearer ") or value.count(" ") != 1 or "," in value or "\t" in value:
         raise AuthenticationFailedError("valid tenant authentication is required")
     token = value[7:]
     if not token or len(token.encode("utf-8")) > _MAX_TOKEN_BYTES:
@@ -256,11 +316,7 @@ def _validate_authorized_party(claims: Mapping[str, object], audience: str) -> N
 def _unverified_key_id(token: str) -> str:
     """Read only the bounded selector needed to choose a deployment-owned verification key."""
     key_id = get_unverified_header(token).get("kid")
-    if (
-        not isinstance(key_id, str)
-        or not key_id
-        or len(key_id.encode("utf-8")) > _MAX_KEY_ID_BYTES
-    ):
+    if not isinstance(key_id, str) or not key_id or len(key_id.encode("utf-8")) > _MAX_KEY_ID_BYTES:
         raise ValueError("token key ID must be a non-empty bounded string")
     return key_id
 

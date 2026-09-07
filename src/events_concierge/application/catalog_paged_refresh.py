@@ -22,12 +22,14 @@ from ..ports.catalog_sources import (
     CatalogPagedRefreshPromoter,
     CatalogPagedRefreshRepository,
     CatalogPagedSourceFetcher,
+    CatalogRunEvidenceRecorder,
     CatalogSourceRepository,
 )
 from ..ports.discovery_policy import DiscoveryPolicyGate
 from ..ports.policy import Pacer, PacerOperation, PacerRequest, SourceQuarantinePort
 from ..ports.sources import SourceAccessDeniedError, SourceRateLimitedError
 from .catalog_refresh import CatalogRefreshOutcome, CatalogRefreshResult
+from .catalog_run_evidence import CatalogRunEvidenceSession
 
 _MAX_LEGISTAR_PAGES = 5
 _MAX_CATALOG_REFRESH_LEASE_SECONDS = 3_600
@@ -55,6 +57,7 @@ class PagedCatalogRefreshService:
         pacer: Pacer,
         policy_gate: DiscoveryPolicyGate,
         source_quarantine: SourceQuarantinePort | None = None,
+        run_evidence: CatalogRunEvidenceRecorder | None = None,
         *,
         lease_seconds: int = 300,
         now: Callable[[], datetime] | None = None,
@@ -70,13 +73,39 @@ class PagedCatalogRefreshService:
         self._pacer = pacer
         self._policy_gate = policy_gate
         self._source_quarantine = source_quarantine
+        self._run_evidence = run_evidence
         self._lease_seconds = lease_seconds
         self._now = now or (lambda: datetime.now(UTC))
 
     async def refresh_page(self, source_key: str, run_key: str) -> CatalogRefreshResult:
         """Execute one page-sized effect or a terminal staged promotion (P15b, ADR-003/005)."""
+        evidence = CatalogRunEvidenceSession(
+            self._run_evidence,
+            source_key,
+            run_key,
+            # This path runs in a shared Temporal activity worker; process deltas would include
+            # unrelated concurrent activities and are intentionally omitted.
+            include_process_metrics=False,
+        )
+        try:
+            result = await self._refresh_page_observed(source_key, run_key, evidence)
+        except Exception:
+            await evidence.finish("failed")
+            raise
+        await evidence.finish(result.outcome.value)
+        return result
+
+    async def _refresh_page_observed(
+        self,
+        source_key: str,
+        run_key: str,
+        evidence: CatalogRunEvidenceSession,
+    ) -> CatalogRefreshResult:
+        """Advance one page while recording closed, monotonic stage observations."""
+        admission = evidence.start_stage("admission")
         preflight = await self._preflight(source_key, run_key)
         if isinstance(preflight, CatalogRefreshResult):
+            await admission.finish(preflight.outcome.value)
             return preflight
         source, fetcher = preflight
         lease_seconds = self._lease_seconds_for(source)
@@ -87,9 +116,13 @@ class PagedCatalogRefreshService:
                 if claim.outcome is CatalogRefreshClaimOutcome.SUCCEEDED
                 else CatalogRefreshOutcome.BUSY
             )
+            await admission.finish(outcome.value)
             return CatalogRefreshResult(source_key, run_key, outcome)
         assert claim.lease_token is not None
-        return await self._refresh_claimed(source_key, run_key, source, fetcher, claim.lease_token)
+        await admission.finish(CatalogRefreshOutcome.SUCCEEDED.value)
+        return await self._refresh_claimed(
+            source_key, run_key, source, fetcher, claim.lease_token, evidence
+        )
 
     async def _refresh_claimed(
         self,
@@ -98,13 +131,16 @@ class PagedCatalogRefreshService:
         source: CatalogSource,
         fetcher: CatalogPagedSourceFetcher,
         lease_token: UUID,
+        evidence: CatalogRunEvidenceSession,
     ) -> CatalogRefreshResult:
         """Advance exactly one source cursor position while holding its fresh database lease."""
         prepared = await self._prepare(source_key, run_key, lease_token, source)
         if isinstance(prepared, CatalogRefreshResult):
             return prepared
         if prepared.progress.is_terminal:
-            return await self._promote_if_current(source_key, run_key, lease_token, prepared)
+            return await self._promote_if_current(
+                source_key, run_key, lease_token, prepared, evidence
+            )
 
         pacer_request = self._pacer_request(source, run_key, prepared.progress.next_page)
         lease = await self._pacer.acquire(pacer_request)
@@ -125,10 +161,16 @@ class PagedCatalogRefreshService:
                 retry_after_seconds=lease.retry_after_seconds,
             )
 
-        reread = await self._recheck_after_pacer(source_key, run_key, lease_token, prepared)
+        reread = await self._recheck_after_pacer(
+            source_key, run_key, lease_token, prepared, evidence
+        )
         if isinstance(reread, CatalogRefreshResult):
             return reread
         prepared = reread
+        # The paged provider adapter combines the HTTP request and response parsing.  Record the
+        # observable adapter boundary as collection; extraction/enrichment remains explicitly
+        # marked as included rather than receiving an invented timing.
+        collect = evidence.start_stage("collect")
         try:
             page = await prepared.fetcher.fetch_page(
                 prepared.source,
@@ -136,8 +178,10 @@ class PagedCatalogRefreshService:
                 page_number=prepared.progress.next_page,
             )
         except SourceRateLimitedError as error:
+            await collect.finish(CatalogRefreshOutcome.DEFERRED.value)
             return await self._rate_limited(source_key, run_key, lease_token, pacer_request, error)
         except SourceAccessDeniedError as error:
+            await collect.finish(CatalogRefreshOutcome.SKIPPED.value)
             await self._quarantine_after_access_denied(error)
             await self._progress.abort_paged_refresh(
                 source_key,
@@ -152,6 +196,7 @@ class PagedCatalogRefreshService:
                 detail="source access denied; source quarantined",
             )
         except Exception as exc:
+            await collect.finish("failed")
             # An untyped transport/parser failure is not provider backoff, so do not invent a
             # shared throttle window.  Preserve already staged pages and let the failed Temporal
             # execution be restarted under the same source/run identity after the source recovers.
@@ -165,7 +210,9 @@ class PagedCatalogRefreshService:
                 error=f"Legistar page fetch failed: {type(exc).__name__}",
             )
             raise
+        await collect.finish(CatalogRefreshOutcome.SUCCEEDED.value)
 
+        publish = evidence.start_stage("catalog_publish")
         try:
             staged = await self._progress.stage_paged_page(
                 source_key,
@@ -175,6 +222,7 @@ class PagedCatalogRefreshService:
                 page=page,
             )
         except Exception as exc:
+            await publish.finish("failed")
             # A database contract fence can reject a page after its GET if an owner edit won the
             # race. Discard that old revision and fail the workflow so its stable source/slot ID
             # can restart against the newly reviewed contract; never leave a running lease behind.
@@ -186,6 +234,7 @@ class PagedCatalogRefreshService:
             )
             raise
         if staged.status == "more":
+            await publish.finish(CatalogRefreshOutcome.PROGRESSED.value)
             return CatalogRefreshResult(
                 source_key,
                 run_key,
@@ -193,8 +242,12 @@ class PagedCatalogRefreshService:
                 detail=f"staged Legistar page {page.page_number}",
             )
         if staged.status == "terminal":
-            return await self._promote_if_current(source_key, run_key, lease_token, prepared)
+            await publish.finish(CatalogRefreshOutcome.PROGRESSED.value)
+            return await self._promote_if_current(
+                source_key, run_key, lease_token, prepared, evidence
+            )
         if staged.status in {"lease_lost", "stale_cursor"}:
+            await publish.finish(CatalogRefreshOutcome.BUSY.value)
             return CatalogRefreshResult(source_key, run_key, CatalogRefreshOutcome.BUSY)
         await self._progress.abort_paged_refresh(
             source_key,
@@ -207,6 +260,7 @@ class PagedCatalogRefreshService:
             if staged.status == "cap_exceeded"
             else f"Legistar staged page rejected: {staged.status}"
         )
+        await publish.finish(CatalogRefreshOutcome.SKIPPED.value)
         return CatalogRefreshResult(
             source_key, run_key, CatalogRefreshOutcome.SKIPPED, detail=detail
         )
@@ -277,6 +331,7 @@ class PagedCatalogRefreshService:
         run_key: str,
         lease_token: UUID,
         admitted: _PreparedPage,
+        evidence: CatalogRunEvidenceSession,
     ) -> _PreparedPage | CatalogRefreshResult:
         """Fence the page GET after Pacer admission and before its one source effect (NFR-8).
 
@@ -347,7 +402,9 @@ class PagedCatalogRefreshService:
             # A previous at-least-once activity can finish its recoverable terminal stage while
             # this one waits for Pacer. Promote that durable input rather than issue another GET
             # under a page-specific admission (NFR-8, ADR-003/005).
-            return await self._promote_if_current(source_key, run_key, lease_token, revalidated)
+            return await self._promote_if_current(
+                source_key, run_key, lease_token, revalidated, evidence
+            )
         return revalidated
 
     async def _promote_if_current(
@@ -356,6 +413,7 @@ class PagedCatalogRefreshService:
         run_key: str,
         lease_token: UUID,
         prepared: _PreparedPage,
+        evidence: CatalogRunEvidenceSession,
     ) -> CatalogRefreshResult:
         """Recheck authority before final promotion; a changed source discards its old stage first."""
         source = await self._sources.get(source_key)
@@ -402,12 +460,18 @@ class PagedCatalogRefreshService:
         # retries promotion without another source GET. The concrete promoter rolls back all of its
         # catalog writes on an error, so retaining this normalized stage is the safe recovery path
         # (NFR-8, ADR-001/003).
-        promotion = await self._promoter.promote_paged_refresh(
-            source_key,
-            run_key,
-            lease_token=lease_token,
-            source_revision=prepared.progress.source_revision,
-        )
+        publish = evidence.start_stage("catalog_publish")
+        try:
+            promotion = await self._promoter.promote_paged_refresh(
+                source_key,
+                run_key,
+                lease_token=lease_token,
+                source_revision=prepared.progress.source_revision,
+            )
+        except Exception:
+            await publish.finish("failed")
+            raise
+        await publish.finish(CatalogRefreshOutcome.SUCCEEDED.value)
         return CatalogRefreshResult(
             source_key,
             run_key,

@@ -3,12 +3,22 @@ fails closed to zero rows without it (FR-1.3/1.4). The catalog is tenant-neutral
 
 from __future__ import annotations
 
+from contextlib import AbstractAsyncContextManager
 from dataclasses import dataclass
 from datetime import datetime
 from enum import StrEnum
 from typing import Protocol
 from uuid import UUID
 
+from ..domain.catalog_browse import (
+    CatalogBrowseCity,
+    CatalogBrowseCursor,
+    CatalogBrowseDay,
+    CatalogBrowseEvent,
+    CatalogBrowseProvider,
+    CatalogBrowseSort,
+    CatalogBrowseTopic,
+)
 from ..domain.credentials import Tenant
 from ..domain.enums import HandoffReminderKind, LifecycleState, Source
 from ..domain.events import CandidateEvent, CanonicalEvent
@@ -88,6 +98,81 @@ class CatalogRepository(Protocol):
 
     async def get(self, canonical_event_id: UUID) -> CanonicalEvent | None: ...
 
+    async def browse_current(
+        self,
+        *,
+        source_keys: tuple[str, ...] = (),
+        after: CatalogBrowseCursor | None,
+        limit: int,
+        starts_after: datetime | None = None,
+        starts_before: datetime | None = None,
+        date_ranges: tuple[tuple[datetime, datetime], ...] = (),
+        query: str | None = None,
+        city: str | None = None,
+        cities: tuple[str, ...] | None = None,
+        location_scopes: tuple[str, ...] = (),
+        price: str | None = None,
+        price_max_cents: int | None = None,
+        price_min_cents: int | None = None,
+        topics: tuple[str, ...] = (),
+        availability: str | None = None,
+        sort: CatalogBrowseSort = "soonest",
+        include_providers: bool = True,
+    ) -> tuple[list[CatalogBrowseEvent], list[CatalogBrowseProvider]]:
+        """Filter latest-success or explicitly retained past observations before keyset paging.
+
+        ``include_providers`` is the escape hatch for callers that page events and discard the
+        source inventory: the provider rollup is a whole-catalog aggregation that costs about as
+        much as the page itself, so a caller that never reads it should not pay for it.
+        """
+        ...
+
+    async def list_topic_facets(
+        self,
+        *,
+        source_keys: tuple[str, ...] = (),
+        starts_after: datetime | None,
+        starts_before: datetime | None,
+        date_ranges: tuple[tuple[datetime, datetime], ...] = (),
+        query: str | None,
+        cities: tuple[str, ...],
+        location_scopes: tuple[str, ...],
+        price: str | None,
+        price_max_cents: int | None,
+        price_min_cents: int | None = None,
+        availability: str | None = None,
+    ) -> list[CatalogBrowseTopic]:
+        """Count stable topics for the non-topic portion of the current browse filter."""
+        ...
+
+    async def list_day_facets(
+        self,
+        *,
+        source_keys: tuple[str, ...] = (),
+        starts_after: datetime | None,
+        starts_before: datetime | None,
+        date_ranges: tuple[tuple[datetime, datetime], ...] = (),
+        query: str | None,
+        cities: tuple[str, ...],
+        location_scopes: tuple[str, ...],
+        price: str | None,
+        price_max_cents: int | None,
+        price_min_cents: int | None = None,
+        topics: tuple[str, ...] = (),
+        availability: str | None = None,
+        time_zone: str,
+    ) -> list[CatalogBrowseDay]:
+        """Count the current browse filter into local calendar days instead of paging it.
+
+        Unlike :meth:`list_topic_facets`, this applies the topic selection, because the calendar
+        grid must agree with the agenda the same filters produce.
+        """
+        ...
+
+    async def list_city_facets(self) -> list[CatalogBrowseCity]:
+        """List normalized cities from the admitted upcoming catalog projection."""
+        ...
+
 
 class TenantRepository(Protocol):
     async def get(self, tenant_id: UUID) -> Tenant | None: ...
@@ -97,6 +182,14 @@ class TenantRepository(Protocol):
 class RequestRepository(Protocol):
     async def add(self, request: EventRequest) -> None: ...
     async def get(self, tenant_id: UUID, request_id: UUID) -> EventRequest | None: ...
+
+    async def register_workflow_targets(
+        self,
+        tenant_id: UUID,
+        workflow_ids: tuple[str, ...],
+    ) -> None:
+        """Persist child IDs before Temporal may start them; a tenant erasure fence rejects late inserts."""
+        ...
 
     async def add_and_enqueue_start(self, request: EventRequest, dedup_key: str) -> None:
         """Atomically persist an EventRequest and its replay-safe Temporal start instruction.
@@ -118,6 +211,14 @@ class RequestRepository(Protocol):
 
     async def has_live_start_lease(self, record: RequestStartRecord) -> bool:
         """Confirm an exact current start lease immediately before Temporal egress (NFR-8, ADR-003)."""
+        ...
+
+    def request_start_guard(self, record: RequestStartRecord) -> AbstractAsyncContextManager[bool]:
+        """Serialize a bounded Temporal start with erasure begin and yield exact authority."""
+        ...
+
+    async def account_erasure_fenced(self, tenant_id: UUID) -> bool:
+        """Recheck the durable tenant erasure fence immediately after Temporal start returns."""
         ...
 
     async def mark_start_started(self, record: RequestStartRecord) -> bool:
@@ -148,6 +249,10 @@ class LifecycleRepository(Protocol):
     async def get_or_create(
         self, tenant_id: UUID, canonical_event_id: UUID, workflow_id: str
     ) -> Lifecycle: ...
+
+    async def find_by_workflow_id(self, tenant_id: UUID, workflow_id: str) -> Lifecycle | None:
+        """Return this tenant's exact lifecycle, including terminal states, without creating it."""
+        ...
 
     async def find_active(self, tenant_id: UUID, canonical_event_id: UUID) -> Lifecycle | None:
         """Return only this tenant's non-terminal lifecycle, never creating a phantom row (FR-8.8)."""

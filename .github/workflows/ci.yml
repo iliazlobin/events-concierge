@@ -38,6 +38,9 @@ jobs:
       - name: Install locked development dependencies
         run: uv sync --locked --extra dev
 
+      - name: Validate production deployment contract
+        run: make validate-production-example
+
       - name: Lint
         run: make lint
 
@@ -46,6 +49,48 @@ jobs:
 
       - name: Run unit tests
         run: make test-unit
+
+  web:
+    name: Web type, behavior, and production build
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: web
+    steps:
+      - name: Check out source
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+
+      - name: Install Node.js
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      - name: Install locked frontend dependencies
+        run: npm ci
+
+      - name: Audit production frontend dependencies
+        run: npm audit --omit=dev --audit-level=high
+
+      - name: Type-check frontend
+        run: npm run typecheck
+
+      - name: Run frontend behavior contracts
+        run: |
+          npm run test:proxy
+          npm run test:account
+          npm run test:admin
+          npm run test:events
+          npm run test:entity-graph
+          npm run test:filters
+          npm run test:intent
+
+      - name: Build production frontend
+        run: npm run build
 
   integration-and-quality:
     name: Integration and quality tests
@@ -73,6 +118,9 @@ jobs:
       - name: Run bounded quality repetition suite
         run: make quality-load
 
+      - name: Rehearse isolated PostgreSQL backup and restore
+        run: make restore-drill-local
+
       - name: Show service logs after a failure
         if: failure()
         run: docker compose logs --no-color
@@ -80,6 +128,32 @@ jobs:
       - name: Remove CI services and volumes
         if: always()
         run: make reset CONFIRM=reset
+
+  browser-e2e:
+    name: Consumer browser E2E
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Check out source
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+
+      - name: Install uv and Python
+        uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b # v8.1.0
+        with:
+          version: "0.11.29"
+          python-version: "3.12"
+          enable-cache: true
+
+      - name: Install locked development dependencies
+        run: uv sync --locked --extra dev
+
+      - name: Install Chromium and Linux browser dependencies
+        run: uv run playwright install --with-deps chromium
+
+      - name: Run consumer browser gate
+        run: make test-browser
 
   container:
     name: Container build
@@ -96,10 +170,51 @@ jobs:
           docker compose config --quiet
           docker compose --profile app config --quiet
 
-      - name: Build production image
-        run: docker build --tag events-concierge:ci .
+      - name: Build production images
+        run: >-
+          docker build
+          --build-arg VCS_REF="${GITHUB_SHA}"
+          --build-arg SOURCE_URL="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}"
+          --tag events-concierge:ci .
+          && docker build --tag events-concierge-web:ci web
 
       - name: Smoke-test installed package and non-root user
         run: |
           docker run --rm --entrypoint python events-concierge:ci -c "import events_concierge"
           test "$(docker run --rm --entrypoint id events-concierge:ci -u)" != "0"
+          test "$(docker run --rm --entrypoint id events-concierge-web:ci -u)" != "0"
+          test "$(docker inspect --format '{{ index .Config.Labels \"org.opencontainers.image.revision\" }}' events-concierge:ci)" = "${GITHUB_SHA}"
+          test "$(docker inspect --format '{{ json .Config.Healthcheck }}' events-concierge:ci)" = "null"
+
+      - name: Start the exact candidate image
+        env:
+          EC_IMAGE: events-concierge:ci
+          EC_WEB_IMAGE: events-concierge-web:ci
+          EC_RELEASE_REVISION: ${{ github.sha }}
+        run: docker compose --profile app up -d --wait
+
+      - name: Run non-mutating candidate-stack canary
+        run: |
+          docker compose --profile app exec -T api python \
+            -m events_concierge.operations canary \
+            --base-url http://127.0.0.1:8000 \
+            --expected-release-revision "${GITHUB_SHA}" \
+            --allow-http \
+            --allow-local-mode
+
+      - name: Verify every candidate process remains running
+        run: |
+          for service in \
+            api workflow-worker request-starter account-erasure notifier \
+            change-delivery handoff-expiry lifecycle-invariants
+          do
+            test -n "$(docker compose --profile app ps --status running --quiet "${service}")"
+          done
+
+      - name: Show candidate-stack logs after a failure
+        if: failure()
+        run: docker compose --profile app logs --no-color
+
+      - name: Remove candidate-stack services and volumes
+        if: always()
+        run: docker compose --profile app down --volumes --remove-orphans

@@ -8,7 +8,9 @@ expires a live child.
 
 from __future__ import annotations
 
+import argparse
 import asyncio
+from collections.abc import Sequence
 
 from temporalio.client import Client
 
@@ -23,8 +25,8 @@ from ..workflows.temporal_client import connect_temporal
 _log = get_logger(__name__)
 
 
-async def run_handoff_expiry() -> None:
-    """Continuously repair only task TTLs whose owning workflow is definitively closed."""
+async def run_handoff_expiry(*, once: bool = False) -> int:
+    """Repair task TTLs continuously, or execute one deployment-scheduled pass."""
     settings = get_settings()
     configure_logging(settings.log_level, local=settings.env == "local")
     container = build_container(settings)
@@ -38,6 +40,8 @@ async def run_handoff_expiry() -> None:
         if client is None:
             client = await _try_connect_temporal(settings, container.object_store)
             if client is None:
+                if once:
+                    return 1
                 await asyncio.sleep(settings.handoff_expiry_poll_seconds)
                 continue
         worker = HandoffExpiryWorker(
@@ -50,6 +54,8 @@ async def run_handoff_expiry() -> None:
         except Exception as error:
             _log.warning("handoff expiry repair failed", error=str(error))
             client = None
+            if once:
+                return 1
             await asyncio.sleep(settings.handoff_expiry_poll_seconds)
             continue
         _log.info(
@@ -61,6 +67,8 @@ async def run_handoff_expiry() -> None:
             retried=stats.retried,
             lost_leases=stats.lost_leases,
         )
+        if once:
+            return 0
         if stats.claimed == 0:
             await asyncio.sleep(settings.handoff_expiry_poll_seconds)
 
@@ -74,8 +82,19 @@ async def _try_connect_temporal(settings: Settings, object_store: ObjectStorePor
         return None
 
 
-def main() -> None:
-    asyncio.run(run_handoff_expiry())
+def _parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument(
+        "--once",
+        action="store_true",
+        help="run one bounded repair pass for a deployment CronJob, then exit",
+    )
+    return parser.parse_args(argv)
+
+
+def main(argv: Sequence[str] | None = None) -> None:
+    args = _parse_args(argv)
+    raise SystemExit(asyncio.run(run_handoff_expiry(once=args.once)))
 
 
 if __name__ == "__main__":

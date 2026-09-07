@@ -48,6 +48,9 @@ class RecordingStarter:
     async def start(self, tenant_id: UUID, request_id: UUID) -> None:
         self.effects.add((tenant_id, request_id))
 
+    async def cancel(self, tenant_id: UUID, request_id: UUID) -> None:
+        self.effects.discard((tenant_id, request_id))
+
 
 class RecordingLifecycleSignaler:
     """Port-faithful Temporal signal seam for the un-RSVP API contract."""
@@ -304,10 +307,11 @@ async def test_api_request_replay_queues_and_starts_one_parent_workflow(db: None
     assert first.status_code == 200
     assert replay.status_code == 200
     assert first.json()["request_id"] == replay.json()["request_id"]
-    assert first.json()["workflow_id"] == replay.json()["workflow_id"]
+    assert "workflow_id" not in first.json()
+    assert "workflow_id" not in replay.json()
     assert first.json()["workflow_started"] is True
     assert replay.json()["workflow_started"] is True
-    assert len(starter.effects) == 1
+    assert starter.effects == {(UUID(tenant_id), UUID(first.json()["request_id"]))}
 
 
 async def test_api_temporal_timeout_returns_queued_without_false_acknowledgement(db: None) -> None:
@@ -416,7 +420,7 @@ async def test_api_feedback_is_authenticated_replay_safe_and_server_controlled(d
             body = {
                 "signal_id": str(signal_id),
                 "canonical_event_id": str(canonical_event_id),
-                "kind": "click",
+                "kind": "like",
             }
 
             first = await client.post("/v1/feed-feedback", json=body, headers=_auth_headers(owner))
@@ -522,8 +526,9 @@ async def test_api_unrsvp_signals_the_actual_tenant_scoped_lifecycle(db: None) -
 
     assert cross_tenant.status_code == 404
     assert response.status_code == 202
-    assert response.json()["workflow_id"] == workflow_id
+    assert response.json()["status"] == "accepted"
     assert response.json()["request_id"] == str(request_id)
+    assert "workflow_id" not in response.json()
     assert signaler.commands == [(workflow_id, str(request_id))]
 
 

@@ -26,10 +26,14 @@ from ...domain.catalog_sources import CatalogSource
 from ...domain.enums import CatalogSourceMode, PriceStatus, Source
 from ...domain.events import CandidateEvent, GeoPoint
 from ...infra.logging import get_logger
+from ...ports.sources import SourceTransientError
 
 _log = get_logger("bibliocommons.source")
 
 _FETCH_TIMEOUT_S = 15.0
+_TRANSPORT_RETRY_ATTEMPTS = 3
+_TRANSPORT_RETRY_BASE_DELAY_S = 0.5
+_TRANSPORT_EXHAUSTED_RETRY_DELAY_S = 15.0
 _ITEMS_PER_PAGE = 25
 _MAX_RESPONSE_BYTES = 1_000_000
 _BC_NAMESPACE = "http://bibliocommons.com/rss/1.0/modules/event/"
@@ -219,7 +223,9 @@ _BIBLIOCOMMONS_PUBLISHERS = {
         fixed_query=tuple(
             ("locations", location_id) for location_id in _SCCLD_ALL_PHYSICAL_LOCATION_IDS
         ),
-        page_limit=50,
+        # Raised from 50 by migration 0167: the feed reached 1,207 of that cap's 1,250 items and
+        # then published nothing at all for six days. The cap is a cliff, not a budget.
+        page_limit=120,
         require_physical_location=True,
         window_days=90,
         min_interval_ms=5_000,
@@ -308,7 +314,9 @@ _BIBLIOCOMMONS_PUBLISHERS = {
         handoff_host="sjpl.bibliocommons.com",
         location_ids=frozenset(_SAN_JOSE_LOCATION_IDS),
         fixed_query=tuple(("locations", location_id) for location_id in _SAN_JOSE_LOCATION_IDS),
-        page_limit=160,
+        # Raised from 160 by migration 0167: the feed reached 3,820 of that cap's 4,000 items and
+        # then published nothing at all for thirteen days.
+        page_limit=320,
         require_physical_location=True,
         window_days=90,
     ),
@@ -437,8 +445,18 @@ class BiblioCommonsCatalogFetcher:
         if not _is_approved_feed_url(source, publisher, window, url, page):
             raise BiblioCommonsFetchError(f"BiblioCommons page {page} left the approved endpoint")
         try:
-            await self._wait_for_host_slot(url, source.min_interval_ms)
-            response = await client.get(url, follow_redirects=False)
+            response = await self._get_with_transport_retry(
+                client,
+                source,
+                url,
+                page,
+            )
+        except httpx.TransportError as exc:
+            raise SourceTransientError(
+                f"BiblioCommons page {page} transient transport failure "
+                f"for {source.source_key}: {exc}",
+                retry_after_seconds=_TRANSPORT_EXHAUSTED_RETRY_DELAY_S,
+            ) from exc
         except httpx.HTTPError as exc:
             raise BiblioCommonsFetchError(
                 f"BiblioCommons page {page} failed for {source.source_key}: {exc}"
@@ -458,6 +476,33 @@ class BiblioCommonsCatalogFetcher:
                 f"BiblioCommons page {page} exceeded its reviewed response-size limit"
             )
         return response
+
+    async def _get_with_transport_retry(
+        self,
+        client: httpx.AsyncClient,
+        source: CatalogSource,
+        url: str,
+        page: int,
+    ) -> httpx.Response:
+        """Retry bounded idempotent GET transport failures while retaining host pacing."""
+        for attempt in range(1, _TRANSPORT_RETRY_ATTEMPTS + 1):
+            try:
+                await self._wait_for_host_slot(url, source.min_interval_ms)
+                return await client.get(url, follow_redirects=False)
+            except httpx.TransportError as exc:
+                if attempt >= _TRANSPORT_RETRY_ATTEMPTS:
+                    raise
+                retry_delay = _TRANSPORT_RETRY_BASE_DELAY_S * (2 ** (attempt - 1))
+                _log.warning(
+                    "bibliocommons_transport_retry",
+                    source_key=source.source_key,
+                    page=page,
+                    attempt=attempt,
+                    retry_delay_seconds=retry_delay,
+                    error=str(exc),
+                )
+                await self._sleep(retry_delay)
+        raise AssertionError("bounded BiblioCommons transport retry loop exhausted")
 
     async def _wait_for_host_slot(self, url: str, min_interval_ms: int) -> None:
         """Honor the stricter adjacent reviewed per-host cadence before every feed GET (FR-10.4)."""

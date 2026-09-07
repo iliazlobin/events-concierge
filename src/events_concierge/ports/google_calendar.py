@@ -22,6 +22,8 @@ GOOGLE_CALENDAR_SCOPES: Final[tuple[str, str]] = (
     "https://www.googleapis.com/auth/calendar.freebusy",
 )
 GOOGLE_CALENDAR_CANONICAL_EVENT_ID_KEY: Final = "events_concierge.canonical_event_id"
+GOOGLE_CALENDAR_OWNER_KEY: Final = "events_concierge.owner"
+GOOGLE_CALENDAR_OWNER_VALUE: Final = "v1"
 _GOOGLE_CALENDAR_CHANNEL_ID_MAX_LENGTH: Final = 64
 _SHA256_HEX_LENGTH: Final = 64
 _GOOGLE_CALENDAR_WEBHOOK_STATES: Final[frozenset[str]] = frozenset({"sync", "exists", "not_exists"})

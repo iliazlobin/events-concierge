@@ -55,7 +55,7 @@ def _seed(location_ids: tuple[str, ...]) -> str:
 _SEED_URL = _seed(_LOCATION_IDS)
 
 
-def _source(*, seed_url: str = _SEED_URL, page_limit: int = 160) -> CatalogSource:
+def _source(*, seed_url: str = _SEED_URL, page_limit: int = 320) -> CatalogSource:
     return CatalogSource(
         source_key="san-jose-public-library-events",
         display_name="San José Public Library Events",
@@ -230,7 +230,7 @@ async def test_san_jose_rejects_query_or_page_cap_tampering_before_a_request() -
         with pytest.raises(ValueError, match="reviewed publisher RSS"):
             await fetcher.fetch(_source(seed_url=seed_url))
     with pytest.raises(ValueError, match="reviewed publisher RSS"):
-        await fetcher.fetch(replace(_source(), page_limit=159))
+        await fetcher.fetch(replace(_source(), page_limit=319))
     assert requested == []
 
 
@@ -265,5 +265,7 @@ async def test_san_jose_fails_closed_when_all_one_hundred_sixty_reviewed_pages_a
 
     with pytest.raises(BiblioCommonsFetchError, match="exceeds"):
         await fetcher.fetch(_source())
-    assert len(requested) == 160
-    assert requested[-1].params.get("page") == "160"
+    # Raised from 160 by migration 0167: the feed reached 3,820 of that cap's 4,000 items and
+    # then published nothing at all for thirteen days.
+    assert len(requested) == 320
+    assert requested[-1].params.get("page") == "320"

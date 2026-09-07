@@ -26,14 +26,21 @@ FROM ${PYTHON_IMAGE} AS runtime
 
 ARG APP_UID=10001
 ARG APP_GID=10001
+ARG BUILD_VERSION=0.1.0
+ARG VCS_REF=unknown
+ARG SOURCE_URL=local
 
 ENV PATH="/app/.venv/bin:${PATH}" \
+    EC_RELEASE_REVISION="${VCS_REF}" \
     PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     PYTHONFAULTHANDLER=1
 
 LABEL org.opencontainers.image.title="Events Concierge" \
-      org.opencontainers.image.description="Events Concierge API and durable workers"
+      org.opencontainers.image.description="Events Concierge API and durable workers" \
+      org.opencontainers.image.version="${BUILD_VERSION}" \
+      org.opencontainers.image.revision="${VCS_REF}" \
+      org.opencontainers.image.source="${SOURCE_URL}"
 
 RUN groupadd --gid "${APP_GID}" events-concierge \
     && useradd \
@@ -43,7 +50,7 @@ RUN groupadd --gid "${APP_GID}" events-concierge \
         --home-dir /home/events-concierge \
         --shell /usr/sbin/nologin \
         events-concierge \
-    && mkdir -p /app /var/lib/events-concierge/claim-check \
+    && mkdir -p /app /var/lib/events-concierge/claim-check /var/lib/events-concierge/media \
     && chown -R events-concierge:events-concierge \
         /app /var/lib/events-concierge /home/events-concierge
 
@@ -55,8 +62,5 @@ COPY --chown=events-concierge:events-concierge migrations/ ./migrations/
 USER events-concierge
 EXPOSE 8000
 STOPSIGNAL SIGTERM
-
-HEALTHCHECK --interval=30s --timeout=3s --start-period=10s --retries=3 \
-    CMD ["python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/readyz', timeout=2).read()"]
 
 CMD ["uvicorn", "events_concierge.api.app:app", "--host", "0.0.0.0", "--port", "8000", "--no-server-header", "--no-access-log"]

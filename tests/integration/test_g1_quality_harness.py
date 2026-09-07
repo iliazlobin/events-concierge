@@ -77,8 +77,10 @@ from events_concierge.workflows.activities import (
     enqueue_handoff_reminder,
     expire_handoff,
     finalize_no_candidate,
+    link_request_outcome,
     policy_gate,
     reconcile_organizer_change,
+    register_erasure_workflow_targets,
     register_or_rsvp,
     resolve_membership,
     route_to_handoff,
@@ -324,7 +326,9 @@ def _activities() -> list[object]:
     """Match the production worker's complete activity registration set."""
     return [
         discover_and_rank,
+        register_erasure_workflow_targets,
         finalize_no_candidate,
+        link_request_outcome,
         resolve_membership,
         policy_gate,
         close_failed_candidate,

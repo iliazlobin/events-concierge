@@ -5,7 +5,7 @@ slice tests run with no external cloud dependency. Adapters import domain + port
 
 from __future__ import annotations
 
-from .auth import HeaderAuthContext
+from .auth import HeaderAuthContext, LocalHeaderCsrfProtection
 from .calendar import MockCalendar
 from .calendar_sync import MockGoogleCalendarSyncSink, MockGoogleCalendarSyncState
 from .consent import MockRegistrationConsentEvidence
@@ -21,6 +21,7 @@ __all__ = [
     "FixtureRelayInboxIngress",
     "HeaderAuthContext",
     "InMemoryRankingFeedback",
+    "LocalHeaderCsrfProtection",
     "MockCalendar",
     "MockEmailIngestion",
     "MockFilesystemObjectStore",

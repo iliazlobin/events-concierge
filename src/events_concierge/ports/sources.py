@@ -79,6 +79,16 @@ class SourceRateLimitedError(Exception):
         super().__init__(detail)
 
 
+class SourceTransientError(Exception):
+    """A retryable source transport failure that must not become terminal operator work."""
+
+    def __init__(self, detail: str, *, retry_after_seconds: float) -> None:
+        if not math.isfinite(retry_after_seconds) or retry_after_seconds <= 0.0:
+            raise ValueError("source transient retry_after_seconds must be finite and positive")
+        self.retry_after_seconds = retry_after_seconds
+        super().__init__(detail)
+
+
 class SourceAccessDeniedError(Exception):
     """A normalized ban/403 signal that must trip the durable source circuit breaker.
 

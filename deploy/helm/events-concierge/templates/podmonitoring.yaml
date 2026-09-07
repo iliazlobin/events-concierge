@@ -1,0 +1,16 @@
+{{- if and .Values.podMonitoring.enabled (or (eq .Values.global.releasePhase "all") (eq .Values.global.releasePhase "application")) }}
+apiVersion: monitoring.googleapis.com/v1
+kind: PodMonitoring
+metadata:
+  name: {{ include "events-concierge.fullname" . }}-api
+  labels:
+    {{- include "events-concierge.labels" (dict "root" . "component" "api") | nindent 4 }}
+spec:
+  selector:
+    matchLabels:
+      {{- include "events-concierge.selectorLabels" (dict "root" . "component" "api") | nindent 6 }}
+  endpoints:
+    - port: http
+      path: /metrics
+      interval: {{ .Values.podMonitoring.interval }}
+{{- end }}

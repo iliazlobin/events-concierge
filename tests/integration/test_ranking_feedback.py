@@ -64,7 +64,7 @@ async def test_ranking_feedback_obeys_forced_rls_for_owner_other_unset_and_empty
     other = await _add_tenant("ranking-feedback-other")
     event = await _seed_event("ranking-feedback-rls")
     feedback = PostgresRankingFeedbackRepository()
-    owner_signal = RankingFeedbackSignal(uuid4(), event.canonical_event_id, FeedbackSignalKind.CLICK)
+    owner_signal = RankingFeedbackSignal(uuid4(), event.canonical_event_id, FeedbackSignalKind.LIKE)
     other_signal = RankingFeedbackSignal(uuid4(), event.canonical_event_id, FeedbackSignalKind.DISMISS)
 
     assert (
@@ -89,7 +89,7 @@ async def test_ranking_feedback_obeys_forced_rls_for_owner_other_unset_and_empty
         empty_rows = (await session.execute(_VISIBLE_RECEIPTS)).mappings().all()
 
     assert _rows(owner_rows) == [
-        (owner, owner_signal.signal_id, event.canonical_event_id, FeedbackSignalKind.CLICK.value)
+        (owner, owner_signal.signal_id, event.canonical_event_id, FeedbackSignalKind.LIKE.value)
     ]
     assert _rows(other_rows) == [
         (other, other_signal.signal_id, event.canonical_event_id, FeedbackSignalKind.DISMISS.value)

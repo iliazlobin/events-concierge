@@ -13,6 +13,7 @@ from events_concierge.adapters.bibliocommons.source import (
 )
 from events_concierge.domain.catalog_sources import CatalogSource
 from events_concierge.domain.enums import CatalogSourceMode, PriceStatus
+from events_concierge.ports.sources import SourceTransientError
 
 _BC_NAMESPACE = "http://bibliocommons.com/rss/1.0/modules/event/"
 
@@ -156,6 +157,73 @@ async def test_bibliocommons_pages_at_a_human_cadence_until_the_first_short_page
     assert [request.params.get("page") for request in requested] == [None, "2"]
     assert all(request.params["locations"] == "MI" for request in requested)
     assert slept == [1.5]
+
+
+async def test_bibliocommons_retries_transient_transport_failures_at_a_human_cadence() -> None:
+    """A brief DNS/connectivity failure does not make an otherwise healthy source terminal."""
+    current = 100.0
+    attempts = 0
+    slept: list[float] = []
+
+    def clock() -> float:
+        return current
+
+    async def sleep(delay: float) -> None:
+        nonlocal current
+        slept.append(delay)
+        current += delay
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal attempts
+        attempts += 1
+        if attempts < 3:
+            raise httpx.ConnectError("temporary DNS failure", request=request)
+        return httpx.Response(200, text=_feed(_item("recovered")), request=request)
+
+    fetcher = BiblioCommonsCatalogFetcher(
+        user_agent="test",
+        now=lambda: datetime(2026, 7, 17, 12, 0, tzinfo=UTC),
+        clock=clock,
+        sleep=sleep,
+        transport=httpx.MockTransport(handler),
+    )
+
+    candidates = await fetcher.fetch(_source(min_interval_ms=1))
+
+    assert [candidate.title for candidate in candidates] == ["Cupcake Wars for Grades K-5"]
+    assert attempts == 3
+    assert slept == [0.5, 1.0]
+
+
+async def test_bibliocommons_defers_after_bounded_transport_retries_are_exhausted() -> None:
+    """A longer resolver outage remains durable retry work rather than a terminal source defect."""
+    current = 100.0
+    attempts = 0
+
+    def clock() -> float:
+        return current
+
+    async def sleep(delay: float) -> None:
+        nonlocal current
+        current += delay
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal attempts
+        attempts += 1
+        raise httpx.ConnectError("temporary DNS failure", request=request)
+
+    fetcher = BiblioCommonsCatalogFetcher(
+        user_agent="test",
+        clock=clock,
+        sleep=sleep,
+        transport=httpx.MockTransport(handler),
+    )
+
+    with pytest.raises(SourceTransientError, match="transient transport failure") as raised:
+        await fetcher.fetch(_source(min_interval_ms=1))
+
+    assert attempts == 3
+    assert raised.value.retry_after_seconds == 15.0
 
 
 async def test_bibliocommons_rejects_an_unapproved_redirect_before_requesting_it() -> None:

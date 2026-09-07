@@ -65,7 +65,9 @@ def test_temporal_worker_receives_explicit_execution_limits(
     assert captured["max_concurrent_activities"] == 4
     assert captured["workflow_task_executor"] is executor
     assert len(captured["workflows"]) == 4
-    assert len(captured["activities"]) == 18
+    activities = cast("list[object]", captured["activities"])
+    assert len(activities) == 20
+    assert worker_module.register_erasure_workflow_targets in activities
 
 
 async def test_worker_runtime_shuts_down_its_executor_after_failure(

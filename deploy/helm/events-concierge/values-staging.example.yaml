@@ -1,0 +1,58 @@
+global:
+  releasePhase: application
+  # Deliberately false: enable only after the deployed provider passes full validate-config.
+  runtimeProviderReady: false
+  environment: staging
+  releaseRevision: 0123456789abcdef0123456789abcdef01234567
+  appImage:
+    repository: us-west1-docker.pkg.dev/events-staging/ec-stg-containers/events-concierge
+    digest: sha256:ee415bf30ee0fb862d16709e5e0b4fd01bc58a8c22a10fe42940b94a28f26318
+  frontendImage:
+    repository: us-west1-docker.pkg.dev/events-staging/ec-stg-containers/events-concierge-web
+    digest: sha256:ef5ea473e87296778f17bb2d5fccefe524138d622e3a58ea20ef53397db6ad99
+
+applicationConfig:
+  EC_PUBLIC_BASE_URL: https://staging.concierge.example
+  EC_GCP_PROJECT: events-staging
+  EC_GCS_CLAIM_CHECK_BUCKET: events-staging-claim-check
+  EC_TEMPORAL_TARGET: events-staging.example.tmprl.cloud:7233
+  EC_TEMPORAL_TLS_DOMAIN: events-staging.example.tmprl.cloud
+
+cloudSqlProxy:
+  instanceConnectionName: events-staging:us-west1:ec-stg-postgres
+  image:
+    digest: sha256:3d7574f94d00eea61480237bb87faa5a804ec450133d8d4a1af6d10261795e89
+
+secretManager:
+  projectId: events-staging
+
+serviceAccounts:
+  frontend:
+    gcpServiceAccount: ec-stg-frontend@events-staging.iam.gserviceaccount.com
+  api:
+    gcpServiceAccount: ec-stg-api@events-staging.iam.gserviceaccount.com
+  temporal-transactional:
+    gcpServiceAccount: ec-stg-transactional@events-staging.iam.gserviceaccount.com
+  temporal-catalog:
+    gcpServiceAccount: ec-stg-catalog-worker@events-staging.iam.gserviceaccount.com
+  request-starter:
+    gcpServiceAccount: ec-stg-request-start@events-staging.iam.gserviceaccount.com
+  notifier:
+    gcpServiceAccount: ec-stg-notifier@events-staging.iam.gserviceaccount.com
+  account-erasure:
+    gcpServiceAccount: ec-stg-erasure@events-staging.iam.gserviceaccount.com
+  change-delivery:
+    gcpServiceAccount: ec-stg-change@events-staging.iam.gserviceaccount.com
+  handoff-expiry:
+    gcpServiceAccount: ec-stg-handoff@events-staging.iam.gserviceaccount.com
+  lifecycle-invariants:
+    gcpServiceAccount: ec-stg-invariants@events-staging.iam.gserviceaccount.com
+  catalog-jobs:
+    gcpServiceAccount: ec-stg-catalog@events-staging.iam.gserviceaccount.com
+  migration:
+    gcpServiceAccount: ec-stg-migration@events-staging.iam.gserviceaccount.com
+
+gateway:
+  enabled: false
+  hostname: staging.concierge.example
+  tlsSecretName: ""

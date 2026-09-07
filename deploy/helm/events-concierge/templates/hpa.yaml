@@ -1,0 +1,33 @@
+{{- $root := . -}}
+{{- if or (eq .Values.global.releasePhase "all") (eq .Values.global.releasePhase "application") }}
+{{- range $name, $hpa := .Values.autoscaling }}
+{{- if $hpa.enabled }}
+---
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: {{ include "events-concierge.fullname" $root }}-{{ $name }}
+  labels:
+    {{- include "events-concierge.labels" (dict "root" $root "component" $name) | nindent 4 }}
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: {{ include "events-concierge.fullname" $root }}-{{ $name }}
+  minReplicas: {{ $hpa.minReplicas }}
+  maxReplicas: {{ $hpa.maxReplicas }}
+  behavior:
+    scaleDown:
+      stabilizationWindowSeconds: 300
+    scaleUp:
+      stabilizationWindowSeconds: 60
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: {{ $hpa.targetCPUUtilizationPercentage }}
+{{- end }}
+{{- end }}
+{{- end }}

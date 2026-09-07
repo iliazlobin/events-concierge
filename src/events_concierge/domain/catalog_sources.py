@@ -22,7 +22,7 @@ from .enums import (
     PriceStatus,
     Source,
 )
-from .events import CandidateEvent
+from .events import CandidateEvent, event_entity_profiles_payload
 
 _SOURCE_KEY = re.compile(r"[a-z0-9][a-z0-9-]{1,79}")
 _MAX_PAGED_CATALOG_RECORDS = 100
@@ -49,6 +49,12 @@ def _https_origin(url: str) -> str | None:
     suffix = f":{port}" if port is not None else ""
     return f"https://{hostname.lower()}{suffix}"
 
+# The slowest cadence a reviewed source may be scheduled on. It bounds how long a shared Pacer
+# bucket can sit idle between two ordinary uses, which is what
+# ``Settings.pacer_state_retention_seconds`` has to outlast: a bucket that expires between one
+# refresh and the next is indistinguishable from lost state and is deferred before any provider
+# call (ADR-005).
+MAX_SOURCE_REFRESH_INTERVAL_MINUTES = 1_440
 
 @dataclass(frozen=True, slots=True)
 class CatalogSource:
@@ -78,6 +84,10 @@ class CatalogSource:
             raise ValueError("catalog source display_name, publisher, and region are required")
         if self.refresh_interval_minutes <= 0 or self.min_interval_ms <= 0 or self.page_limit <= 0:
             raise ValueError("catalog source refresh and pacing intervals must be positive")
+        if self.refresh_interval_minutes > MAX_SOURCE_REFRESH_INTERVAL_MINUTES:
+            raise ValueError(
+                "catalog source refresh_interval_minutes exceeds the supported cadence ceiling"
+            )
         if self.source_revision <= 0:
             raise ValueError("catalog source_revision must be positive")
         seed_origin = _https_origin(self.seed_url)
@@ -155,6 +165,36 @@ class CatalogRefreshRun:
     canonical_count: int | None
     error: str | None
     attempt_count: int
+
+
+@dataclass(frozen=True, slots=True)
+class CatalogRunExecutionEvidence:
+    """One bounded worker-entry measurement; never a claim of host-wide attribution.
+
+    Process CPU/RSS fields are populated only by the sequential direct worker.  Shared Temporal
+    activity workers record wall time while leaving process measurements null because concurrent
+    activities make process deltas non-attributable to one run.
+    """
+
+    wall_time_ms: int
+    process_cpu_time_ms: int | None
+    rss_before_bytes: int | None
+    rss_after_bytes: int | None
+    boundary_observed_peak_rss_bytes: int | None
+    process_lifetime_peak_rss_bytes: int | None
+    measurement_source: str
+    measurement_scope: str
+    measurement_quality: str
+    outcome_code: str
+
+
+@dataclass(frozen=True, slots=True)
+class CatalogRunStageEvidence:
+    """One monotonic timing for a closed, payload-free refresh stage."""
+
+    stage: str
+    duration_ms: int
+    outcome_code: str
 
 
 @dataclass(frozen=True, slots=True)
@@ -336,6 +376,9 @@ class CatalogSourceObservation:
     registration_url: str
     price_status: PriceStatus
     content_hash: str
+    price_min_cents: int | None = None
+    price_max_cents: int | None = None
+    price_currency: str | None = None
     first_seen_at: datetime | None = None
     last_seen_at: datetime | None = None
     last_run_key: str | None = None
@@ -353,6 +396,9 @@ def observation_for(
         registration_url=candidate.registration_url,
         price_status=candidate.price_status,
         content_hash=catalog_candidate_content_hash(candidate),
+        price_min_cents=candidate.price_min_cents,
+        price_max_cents=candidate.price_max_cents,
+        price_currency=candidate.price_currency,
     )
 
 
@@ -361,21 +407,50 @@ def catalog_candidate_content_hash(candidate: CandidateEvent) -> str:
 
     The candidate's adapter-only ``raw`` mapping is intentionally absent.  That lets a paged run
     detect a changed source identity across retries while retaining the same provenance hash used
-    after its one-transaction catalog promotion (FR-3.8/FR-10.3, NFR-8).
+    after its one-transaction catalog promotion. Timestamps are reduced to their UTC instant
+    because PostgreSQL ``timestamptz`` intentionally does not retain an input offset
+    (FR-3.8/FR-10.3, NFR-8).
     """
-    payload = {
+    payload: dict[str, object] = {
         "source": candidate.source.value,
         "source_event_id": candidate.source_event_id,
         "title": candidate.title,
-        "start_at": candidate.start_at.isoformat(),
-        "end_at": candidate.end_at.isoformat() if candidate.end_at is not None else None,
+        "start_at": _canonical_catalog_timestamp(candidate.start_at),
+        "end_at": (
+            _canonical_catalog_timestamp(candidate.end_at) if candidate.end_at is not None else None
+        ),
         "registration_url": candidate.registration_url,
         "venue_name": candidate.venue_name,
         "city": candidate.city,
         "description": candidate.description,
         "price_status": candidate.price_status.value,
+        "organizer_name": candidate.organizer_name,
+        "host_names": candidate.host_names,
+        "speaker_names": candidate.speaker_names,
+        "partner_names": candidate.partner_names,
+        "attendance_count": candidate.attendance_count,
+        "registration_status": candidate.registration_status.value,
     }
+    if candidate.price_min_cents is not None:
+        payload.update(
+            {
+                "price_min_cents": candidate.price_min_cents,
+                "price_max_cents": candidate.price_max_cents,
+                "price_currency": candidate.price_currency,
+            }
+        )
+    # Preserve rolling compatibility for rows staged before 0128: their new JSONB column defaults
+    # to an empty array, so an empty profile set must retain the pre-0128 content hash.
+    if candidate.entity_profiles:
+        payload["entity_profiles"] = event_entity_profiles_payload(candidate.entity_profiles)
     content_hash = sha256(
         json.dumps(payload, sort_keys=True, separators=(",", ":")).encode()
     ).hexdigest()
     return content_hash
+
+
+def _canonical_catalog_timestamp(value: datetime) -> str:
+    """Serialize one database-bound event instant independently of its source UTC offset."""
+    if value.tzinfo is None or value.utcoffset() is None:
+        raise ValueError("catalog candidate content hash requires timezone-aware timestamps")
+    return value.astimezone(UTC).isoformat()

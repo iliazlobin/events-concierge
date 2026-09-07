@@ -1,0 +1,9 @@
+apiVersion: v2
+name: events-concierge
+description: Production-shaped GKE workloads for Events Concierge
+type: application
+version: 0.1.0
+appVersion: "0.1.0"
+kubeVersion: ">=1.29.0-0"
+annotations:
+  artifacthub.io/license: MIT

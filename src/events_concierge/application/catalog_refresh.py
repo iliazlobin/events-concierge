@@ -18,15 +18,29 @@ from ..domain.enums import CatalogRefreshClaimOutcome, CatalogSourceMode, Modali
 from ..domain.policy import PolicyDecision, PolicyDecisionCode
 from ..ports.catalog_sources import (
     CatalogRefreshCommitter,
+    CatalogRunEvidenceRecorder,
     CatalogSourceFetcher,
     CatalogSourceRepository,
 )
 from ..ports.discovery_policy import DiscoveryPolicyGate
 from ..ports.policy import Pacer, PacerOperation, PacerRequest, SourceQuarantinePort
-from ..ports.sources import SourceAccessDeniedError, SourceRateLimitedError
+from ..ports.sources import (
+    SourceAccessDeniedError,
+    SourceRateLimitedError,
+    SourceTransientError,
+)
+from .catalog_run_evidence import CatalogRunEvidenceSession
 
 _MAX_CATALOG_REFRESH_LEASE_SECONDS = 3_600
 _LEASE_COMPLETION_BUFFER_SECONDS = 60
+_BIBLIOCOMMONS_MAX_ITEMS_PER_PAGE = 25
+_BIBLIOCOMMONS_PERSISTENCE_BUDGET_MS_PER_EVENT = 250
+#: Both Luma modes issue one further paced detail GET per retained event, so their worst case is
+#: pages *plus* the events those pages can carry -- not pages alone.
+_LUMA_DETAIL_MODES = frozenset(
+    {CatalogSourceMode.LUMA_DISCOVER_JSON, CatalogSourceMode.LUMA_CALENDAR_JSON}
+)
+_LUMA_MAX_ITEMS_PER_PAGE = 25
 
 
 class CatalogRefreshOutcome(StrEnum):
@@ -72,6 +86,7 @@ class CatalogRefreshService:
         pacer: Pacer,
         policy_gate: DiscoveryPolicyGate,
         source_quarantine: SourceQuarantinePort | None = None,
+        run_evidence: CatalogRunEvidenceRecorder | None = None,
         *,
         lease_seconds: int = 300,
         now: Callable[[], datetime] | None = None,
@@ -84,6 +99,7 @@ class CatalogRefreshService:
         self._pacer = pacer
         self._policy_gate = policy_gate
         self._source_quarantine = source_quarantine
+        self._run_evidence = run_evidence
         self._lease_seconds = lease_seconds
         self._now = now or (lambda: datetime.now(UTC))
 
@@ -103,6 +119,38 @@ class CatalogRefreshService:
         Pacer admission. Paged and redirecting sources stay on the legacy one-shot path until their
         source-specific durable staging/cursor profile is reviewed (FR-10.3/10.4, NFR-8, ADR-003/005).
         """
+        evidence = CatalogRunEvidenceSession(
+            self._run_evidence,
+            source_key,
+            run_key,
+            # P15a executes in a shared Temporal activity worker. Direct legacy refreshes are
+            # processed sequentially by the command worker and may expose explicitly qualified
+            # process boundary samples.
+            include_process_metrics=not require_single_http_get,
+        )
+        try:
+            result = await self._refresh_observed(
+                source_key,
+                run_key,
+                require_single_http_get=require_single_http_get,
+                evidence=evidence,
+            )
+        except Exception:
+            await evidence.finish("failed")
+            raise
+        await evidence.finish(result.outcome.value)
+        return result
+
+    async def _refresh_observed(
+        self,
+        source_key: str,
+        run_key: str,
+        *,
+        require_single_http_get: bool,
+        evidence: CatalogRunEvidenceSession,
+    ) -> CatalogRefreshResult:
+        """Execute the guarded refresh while recording only typed stage timings."""
+        admission = evidence.start_stage("admission")
         now = self._now()
         prepared = await self._preflight(
             source_key,
@@ -111,11 +159,13 @@ class CatalogRefreshService:
             require_single_http_get=require_single_http_get,
         )
         if isinstance(prepared, CatalogRefreshResult):
+            await admission.finish(prepared.outcome.value)
             return prepared
         source, fetcher = prepared
 
         lease_seconds = self._lease_seconds_for(source)
         if lease_seconds is None:
+            await admission.finish(CatalogRefreshOutcome.SKIPPED.value)
             return CatalogRefreshResult(
                 source_key,
                 run_key,
@@ -129,8 +179,10 @@ class CatalogRefreshService:
                 if claim.outcome is CatalogRefreshClaimOutcome.SUCCEEDED
                 else CatalogRefreshOutcome.BUSY
             )
+            await admission.finish(outcome.value)
             return CatalogRefreshResult(source_key, run_key, outcome)
         assert claim.lease_token is not None
+        await admission.finish(CatalogRefreshOutcome.SUCCEEDED.value)
         return await self._refresh_claimed(
             source_key,
             run_key,
@@ -138,6 +190,7 @@ class CatalogRefreshService:
             fetcher,
             claim.lease_token,
             lease_seconds,
+            evidence,
             require_single_http_get=require_single_http_get,
         )
 
@@ -149,6 +202,7 @@ class CatalogRefreshService:
         fetcher: CatalogSourceFetcher,
         lease_token: UUID,
         claimed_lease_seconds: int,
+        evidence: CatalogRunEvidenceSession,
         *,
         require_single_http_get: bool,
     ) -> CatalogRefreshResult:
@@ -162,19 +216,11 @@ class CatalogRefreshService:
         )
         lease = await self._pacer.acquire(pacer_request)
         if not lease.granted:
-            # The durable source-run claim must not remain RUNNING while a non-reserved Pacer
-            # projection expires. Release it for an explicit/scheduled retry; no worker sleeps and
-            # no catalog wire call is made (ADR-005, NFR-8).
-            await self._sources.fail_refresh(
+            return await self._pause_for_pacer(
                 source_key,
                 run_key,
-                lease_token=lease_token,
-                error=f"Pacer {lease.status.value}: {lease.detail}",
-            )
-            return CatalogRefreshResult(
-                source_key,
-                run_key,
-                CatalogRefreshOutcome.DEFERRED,
+                lease_token,
+                status=lease.status.value,
                 detail=lease.detail,
                 retry_after_seconds=lease.retry_after_seconds,
             )
@@ -230,6 +276,43 @@ class CatalogRefreshService:
             fetcher,
             lease_token,
             pacer_request,
+            evidence,
+        )
+
+    async def _pause_for_pacer(
+        self,
+        source_key: str,
+        run_key: str,
+        lease_token: UUID,
+        *,
+        status: str,
+        detail: str,
+        retry_after_seconds: float,
+    ) -> CatalogRefreshResult:
+        """Pause one no-egress claim only while its exact database lease remains live."""
+        # The durable source-run claim must not remain RUNNING while a non-reserved Pacer
+        # projection expires. Pause it for an explicit/scheduled retry; no worker sleeps, no
+        # catalog wire call is made, and admin reliability metrics do not misclassify ordinary
+        # throttle coordination as a provider failure (ADR-005, NFR-8).
+        paused = await self._sources.pause_refresh(
+            source_key,
+            run_key,
+            lease_token=lease_token,
+            error=f"Pacer {status}: {detail}",
+        )
+        if not paused:
+            return CatalogRefreshResult(
+                source_key,
+                run_key,
+                CatalogRefreshOutcome.BUSY,
+                detail="catalog refresh lease was lost before the Pacer defer could be recorded",
+            )
+        return CatalogRefreshResult(
+            source_key,
+            run_key,
+            CatalogRefreshOutcome.DEFERRED,
+            detail=detail,
+            retry_after_seconds=retry_after_seconds,
         )
 
     async def _fetch_and_commit(
@@ -240,18 +323,18 @@ class CatalogRefreshService:
         fetcher: CatalogSourceFetcher,
         lease_token: UUID,
         pacer_request: PacerRequest,
+        evidence: CatalogRunEvidenceSession,
     ) -> CatalogRefreshResult:
         """Issue the already-authorized source fetch and atomically publish its normalized result."""
 
+        # The provider adapter owns transport and response parsing as one call.  Measure that real
+        # adapter boundary as collection; the admin projection labels extraction/enrichment as
+        # included instead of fabricating an independent duration.
+        collect = evidence.start_stage("collect")
         try:
             candidates = await fetcher.fetch(source)
-            committed = await self._committer.commit_refresh(
-                source_key,
-                run_key,
-                lease_token=lease_token,
-                candidates=candidates,
-            )
         except (SourceRateLimitedError, SourceAccessDeniedError) as source_error:
+            await collect.finish(CatalogRefreshOutcome.DEFERRED.value)
             return await self._source_dispatch_error(
                 source_key,
                 run_key,
@@ -259,7 +342,23 @@ class CatalogRefreshService:
                 pacer_request,
                 source_error,
             )
+        except SourceTransientError as source_error:
+            await collect.finish(CatalogRefreshOutcome.DEFERRED.value)
+            await self._sources.fail_refresh(
+                source_key,
+                run_key,
+                lease_token=lease_token,
+                error=f"Source transient failure: {source_error}",
+            )
+            return CatalogRefreshResult(
+                source_key,
+                run_key,
+                CatalogRefreshOutcome.DEFERRED,
+                detail=str(source_error),
+                retry_after_seconds=source_error.retry_after_seconds,
+            )
         except Exception as exc:
+            await collect.finish("failed")
             await self._sources.fail_refresh(
                 source_key,
                 run_key,
@@ -267,6 +366,32 @@ class CatalogRefreshService:
                 error=str(exc),
             )
             raise
+        await collect.finish(CatalogRefreshOutcome.SUCCEEDED.value)
+
+        # Normalization/deduplication and publication share one lease-fenced commit capability.
+        # Time the observable commit boundary as catalog publication and expose the inseparable
+        # normalize/dedupe phase honestly in the structured stage projection.
+        publish = evidence.start_stage("catalog_publish")
+        try:
+            committed = await self._committer.commit_refresh(
+                source_key,
+                run_key,
+                lease_token=lease_token,
+                candidates=candidates,
+            )
+        except Exception as exc:
+            await publish.finish("failed")
+            await self._sources.fail_refresh(
+                source_key,
+                run_key,
+                lease_token=lease_token,
+                error=str(exc),
+            )
+            raise
+        commit_outcome = (
+            CatalogRefreshOutcome.SUCCEEDED if committed is not None else CatalogRefreshOutcome.BUSY
+        )
+        await publish.finish(commit_outcome.value)
 
         return self._commit_result(source_key, run_key, committed)
 
@@ -313,21 +438,9 @@ class CatalogRefreshService:
         )
 
     def _lease_seconds_for(self, source: CatalogSource) -> int | None:
-        """Reserve enough time for every bounded, source-paced request plus final persistence.
+        """Reserve enough time for every bounded, source-paced request plus final persistence."""
+        return catalog_refresh_lease_seconds(source, floor_seconds=self._lease_seconds)
 
-        ``page_limit`` is the reviewed upper bound on one source refresh's pagination/request
-        units.  A source that has to make that many same-host reads cannot safely inherit a
-        shorter process-default lease: otherwise a correct, deliberately slow fetch can lose its
-        ownership before its single catalog write.  The database capability limits a lease to one
-        hour, so an over-budget registry row fails closed before Pacer or network activity
-        (FR-10.3/NFR-8).
-        """
-        paced_seconds = (source.page_limit * source.min_interval_ms + 999) // 1_000
-        required_seconds = paced_seconds + _LEASE_COMPLETION_BUFFER_SECONDS
-        lease_seconds = max(self._lease_seconds, required_seconds)
-        if lease_seconds > _MAX_CATALOG_REFRESH_LEASE_SECONDS:
-            return None
-        return lease_seconds
 
     async def _release_if_source_exceeds_claimed_lease(
         self,
@@ -685,3 +798,46 @@ def _single_http_get_contract_changed(before: CatalogSource, after: CatalogSourc
         after.page_limit,
         after.min_interval_ms,
     )
+
+
+def catalog_refresh_lease_seconds(source: CatalogSource, *, floor_seconds: int) -> int | None:
+    """Return the lease one refresh of ``source`` needs, or None when it cannot fit in one.
+
+    ``page_limit`` is the reviewed upper bound on one source refresh's pagination units.  A source
+    that has to make that many same-host reads cannot safely inherit a shorter process-default
+    lease: otherwise a correct, deliberately slow fetch loses ownership before its single catalog
+    write.  The database capability limits a lease to one hour, so an over-budget registry row
+    fails closed before Pacer or network activity (FR-10.3/NFR-8).
+
+    Pages are not the whole request count for every mode.  The Luma modes follow their listing with
+    one paced detail GET per retained event, so their reservation counts the events their reviewed
+    page cap can carry as well.
+
+    This is a module-level function so the registry can be checked against it directly: a row whose
+    reservation returns None is SKIPPED with no run recorded, which is coverage disappearing with
+    no failure to look at.
+    """
+    request_units = source.page_limit
+    if source.mode in _LUMA_DETAIL_MODES:
+        # Every retained event costs one further same-host detail GET at the same cadence floor.
+        # Reserving pages alone left these sources relying on the process-default lease, which a
+        # large calendar outgrows silently: the fetch keeps running, the lease expires, and the
+        # commit is fenced out after all the egress has already happened.
+        request_units += source.page_limit * _LUMA_MAX_ITEMS_PER_PAGE
+    paced_seconds = (request_units * source.min_interval_ms + 999) // 1_000
+    persistence_seconds = 0
+    if source.mode is CatalogSourceMode.BIBLIOCOMMONS_RSS:
+        # These reviewed feeds can publish thousands of rows. Their atomic catalog merge is
+        # intentionally fenced by the same lease as fetch, so reserve a bounded per-event
+        # persistence allowance in addition to the worst-case page pacing.
+        persistence_milliseconds = (
+            source.page_limit
+            * _BIBLIOCOMMONS_MAX_ITEMS_PER_PAGE
+            * _BIBLIOCOMMONS_PERSISTENCE_BUDGET_MS_PER_EVENT
+        )
+        persistence_seconds = (persistence_milliseconds + 999) // 1_000
+    required_seconds = paced_seconds + persistence_seconds + _LEASE_COMPLETION_BUFFER_SECONDS
+    lease_seconds = max(floor_seconds, required_seconds)
+    if lease_seconds > _MAX_CATALOG_REFRESH_LEASE_SECONDS:
+        return None
+    return lease_seconds

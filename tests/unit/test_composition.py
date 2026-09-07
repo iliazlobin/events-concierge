@@ -64,7 +64,7 @@ class FixtureRanker:
 
 def _without_engine(monkeypatch: pytest.MonkeyPatch) -> None:
     """Keep graph-selection tests free of a database connection or external service."""
-    monkeypatch.setattr("events_concierge.composition.init_engine", lambda _: None)
+    monkeypatch.setattr("events_concierge.composition.init_engine", lambda _, **kwargs: None)
 
 
 def test_default_composition_keeps_deterministic_ranking_and_mock_calendar(

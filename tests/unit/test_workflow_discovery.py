@@ -23,6 +23,13 @@ class _RequestRepository:
         assert request_id == self._request.request_id
         return self._request
 
+    async def register_workflow_targets(
+        self,
+        tenant_id: UUID,
+        workflow_ids: tuple[str, ...],
+    ) -> None:
+        del tenant_id, workflow_ids
+
 
 class _Embedding:
     def __init__(self, vector: list[float]) -> None:
