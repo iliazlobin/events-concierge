@@ -94,15 +94,13 @@ Refined at **2026-07-02** after research wave 1 surfaced the risk profile — HA
 
 ## Surfaces
 
-- **Local workspace (authoritative for iteration):** `~/Claude/events-concierge/`
-  - `research/` (+ `_salvage/`) · `design/` · `decisions/` · `workflows/` · `tools/` · `PROJECT.md`
-- **Notion hub:** "Events Concierge" — https://app.notion.com/p/391d865005a8814181c1c508a5d70f34
-  - id `391d8650-05a8-8141-81c1-c508a5d70f34`; parent = "Claude" hub `38fd865005a8804aae29d4ebb234f127`
-  - Child placeholders:
-    - System Design — `391d8650-05a8-8164-a182-eabc18fe068f`
-    - Requirements Specification — `391d8650-05a8-816b-830b-d280c9f2479e`
-    - Decision Log — `391d8650-05a8-81c7-8431-ef1340ae7496`
-    - Research — `391d8650-05a8-8193-9eab-c0a529bf52fc`
+- **Local workspace (authoritative for iteration):** `~/Claude/events-concierge/`. Preserve unrelated work when preparing commits.
+- **Published 2026 source:** https://github.com/iliazlobin/events-concierge — private repository, remote `origin`. The initial published source checkpoint is `11ed6adc996de069a9e4afb6fe1423c7162362be` on `codex/documentation-source-baseline`; it is documentation evidence, not a release. The public 2025 repository remains the separate `legacy-prototype` remote.
+- **Living Notion documentation:** [Events Concierge](https://app.notion.com/p/391d865005a8814181c1c508a5d70f34), under Workspace → Projects.
+  - [System Design](https://app.notion.com/p/391d865005a88164a182eabc18fe068f)
+  - [Components](https://app.notion.com/p/3cfd865005a88162aa6bd4624b6a4af4)
+  - [GCP & Operations](https://app.notion.com/p/3a5d865005a881f288dfdc9993b8fdd2)
+  - [Delivery](https://app.notion.com/p/3d3d865005a881339dc1f760bf5277e9) — existing tasks and retained history.
   - Do NOT touch the unrelated inline DB "System Design Interview Questions" (`62b6f08be0a74b81b3e48a203fa9e48d`).
 
 ## Conventions
