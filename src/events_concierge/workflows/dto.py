@@ -47,6 +47,14 @@ class DiscoverResult:
 
 
 @dataclass
+class RegisterWorkflowTargetsInput:
+    """Complete deterministic child set persisted before any start-child command is emitted."""
+
+    tenant_id: str
+    workflow_ids: list[str] = field(default_factory=list)
+
+
+@dataclass
 class RegChildInput:
     tenant_id: str
     canonical_event_id: str
@@ -262,6 +270,22 @@ class FinalizeNoCandidateInput:
 @dataclass
 class FinalizeNoCandidateResult:
     """Serializable request no-result outcome for the parent workflow."""
+
+    status: str
+
+
+@dataclass
+class LinkRequestOutcomeInput:
+    """Opaque identities for the parent's immutable selected-lifecycle projection."""
+
+    tenant_id: str
+    request_id: str
+    canonical_event_id: str
+
+
+@dataclass
+class LinkRequestOutcomeResult:
+    """Serializable convergence result for a first link or an exact activity replay."""
 
     status: str
 

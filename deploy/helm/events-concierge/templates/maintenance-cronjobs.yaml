@@ -1,0 +1,97 @@
+{{- $root := . -}}
+{{- if or (eq .Values.global.releasePhase "all") (eq .Values.global.releasePhase "application") }}
+{{- range $name, $job := .Values.maintenanceCronJobs }}
+{{- if $job.enabled }}
+---
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: {{ include "events-concierge.fullname" $root }}-{{ $name }}
+  labels:
+    {{- include "events-concierge.labels" (dict "root" $root "component" $name) | nindent 4 }}
+spec:
+  schedule: {{ $job.schedule | quote }}
+  concurrencyPolicy: Forbid
+  startingDeadlineSeconds: {{ $job.startingDeadlineSeconds }}
+  successfulJobsHistoryLimit: 2
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      backoffLimit: 1
+      activeDeadlineSeconds: {{ $job.activeDeadlineSeconds }}
+      template:
+        metadata:
+          labels:
+            {{- include "events-concierge.selectorLabels" (dict "root" $root "component" $name) | nindent 12 }}
+            app.kubernetes.io/part-of: events-concierge
+          annotations:
+            checksum/runtime-secret-versions: {{ $root.Values.secretManager.runtimeSecrets | toJson | sha256sum }}
+        spec:
+          restartPolicy: Never
+          serviceAccountName: {{ (index $root.Values.serviceAccounts $job.serviceAccount).name }}
+          automountServiceAccountToken: true
+          enableServiceLinks: false
+          securityContext:
+            {{- include "events-concierge.podSecurityContext" $root | nindent 12 }}
+          {{- if $root.Values.cloudSqlProxy.enabled }}
+          initContainers:
+            - name: cloud-sql-proxy
+              restartPolicy: Always
+              image: {{ include "events-concierge.image" $root.Values.cloudSqlProxy.image | quote }}
+              imagePullPolicy: {{ $root.Values.cloudSqlProxy.image.pullPolicy }}
+              args:
+                - --structured-logs
+                - --port=5432
+                - --address=0.0.0.0
+                {{- if $root.Values.cloudSqlProxy.privateIp }}
+                - --private-ip
+                {{- end }}
+                - {{ $root.Values.cloudSqlProxy.instanceConnectionName | quote }}
+              ports:
+                - name: cloud-sql
+                  containerPort: 5432
+              securityContext:
+                {{- include "events-concierge.appSecurityContext" $root | nindent 16 }}
+              resources:
+                {{- toYaml $root.Values.cloudSqlProxy.resources | nindent 16 }}
+              startupProbe:
+                tcpSocket: {port: cloud-sql}
+                failureThreshold: 30
+                periodSeconds: 2
+          {{- end }}
+          containers:
+            - name: {{ $name }}
+              image: {{ include "events-concierge.image" $root.Values.global.appImage | quote }}
+              imagePullPolicy: {{ $root.Values.global.appImage.pullPolicy }}
+              command:
+                {{- toYaml $job.command | nindent 16 }}
+              envFrom:
+                - configMapRef:
+                    name: {{ include "events-concierge.fullname" $root }}-runtime
+              securityContext:
+                {{- include "events-concierge.appSecurityContext" $root | nindent 16 }}
+              resources:
+                requests: {cpu: 100m, memory: 192Mi}
+                limits: {cpu: 500m, memory: 512Mi}
+              volumeMounts:
+                - name: tmp
+                  mountPath: /tmp
+                {{- if $root.Values.secretManager.enabled }}
+                - name: runtime-secrets
+                  mountPath: /var/run/secrets/events-concierge
+                  readOnly: true
+                {{- end }}
+          volumes:
+            - name: tmp
+              emptyDir: {sizeLimit: 64Mi}
+            {{- if $root.Values.secretManager.enabled }}
+            - name: runtime-secrets
+              csi:
+                driver: secrets-store-gke.csi.k8s.io
+                readOnly: true
+                volumeAttributes:
+                  secretProviderClass: {{ include "events-concierge.runtimeSecretProviderClass" $root | quote }}
+            {{- end }}
+{{- end }}
+{{- end }}
+{{- end }}

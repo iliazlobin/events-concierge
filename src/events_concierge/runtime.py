@@ -13,11 +13,10 @@ from dataclasses import dataclass
 from importlib import import_module
 from typing import Protocol, cast
 
-from .application.feed import MembershipResolver
 from .config import Settings
 from .domain.enums import Source
 from .ports.audit import RegistrationActionAuditPort
-from .ports.auth import AuthContextPort
+from .ports.auth import AuthContextPort, BrowserSessionLifecyclePort, CsrfProtectionPort
 from .ports.calendar import CalendarPort
 from .ports.consent import RegistrationConsentEvidencePort
 from .ports.credentials import CredentialVault
@@ -33,12 +32,16 @@ from .ports.withdrawal import RegistrationWithdrawalPort
 class RuntimePorts:
     """Provisioned boundaries that cannot safely be inferred by the core composition root.
 
-    ``None`` means "not provisioned." Source maps intentionally preserve that distinction from an
-    explicitly empty mapping, which lets a production deployment disable autonomous registration
-    or withdrawal deliberately without silently inheriting an accidental empty default.
+    ``None`` means "not provisioned." Production authentication and CSRF verification are a paired
+    edge contract: the former resolves the deployment session and the latter binds state-changing
+    requests to it. Source maps intentionally preserve the distinction from an explicitly empty
+    mapping, which lets a deployment disable autonomous registration or withdrawal deliberately
+    without silently inheriting an accidental empty default.
     """
 
     auth_context: AuthContextPort | None = None
+    csrf_protection: CsrfProtectionPort | None = None
+    browser_session: BrowserSessionLifecyclePort | None = None
     object_store: ObjectStorePort | None = None
     notifier: NotificationPort | None = None
     notification_secret_protector: NotificationSecretProtector | None = None
@@ -49,7 +52,6 @@ class RuntimePorts:
     discovery_sources: Sequence[SourcePort] | None = None
     register_sources: Mapping[Source, SourcePort] | None = None
     withdrawal_sources: Mapping[Source, RegistrationWithdrawalPort] | None = None
-    membership_resolver: MembershipResolver | None = None
     action_audit: RegistrationActionAuditPort | None = None
     registration_consent: RegistrationConsentEvidencePort | None = None
 

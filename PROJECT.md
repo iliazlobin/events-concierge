@@ -107,12 +107,17 @@ Refined at **2026-07-02** after research wave 1 surfaced the risk profile — HA
 
 ## Conventions
 
+- **Code references (agreed 2026-09-07):** publish reviewed source changes to the approved GitHub repository before citing them in living Notion documentation. Use commit-pinned `blob/<full-commit-sha>/<path>` links for files and `tree/<full-commit-sha>/<path>` for directories; use verified line anchors when they clarify a specific mechanism. Display concise repository-relative labels rather than workstation paths. Verify each referenced path exists at that remote revision. Keep experimental branches and test dates distinct from deployed behavior; preserve dated historical evidence. If source is not yet published, label the reference pending instead of inventing a URL or linking an older revision as current. Preserve unrelated work and keep commits scoped; committing and pushing do not imply merging, deployment or migration.
+
 - Arc/scaffold + persistence: `/project-kickoff` skill.
 - Requirements + design craft and Workflow orchestration recipes: `/project-design` skill.
 - Design-doc pyramid skeleton + rubric gate (≥33/40, no dim <3, critical dims ≥4): see `project-design` `references/system-design-craft.md`;
   rubric file `~/.hermes/skills/research/system-design-kanban/references/design-doc-rubric.md`; calibrator `~/.hermes/verify/score-design-doc.py`.
 
 ## State (update at every phase boundary)
+
+Entries below are dated implementation snapshots. Later phases may supersede an earlier entry's
+“remaining boundary”; the newest phase is authoritative for current implementation state.
 
 - **2026-07-02 — Kickoff / scaffold DONE.**
   - Local workspace scaffolded (all dirs + this file).
@@ -3476,7 +3481,9 @@ wave or the next phase.
 
 - **2026-07-18 — P17 COMPLETE: tenant-isolated implicit feed feedback and next-feed re-score.** The authenticated
   `POST /v1/feed-feedback` contract accepts only a caller-minted `signal_id`, a canonical event id, and one closed
-  `scroll` / `dwell` / `click` / `dismiss` kind; it rejects caller tenants, raw event text, durations, and weights.
+  `scroll` / `dwell` / `click` / `like` / `dismiss` kind; it rejects caller tenants, raw event text, durations,
+  and weights. Migration `0113` adds the explicit positive `like` receipt kind without changing the bounded
+  server-owned +1.0 influence ceiling shared with `click`.
   `RankingFeedbackService` resolves the canonical event before deriving a bounded lexical feature snapshot, and the
   ranker reads a feedback-aware profile overlay on the next feed. This closes the FR-2.1 / FR-4.3 implicit-signal
   path without read-modify-writing the existing revisioned declared-profile row (ADR-001, NFR-7/8).
@@ -4250,6 +4257,490 @@ wave or the next phase.
     broader historical local-test data is therefore a separate explicit reset/retention choice. P43/P44 production
     gates remain open; this local recovery does not establish managed capacity, observability, restore, external
     provider, or production-launch evidence.
+
+- **2026-07-20 — P46 COMPLETE: same-origin consumer web MVP and tenant-safe product projections (public
+  production launch not claimed).** The API image now serves a responsive consumer product at `/` and `/app`,
+  with local-demo onboarding, focused catalog previews, durable concierge requests, recent briefs, lifecycle-backed
+  Plans, actionable handoffs, preference editing, feedback, and withdrawal. Preview and durable modes are visibly
+  distinct; an accepted brief is never presented as a completed registration. The plain HTML/CSS/JavaScript client
+  is packaged with the Python application, uses no unsafe HTML sink, validates external destinations, restores
+  keyboard focus across dynamic transitions, honors reduced motion, exposes high-contrast focus states, and follows
+  Plans/To-do cursors to an explicit 200-item display bound rather than silently dropping later pages.
+  - **Consumer truth and authority boundary:** new RLS-backed read models expose only account, request, event,
+    lifecycle, and handoff facts needed by the product. They omit completion capabilities and Temporal identities,
+    explicitly predicate every tenant query, hide internal `failed_no_candidate` attempts, keep selected-provider
+    labels and URLs consistent, and exclude expired handoffs from actionable results. Authenticated completion is
+    tenant-bound and returns `410` after absolute TTL. Every authenticated route now verifies that the resolved
+    tenant is provisioned before any read or write, preference revisions conflict with `409`, browser-ambiguous auth
+    redirects are rejected, and consumer command responses no longer disclose workflow IDs. Production composition
+    still requires a deployment-owned session/BFF and runtime provider graph; local header auth and onboarding exist
+    only when `EC_MOCK_CLOUD=true`.
+  - **Live product evidence:** the locked image was rebuilt and the complete Compose application profile recreated;
+    API and all durable workers report healthy, while `/readyz` reports PostgreSQL and Temporal ready. A real Chrome
+    acceptance pass exercised the authenticated desktop and 390 px mobile layouts, preview pagination, Plans,
+    To do, Settings, safe external links, and the accessibility tree with zero page console/runtime errors or
+    horizontal overflow. The retained durable UI canary completed its 68-event parent in about **1.21 seconds** and
+    projects one truthful handoff without exposing its two internal failed candidate attempts. A post-rebuild log
+    scan found no traceback, error, workflow-task timeout, deadlock, pool exhaustion, nonzero retry, or lost-lease
+    signature.
+  - **Verification:** Ruff is clean; strict mypy is clean across **209 source files**; unit tests are **723 passed,
+    227 deselected**; integration tests are **226 passed, 724 deselected** in a disposable database. The synthetic
+    quality matrix is **1 passed**, bounded quality load is **1 passed, 1 deselected**, and the disposable Temporal
+    slice is **1 passed**. JavaScript syntax, DOM/ARIA reference checks, diff/format checks, security headers, static
+    asset serving, the locked non-root image build, and the final healthy stack all pass.
+  - **Explicit remaining boundary:** public launch still needs the deployment-owned OIDC/BFF session and CSRF policy,
+    real provider/Calendar/notification/secret implementations and credentials, managed infrastructure and release
+    evidence, and the broader P43-P45 account-erasure/quality/operations gates. Product follow-ons are a durable
+    request-to-outcome projection, push/poll lifecycle refresh instead of manual refresh, and a committed browser E2E
+    job (all three repository follow-ons are implemented by P47 below). Historical fixture-shaped catalog/runtime
+    rows remain deliberately preserved; cleaning them is a separate owner-approved reset/retention action, not part
+    of this UI build.
+
+- **2026-07-22 — P47 COMPLETE: selected-request truth, bounded browser freshness, and repository
+  product gates (public production launch not claimed).** Migration `0107` adds the insert-only,
+  RLS-protected `request_outcome_links` projection with tenant-consistent request/lifecycle foreign
+  keys. After a child commits the selected registration or handoff outcome, the patched parent
+  workflow records that stable lifecycle through a replay-convergent activity; a different-lifecycle
+  rebind is non-retryable, failed internal attempts stay hidden, and legacy/unselected requests remain
+  honestly outcome-free. Recent briefs now render the linked lifecycle's live state without querying
+  Temporal or inferring from candidate order.
+  - **Browser freshness and security boundary:** while visible and signed in, one timer chain watches
+    only recent unresolved requests at a jittered 30-second base cadence, backs off toward five
+    minutes after failures, and refreshes Plans/To do once when request truth changes. It stops when
+    hidden, signed out, aged out, or resolved; per-resource generations prevent stale-load overwrite,
+    and transient background failures retain last-known truth. Every authenticated consumer mutation
+    now passes through `CsrfProtectionPort` after tenant
+    authentication/provisioning; non-mock composition fails closed without an injected verifier,
+    while the no-op remains paired only with explicit local header auth.
+  - **Committed product gate:** locked Python Playwright dependencies, `make browser-install`,
+    `make test-browser`, and a dedicated GitHub Actions Chromium job exercise the real packaged
+    FastAPI shell with deterministic product API fixtures across local onboarding, preview versus
+    durable semantics, selected outcomes, Plans, handoffs, Settings, accessibility/error behavior,
+    security headers, and desktop/mobile overflow. Focused unit and PostgreSQL/Temporal integration
+    coverage for the projection, replay fence, refresh scheduler, and CSRF route matrix is committed.
+  - **Final verification and live local evidence:** locked dependency sync passes; Ruff is clean; strict
+    mypy is clean across **209 source files**; unit tests are **741 passed, 235 deselected**; and the
+    fresh-database integration suite is **229 passed, 747 deselected**. The synthetic quality matrix is
+    **1 passed**, bounded five-repeat quality load is **1 passed, 1 deselected**, the disposable vertical
+    slice is **1 passed**, and the Chromium product suite is **5 passed**. Migration `0107` also passed a
+    deliberate interrupted-build rehearsal: a healthy partial index was reused, a stale same-name index
+    was rebuilt, and downgrade/re-upgrade converged. The locked non-root image builds; `0107` is applied to
+    the preserved local database; API plus all durable workers were recreated from that image and are
+    healthy; `/healthz`, `/readyz`, the packaged consumer shell, and security headers return `200`; and the
+    post-recreate application-log scan contains no traceback, exception, error, panic, or fatal signature.
+  - **Explicit remaining boundary:** the repository supplies the required CSRF port and browser gate,
+    not a real identity provider. Public launch still requires deployment-owned OIDC/BFF session and
+    CSRF implementations plus production canary evidence, full account erasure, P20/operator
+    decisions, real Calendar/notification/secret/source providers and credentials, managed
+    infrastructure/observability/restore proof, G1–G3 and legal evidence, owner sign-off, and a
+    controlled canary/rollback release.
+
+- **2026-07-22 — P48 COMPLETE: built-in consumer identity, durable account erasure, shared
+  external-effect fencing, and production operations foundation (public production launch not
+  claimed).** Non-mock composition now includes a same-origin OIDC BFF rather than depending on an
+  unspecified deployment adapter. Authorization Code + PKCE sessions are Redis-backed and bounded,
+  bind state/nonce/current tenant and subject, enforce tenant-wide permanent revocation, and use the
+  provider's `auth_time` plus a purpose-bound `prompt=login` step-up to establish recent
+  authentication without extending the original session lifetime. The consumer Settings UI exposes a
+  deliberate account-erasure flow: the user must reauthenticate when required and enter the exact
+  confirmation phrase `DELETE MY ACCOUNT`; accepted work returns a stable receipt and the browser
+  clears its session instead of polling a now-revoked account.
+  - **Durable erasure and race boundary:** migration `0108` introduces the permanent pseudonymous
+    tenant tombstone, an advisory-lock write fence over tenant-owned tables, immutable workflow and
+    Calendar cleanup inventories, begin-time audit PII shredding, and a cross-tenant leased/resumable
+    erasure coordinator. Its ordered stages drain admitted external effects; cancel Temporal parents
+    before descendants and remove their addressability; sweep deterministic Calendar IDs plus
+    owner-marked, paginated tenant events; revoke/delete vault credentials, tenant object prefixes,
+    and browser sessions; then verify the retained-audit shred invariant and purge tenant database
+    data. Registration, withdrawal, Calendar mutations, claim-check object writes, Temporal parent
+    starts, and notification sends now enter one shared PostgreSQL
+    `TenantEffectAuthority` using the same tenant advisory lock as erasure start. Already-admitted
+    async and thread-backed effects are cancellation-drained before that lock can be released, exact
+    queue/ledger authority is re-read inside the fence, and nested claim-check work is reentrant only
+    for the same authority instance, tenant, and effect mode.
+  - **Operations foundation:** production configuration has a fail-closed example and preflight
+    validator; the service exposes release identity at `/versionz` and operational metrics at
+    `/metrics`; canary checks, locked-image smoke tests, migration/rollback guidance, and an all-table
+    plus sequence restore drill are wired into documented Make/CI gates.
+  - **Final repository evidence:** locked dependency installation passes; Ruff is clean; strict mypy
+    is clean across **232 source files**; unit tests are **942 passed, 246 deselected**; operations
+    contracts are **114 passed**; the Chromium product suite is **6 passed**; and the disposable full
+    integration suite is **239 passed, 949 deselected**. The synthetic quality matrix is **1 passed**,
+    its configured five-repeat load gate is **1 passed, 1 deselected**, the disposable vertical slice
+    is **1 passed**, and the structural production-example validator is **20/20**. Focused evidence
+    includes the account-erasure module (**4/4**), cross-boundary security integration (**10/10**),
+    combined real-database authority/request/erasure races (**15/15**), request-start integration
+    (**7/7**), and a live local Temporal cancel/delete/`NOT_FOUND` proof (**1/1**). Fresh install and
+    `0108 → 0107 → 0108` migration replay, the locked non-root image build, and final hygiene/security
+    reviews are green.
+  - **Controlled local cutover evidence:** all API/writer processes were quiesced before a mode-0600
+    custom-format backup was validated and checksummed. The preserved runtime database migrated from
+    `0107` to `0108`, exposing the three erasure tables, begin/finalize capabilities, and **78** write-
+    fence triggers. The isolated restore drill passed **10/10** across **49 tables and 5 sequences**
+    and destroyed only its generated database. A sanitized pre/post comparison found identical counts
+    across all **45 shared tables** (**248,308 rows** before and after) and identical states for all
+    **5 shared sequences**; the only additions were the four expected empty `0108` schema tables, with
+    no removed tables. All eight app containers then started from exact image
+    `sha256:221fb8c7e950eead0ba23b3e4286ee16a8b7a2462bb4cdba4b3079532d378a47`; the local canary passed
+    **34/34**, health and database/Temporal readiness are green, and worker startup/cycle logs show no
+    traceback, provider error, retry, or lost lease. Local identity is intentionally `not_configured`
+    and release identity is development/null, so none of this is represented as production IdP or
+    immutable-release evidence.
+  - **Explicit remaining boundary:** the repository can remove Temporal visibility/addressability, but
+    Temporal Cloud physical history deletion—and deletion or disablement of every archival/export
+    copy—within the erasure deadline still requires vendor/deployment evidence. Launch also requires
+    a realistic G1 corpus, Meetup Pro G2 and relay-domain G3, real provider and confidential IdP
+    credentials/canaries, managed
+    infrastructure/PITR/restore/observability/on-call proof, legal approval of retention, holds,
+    pseudonymous tombstones, and retained audit workflow IDs, plus real vault/session/provider
+    revocation evidence. Google events created before the owner marker need an approved backfill or
+    cleanup procedure; Calendar watch creation remains disabled until a durable
+    create/store/stop-channel protocol closes its provider-created/local-store gap. Authenticated
+    operator ownership, P20 Calendar policy, P24a notification post-send acknowledgement, remaining
+    draft-v0.3 scope, owner sign-off, and a controlled canary/rollback release are likewise still open.
+
+- **2026-08-06 — Entity page reachable from every event, and insights for every entity
+  (migration `0152`).** Owner reported clicking a host on the map and getting a bare
+  `event entity not found` banner.
+  - **Root cause.** The projection read
+    `fn_list_retained_catalog_browse_observations_v1(source, NULL, NULL)`, whose unbounded mode uses
+    `statement_timestamp()` as the lower bound, so elapsed events were never projected: **0 of 321**
+    past events carrying role names had a mention row, against 83% of future ones. The consumer can
+    browse a historical date range, so the gap was reachable from the normal product surface — the
+    clicked event had started three days earlier.
+  - **`fn_refresh_catalog_entity_index_v2`** keeps the live call verbatim and unions one bounded
+    trailing-365-day history call; the branches are mutually exclusive by the retained capability's
+    own predicates. 365 days keeps an unscoped rebuild inside the capability's 370-day ceiling. The
+    0148/0149 quality gate runs after the rebuild, matching the refresh-commit/paged-promotion
+    sequencing (a first cut skipped it and was caught by the existing contract test).
+    Past-event coverage **0% → 97%**; entities 572 → 1,229, mentions 673 → 1,464.
+  - **`fn_list_catalog_entity_events_v2`** adds `is_past` and orders upcoming ascending before past
+    descending, so history cannot crowd out upcoming appearances; the page now shows
+    "Upcoming appearances" and "Previously".
+  - **`fn_get_catalog_entity_insights_v1`** derives cadence, typical attendance, price mix, topics,
+    venues, cities, asserting sources, and recurring collaborators from admitted mentions and
+    canonical events only — no provider, no enrichment table, no `identity_status` precondition, so
+    the ~50% of entities that are name-only `source_scoped` (which the enrichment plane deliberately
+    never researches) get real evidence. Cadence uses a trailing-365/leading-90-day window because
+    provider start dates run out to 2099.
+  - **UI.** A "Catalog activity" card, clickable collaborator chips, per-fact provenance links next
+    to every external value, and a 404 that now names the unindexed entity instead of surfacing raw
+    API text. Async external crawling was left as designed: `fn_list_catalog_entities_due_for_refresh_v1`
+    already sweeps every URL-anchored entity, never-fetched first.
+  - **Evidence.** 1,251 unit · 274 integration (fresh migration chain) · 114 operations · 40 Chromium
+    e2e · 87+79 web suites; ruff + strict mypy clean over 260 files. Verified against live data:
+    the exact host/organizer chips from the report now resolve, and both an enriched entity (Sentry)
+    and a name-only one were screenshot-checked in the running stack.
+  - **Deployment note:** the migration ran before the image rebuild, so sources refreshed in that
+    window re-ran the old live-only projection and dropped their history again. One idempotent
+    `fn_refresh_catalog_entity_index_v2(NULL)` + prune after the rebuild restored it. Migrate and
+    deploy together, or rebuild once after.
+
+- **2026-08-25 — Calendar range served by one aggregate instead of paging every event
+  (migration `0153`).** Owner reported the calendar showing "No events" for today and empty cells
+  for most of the month.
+  - **Root cause — the data was never missing.** August 2026 holds **7,500** eligible events and
+    Aug 25 alone holds 279. The grid renders per-day totals and topic chips only, but derived them
+    by paging the whole visible range at 72 events per request and grouping in the browser:
+    **105 sequential round-trips** for that month, restarted from zero on every reload because the
+    proxy sends `no-store` and `loadCatalog` resets its list on mount. The owner's screenshots were
+    a load in progress — days already filled matched the catalog exactly (Aug 16–24 = 147, 222,
+    287, 336, 332, 218, 270, 153, 219), and everything past the point it had reached read as empty.
+  - **`fn_list_catalog_day_facets_v1`** runs the same unbounded observation/eligibility scan
+    `fn_list_catalog_topic_facets_v2` (0151) runs and buckets it into local calendar days. Two
+    deliberate differences from that facet: it applies the topic selection, because the grid must
+    agree with the agenda its own filters produce; and it takes an IANA `p_time_zone` and buckets on
+    `start_at AT TIME ZONE p_time_zone`, because a calendar day is local wall clock and a UTC bucket
+    would move every Pacific evening event to the next day. Untopiced events are counted under the
+    synthetic `other` bucket, matching the client taxonomy. Day totals are distinct events, so a
+    day is not the sum of its topic rows.
+  - **`GET /v1/catalog/events/summary`** accepts exactly the filters the paged route accepts, minus
+    paging and ordering. Both routes now share one `_normalized_catalog_filters` validator and one
+    adapter-side `_validated_catalog_filter_inputs`, so a range can never be summarized under a
+    filter the agenda would refuse. The time zone is validated before the query so an invalid zone
+    is a 422 rather than a driver error.
+  - **Client.** The calendar reads counts for the range and events only for the open day; week
+    columns preview four events per day beside the authoritative count. A per-tab, per-tenant
+    `sessionStorage` summary cache (counts only, 5-minute TTL, bounded, cleared on session loss)
+    paints a reload before revalidation lands. A day window matches by interval overlap, so the
+    agenda filters to events that *start* that day — matching what the grid counted — and skips
+    bounded pages of still-running earlier events rather than showing an empty agenda beside a cell
+    counting hundreds.
+  - **Evidence.** 1,366 unit · 277 integration (fresh migration chain) · 40 Chromium e2e · 214 web
+    suites; ruff + strict mypy clean over 266 files; production frontend build green. The new
+    integration test reads a range page-by-page the way the calendar used to and asserts the
+    aggregate reproduces it day-for-day and topic-for-topic. Verified against the running stack with
+    Playwright: **August completes in ~1.0s over 3 requests** (was 105), a reload first-paints from
+    cache in **0.03s**, all 33 populated days render, Aug 25 reads 279 events with 19 topic chips,
+    and the agenda lists only Aug 25.
+  - **Also confirmed healthy while diagnosing:** the ingestion cadence wakes every 300s, dispatches
+    a bounded batch, and the Redis pacer defers the rest by design (`deferred: 9, succeeded: 1`);
+    `luma-sf`, `meetup-nyc`, `meetup-sf`, and `luma-nyc` all refreshed successfully during the
+    session.
+
+- **2026-08-25 — Shared Pacer buckets expired between refreshes, so every catalog source was
+  deferred before any provider call.** Investigating apparent ingestion starvation.
+  - **First, a measurement correction that matters for every future ingestion number.** The
+    registry reports 526 enabled sources, but **497 of them are `test-*` fixtures** living in the
+    shared development database. The real roster is **29 named enabled sources** on 120/360/720/
+    1440-minute cadences, asking for ~139 refreshes/day — not the 12,067/day the raw registry
+    implies. Any source, refresh, or freshness figure must filter `source_key NOT LIKE 'test-%'`
+    first; the same residue already inflates the failed-run count (`fixture cleanup`, 1,224 rows)
+    and the "unreviewed source" count (101 rows, all `test-unreviewed-*`). Measured against the
+    real roster, 27 of 29 sources were within ~1.1 intervals of schedule.
+  - **Root cause.** `RedisPacer._base_ttl_seconds` returned `max(burst / rate, unavailable_retry)`
+    — **two seconds**. Every bucket therefore expired within ~3s of its last use, while sources
+    refresh 2 to 24 hours apart. The take script deliberately treats a missing bucket as lost
+    state and starts it empty (ADR-005), which is right for a real eviction; with that retention
+    it fired on **every ordinary attempt instead**. Each attempt returned `W|0.2s`, and the
+    refresh service responded by pausing the durable run before any provider call. Verified
+    directly against the running Redis: measured bucket TTL **2,999 ms**, first acquire denied,
+    an acquire 0.5s later granted, and the bucket gone after 3.2s.
+  - **Who it actually hurt.** Paged multi-branch sources, which need many sequential tokens:
+    `san-jose-public-library-events` and `sccld-all-physical-branches-events` had accumulated
+    **5,099** and **2,186** paused attempts and fallen **49** and **21** refresh intervals behind,
+    against a run history that normally completes in 3–17 attempts. Fleet-wide the symptom was 28
+    paused runs all carrying `Pacer wait: shared token bucket is refilling or source backoff is
+    active`, and roughly one successful refresh per dispatch pass instead of a full batch of 50.
+  - **Fix.** `EC_PACER_STATE_RETENTION_SECONDS` (default **7 days**) floors the bucket TTL. The
+    binding requirement is expressed in code, not prose: retention must outlast
+    `MAX_SOURCE_REFRESH_INTERVAL_MINUTES`, the new cadence ceiling on `CatalogSource`, which
+    `refresh_interval_minutes` is now validated against. A first attempt at one hour was still
+    short of the 6-hour cadence most sources use and left the cold-start deferral in place — the
+    measured retry counts stopped exploding but paused runs persisted, so the floor was resized
+    against the ceiling rather than against a guessed cadence.
+  - **Why this is not a weakening of ADR-005.** Retention never hands back spent capacity: an idle
+    bucket refills from its own recorded timestamp and caps at burst, exactly as a busy one does.
+    The previous behaviour was strictly *less* faithful — an expiring bucket forgot the tokens it
+    had just spent, and the cold-start rule existed to compensate. Genuine state loss still
+    cold-starts empty and throttle-first; `test_redis_loss_cold_starts_empty_without_a_source_burst`
+    still passes unchanged.
+  - **Evidence.** 1,367 unit · 279 integration · ruff and strict mypy clean over 266 files. Two new
+    Redis integration tests pin the regression (a bucket idle past its refill window still grants;
+    a retained bucket still enforces the shared rate) and a composition test pins retention against
+    the cadence ceiling. In the running stack, Redis went from **0 retained pacer buckets to 15**,
+    and pacer-caused pauses stopped.
+  - **Unrelated environment noise seen during the session:** a host DNS blackout at 22:54–22:55
+    failed every in-flight source with `[Errno -2] Name or service not known` and self-healed; this
+    is the known hotspot-DNS behaviour, not an ingestion defect.
+  - **What the fix then uncovered — OPEN, needs an owner ruling on crawl budget.** With the Pacer no
+    longer deferring them, both BiblioCommons all-branch sources ran to completion and hit a real
+    defect the thrashing had been masking: they exceed their **owner-reviewed page caps**. The
+    adapter pages 25 items at a time until a short page or `page_limit`, so
+    `san-jose-public-library-events` ceilings at 160 x 25 = 4,000 items against a best-ever haul of
+    **3,820** (4.5% headroom), and `sccld-all-physical-branches-events` at 50 x 25 = 1,250 against
+    **1,207** (3.4%). Both feeds have simply grown past caps sized when they were smaller. These are
+    the only 2 of 29 real sources still behind schedule. `page_limit` is part of the reviewed source
+    record and raising it increases approved third-party egress, so it is an owner decision, not a
+    code fix. Recommended: roughly double both (160 -> 320, 50 -> 120) to restore headroom.
+
+- **2026-08-25 — Calendar selection and the six-month grid restyled.** Owner: "looks ugly when
+  selecting."
+  - **Selection was an inverted light fill.** `.calendar-grid button.is-selected` set
+    `background: var(--ink); color: var(--black)`, so the selected day read as a hole punched
+    through a dark grid, and every topic chip inside it needed a second set of colours to stay
+    legible (three override rules existed only to repaint chips for a white background). Selection
+    now keeps the cell on the dark surface: an accent-tinted background, an inset accent ring, and
+    the day total rendered in the accent. Chips keep the one palette they were designed against and
+    the light-background overrides are gone. The week grid carried the same inverted fill and was
+    brought in line.
+  - **The six-month grid could not hold its own content.** A compact cell measures **29px wide with
+    19px of usable width**. It was rendering the date plus up to three *numbered* topic pills on one
+    row; the pills carried `min-width: 14px` and so could not shrink, spilled across day borders,
+    and stretched whole rows out of alignment — visible as digits running together between adjacent
+    days. The cell now spends its height instead of fighting for width: date, then day total, then a
+    tone strip pinned to the bottom. The date never shrinks (losing which day a cell is costs more
+    than losing its count), every count remains in the cell's `aria-label` and in each tone's
+    `title`, and `overflow: hidden` plus a fixed `grid-auto-rows` guarantee a cell can never bleed
+    into its neighbour however many topics a day carries.
+  - **Two regressions caught by looking at the render, not the tests.** A first pass let the date
+    shrink to zero width behind the count badge, so populated cells lost their day number entirely;
+    the date is now `flex: 0 0 auto`. A second pass made the week view's selected count an
+    accent-filled pill, which stretched into a solid lime bar across the column because that count
+    is not a pill in the week header — it is now accent text.
+  - **Also fixed while verifying:** week columns rendered no preview events at all. The per-day
+    preview introduced with the summary work requested only 4 events, and a day window matches
+    events that began earlier and are still running, which sort first — a busy column's whole page
+    could be leftovers. Previews now read a full page and take the first four that actually start
+    that day.
+  - **Evidence.** Measured in the running stack with Playwright: **every compact cell exactly 56px,
+    0 cells overflowing, 0 dot rows clipped**, 28 week preview chips across 7 columns. 104 calendar/
+    event web tests (5 new assertions pinning the accent-ring selection and the fixed compact box),
+    216 web tests overall, 40 Chromium e2e, ruff + strict mypy clean, production frontend build
+    green. Month, week, and six-month selection states each screenshot-checked against live data.
+
+- **2026-08-25 — Opening an event card no longer re-requests the list it belongs to.** Owner:
+  "when selecting an event it shows loading panels... it should show it instantly."
+  - **Root cause.** Every browsing action routes through `pushConsumerSnapshot`, which rebuilds the
+    whole snapshot and calls `setFilters(nextSnapshot.filters)`. Expanding a card changes only
+    `expandedId`, but the snapshot still hands back a **structurally identical filter object with a
+    new identity**. The catalog effect depends on `filters`, so it re-ran; `loadCatalog`
+    unconditionally clears its list and raises its loading flag, and `EventsView` renders skeletons
+    whenever `loading && !events.length`. Opening a card therefore threw away the results the reader
+    had just clicked into and fetched the same page again. The pre-existing
+    `preserveExpandedOnNextCatalogLoad` ref is evidence the reload was known about; it carried the
+    expanded id *through* the reload rather than preventing it.
+  - **Fix.** `catalogFilterKey(filters)` in `lib/catalog-filters.ts` is now the canonical identity of
+    a catalog request — every field that changes which events are returned, plus `sort`, and nothing
+    about browsing state. `applyFilters` adopts a filter set through that key and keeps the previous
+    object when the request is unchanged, so React bails out of the render entirely. All four filter
+    setters (initial history restore, popstate, snapshot push, filter-bar change) go through it, and
+    the calendar range effect got the same guard.
+  - **One definition, not two.** `catalogSummarySignature` now derives from the same
+    `catalogFilterKey` (with `includeSort: false`, since ordering cannot change a count), so the
+    calendar cache and the request path can never disagree about what counts as a change.
+  - **Evidence.** Measured against the running app with Playwright: expanding a card in a 72-card
+    list leaves **72 cards, renders the expansion, shows no skeleton, and issues 0 catalog
+    requests**. 105 event/calendar web tests (a new one pins the guard and forbids any path setting
+    filters straight from a snapshot), 217 web tests overall, 40 Chromium e2e, ruff + strict mypy
+    clean, production build green.
+
+- **2026-08-25 — The price composer accepts an amount.** Owner: "how can we better implement price
+  filter so users can input number."
+  - **The dead end.** `parseSmartFilterComposerQuery` already recognised a `price` composer context
+    (aliases `price`/`cost`/`budget`), and place, source, topic, and date all narrow by the term the
+    reader types after it. Price was the **only** context that discarded its term: the branch
+    returned the four categorical options and ignored everything after the keyword. So typing
+    `price` confirmed the composer understood you, and typing `price 25` then returned **nothing at
+    all** — measured, not inferred. A ceiling was reachable only by already knowing an exact
+    phrasing (`price $25`, `price under 25`) or by leaving the omnibox for the filter rail's popover.
+  - **A bare amount is a ceiling, but only in the composer.** `maximumPriceSuggestion` now takes
+    `allowBareAmount`, set when the composer context is `price`. `price 25`, `budget 40`, `cost 15`,
+    `price 5`, and `price 12.50` all resolve to a maximum. Outside the composer a bare number is
+    still not a price: `25` and `2026` are far more often a year, a street number, or part of a
+    title, and the existing announced forms (`$25`, `under 25`, `25 dollars`, now also `25 bucks`)
+    continue to work everywhere. The two-character minimum term length is relaxed to one in the
+    price composer, because `5` is a complete answer.
+  - **The number is now visible, not guessed.** Opening the composer lists the four categories plus
+    one-tap ceilings (`Up to $10/25/50/100`), so a reader learns that an amount is an option without
+    having to discover the phrasing.
+  - **Evidence.** Verified against the running app: `price` offers `Any price · Free · Paid · Price
+    unlisted · Up to $10 · Up to $25`; `price 25` offers `Up to $25`; `budget 40` offers `Up to
+    $40`; applying it yields the chip `PRICE ≤ $25`, the URL `max=25`, and the request
+    `price_max_cents=2500`. 19 filter-suggestion tests (5 new, including one asserting a bare number
+    outside the composer is *not* read as a price), 222 web tests overall, 40 Chromium e2e, web
+    typecheck and production build green.
+
+- **2026-08-26 — A host's page showed 2 events while the host published 87; every entity in the
+  catalog had the same defect.** Owner: "for entities, e.g. sf commons there's much more events
+  associated with them... make sure it's all captured for this and other entities."
+  - **The catalog was reading a shelf and calling it a feed.** All Luma coverage came from one
+    enabled source, `luma-sf`, mode `luma_discover_json`. Discover is a curated, ranked
+    *one-event-per-calendar* shelf: a live walk of the whole Bay Area cursor ends naturally after
+    **4 pages with 81 events drawn from 75 distinct owner calendars** — 1.08 events per host. Its
+    `page_limit` of 40 was inert, because the ceiling is Luma's, not ours. `luma-nyc` measured
+    identically (90 events, 89 calendars). The consequence was catalog-wide, not local to one page:
+    **1,995 of 2,506 entities held exactly one event**, and every entity we had came from one of
+    the two Discover shelves or the two Meetup city pages.
+  - **The one adapter that could read a host's programme was fenced shut in code.** Mode
+    `luma_calendar_json` already existed and already walked a calendar cursor, but
+    `_PROFILES` was a hard-coded dict with a single entry, and migration 0117 had disabled that
+    entry in 2026-07 on the assumption that the Discover cursor superseded it. It had not.
+    `_profile_for_source` now derives the calendar identity from the reviewed row's `seed_url`
+    itself and refuses any seed that is not the exact cursor shape, so admitting a calendar is an
+    audited `catalog_sources` change — revision-bumped and written to
+    `catalog_source_configuration_audit` — instead of an edit to a Python allowlist no audit trail
+    covers. 64 host calendars are now reviewed and enabled (0163, 0168), on the rule that Discover
+    materially under-represents them: **3 or more future events at review, personal calendars
+    excluded**.
+  - **Four defects only the live fleet could surface.** A calendar may list an *off-platform* event
+    (`platform: "external"`) carrying no Luma identity at all — 7 of Postman's 17 entries — and one
+    of them failed the whole refresh. A live custom slug contains dots (`luma.com/fw.models.nyc`)
+    and the slug pattern rejected it, taking its calendar to zero. `registration_availability` has
+    a fifth public value, `coming-soon`, that the mapping did not know; five such events published
+    nothing for a New York calendar, and the same record on a Discover page would have taken that
+    whole city feed down. And `page_limit` is a **cliff, not a budget** — exceeding it discards
+    every page already fetched — which is why every calendar row carries 3x headroom.
+  - **Calendar events would have been second-class.** A listing carries identity, timing, place and
+    price and nothing else; description, speakers, partners, attendance and registration status
+    live only on `api2.luma.com/event/get`, and only the Discover adapter followed that lane. Since
+    both sources can hold the same event and the catalog keeps whichever fetch ran last, *which
+    source refreshed last* would have decided what the reader saw. The lane is now
+    `adapters/luma_detail.py`, shared by both adapters (0169 approves the second origin), and
+    `_lease_seconds_for` reserves for the events a page cap can carry rather than for pages alone —
+    both Luma modes had been leaning on the 300-second process default.
+  - **Adding sources split the entities they were meant to fill.** Source-scoped identity is keyed
+    to the asserting source, by 0147's deliberate rule that a display name is not a cross-source
+    identity. Correct — until two sources assert *the same role, for the same name, on the same
+    canonical event*, where the shared event has done the identifying and keeping them apart splits
+    one host's evidence. That went from rare to routine overnight: **75 names across 164 rows**,
+    and `The SF Commons` became two entities, one holding 2 events and one holding 86. 0171 keys a
+    corroborated identity to the minimum source of its whole **connected component** — a
+    direct-neighbour minimum is not symmetric, so a hub shelf and its leaf calendars would each
+    choose differently and never converge — and moves standing mentions off the non-representative
+    members, because a component is discovered only when its *second* source arrives and by then
+    the first source's rows are already persisted. Testing caught that: the merge was
+    order-dependent until the re-key step existed. Profile-verified identity is untouched.
+  - **Nothing measured any of this, which is why it was found by eye.** Every completeness guard in
+    the ingestion path is a *truncation* detector — page caps, cursor checks, lease fences. None can
+    see a complete walk of the wrong seed. `quality/catalog_coverage.py` and
+    `fn_report_catalog_source_coverage_v1` (0166) measure shape instead: **depth**, live future
+    events per distinct organizer, read only where it means something. A shelf scores ~1.0 by
+    construction; a host calendar scores its programme. It also reports what nothing else does —
+    future events the newest-successful-run retention rule has silently retracted, page caps that
+    have gone terminal, and sources aged past their own cadence. `make catalog-coverage`.
+  - **Fixed while verifying.** The entity-intelligence worker had been throwing `ProgrammingError`
+    every 30s since 23:24Z: a deployed image still called `fn_get_catalog_entity_insights_v1` after
+    0156 dropped it, and the handler logged only `error_type`, so the missing function's name never
+    reached the log. It now logs the message and escalates on a run of identical failures, because
+    a drift is not a blip. Two BiblioCommons feeds (0167) had grown past caps sized when they were
+    smaller — San José 3,820 of 4,000 (attempt_count 5,166, failing 13 days), SCCLD 1,207 of 1,250
+    (2,252 attempts, 6 days) — publishing nothing while heading every cadence plan. The cap is
+    pinned in *two* places, code and registry, and they must agree; an integration test now says so.
+    `alameda-county-library-all-physical-branches-events` is at 8.3% headroom and is next.
+  - **Evidence.** Measured through the new report's own rule (distinct live future events on each
+    source's newest successful run): Luma now holds **895**, of which **723 come from the 64 host
+    calendars that did not exist before** — the two Discover shelves contribute 172 between them
+    (78 Bay Area, 94 New York) and that is all they have ever been able to contribute.
+    `The SF Commons`, on the same entity id and URL the owner opened, **2 → 88 events**. 695 of 811
+    calendar events now carry a description where none did. Duplicate source-scoped rows
+    **164 → 51**, the remainder genuinely uncorroborated (an "April" in New York and an "April" in
+    San Francisco share no event and stay two). `make catalog-coverage` exits 0 with no
+    error-severity finding. 1,494 unit tests pass, plus 36 source-registry and 5 entity-identity
+    integration tests — the entity projection had no executable coverage at all before this. ruff
+    and strict mypy clean across every file touched.
+  - **Caught by reviewing the change set adversarially** (28 findings raised, 26 refuted under
+    independent attack, 2 confirmed and fixed):
+    - The first cut of the coverage report counted observation *rows*, not events:
+      `catalog_event_observations` is keyed by source identity and one source routinely observes
+      one canonical event under several, so San José reported 3,986 for 3,883. Small in absolute
+      terms and fatal in kind — `depth` divides two numbers that were counting different things.
+      0173 counts distinct events, uses `IS DISTINCT FROM` (a source that had *never* succeeded
+      reported zero retracted events rather than all of them, because both sides of the comparison
+      were NULL), and adopts the retention rule's own window.
+    - **The calendar lane never filtered `visibility`.** Discover drops non-public entries before
+      the detail lane sees them; the calendar contract does not assert visibility at all. So an
+      `unlisted` event would have been published whenever its detail record happened to agree — and
+      would have failed the *entire* calendar whenever it did not, because the shared detail lane
+      requires `visibility == "public"`. Now filtered, and never even fetched.
+    - **0171 could strand an entity on a source that stopped asserting it.** Such a source appears
+      in neither branch of the component computation, so a repair driven by the component map never
+      selected its entity, and the prune spared it because it still held the other members'
+      mentions. Reproduced end-to-end: after the naming source drops the event, a per-source
+      refresh and a full rebuild disagree — and a later third source re-creates the exact split
+      0171 exists to eliminate. 0175 reads the implied identity from the mentions an entity
+      *actually holds*: the component's representative where a holder is still a member, otherwise
+      the smallest source still asserting. Live invariant now holds at zero violations.
+    - **The entity-intelligence log leaked third-party PII.** Logging `str(error)` renders
+      SQLAlchemy's `[SQL: …]`/`[parameters: …]` tail and Postgres's `DETAIL: Failing row contains`,
+      which bind a named individual's public profile URL — observed live in stdout, undeduplicated.
+      The four sibling poll loops log the type alone and say why. The diagnosis this worker needs is
+      on line one and the bound values are on the lines below it, so it now logs the first line,
+      bounded.
+    - Two migration docstrings asserted things that were not true — 0169 cited a Luma pacer envelope
+      that does not govern this path (catalog refresh runs under `PUBLIC_JSONLD`'s generic default;
+      what paces these GETs is the adapter's own per-host floor), and 0163's "600 events" assumed a
+      full page everywhere. Both corrected. `_lease_seconds_for` is now the pure, testable
+      `catalog_refresh_lease_seconds`, because it is the *real* upper bound on a Luma `page_limit`:
+      past 90 pages the reservation exceeds the one-hour ceiling and the source is skipped with no
+      run recorded at all. The registry test asserts both ends.
+  - **Left open, owner-scoped.** The two Discover shelves are *still* shelves (`luma-nyc` names 87
+    hosts at 1.08 each, `meetup-sf` 35 at 1.34); the coverage eval now says so on every run. Host
+    calendars were registered by hand from one measured crawl — the systematic answer is a source
+    *proposal* plane, since every Discover page already carries `calendar.api_id` and
+    `calendar.slug` and throws them away. Meetup group calendars are the same untapped depth behind
+    a different adapter. 1,355 future events remain retracted fleet-wide by the newest-run retention
+    rule.
 
 ## Session contract reminder
 

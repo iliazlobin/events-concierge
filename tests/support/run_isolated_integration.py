@@ -80,6 +80,11 @@ def run(pytest_args: Sequence[str], environ: dict[str, str] | None = None) -> in
             # A defensive boundary for any future test that connects to the persistent local
             # Temporal service instead of WorkflowEnvironment's ephemeral server.
             "EC_TEMPORAL_TASK_QUEUE": f"events-concierge-test-{run_id}",
+            # Fresh CI clusters do not have the application role yet. This is an explicit local
+            # fixture secret; production migration jobs receive a separately managed value.
+            "EC_APP_ROLE_PASSWORD": source_environment.get(
+                "EC_LOCAL_APP_ROLE_PASSWORD", "ec_app"
+            ),
         }
     )
     validate_isolated_test_environment(child_environment)

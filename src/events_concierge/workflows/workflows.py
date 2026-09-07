@@ -42,6 +42,8 @@ from .dto import (
     HandoffInput,
     HandoffReminderActivityResult,
     HandoffReminderInput,
+    LinkRequestOutcomeInput,
+    LinkRequestOutcomeResult,
     OrganizerChangeSignal,
     PendingLifecycleSignals,
     PolicyGateInput,
@@ -52,6 +54,7 @@ from .dto import (
     RegChildResult,
     RegisterOrRsvpInput,
     RegisterOrRsvpResult,
+    RegisterWorkflowTargetsInput,
     RegistrationSagaKeys,
     RequestInput,
     RequestResult,
@@ -1914,6 +1917,15 @@ class EventRequestWorkflow:
         )
         attempts = 0
         candidate_ids = disc.candidate_ids[: inp.attempt_budget]
+        if candidate_ids and workflow.patched("p16-account-erasure-child-registry-v1"):
+            await workflow.execute_activity(
+                "register_erasure_workflow_targets",
+                RegisterWorkflowTargetsInput(
+                    tenant_id=inp.tenant_id,
+                    workflow_ids=[f"{inp.tenant_id}:{candidate_id}" for candidate_id in candidate_ids],
+                ),
+                start_to_close_timeout=_ACTIVITY_TIMEOUT,
+            )
         failed_children: dict[
             str,
             tuple[
@@ -1952,6 +1964,7 @@ class EventRequestWorkflow:
                             raise RuntimeError(
                                 "terminal handoff directive did not produce a handoff child outcome"
                             )
+                        await self._link_request_outcome(inp, terminal_outcome.canonical_event_id)
                         return RequestResult(
                             outcome=terminal_outcome.status,
                             attempts=attempts,
@@ -1973,6 +1986,7 @@ class EventRequestWorkflow:
                 # request workflow long-lived and contradict the ADR-003 split (FR-6.6/8.1/8.7).
                 if uses_directive_terminality:
                     await self._close_failed_children(failed_children)
+                await self._link_request_outcome(inp, outcome.canonical_event_id)
                 return RequestResult(
                     outcome=outcome.status, attempts=attempts, detail=f"lane={outcome.lane}"
                 )
@@ -1980,12 +1994,16 @@ class EventRequestWorkflow:
             if result.status == "handoff":
                 if uses_directive_terminality:
                     await self._close_failed_children(failed_children)
+                await self._link_request_outcome(inp, canonical_id)
                 return RequestResult(
                     outcome=result.status, attempts=attempts, detail=f"lane={result.lane}"
                 )
         if uses_directive_terminality:
             terminal_handoff = await self._demote_best_handoff_child(failed_children)
             if terminal_handoff is not None:
+                await self._link_request_outcome(
+                    inp, terminal_handoff.canonical_event_id
+                )
                 return RequestResult(
                     outcome=terminal_handoff.status,
                     attempts=attempts,
@@ -1993,6 +2011,23 @@ class EventRequestWorkflow:
                 )
             await self._close_failed_children(failed_children)
         return await self._finalize_no_candidate(inp, attempts)
+
+    async def _link_request_outcome(self, inp: RequestInput, canonical_event_id: str) -> None:
+        """Persist the selected child identity without changing pre-P47 workflow histories."""
+        if not workflow.patched("p47-request-outcome-link-v1"):
+            return
+        result: LinkRequestOutcomeResult = await workflow.execute_activity(
+            "link_request_outcome",
+            LinkRequestOutcomeInput(
+                tenant_id=inp.tenant_id,
+                request_id=inp.request_id,
+                canonical_event_id=canonical_event_id,
+            ),
+            start_to_close_timeout=_ACTIVITY_TIMEOUT,
+            result_type=LinkRequestOutcomeResult,
+        )
+        if result.status not in {"linked", "replayed"}:
+            raise RuntimeError("request outcome link did not converge")
 
     async def _demote_best_handoff_child(
         self,

@@ -81,6 +81,12 @@ from ..ports.sources import (
     SourceRateLimitedError,
     SourceReconsentRequiredError,
 )
+from ..ports.tenant_effects import (
+    TenantEffectAuthority,
+    TenantEffectKind,
+    TenantEffectRequest,
+)
+from .tenant_effects import DirectTenantEffectAuthority
 
 _log = get_logger(__name__)
 
@@ -263,6 +269,8 @@ class RegistrationService:
         handoff_completion_base_url: str = "",
         require_https_completion_links: bool = False,
         notification_secret_protector: NotificationSecretProtector | None = None,
+        tenant_effect_authority: TenantEffectAuthority | None = None,
+        tenant_effect_timeout_seconds: float = 30.0,
         now: Callable[[], datetime] | None = None,
     ) -> None:
         self._sources = sources_by_source
@@ -282,6 +290,15 @@ class RegistrationService:
             require_https=require_https_completion_links,
         )
         self._notification_secret_protector = notification_secret_protector
+        self._tenant_effects = tenant_effect_authority or DirectTenantEffectAuthority()
+        # Validate at graph construction, rather than discovering an invalid deadline only after
+        # a workflow has acquired browser/provider capacity.
+        TenantEffectRequest(
+            tenant_id=UUID(int=0),
+            kind=TenantEffectKind.REGISTRATION,
+            timeout_seconds=tenant_effect_timeout_seconds,
+        )
+        self._tenant_effect_timeout_seconds = tenant_effect_timeout_seconds
         self._now = now or (lambda: datetime.now(UTC))
 
     async def resolve_membership(
@@ -541,8 +558,18 @@ class RegistrationService:
                         final_policy.reason,
                     )
                 try:
-                    source_result = await adapter.register(
-                        tenant_id, link, modality, source_idempotency_key
+                    source_result = await self._tenant_effects.run(
+                        TenantEffectRequest(
+                            tenant_id=tenant_id,
+                            kind=TenantEffectKind.REGISTRATION,
+                            timeout_seconds=self._tenant_effect_timeout_seconds,
+                        ),
+                        lambda: adapter.register(
+                            tenant_id,
+                            link,
+                            modality,
+                            source_idempotency_key,
+                        ),
                     )
                 except SourceRateLimitedError as throttle:
                     await self._defer_for_source_throttle(pacer_request, throttle)
@@ -1015,7 +1042,14 @@ class RegistrationService:
         entry = self.dedupe_calendar(tenant_id, event)
         if entry.calendar_event_id != calendar_event_id:
             raise ValueError("calendar id was not minted from tenant and canonical event")
-        await self._calendar.upsert_event(tenant_id, entry)
+        await self._tenant_effects.run(
+            TenantEffectRequest(
+                tenant_id=tenant_id,
+                kind=TenantEffectKind.CALENDAR_UPSERT,
+                timeout_seconds=self._tenant_effect_timeout_seconds,
+            ),
+            lambda: self._calendar.upsert_event(tenant_id, entry),
+        )
         lifecycle = await self._lifecycle.get_or_create(
             tenant_id, event.canonical_event_id, workflow_id
         )

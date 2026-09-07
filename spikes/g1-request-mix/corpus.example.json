@@ -1,0 +1,9 @@
+{
+  "schema_version": "g1-request-mix-v1",
+  "requests": [
+    {
+      "id": "scenario-0001",
+      "text": "Replace this example with one consented, realistic request"
+    }
+  ]
+}

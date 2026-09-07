@@ -8,6 +8,7 @@ semantics before this adapter can be activated (FR-5.2/5.3, ADR-005).
 
 from __future__ import annotations
 
+import math
 from collections.abc import Mapping
 from typing import Final
 from uuid import UUID
@@ -32,9 +33,13 @@ from ...ports.sources import (
     SourceReconsentRequiredError,
 )
 
-_DEFAULT_ENDPOINT: Final = "https://api.meetup.com/gql"
+# Meetup's February 2025 GraphQL migration moved third-party clients to ``gql-ext``. Keep the
+# endpoint fixed in trusted deployment code; neither a target event nor a token may select it.
+_DEFAULT_ENDPOINT: Final = "https://api.meetup.com/gql-ext"
 _HTTP_UNAUTHORIZED: Final = 401
 _HTTP_FORBIDDEN: Final = 403
+_MIN_TIMEOUT_SECONDS: Final = 0.1
+_MAX_TIMEOUT_SECONDS: Final = 60.0
 
 _MEMBERSHIP_QUERY: Final = """
 query ReadEventMembership($eventId: ID!) {
@@ -85,8 +90,12 @@ class HttpxMeetupApi:
     ) -> None:
         if not endpoint.startswith("https://"):
             raise ValueError("Meetup GraphQL endpoint must use HTTPS")
-        if timeout_s <= 0.0:
-            raise ValueError("Meetup timeout must be positive")
+        if (
+            isinstance(timeout_s, bool)
+            or not math.isfinite(timeout_s)
+            or not _MIN_TIMEOUT_SECONDS <= timeout_s <= _MAX_TIMEOUT_SECONDS
+        ):
+            raise ValueError("Meetup timeout must be finite and between 0.1 and 60 seconds")
         self._tokens = tokens
         self._client = client
         self._endpoint = endpoint
@@ -125,6 +134,7 @@ class HttpxMeetupApi:
             self._endpoint,
             headers={"Authorization": f"Bearer {token}"},
             json={"query": operation, "variables": {"eventId": event_id}},
+            timeout=self._timeout_s,
         )
         if response.status_code == _HTTP_UNAUTHORIZED:
             raise MeetupReconsentRequiredError("Meetup rejected the OAuth token")

@@ -45,7 +45,7 @@ def main() -> None:
     parser = argparse.ArgumentParser(
         description="Refresh one approved Events Concierge catalog source"
     )
-    parser.add_argument("source_key", help="catalog_sources.source_key, for example luma-genai-sf")
+    parser.add_argument("source_key", help="catalog_sources.source_key, for example luma-sf")
     parser.add_argument("--run-key", help="stable retry key; defaults to a fresh manual key")
     args = parser.parse_args()
     run_key = args.run_key or f"manual:{uuid4().hex}"

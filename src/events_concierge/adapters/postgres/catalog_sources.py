@@ -21,6 +21,8 @@ from ...domain.catalog_sources import (
     CatalogRefreshClaim,
     CatalogRefreshDue,
     CatalogRefreshRun,
+    CatalogRunExecutionEvidence,
+    CatalogRunStageEvidence,
     CatalogSource,
     CatalogSourcePage,
     catalog_candidate_content_hash,
@@ -30,7 +32,7 @@ from ...domain.enums import (
     CatalogRefreshRunStatus,
     CatalogSourceMode,
 )
-from ...domain.events import CandidateEvent
+from ...domain.events import CandidateEvent, event_entity_profiles_payload
 from ...infra.db import system_session_scope
 
 
@@ -128,6 +130,77 @@ class PostgresCatalogSourceRepository:
             return CatalogRefreshClaim(CatalogRefreshClaimOutcome.SUCCEEDED)
         return CatalogRefreshClaim(CatalogRefreshClaimOutcome.BUSY)
 
+    async def record_run_execution(
+        self,
+        source_key: str,
+        run_key: str,
+        evidence: CatalogRunExecutionEvidence,
+    ) -> bool:
+        """Record bounded process/wall evidence through its fixed capability."""
+        async with system_session_scope() as session:
+            recorded = (
+                await session.execute(
+                    text(
+                        """
+                        SELECT public.fn_record_catalog_refresh_run_execution_v1(
+                            :source_key, :run_key, :wall_time_ms, :process_cpu_time_ms,
+                            :rss_before_bytes, :rss_after_bytes,
+                            :boundary_observed_peak_rss_bytes,
+                            :process_lifetime_peak_rss_bytes, :measurement_source,
+                            :measurement_scope, :measurement_quality, :outcome_code
+                        )
+                        """
+                    ),
+                    {
+                        "source_key": source_key,
+                        "run_key": run_key,
+                        "wall_time_ms": evidence.wall_time_ms,
+                        "process_cpu_time_ms": evidence.process_cpu_time_ms,
+                        "rss_before_bytes": evidence.rss_before_bytes,
+                        "rss_after_bytes": evidence.rss_after_bytes,
+                        "boundary_observed_peak_rss_bytes": (
+                            evidence.boundary_observed_peak_rss_bytes
+                        ),
+                        "process_lifetime_peak_rss_bytes": (
+                            evidence.process_lifetime_peak_rss_bytes
+                        ),
+                        "measurement_source": evidence.measurement_source,
+                        "measurement_scope": evidence.measurement_scope,
+                        "measurement_quality": evidence.measurement_quality,
+                        "outcome_code": evidence.outcome_code,
+                    },
+                )
+            ).scalar_one()
+        return bool(recorded)
+
+    async def record_run_stage(
+        self,
+        source_key: str,
+        run_key: str,
+        evidence: CatalogRunStageEvidence,
+    ) -> bool:
+        """Record one closed-vocabulary monotonic stage timing."""
+        async with system_session_scope() as session:
+            recorded = (
+                await session.execute(
+                    text(
+                        """
+                        SELECT public.fn_record_catalog_refresh_run_stage_v1(
+                            :source_key, :run_key, :stage, :duration_ms, :outcome_code
+                        )
+                        """
+                    ),
+                    {
+                        "source_key": source_key,
+                        "run_key": run_key,
+                        "stage": evidence.stage,
+                        "duration_ms": evidence.duration_ms,
+                        "outcome_code": evidence.outcome_code,
+                    },
+                )
+            ).scalar_one()
+        return bool(recorded)
+
     async def has_live_refresh_lease(
         self,
         source_key: str,
@@ -213,6 +286,35 @@ class PostgresCatalogSourceRepository:
             ).scalar_one()
         return bool(failed)
 
+    async def pause_refresh(
+        self,
+        source_key: str,
+        run_key: str,
+        *,
+        lease_token: UUID,
+        error: str,
+    ) -> bool:
+        """Release a generic Pacer defer through the existing lease-fenced pause capability."""
+        async with system_session_scope() as session:
+            paused = (
+                await session.execute(
+                    text(
+                        """
+                        SELECT public.fn_pause_paged_catalog_refresh(
+                            :source_key, :run_key, :lease_token, :error
+                        ) AS paused
+                        """
+                    ),
+                    {
+                        "source_key": source_key,
+                        "run_key": run_key,
+                        "lease_token": lease_token,
+                        "error": error[:2_000],
+                    },
+                )
+            ).scalar_one()
+        return bool(paused)
+
     async def get_refresh_run(self, source_key: str, run_key: str) -> CatalogRefreshRun | None:
         async with system_session_scope() as session:
             row = (
@@ -291,7 +393,7 @@ class PostgresCatalogSourceRepository:
                 await session.execute(
                     text(
                         """
-                        SELECT public.fn_stage_paged_catalog_refresh_page(
+                        SELECT public.fn_stage_paged_catalog_refresh_page_v4(
                             :source_key,
                             :run_key,
                             :lease_token,
@@ -429,5 +531,15 @@ def _staged_candidate_payload(candidate: CandidateEvent) -> dict[str, object]:
         "city": candidate.city,
         "description": candidate.description,
         "price_status": candidate.price_status.value,
+        "price_min_cents": candidate.price_min_cents,
+        "price_max_cents": candidate.price_max_cents,
+        "price_currency": candidate.price_currency,
+        "organizer_name": candidate.organizer_name,
+        "host_names": list(candidate.host_names),
+        "speaker_names": list(candidate.speaker_names),
+        "partner_names": list(candidate.partner_names),
+        "entity_profiles": event_entity_profiles_payload(candidate.entity_profiles),
+        "attendance_count": candidate.attendance_count,
+        "registration_status": candidate.registration_status.value,
         "content_hash": catalog_candidate_content_hash(candidate),
     }

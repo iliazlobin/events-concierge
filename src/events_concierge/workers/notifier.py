@@ -30,6 +30,8 @@ async def run_notifier() -> None:
         container.notifier,
         container.notification_secret_protector,
         lease_seconds=settings.outbox_lease_seconds,
+        tenant_effect_authority=container.tenant_effect_authority,
+        tenant_effect_timeout_seconds=settings.tenant_effect_timeout_seconds,
     )
     worker = NotifierWorker(
         relay,

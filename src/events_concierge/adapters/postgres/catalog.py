@@ -4,20 +4,45 @@ links) and hybrid retrieval (dense pgvector ANN + sparse tsvector) fused by Reci
 from __future__ import annotations
 
 import json
-from datetime import UTC, datetime
-from typing import cast
+import re
+from datetime import UTC, date, datetime, timedelta
+from typing import Any, cast
 from uuid import UUID, uuid4
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ...domain import dedup
-from ...domain.enums import PriceStatus
+from ...domain.catalog_browse import (
+    CatalogBrowseCity,
+    CatalogBrowseCursor,
+    CatalogBrowseDay,
+    CatalogBrowseDayTopic,
+    CatalogBrowseEvent,
+    CatalogBrowseProvider,
+    CatalogBrowseSort,
+    CatalogBrowseSource,
+    CatalogBrowseTopic,
+)
+from ...domain.enums import PriceStatus, Source
+from ...domain.event_semantics import (
+    CATALOG_TOPICS,
+    MAX_CATALOG_TOPIC_SELECTIONS,
+    TOPIC_LABELS,
+    EventSemanticProjection,
+    extract_event_semantics,
+    extraction_evidence_payload,
+)
 from ...domain.events import (
+    MAX_PUBLIC_PRICE_CENTS,
     CandidateEvent,
     CanonicalEvent,
+    EventEntityProfile,
     EventSourceLink,
+    aggregate_price_range,
     aggregate_price_status,
+    event_entity_profiles_payload,
 )
 from ...domain.request import RequestConstraints
 from ...infra.db import system_session_scope
@@ -27,6 +52,204 @@ from ._mapping import canonical_from_row, link_from_row, vector_literal
 RRF_K = 60
 _FUZZY_LOCK_BUCKET = dedup.TIME_DELTA
 _UNIX_EPOCH = datetime(1970, 1, 1, tzinfo=UTC)
+_MAX_CATALOG_BROWSE_LIMIT = 101
+_MAX_CATALOG_BROWSE_WINDOW = timedelta(days=370)
+_MAX_SOURCE_CATALOG_ARCHIVE_WINDOW = timedelta(days=7_305)
+_MAX_CATALOG_FILTER_LENGTH = 160
+_MAX_CATALOG_CITY_FILTERS = 20
+_MAX_CATALOG_SOURCE_FILTERS = 40
+_MAX_CATALOG_DATE_RANGES = 8
+_CATALOG_LOCATION_SCOPES = frozenset({"bay_area", "manhattan", "los_angeles_area"})
+_MIN_PRINTABLE_CODEPOINT = 0x20
+_DELETE_CODEPOINT = 0x7F
+
+
+_CATALOG_TIME_ZONE_PATTERN = re.compile(r"[A-Za-z0-9+_/-]{1,64}")
+# Events carrying no topics are counted under this synthetic bucket, matching the consumer
+# calendar's own taxonomy. It is deliberately not a member of CATALOG_TOPICS.
+_CATALOG_UNTOPICED_BUCKET = "other"
+
+
+def _validated_catalog_filter_inputs(
+    *,
+    query: str | None,
+    source_keys: tuple[str, ...] = (),
+    city_filters: tuple[str, ...],
+    location_scopes: tuple[str, ...],
+    price: str | None,
+    price_max_cents: int | None,
+    price_min_cents: int | None = None,
+    topics: tuple[str, ...],
+    availability: str | None = None,
+) -> tuple[str, ...]:
+    """Reject the scalar filters both catalog read paths share and normalize the topic selection.
+
+    The page and the day summary must refuse identical inputs, or a summarized range could
+    describe a filter the paged agenda rejects.
+    """
+    if len(city_filters) > _MAX_CATALOG_CITY_FILTERS:
+        raise ValueError("catalog browse has too many city filters")
+    if len(source_keys) > _MAX_CATALOG_SOURCE_FILTERS:
+        raise ValueError("catalog browse has too many source filters")
+    for value in (query, *city_filters):
+        if value is not None and (
+            len(value) > _MAX_CATALOG_FILTER_LENGTH
+            or any(
+                ord(character) < _MIN_PRINTABLE_CODEPOINT or ord(character) == _DELETE_CODEPOINT
+                for character in value
+            )
+        ):
+            raise ValueError("catalog browse filter is invalid")
+    if price not in {None, "free", "paid", "unknown"}:
+        raise ValueError("catalog browse price is invalid")
+    if availability not in {None, "available", "sold_out"}:
+        raise ValueError("catalog browse availability is invalid")
+    if any(scope not in _CATALOG_LOCATION_SCOPES for scope in location_scopes) or len(
+        location_scopes
+    ) > len(_CATALOG_LOCATION_SCOPES):
+        raise ValueError("catalog browse location scope is invalid")
+    if price_max_cents is not None and (
+        isinstance(price_max_cents, bool)
+        or not 1 <= price_max_cents <= MAX_PUBLIC_PRICE_CENTS
+        or price == "unknown"
+    ):
+        raise ValueError("catalog browse maximum price is invalid")
+    # A floor cannot describe a free or unpriced event, and an inverted band selects nothing, so
+    # both are rejected here rather than returning a silently empty page.
+    if price_min_cents is not None and (
+        isinstance(price_min_cents, bool)
+        or not 1 <= price_min_cents <= MAX_PUBLIC_PRICE_CENTS
+        or price in {"free", "unknown"}
+        or (price_max_cents is not None and price_min_cents > price_max_cents)
+    ):
+        raise ValueError("catalog browse minimum price is invalid")
+    normalized_topics = tuple(dict.fromkeys(topics))
+    if len(normalized_topics) > MAX_CATALOG_TOPIC_SELECTIONS or any(
+        topic not in CATALOG_TOPICS for topic in normalized_topics
+    ):
+        raise ValueError("catalog browse topic filter is invalid")
+    return normalized_topics
+
+
+def _validated_catalog_time_zone(time_zone: str) -> str:
+    """Reject a time zone before it reaches the database.
+
+    The capability validates the zone too, but a database exception surfaces as a
+    driver error rather than an invalid-argument the API can answer with 422.
+    """
+    if not _CATALOG_TIME_ZONE_PATTERN.fullmatch(time_zone):
+        raise ValueError("catalog browse time zone is invalid")
+    try:
+        ZoneInfo(time_zone)
+    except (ValueError, ZoneInfoNotFoundError) as error:
+        raise ValueError("catalog browse time zone is invalid") from error
+    return time_zone
+
+
+def _catalog_day_topic_label(topic: str) -> str:
+    if topic == _CATALOG_UNTOPICED_BUCKET:
+        return "Other"
+    return TOPIC_LABELS.get(topic, topic)
+
+
+def _validated_catalog_sort(sort: CatalogBrowseSort) -> CatalogBrowseSort:
+    if sort not in {"soonest", "latest"}:
+        raise ValueError("catalog browse sort is invalid")
+    return sort
+
+
+def _catalog_browse_ranges(
+    *,
+    starts_after: datetime | None,
+    starts_before: datetime | None,
+    date_ranges: tuple[tuple[datetime, datetime], ...],
+    max_window: timedelta,
+) -> tuple[tuple[datetime, datetime], ...]:
+    if (starts_after is None) != (starts_before is None):
+        raise ValueError("catalog browse window must provide both bounds")
+    if date_ranges and starts_after is not None:
+        raise ValueError("catalog browse window must use one date encoding")
+    requested = (
+        date_ranges
+        if date_ranges
+        else (
+            ((starts_after, cast(datetime, starts_before)),)
+            if starts_after is not None
+            else ()
+        )
+    )
+    if len(requested) > _MAX_CATALOG_DATE_RANGES:
+        raise ValueError("catalog browse has too many date ranges")
+    if any(
+        start.tzinfo is None
+        or start.utcoffset() is None
+        or end.tzinfo is None
+        or end.utcoffset() is None
+        or end <= start
+        or end - start > max_window
+        for start, end in requested
+    ) or sum((end - start for start, end in requested), timedelta()) > max_window:
+        raise ValueError("catalog browse window is invalid")
+    return requested
+
+
+def _semantic_projection(candidate: CandidateEvent) -> EventSemanticProjection:
+    return extract_event_semantics(candidate.title, candidate.description, candidate.raw)
+
+
+def _conservative_shared_entities(
+    existing: CanonicalEvent,
+    candidate: CandidateEvent,
+) -> tuple[
+    str | None,
+    tuple[str, ...],
+    tuple[str, ...],
+    tuple[str, ...],
+    tuple[EventEntityProfile, ...],
+]:
+    """Fill verified links without letting one publisher rewrite another's identity."""
+    organizer_name = existing.organizer_name or candidate.organizer_name
+
+    def merged_names(
+        role: str,
+        current: tuple[str, ...],
+        observed: tuple[str, ...],
+    ) -> tuple[str, ...]:
+        proposed = observed if len(observed) > len(current) else current
+        protected = {
+            profile.name.casefold() for profile in existing.entity_profiles if profile.role == role
+        }
+        if protected.issubset(name.casefold() for name in proposed):
+            return proposed
+        return current
+
+    host_names = merged_names("host", existing.host_names, candidate.host_names)
+    speaker_names = merged_names("speaker", existing.speaker_names, candidate.speaker_names)
+    partner_names = merged_names("partner", existing.partner_names, candidate.partner_names)
+    if existing.entity_profiles:
+        return (
+            organizer_name,
+            host_names,
+            speaker_names,
+            partner_names,
+            existing.entity_profiles,
+        )
+
+    allowed = {
+        "organizer": ({organizer_name.casefold()} if organizer_name is not None else set()),
+        "host": {name.casefold() for name in host_names},
+        "speaker": {name.casefold() for name in speaker_names},
+        "partner": {name.casefold() for name in partner_names},
+    }
+    profiles = (
+        candidate.entity_profiles
+        if all(
+            profile.name.casefold() in allowed[profile.role]
+            for profile in candidate.entity_profiles
+        )
+        else ()
+    )
+    return organizer_name, host_names, speaker_names, partner_names, profiles
 
 
 class PostgresCatalogRepository:
@@ -78,10 +301,33 @@ class PostgresCatalogRepository:
         # constraint chooses one, leaving the losing canonical orphaned.
         exact_canonical_id = await self._find_source_identity(s, candidate)
         if exact_canonical_id is not None:
-            await self._enrich_existing(s, exact_canonical_id, candidate, vector)
-            await self._attach_link(s, exact_canonical_id, candidate)
-            await self._refresh_price_status(s, exact_canonical_id)
-            return await self._load(s, exact_canonical_id)
+            existing = await self._load(s, exact_canonical_id)
+            if len(existing.source_links) == 1:
+                # A stable publisher identity is authoritative for its own exclusive canonical.
+                # In particular, an organizer can move an occurrence outside the fuzzy dedup
+                # window.  Keeping the old time made the current-observation browse silently drop
+                # a successfully refreshed future event once its original time elapsed.
+                await self._replace_exclusive_source_event(s, exact_canonical_id, candidate, vector)
+                await self._attach_link(s, exact_canonical_id, candidate)
+                await self._refresh_price(s, exact_canonical_id)
+                return await self._load(s, exact_canonical_id)
+
+            if dedup.is_duplicate(candidate, existing):
+                # Multiple publishers still describe the same occurrence. Preserve the established
+                # shared identity and only fill metadata gaps; one source must not rewrite fields
+                # that belong to all retained links.
+                await self._enrich_existing(s, existing, candidate, vector)
+                await self._attach_link(s, exact_canonical_id, candidate)
+                await self._refresh_price(s, exact_canonical_id)
+                return await self._load(s, exact_canonical_id)
+
+            # This publisher moved away from an occurrence that is still independently asserted by
+            # another source. Split only its link, then let the ordinary fuzzy path attach it to an
+            # already-known moved occurrence or mint a new canonical. The refresh committer updates
+            # this source_key's catalog observation to the returned canonical in the same
+            # transaction, while observations belonging to other sources remain on the old event.
+            await self._detach_source_link(s, exact_canonical_id, candidate)
+            await self._refresh_price(s, exact_canonical_id)
 
         city_norm = dedup.normalize_city(candidate.city)
         lo = candidate.start_at - dedup.TIME_DELTA
@@ -112,21 +358,31 @@ class PostgresCatalogRepository:
                     ),
                     {"cid": existing.canonical_event_id},
                 )
-                await self._enrich_existing(s, existing.canonical_event_id, candidate, vector)
+                await self._enrich_existing(s, existing, candidate, vector)
                 await self._attach_link(s, existing.canonical_event_id, candidate)
-                await self._refresh_price_status(s, existing.canonical_event_id)
+                await self._refresh_price(s, existing.canonical_event_id)
                 return await self._load(s, existing.canonical_event_id)
 
         canonical_id = uuid4()
+        semantics = _semantic_projection(candidate)
         await s.execute(
             text(
                 """
                 INSERT INTO canonical_events
                     (canonical_event_id, title, start_at, end_at, venue_name, lat, lon,
-                     city_norm, description, price_status, embedding)
+                     city_norm, description, price_status, price_min_cents, price_max_cents,
+                     price_currency, embedding, organizer_name,
+                     host_names, speaker_names, partner_names, entity_profiles, attendance_count,
+                     registration_status, topics, extraction_evidence)
                 VALUES
                     (:cid, :title, :start, :end, :venue, :lat, :lon,
-                     :city, :descr, :price_status, (:emb)::vector)
+                     :city, :descr, :price_status, :price_min_cents, :price_max_cents,
+                     :price_currency, (:emb)::vector, :organizer_name,
+                     CAST(:host_names AS text[]), CAST(:speaker_names AS text[]),
+                     CAST(:partner_names AS text[]), CAST(:entity_profiles AS jsonb),
+                     :attendance_count,
+                     :registration_status, CAST(:topics AS text[]),
+                     CAST(:extraction_evidence AS jsonb))
                 """
             ),
             {
@@ -140,7 +396,24 @@ class PostgresCatalogRepository:
                 "city": city_norm,
                 "descr": candidate.description,
                 "price_status": candidate.price_status.value,
+                "price_min_cents": candidate.price_min_cents,
+                "price_max_cents": candidate.price_max_cents,
+                "price_currency": candidate.price_currency,
                 "emb": vector_literal(vector),
+                "organizer_name": candidate.organizer_name,
+                "host_names": list(candidate.host_names),
+                "speaker_names": list(candidate.speaker_names),
+                "partner_names": list(candidate.partner_names),
+                "entity_profiles": json.dumps(
+                    event_entity_profiles_payload(candidate.entity_profiles),
+                    separators=(",", ":"),
+                ),
+                "attendance_count": candidate.attendance_count,
+                "registration_status": candidate.registration_status.value,
+                "topics": list(semantics.topics),
+                "extraction_evidence": json.dumps(
+                    extraction_evidence_payload(semantics.evidence), separators=(",", ":")
+                ),
             },
         )
         linked_canonical_id = await self._attach_link(s, canonical_id, candidate)
@@ -170,11 +443,12 @@ class PostgresCatalogRepository:
                 ),
                 {"canonical_id": linked_canonical_id},
             )
-            await self._enrich_existing(s, linked_canonical_id, candidate, vector)
-            await self._refresh_price_status(s, linked_canonical_id)
+            linked_existing = await self._load(s, linked_canonical_id)
+            await self._enrich_existing(s, linked_existing, candidate, vector)
+            await self._refresh_price(s, linked_canonical_id)
             return await self._load(s, linked_canonical_id)
 
-        await self._refresh_price_status(s, canonical_id)
+        await self._refresh_price(s, canonical_id)
         return await self._load(s, canonical_id)
 
     @staticmethod
@@ -323,7 +597,7 @@ class PostgresCatalogRepository:
     @staticmethod
     async def _enrich_existing(
         s: AsyncSession,
-        canonical_id: UUID,
+        existing: CanonicalEvent,
         candidate: CandidateEvent,
         vector: list[float],
     ) -> None:
@@ -334,6 +608,16 @@ class PostgresCatalogRepository:
         empty or shorter description (with its corresponding embedding).  It cannot override a
         previously established identity or location with a conflicting value.
         """
+        (
+            organizer_name,
+            host_names,
+            speaker_names,
+            partner_names,
+            entity_profiles,
+        ) = _conservative_shared_entities(existing, candidate)
+        semantics = _semantic_projection(candidate)
+        topics = tuple(dict.fromkeys((*existing.topics, *semantics.topics)))
+        evidence = tuple(dict.fromkeys((*existing.extraction_evidence, *semantics.evidence)))
         await s.execute(
             text(
                 """
@@ -347,6 +631,25 @@ class PostgresCatalogRepository:
                             THEN :description
                         ELSE description
                     END,
+                    organizer_name = :organizer_name,
+                    host_names = CAST(:host_names AS text[]),
+                    speaker_names = CAST(:speaker_names AS text[]),
+                    partner_names = CAST(:partner_names AS text[]),
+                    entity_profiles = CAST(:entity_profiles AS jsonb),
+                    attendance_count = CASE
+                        WHEN CAST(:attendance_count AS integer) IS NULL THEN attendance_count
+                        ELSE GREATEST(
+                            COALESCE(attendance_count, 0),
+                            CAST(:attendance_count AS integer)
+                        )
+                    END,
+                    registration_status = CASE
+                        WHEN CAST(:registration_status AS text) <> 'unknown'
+                            THEN CAST(:registration_status AS text)
+                        ELSE registration_status
+                    END,
+                    topics = CAST(:topics AS text[]),
+                    extraction_evidence = CAST(:extraction_evidence AS jsonb),
                     embedding = CASE
                         WHEN char_length(:description) > char_length(COALESCE(description, ''))
                             THEN (:embedding)::vector
@@ -356,24 +659,135 @@ class PostgresCatalogRepository:
                 """
             ),
             {
-                "canonical_id": canonical_id,
+                "canonical_id": existing.canonical_event_id,
                 "end_at": candidate.end_at,
                 "venue_name": candidate.venue_name,
                 "lat": candidate.geo.lat if candidate.geo is not None else None,
                 "lon": candidate.geo.lon if candidate.geo is not None else None,
                 "description": candidate.description,
                 "embedding": vector_literal(vector),
+                "organizer_name": organizer_name,
+                "host_names": list(host_names),
+                "speaker_names": list(speaker_names),
+                "partner_names": list(partner_names),
+                "entity_profiles": json.dumps(
+                    event_entity_profiles_payload(entity_profiles),
+                    separators=(",", ":"),
+                ),
+                "attendance_count": candidate.attendance_count,
+                "registration_status": candidate.registration_status.value,
+                "topics": list(topics),
+                "extraction_evidence": json.dumps(
+                    extraction_evidence_payload(evidence), separators=(",", ":")
+                ),
             },
         )
 
     @staticmethod
-    async def _refresh_price_status(s: AsyncSession, canonical_id: UUID) -> None:
-        """Recompute canonical price from every retained source link (FR-3.7/FR-3.8/FR-5.10)."""
+    async def _replace_exclusive_source_event(
+        s: AsyncSession,
+        canonical_id: UUID,
+        candidate: CandidateEvent,
+        vector: list[float],
+    ) -> None:
+        """Refresh every publisher-owned field when one source exclusively owns a canonical.
+
+        Source identity, not fuzzy similarity, determines that this is the same publisher event.
+        Optional values are deliberately replaced (including with NULL) so a removed or relocated
+        venue cannot leave stale map coordinates behind. Lifecycle ``event_status`` and the
+        normalizer/merge algorithm versions are separate concerns and remain unchanged.
+        """
+        semantics = _semantic_projection(candidate)
+        await s.execute(
+            text(
+                """
+                UPDATE canonical_events
+                SET title = :title,
+                    start_at = :start_at,
+                    end_at = :end_at,
+                    venue_name = :venue_name,
+                    lat = :lat,
+                    lon = :lon,
+                    city_norm = :city_norm,
+                    description = :description,
+                    organizer_name = :organizer_name,
+                    host_names = CAST(:host_names AS text[]),
+                    speaker_names = CAST(:speaker_names AS text[]),
+                    partner_names = CAST(:partner_names AS text[]),
+                    entity_profiles = CAST(:entity_profiles AS jsonb),
+                    attendance_count = :attendance_count,
+                    registration_status = :registration_status,
+                    topics = CAST(:topics AS text[]),
+                    extraction_evidence = CAST(:extraction_evidence AS jsonb),
+                    embedding = (:embedding)::vector
+                WHERE canonical_event_id = :canonical_id
+                """
+            ),
+            {
+                "canonical_id": canonical_id,
+                "title": candidate.title,
+                "start_at": candidate.start_at,
+                "end_at": candidate.end_at,
+                "venue_name": candidate.venue_name,
+                "lat": candidate.geo.lat if candidate.geo is not None else None,
+                "lon": candidate.geo.lon if candidate.geo is not None else None,
+                "city_norm": dedup.normalize_city(candidate.city),
+                "description": candidate.description,
+                "embedding": vector_literal(vector),
+                "organizer_name": candidate.organizer_name,
+                "host_names": list(candidate.host_names),
+                "speaker_names": list(candidate.speaker_names),
+                "partner_names": list(candidate.partner_names),
+                "entity_profiles": json.dumps(
+                    event_entity_profiles_payload(candidate.entity_profiles),
+                    separators=(",", ":"),
+                ),
+                "attendance_count": candidate.attendance_count,
+                "registration_status": candidate.registration_status.value,
+                "topics": list(semantics.topics),
+                "extraction_evidence": json.dumps(
+                    extraction_evidence_payload(semantics.evidence), separators=(",", ":")
+                ),
+            },
+        )
+
+    @staticmethod
+    async def _detach_source_link(
+        s: AsyncSession,
+        canonical_id: UUID,
+        candidate: CandidateEvent,
+    ) -> None:
+        """Detach exactly one locked source identity before re-running fuzzy placement."""
+        detached_canonical_id = (
+            await s.execute(
+                text(
+                    """
+                    DELETE FROM event_source_links
+                    WHERE source = :source
+                      AND source_event_id = :source_event_id
+                      AND canonical_event_id = :canonical_id
+                    RETURNING canonical_event_id
+                    """
+                ),
+                {
+                    "source": candidate.source.value,
+                    "source_event_id": candidate.source_event_id,
+                    "canonical_id": canonical_id,
+                },
+            )
+        ).scalar_one_or_none()
+        if detached_canonical_id != canonical_id:
+            raise RuntimeError("locked catalog source identity could not be detached")
+
+    @staticmethod
+    async def _refresh_price(s: AsyncSession, canonical_id: UUID) -> None:
+        """Recompute conservative canonical pricing from every retained source link."""
         rows = (
             await s.execute(
                 text(
                     """
-                    SELECT price_status FROM event_source_links
+                    SELECT price_status, price_min_cents, price_max_cents, price_currency
+                    FROM event_source_links
                     WHERE canonical_event_id = :cid
                     """
                 ),
@@ -381,32 +795,94 @@ class PostgresCatalogRepository:
             )
         ).all()
         price_status = aggregate_price_status(PriceStatus(row.price_status) for row in rows)
+        price_range = (
+            aggregate_price_range(
+                (
+                    row.price_min_cents,
+                    row.price_max_cents,
+                    row.price_currency,
+                )
+                for row in rows
+            )
+            if price_status is PriceStatus.PAID
+            else (None, None, None)
+        )
         await s.execute(
             text(
                 """
                 UPDATE canonical_events
-                SET price_status = :price_status
+                SET price_status = :price_status,
+                    price_min_cents = :price_min_cents,
+                    price_max_cents = :price_max_cents,
+                    price_currency = :price_currency
                 WHERE canonical_event_id = :cid
                 """
             ),
-            {"price_status": price_status.value, "cid": canonical_id},
+            {
+                "price_status": price_status.value,
+                "price_min_cents": price_range[0],
+                "price_max_cents": price_range[1],
+                "price_currency": price_range[2],
+                "cid": canonical_id,
+            },
         )
 
     async def _attach_link(
         self, s: AsyncSession, canonical_id: UUID, candidate: CandidateEvent
     ) -> UUID:
+        semantics = _semantic_projection(candidate)
+        # Text is weaker than a provider price.  It may fill the only source observation for a
+        # canonical, but it must not silently turn an additional deduplicated source into a free
+        # assertion.  Zero links is a newly minted canonical; one matching link is an exact replay.
+        # Any other shape is shared provenance and therefore remains unknown without structured
+        # provider evidence.
+        link_shape = (
+            await s.execute(
+                text(
+                    """
+                    SELECT count(*) AS link_count,
+                           count(*) FILTER (
+                               WHERE source = :source AND source_event_id = :source_event_id
+                           ) AS matching_count
+                    FROM event_source_links
+                    WHERE canonical_event_id = :canonical_id
+                    """
+                ),
+                {
+                    "canonical_id": canonical_id,
+                    "source": candidate.source.value,
+                    "source_event_id": candidate.source_event_id,
+                },
+            )
+        ).one()
+        unambiguous_single_source = (
+            int(link_shape.link_count) == 0
+            or int(link_shape.link_count) == int(link_shape.matching_count) == 1
+        )
+        price_status = (
+            semantics.inferred_price_status
+            if candidate.price_status is PriceStatus.UNKNOWN
+            and semantics.inferred_price_status is not None
+            and unambiguous_single_source
+            else candidate.price_status
+        )
         linked_canonical_id = (
             await s.execute(
                 text(
                     """
                     INSERT INTO event_source_links
                         (source, source_event_id, canonical_event_id, registration_url,
-                         last_seen_at, price_status)
-                    VALUES (:src, :sid, :cid, :url, now(), :price_status)
+                         last_seen_at, price_status, price_min_cents, price_max_cents,
+                         price_currency)
+                    VALUES (:src, :sid, :cid, :url, now(), :price_status, :price_min_cents,
+                            :price_max_cents, :price_currency)
                     ON CONFLICT (source, source_event_id)
                     DO UPDATE SET registration_url = EXCLUDED.registration_url,
                                   last_seen_at = now(),
-                                  price_status = EXCLUDED.price_status
+                                  price_status = EXCLUDED.price_status,
+                                  price_min_cents = EXCLUDED.price_min_cents,
+                                  price_max_cents = EXCLUDED.price_max_cents,
+                                  price_currency = EXCLUDED.price_currency
                     RETURNING canonical_event_id
                     """
                 ),
@@ -415,7 +891,16 @@ class PostgresCatalogRepository:
                     "sid": candidate.source_event_id,
                     "cid": canonical_id,
                     "url": candidate.registration_url,
-                    "price_status": candidate.price_status.value,
+                    "price_status": price_status.value,
+                    "price_min_cents": (
+                        candidate.price_min_cents if price_status is PriceStatus.PAID else None
+                    ),
+                    "price_max_cents": (
+                        candidate.price_max_cents if price_status is PriceStatus.PAID else None
+                    ),
+                    "price_currency": (
+                        candidate.price_currency if price_status is PriceStatus.PAID else None
+                    ),
                 },
             )
         ).scalar_one()
@@ -465,6 +950,403 @@ class PostgresCatalogRepository:
             if not exists:
                 return None
             return await self._load(s, canonical_event_id)
+
+    async def browse_current(
+        self,
+        *,
+        source_keys: tuple[str, ...] = (),
+        after: CatalogBrowseCursor | None,
+        limit: int,
+        starts_after: datetime | None = None,
+        starts_before: datetime | None = None,
+        date_ranges: tuple[tuple[datetime, datetime], ...] = (),
+        query: str | None = None,
+        city: str | None = None,
+        cities: tuple[str, ...] | None = None,
+        location_scopes: tuple[str, ...] = (),
+        price: str | None = None,
+        price_max_cents: int | None = None,
+        price_min_cents: int | None = None,
+        topics: tuple[str, ...] = (),
+        availability: str | None = None,
+        sort: CatalogBrowseSort = "soonest",
+        include_providers: bool = True,
+    ) -> tuple[list[CatalogBrowseEvent], list[CatalogBrowseProvider]]:
+        """Browse admitted source observations in a stable chronological order.
+
+        Omitted and current/future windows use only the latest successful source projection.  An
+        explicit past portion may use a retained observation after the identity rolls off that
+        projection.  Retention is one last-known observation and the canonical row is latest known
+        state; this is not event version history or an as-of reconstruction.  The database
+        capability owns those lane, admission, and fixture rules.
+        """
+        if limit < 1 or limit > _MAX_CATALOG_BROWSE_LIMIT:
+            raise ValueError("catalog browse limit must be between 1 and 101")
+        sort = _validated_catalog_sort(sort)
+        max_window = (
+            _MAX_SOURCE_CATALOG_ARCHIVE_WINDOW if source_keys else _MAX_CATALOG_BROWSE_WINDOW
+        )
+        requested_ranges = _catalog_browse_ranges(
+            starts_after=starts_after,
+            starts_before=starts_before,
+            date_ranges=date_ranges,
+            max_window=max_window,
+        )
+        windows: tuple[tuple[datetime | None, datetime | None], ...] = (
+            requested_ranges if requested_ranges else ((None, None),)
+        )
+        city_filters = cities if cities is not None else ((city,) if city else ())
+        normalized_topics = _validated_catalog_filter_inputs(
+            query=query,
+            source_keys=source_keys,
+            city_filters=city_filters,
+            location_scopes=location_scopes,
+            price=price,
+            price_max_cents=price_max_cents,
+            price_min_cents=price_min_cents,
+            topics=topics,
+            availability=availability,
+        )
+        params = {
+            "source_keys": list(dict.fromkeys(source_keys)),
+            "query": query,
+            "cities": list(dict.fromkeys(city_filters)),
+            "location_scopes": list(dict.fromkeys(location_scopes)),
+            "price": price,
+            "price_max_cents": price_max_cents,
+            "price_min_cents": price_min_cents,
+            "topics": list(normalized_topics),
+            "availability": availability,
+            "sort": sort,
+            "after_start": after.start_at if after is not None else None,
+            "after_id": after.canonical_event_id if after is not None else None,
+            "limit": limit,
+        }
+        rows: list[Any] = []
+        provider_rows: list[Any] = []
+        async with system_session_scope() as session:
+            for window_start, window_end in windows:
+                window_params = {
+                    **params,
+                    "window_start": window_start,
+                    "window_end": window_end,
+                }
+                rows.extend(
+                    (
+                        await session.execute(
+                            text(
+                                """
+                                SELECT *
+                                FROM public.fn_browse_filtered_current_catalog_events_v10(
+                                    CAST(:source_keys AS text[]), :window_start, :window_end,
+                                    :query, CAST(:cities AS text[]),
+                                    CAST(:location_scopes AS text[]), :price, :price_max_cents,
+                                    :price_min_cents, CAST(:topics AS text[]), :availability,
+                                    :sort, :after_start, :after_id, :limit
+                                )
+                                """
+                            ),
+                            window_params,
+                        )
+                    ).all()
+                )
+                # Ordinary facets are global so the client can replace its source list, including
+                # admitted sources with zero events in this range. A long archive remains source-only.
+                #
+                # The rollup scans the whole admitted catalog, so it costs about as much as the page
+                # it accompanies. A caller that never renders a source list skips it outright rather
+                # than paying for a result it discards.
+                if not include_providers:
+                    continue
+                # The rollup takes one source, and it is pinned only for the single-source
+                # archive view. Any wider selection reads the whole admitted catalog, which is
+                # what a facet list should offer anyway.
+                provider_source_key = (
+                    source_keys[0]
+                    if len(source_keys) == 1
+                    and window_start is not None
+                    and window_end is not None
+                    and window_end - window_start > _MAX_CATALOG_BROWSE_WINDOW
+                    else None
+                )
+                provider_rows.extend(
+                    (
+                        await session.execute(
+                            text(
+                                """
+                                SELECT *
+                                FROM public.fn_list_current_catalog_providers_v3(
+                                    :source_key, :window_start, :window_end
+                                )
+                                """
+                            ),
+                            {
+                                "source_key": provider_source_key,
+                                "window_start": window_start,
+                                "window_end": window_end,
+                            },
+                        )
+                    ).all()
+                )
+
+        grouped: dict[UUID, tuple[CanonicalEvent, list[CatalogBrowseSource]]] = {}
+        for row in rows:
+            canonical_id = cast(UUID, row.canonical_event_id)
+            if canonical_id not in grouped:
+                grouped[canonical_id] = (canonical_from_row(row, []), [])
+            grouped[canonical_id][1].append(
+                CatalogBrowseSource(
+                    source_key=str(row.source_key),
+                    label=str(row.source_label),
+                    publisher=str(row.publisher),
+                    provider=str(row.provider),
+                    seed_url=str(row.seed_url),
+                    source=Source(str(row.observation_source)),
+                    source_event_id=str(row.source_event_id),
+                    registration_url=str(row.registration_url),
+                    last_seen_at=row.last_seen_at,
+                    refresh_run_key=str(row.refresh_run_key),
+                )
+            )
+        items = [
+            CatalogBrowseEvent(canonical_event=event, sources=tuple(sources))
+            for event, sources in grouped.values()
+        ]
+        items.sort(
+            key=lambda item: (
+                item.canonical_event.start_at,
+                item.canonical_event.canonical_event_id,
+            ),
+            reverse=sort == "latest",
+        )
+        provider_groups: dict[str, CatalogBrowseProvider] = {}
+        for row in provider_rows:
+            row_source_key = str(row.source_key)
+            existing = provider_groups.get(row_source_key)
+            provider_groups[row_source_key] = CatalogBrowseProvider(
+                source_key=row_source_key,
+                display_name=str(row.source_label),
+                publisher=str(row.publisher),
+                provider=str(row.provider),
+                seed_url=str(row.seed_url),
+                event_count=int(row.event_count) + (existing.event_count if existing else 0),
+            )
+        return items[:limit], list(provider_groups.values())
+
+    async def list_city_facets(self) -> list[CatalogBrowseCity]:
+        """Return the bounded global city inventory used by the filter composer."""
+        async with system_session_scope() as session:
+            rows = (
+                await session.execute(
+                    text(
+                        """
+                        SELECT *
+                        FROM public.fn_list_current_catalog_city_facets_v1()
+                        """
+                    )
+                )
+            ).all()
+        return [
+            CatalogBrowseCity(city=str(row.city), event_count=int(row.event_count))
+            for row in rows
+        ]
+
+    async def list_topic_facets(
+        self,
+        *,
+        source_keys: tuple[str, ...] = (),
+        starts_after: datetime | None,
+        starts_before: datetime | None,
+        date_ranges: tuple[tuple[datetime, datetime], ...] = (),
+        query: str | None,
+        cities: tuple[str, ...],
+        location_scopes: tuple[str, ...],
+        price: str | None,
+        price_max_cents: int | None,
+        price_min_cents: int | None = None,
+        availability: str | None = None,
+    ) -> list[CatalogBrowseTopic]:
+        """Count topics after all ordinary filters and before topic selection.
+
+        The v2 capability aggregates one unbounded eligibility scan, so each requested window
+        returns one row per topic.  Summing here still combines the rows from multiple date
+        ranges into one compact product facet per topic.
+        """
+        if date_ranges and starts_after is not None:
+            raise ValueError("catalog browse window must use one date encoding")
+        windows: tuple[tuple[datetime | None, datetime | None], ...] = (
+            date_ranges
+            if date_ranges
+            else (((starts_after, starts_before),) if starts_after is not None else ((None, None),))
+        )
+        params = {
+            "source_keys": list(dict.fromkeys(source_keys)),
+            "query": query,
+            "cities": list(dict.fromkeys(cities)),
+            "location_scopes": list(dict.fromkeys(location_scopes)),
+            "price": price,
+            "price_max_cents": price_max_cents,
+            "price_min_cents": price_min_cents,
+            "availability": availability,
+        }
+        rows: list[Any] = []
+        async with system_session_scope() as session:
+            for window_start, window_end in windows:
+                rows.extend(
+                    (
+                        await session.execute(
+                            text(
+                                """
+                                SELECT *
+                                FROM public.fn_list_catalog_topic_facets_v4(
+                                    CAST(:source_keys AS text[]), :window_start, :window_end,
+                                    :query, CAST(:cities AS text[]),
+                                    CAST(:location_scopes AS text[]), :price, :price_max_cents,
+                                    :price_min_cents, :availability
+                                )
+                                """
+                            ),
+                            {
+                                **params,
+                                "window_start": window_start,
+                                "window_end": window_end,
+                            },
+                        )
+                    ).all()
+                )
+        counts: dict[str, int] = {}
+        for row in rows:
+            topic = str(row.topic)
+            if topic in CATALOG_TOPICS:
+                counts[topic] = counts.get(topic, 0) + int(row.event_count)
+        return [
+            CatalogBrowseTopic(topic=topic, label=label, event_count=counts.get(topic, 0))
+            for topic, label in TOPIC_LABELS.items()
+        ]
+
+    async def list_day_facets(
+        self,
+        *,
+        source_keys: tuple[str, ...] = (),
+        starts_after: datetime | None,
+        starts_before: datetime | None,
+        date_ranges: tuple[tuple[datetime, datetime], ...] = (),
+        query: str | None,
+        cities: tuple[str, ...],
+        location_scopes: tuple[str, ...],
+        price: str | None,
+        price_max_cents: int | None,
+        price_min_cents: int | None = None,
+        topics: tuple[str, ...] = (),
+        availability: str | None = None,
+        time_zone: str,
+    ) -> list[CatalogBrowseDay]:
+        """Bucket the filtered catalog into local calendar days without paging the events.
+
+        The capability runs the same unbounded eligibility scan the topic facet runs and then
+        groups by ``start_at AT TIME ZONE time_zone``, because a calendar day is a local
+        wall-clock concept.  Unlike the topic facet this applies the topic selection, so the grid
+        agrees with the agenda the same filters produce.  Counts from multiple requested windows
+        are summed exactly as the topic facet sums them; the API merges overlapping and adjacent
+        windows before calling, so day buckets do not overlap in practice.
+        """
+        if date_ranges and starts_after is not None:
+            raise ValueError("catalog browse window must use one date encoding")
+        _validated_catalog_time_zone(time_zone)
+        city_filters = tuple(dict.fromkeys(cities))
+        normalized_topics = _validated_catalog_filter_inputs(
+            query=query,
+            source_keys=source_keys,
+            city_filters=city_filters,
+            location_scopes=location_scopes,
+            price=price,
+            price_max_cents=price_max_cents,
+            price_min_cents=price_min_cents,
+            topics=topics,
+            availability=availability,
+        )
+        windows: tuple[tuple[datetime | None, datetime | None], ...] = (
+            date_ranges
+            if date_ranges
+            else (((starts_after, starts_before),) if starts_after is not None else ((None, None),))
+        )
+        params = {
+            "source_keys": list(dict.fromkeys(source_keys)),
+            "query": query,
+            "cities": list(city_filters),
+            "location_scopes": list(dict.fromkeys(location_scopes)),
+            "price": price,
+            "price_max_cents": price_max_cents,
+            "price_min_cents": price_min_cents,
+            "topics": list(normalized_topics),
+            "availability": availability,
+            "time_zone": time_zone,
+        }
+        rows: list[Any] = []
+        async with system_session_scope() as session:
+            for window_start, window_end in windows:
+                rows.extend(
+                    (
+                        await session.execute(
+                            text(
+                                """
+                                SELECT *
+                                FROM public.fn_list_catalog_day_facets_v3(
+                                    CAST(:source_keys AS text[]), :window_start, :window_end,
+                                    :query, CAST(:cities AS text[]),
+                                    CAST(:location_scopes AS text[]), :price, :price_max_cents,
+                                    :price_min_cents, CAST(:topics AS text[]),
+                                    :availability, :time_zone
+                                )
+                                """
+                            ),
+                            {
+                                **params,
+                                "window_start": window_start,
+                                "window_end": window_end,
+                            },
+                        )
+                    ).all()
+                )
+        day_totals: dict[date, int] = {}
+        topic_counts: dict[date, dict[str, int]] = {}
+        for row in rows:
+            start_day = cast(date, row.start_day)
+            if start_day not in day_totals:
+                day_totals[start_day] = 0
+                topic_counts[start_day] = {}
+            day_totals[start_day] = max(day_totals[start_day], int(row.day_event_count))
+            topic = str(row.topic)
+            counts = topic_counts[start_day]
+            counts[topic] = counts.get(topic, 0) + int(row.topic_event_count)
+        days: list[CatalogBrowseDay] = []
+        for start_day in sorted(day_totals):
+            counts = topic_counts[start_day]
+            event_count = max(day_totals[start_day], *counts.values()) if counts else 0
+            if event_count < 1:
+                continue
+            days.append(
+                CatalogBrowseDay(
+                    start_day=start_day,
+                    event_count=event_count,
+                    topics=tuple(
+                        CatalogBrowseDayTopic(
+                            topic=topic,
+                            label=_catalog_day_topic_label(topic),
+                            event_count=count,
+                        )
+                        for topic, count in sorted(
+                            counts.items(),
+                            key=lambda entry: (
+                                -entry[1],
+                                _catalog_day_topic_label(entry[0]),
+                            ),
+                        )
+                        if count > 0
+                    ),
+                )
+            )
+        return days
 
     @staticmethod
     def _constraint_sql(c: RequestConstraints) -> tuple[str, dict[str, object]]:

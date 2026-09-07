@@ -2,18 +2,20 @@
 
 from __future__ import annotations
 
-import os
-
 from alembic import context
 from sqlalchemy import create_engine, pool
+
+from events_concierge.secret_files import resolve_env_or_file
 
 
 def _sync_url() -> str:
     # Migrations run as the OWNER (creates tables, policies, the app role). The app itself connects
     # as the non-superuser ec_app role (EC_DATABASE_URL) so RLS is enforced.
-    url = os.environ.get("EC_MIGRATION_URL") or os.environ.get(
-        "EC_DATABASE_URL", "postgresql+psycopg://ec:ec@localhost:5433/ec"
+    url = resolve_env_or_file("EC_MIGRATION_URL") or resolve_env_or_file(
+        "EC_DATABASE_URL"
     )
+    if url is None:
+        url = "postgresql+psycopg://ec:ec@localhost:5433/ec"
     # psycopg3 driver works for both sync and async; alembic uses it synchronously here.
     return url
 

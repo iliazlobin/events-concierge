@@ -23,6 +23,7 @@ from events_concierge.domain.events import (
     CandidateEvent,
     CanonicalEvent,
     GeoPoint,
+    aggregate_price_range,
     aggregate_price_status,
     merge_price_status,
 )
@@ -145,6 +146,59 @@ def test_price_status_aggregation_requires_complete_agreement() -> None:
     assert aggregate_price_status((PriceStatus.UNKNOWN, PriceStatus.FREE)) is PriceStatus.UNKNOWN
     assert aggregate_price_status((PriceStatus.FREE, PriceStatus.PAID)) is PriceStatus.UNKNOWN
     assert merge_price_status(PriceStatus.UNKNOWN, PriceStatus.FREE) is PriceStatus.UNKNOWN
+
+
+def test_candidate_normalizes_only_a_complete_bounded_paid_price_range() -> None:
+    common = {
+        "source": Source.PUBLIC_JSONLD,
+        "source_event_id": "paid-range",
+        "title": "Paid range",
+        "start_at": datetime(2026, 7, 17, 19, 0, tzinfo=UTC),
+        "registration_url": "https://example.test/paid-range",
+        "price_status": PriceStatus.PAID,
+    }
+
+    event = CandidateEvent(
+        price_min_cents=2_500,
+        price_max_cents=5_000,
+        price_currency=" usd ",
+        **common,
+    )
+
+    assert (
+        event.price_min_cents,
+        event.price_max_cents,
+        event.price_currency,
+    ) == (2_500, 5_000, "USD")
+    for invalid in (
+        {"price_min_cents": 2_500},
+        {"price_min_cents": 0, "price_max_cents": 1, "price_currency": "USD"},
+        {"price_min_cents": 5_000, "price_max_cents": 2_500, "price_currency": "USD"},
+        {"price_min_cents": 2_500, "price_max_cents": 5_000, "price_currency": "US"},
+    ):
+        with pytest.raises(ValueError, match="price"):
+            CandidateEvent(**common, **invalid)
+    with pytest.raises(ValueError, match="only a paid event"):
+        CandidateEvent(
+            **{**common, "price_status": PriceStatus.FREE},
+            price_min_cents=2_500,
+            price_max_cents=5_000,
+            price_currency="USD",
+        )
+
+
+def test_price_range_aggregation_requires_identical_complete_observations() -> None:
+    exact = (2_500, 5_000, "USD")
+
+    assert aggregate_price_range((exact,)) == exact
+    assert aggregate_price_range((exact, exact)) == exact
+    assert aggregate_price_range(()) == (None, None, None)
+    assert aggregate_price_range((exact, (None, None, None))) == (None, None, None)
+    assert aggregate_price_range((exact, (3_000, 5_000, "USD"))) == (
+        None,
+        None,
+        None,
+    )
 
 
 def test_lifecycle_transition_guard() -> None:

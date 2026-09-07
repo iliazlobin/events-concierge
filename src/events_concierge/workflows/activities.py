@@ -13,6 +13,7 @@ from datetime import datetime
 from uuid import UUID
 
 from temporalio import activity
+from temporalio.exceptions import ApplicationError
 
 from ..application.reconciliation import OrganizerChange, completion_deadline
 from ..application.registration import PacerDeferredError
@@ -26,6 +27,8 @@ from ..domain.enums import (
     Source,
 )
 from ..domain.events import CanonicalEvent
+from ..domain.ids import registration_workflow_id
+from ..ports.consumer import ConsumerRequestOutcomeConflictError
 from ..ports.sources import RegisterOutcome
 from .dto import (
     AwaitConfirmationInput,
@@ -46,6 +49,8 @@ from .dto import (
     HandoffInput,
     HandoffReminderActivityResult,
     HandoffReminderInput,
+    LinkRequestOutcomeInput,
+    LinkRequestOutcomeResult,
     PolicyGateInput,
     PolicyGateResult,
     ReconcileOrganizerChangeInput,
@@ -53,6 +58,7 @@ from .dto import (
     RegChildResult,
     RegisterOrRsvpInput,
     RegisterOrRsvpResult,
+    RegisterWorkflowTargetsInput,
     RequestInput,
     ResolveMembershipInput,
     ResolveMembershipResult,
@@ -112,6 +118,16 @@ async def discover_and_rank(inp: RequestInput) -> DiscoverResult:
         if item.conflict_verdict is not ConflictVerdict.BLOCKED
     ]
     return DiscoverResult(candidate_ids=candidate_ids)
+
+
+@activity.defn
+async def register_erasure_workflow_targets(inp: RegisterWorkflowTargetsInput) -> None:
+    """Fence every candidate child identity in PostgreSQL before Temporal can start one."""
+    tenant_id = UUID(inp.tenant_id)
+    await _require().request_repo.register_workflow_targets(
+        tenant_id,
+        tuple(inp.workflow_ids),
+    )
 
 
 @activity.defn
@@ -177,6 +193,36 @@ async def finalize_no_candidate(inp: FinalizeNoCandidateInput) -> FinalizeNoCand
         UUID(inp.tenant_id), UUID(inp.request_id), inp.transition_id
     )
     return FinalizeNoCandidateResult(status=result.status.value)
+
+
+@activity.defn
+async def link_request_outcome(inp: LinkRequestOutcomeInput) -> LinkRequestOutcomeResult:
+    """Append the selected request/lifecycle link after the child has committed its outcome."""
+    c = _require()
+    tenant_id = UUID(inp.tenant_id)
+    canonical_event_id = UUID(inp.canonical_event_id)
+    lifecycle = await c.lifecycle_repo.find_by_workflow_id(
+        tenant_id,
+        registration_workflow_id(tenant_id, canonical_event_id),
+    )
+    if lifecycle is None:
+        # A selected child commits REGISTERED/SCHEDULED/HANDOFF before reporting to the parent.
+        # Read terminal rows too and treat only a genuinely absent row as retryable instead of
+        # fabricating a lifecycle.
+        raise RuntimeError("selected request lifecycle is not visible yet")
+    try:
+        status = await c.consumer.link_request_outcome(
+            tenant_id,
+            UUID(inp.request_id),
+            lifecycle.lifecycle_id,
+        )
+    except ConsumerRequestOutcomeConflictError as error:
+        # Rebinding a durable request would rewrite user-visible history. Operator correction is
+        # required; retrying the same conflicting command can never converge.
+        raise ApplicationError(str(error), non_retryable=True) from error
+    except ValueError as error:
+        raise ApplicationError(str(error), non_retryable=True) from error
+    return LinkRequestOutcomeResult(status=status.value)
 
 
 @activity.defn

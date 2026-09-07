@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import math
 from pathlib import Path
 from uuid import uuid4
 
@@ -35,11 +36,36 @@ def _fixture(name: str) -> object:
     return json.loads((_FIXTURES / name).read_text())
 
 
+async def test_injected_meetup_client_gets_an_explicit_finite_request_timeout() -> None:
+    seen_timeout: object = None
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal seen_timeout
+        seen_timeout = request.extensions.get("timeout")
+        return httpx.Response(200, json=_fixture("membership-member.json"))
+
+    target = RegistrationTarget("fixture-meetup-1", "https://www.meetup.com/example/events/1")
+    async with httpx.AsyncClient(
+        transport=httpx.MockTransport(handler), timeout=None
+    ) as client:
+        api = HttpxMeetupApi(StaticTokenProvider(), client=client, timeout_s=2.5)
+        assert await api.read_membership_state(uuid4(), target) is GroupCondition.MEMBER
+
+    assert seen_timeout == {"connect": 2.5, "read": 2.5, "write": 2.5, "pool": 2.5}
+
+
+@pytest.mark.parametrize("timeout_s", (0.0, 0.09, 60.01, math.inf, math.nan))
+def test_meetup_timeout_must_be_bounded_and_finite(timeout_s: float) -> None:
+    with pytest.raises(ValueError, match="finite and between"):
+        HttpxMeetupApi(StaticTokenProvider(), timeout_s=timeout_s)
+
+
 async def test_meetup_source_uses_read_before_one_create_rsvp_without_member_id() -> None:
     requests: list[dict[str, object]] = []
 
     def handler(request: httpx.Request) -> httpx.Response:
         assert request.method == "POST"
+        assert request.url == "https://api.meetup.com/gql-ext"
         assert request.headers["authorization"] == "Bearer fixture-token"
         body = json.loads(request.content)
         assert isinstance(body, dict)

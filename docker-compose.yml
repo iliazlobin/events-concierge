@@ -8,6 +8,10 @@ name: events-concierge
 x-app-environment: &app-environment
   EC_ENV: ${EC_ENV:-local}
   EC_LOG_LEVEL: ${EC_LOG_LEVEL:-info}
+  EC_RELEASE_REVISION: ${EC_RELEASE_REVISION:-development}
+  # Mirror the actual host-publish edge into application validation. Local admin startup fails if
+  # an operator changes the published API listener away from loopback.
+  EC_API_BIND_ADDRESS: ${EC_API_BIND_ADDRESS:-127.0.0.1}
   # Use service DNS inside Compose. The similarly named host values in .env target local processes.
   EC_DATABASE_URL: ${EC_CONTAINER_DATABASE_URL:-postgresql+psycopg://ec_app:ec_app@postgres:5432/ec}
   # Never expose the owner credential from .env to API/worker processes.
@@ -20,12 +24,31 @@ x-app-environment: &app-environment
   EC_TEMPORAL_WORKER_MAX_CONCURRENT_WORKFLOW_TASKS: ${EC_TEMPORAL_WORKER_MAX_CONCURRENT_WORKFLOW_TASKS:-8}
   EC_TEMPORAL_WORKER_MAX_CONCURRENT_ACTIVITIES: ${EC_TEMPORAL_WORKER_MAX_CONCURRENT_ACTIVITIES:-8}
   EC_REQUEST_BODY_TIMEOUT_SECONDS: ${EC_REQUEST_BODY_TIMEOUT_SECONDS:-10}
+  EC_TENANT_EFFECT_TIMEOUT_SECONDS: ${EC_TENANT_EFFECT_TIMEOUT_SECONDS:-30}
+  EC_TENANT_EFFECT_LOCK_TIMEOUT_SECONDS: ${EC_TENANT_EFFECT_LOCK_TIMEOUT_SECONDS:-5}
   # API and workers must share claim-check payloads and pacing state across processes.
   EC_CLAIM_CHECK_LOCAL_ROOT: /var/lib/events-concierge/claim-check
   EC_PACER_BACKEND: ${EC_CONTAINER_PACER_BACKEND:-redis}
   EC_MOCK_CLOUD: ${EC_MOCK_CLOUD:-true}
+  # The Compose listener is loopback-bound by default; this enables the explicitly local-only
+  # ingestion control room and its durable command relay.
+  EC_ADMIN_INGESTION_ENABLED: ${EC_ADMIN_INGESTION_ENABLED:-true}
+  # Local app-profile convenience only: probe reviewed due sources every five minutes and append
+  # one idempotent fleet command. The separate command worker remains the execution boundary.
+  EC_CATALOG_INGESTION_SCHEDULER_ENABLED: ${EC_CATALOG_INGESTION_SCHEDULER_ENABLED:-true}
+  EC_CATALOG_INGESTION_SCHEDULER_INTERVAL_SECONDS: ${EC_CATALOG_INGESTION_SCHEDULER_INTERVAL_SECONDS:-300}
+  EC_CATALOG_INGESTION_COMMAND_BATCH_SIZE: ${EC_CATALOG_INGESTION_COMMAND_BATCH_SIZE:-2}
+  EC_CATALOG_INGESTION_COMMAND_POLL_SECONDS: ${EC_CATALOG_INGESTION_COMMAND_POLL_SECONDS:-2}
+  EC_CATALOG_INGESTION_COMMAND_LEASE_SECONDS: ${EC_CATALOG_INGESTION_COMMAND_LEASE_SECONDS:-300}
+  EC_ENTITY_INTELLIGENCE_ENABLED: ${EC_ENTITY_INTELLIGENCE_ENABLED:-true}
+  EC_ENTITY_INTELLIGENCE_BATCH_SIZE: ${EC_ENTITY_INTELLIGENCE_BATCH_SIZE:-2}
+  EC_ENTITY_INTELLIGENCE_POLL_SECONDS: ${EC_ENTITY_INTELLIGENCE_POLL_SECONDS:-30}
   EC_REQUEST_START_BATCH_SIZE: ${EC_REQUEST_START_BATCH_SIZE:-5}
   EC_REQUEST_START_POLL_SECONDS: ${EC_REQUEST_START_POLL_SECONDS:-2}
+  EC_ACCOUNT_ERASURE_BATCH_SIZE: ${EC_ACCOUNT_ERASURE_BATCH_SIZE:-10}
+  EC_ACCOUNT_ERASURE_POLL_SECONDS: ${EC_ACCOUNT_ERASURE_POLL_SECONDS:-30}
+  EC_ACCOUNT_ERASURE_LEASE_SECONDS: ${EC_ACCOUNT_ERASURE_LEASE_SECONDS:-120}
+  EC_ACCOUNT_ERASURE_RECENT_AUTH_SECONDS: ${EC_ACCOUNT_ERASURE_RECENT_AUTH_SECONDS:-300}
   EC_LIFECYCLE_INVARIANT_LIVENESS_CALLS_PER_SECOND: ${EC_LIFECYCLE_INVARIANT_LIVENESS_CALLS_PER_SECOND:-10}
 
 x-app-service: &app-service
@@ -33,6 +56,10 @@ x-app-service: &app-service
   build:
     context: .
     target: runtime
+    args:
+      BUILD_VERSION: ${EC_BUILD_VERSION:-0.1.0}
+      VCS_REF: ${EC_RELEASE_REVISION:-development}
+      SOURCE_URL: ${EC_SOURCE_URL:-local}
   env_file:
     - path: .env
       required: false
@@ -42,10 +69,15 @@ x-app-service: &app-service
   restart: unless-stopped
   security_opt:
     - no-new-privileges:true
+  cap_drop:
+    - ALL
   tmpfs:
     - /tmp:size=64m,mode=1777
   volumes:
     - claim-check:/var/lib/events-concierge/claim-check
+    # Profile media outlives a claim check, so it gets its own volume. The container filesystem is
+    # read-only; this mount is the one writable place avatars may land.
+    - media:/var/lib/events-concierge/media
   stop_grace_period: 30s
 
 x-worker-service: &worker-service
@@ -147,6 +179,9 @@ services:
     environment:
       <<: *app-environment
       EC_MIGRATION_URL: ${EC_CONTAINER_MIGRATION_URL:-postgresql+psycopg://ec:ec@postgres:5432/ec}
+      # Local-only bootstrap. Production supplies an independently managed value to its migration
+      # Job and never bakes an application-role password into source or an image.
+      EC_APP_ROLE_PASSWORD: ${EC_LOCAL_APP_ROLE_PASSWORD:-ec_app}
     depends_on:
       postgres:
         condition: service_healthy
@@ -175,6 +210,49 @@ services:
         condition: service_healthy
     ports:
       - "${EC_API_BIND_ADDRESS:-127.0.0.1}:${EC_API_PORT:-8000}:8000"
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/readyz', timeout=2).read()
+      interval: 30s
+      timeout: 3s
+      start_period: 10s
+      retries: 3
+
+  frontend:
+    image: ${EC_WEB_IMAGE:-events-concierge-web:local}
+    build:
+      context: ./web
+    profiles: ["app"]
+    environment:
+      EC_API_ORIGIN: http://api:8000
+      NEXT_TELEMETRY_DISABLED: "1"
+    depends_on:
+      api:
+        condition: service_healthy
+    init: true
+    read_only: true
+    restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    tmpfs:
+      - /tmp:size=64m,mode=1777
+    ports:
+      - "${EC_WEB_BIND_ADDRESS:-127.0.0.1}:${EC_WEB_PORT:-3001}:3000"
+    healthcheck:
+      test:
+        - CMD
+        - node
+        - -e
+        - fetch('http://127.0.0.1:3000/healthz').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))
+      interval: 20s
+      timeout: 4s
+      start_period: 10s
+      retries: 4
 
   workflow-worker:
     <<: *worker-service
@@ -183,6 +261,10 @@ services:
   request-starter:
     <<: *worker-service
     command: ["python", "-m", "events_concierge.workers.request_starter"]
+
+  account-erasure:
+    <<: *worker-service
+    command: ["python", "-m", "events_concierge.workers.account_erasure"]
 
   notifier:
     <<: *worker-service
@@ -200,7 +282,24 @@ services:
     <<: *worker-service
     command: ["python", "-m", "events_concierge.workers.lifecycle_invariants"]
 
+  ingestion-commands:
+    <<: *worker-service
+    command: ["python", "-m", "events_concierge.workers.ingestion_commands"]
+    # Disabled local admin exits cleanly; only unexpected worker failures should restart it.
+    restart: on-failure
+
+  ingestion-cadence:
+    <<: *worker-service
+    command: ["python", "-m", "events_concierge.workers.ingestion_cadence"]
+    # This is a local/mock convenience scheduler, not a production scheduling authority.
+    restart: on-failure
+
+  entity-intelligence:
+    <<: *worker-service
+    command: ["python", "-m", "events_concierge.workers.entity_intelligence"]
+
 volumes:
   claim-check:
+  media:
   pgdata:
   temporal-pgdata:

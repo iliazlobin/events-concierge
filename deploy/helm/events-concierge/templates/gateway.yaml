@@ -1,0 +1,44 @@
+{{- if and .Values.gateway.enabled (or (eq .Values.global.releasePhase "all") (eq .Values.global.releasePhase "application")) }}
+{{- if not .Values.gateway.tlsSecretName }}
+{{- fail "gateway.tlsSecretName is required when gateway.enabled is true" }}
+{{- end }}
+apiVersion: gateway.networking.k8s.io/v1
+kind: Gateway
+metadata:
+  name: {{ include "events-concierge.fullname" . }}
+  labels:
+    {{- include "events-concierge.labels" (dict "root" . "component" "gateway") | nindent 4 }}
+spec:
+  gatewayClassName: {{ .Values.gateway.className }}
+  listeners:
+    - name: https
+      protocol: HTTPS
+      port: 443
+      hostname: {{ .Values.gateway.hostname | quote }}
+      tls:
+        mode: Terminate
+        certificateRefs:
+          - kind: Secret
+            group: ""
+            name: {{ .Values.gateway.tlsSecretName }}
+      allowedRoutes:
+        namespaces:
+          from: Same
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: {{ include "events-concierge.fullname" . }}
+  labels:
+    {{- include "events-concierge.labels" (dict "root" . "component" "frontend") | nindent 4 }}
+spec:
+  parentRefs:
+    - name: {{ include "events-concierge.fullname" . }}
+      sectionName: https
+  hostnames:
+    - {{ .Values.gateway.hostname | quote }}
+  rules:
+    - backendRefs:
+        - name: {{ include "events-concierge.fullname" . }}-frontend
+          port: {{ .Values.services.frontend.port }}
+{{- end }}

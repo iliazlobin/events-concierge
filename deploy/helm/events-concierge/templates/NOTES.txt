@@ -1,0 +1,9 @@
+Events Concierge rendered phase: {{ .Values.global.releasePhase }}
+
+Images are digest-only:
+  application: {{ include "events-concierge.image" .Values.global.appImage }}
+  frontend:    {{ include "events-concierge.image" .Values.global.frontendImage }}
+
+For a release, install the migration phase, wait for its revision-suffixed Job, then upgrade the
+same release to the application phase. See the chart README for commands. Secret payloads are read
+from CSI-mounted files and are never stored in Helm values.

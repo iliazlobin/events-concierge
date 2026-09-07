@@ -57,3 +57,7 @@ class CalendarPort(Protocol):
     ) -> None:
         """Remove a concierge entry, resolving a prior FR-9.3 fuzzy merge when its canonical ID is known."""
         ...
+
+    async def delete_tenant_events(self, tenant_id: UUID) -> None:
+        """Exhaustively delete every provider event carrying this app's ownership metadata."""
+        ...

@@ -30,11 +30,13 @@ from events_concierge.adapters.luma.scripted_browser import (
 )
 from events_concierge.adapters.luma.source import LumaSource
 from events_concierge.adapters.mock.calendar import MockCalendar
+from events_concierge.adapters.mock.discovery_policy import MockDiscoveryPolicyReader
 from events_concierge.adapters.mock.policy import (
     MockPolicySnapshotReader,
     MockSourceQuarantineRepository,
 )
 from events_concierge.adapters.mock.sources import ConfirmingSource
+from events_concierge.adapters.policy.discovery import StoreBackedDiscoveryPolicyGate
 from events_concierge.adapters.policy.engine import StoreBackedPolicyEngine
 from events_concierge.adapters.postgres.audit import PostgresRegistrationActionAuditRepository
 from events_concierge.composition import Container, build_container
@@ -83,8 +85,10 @@ from events_concierge.workflows.activities import (
     enqueue_handoff_reminder,
     expire_handoff,
     finalize_no_candidate,
+    link_request_outcome,
     policy_gate,
     reconcile_organizer_change,
+    register_erasure_workflow_targets,
     register_or_rsvp,
     resolve_membership,
     route_to_handoff,
@@ -104,6 +108,8 @@ from events_concierge.workflows.dto import (
     HandoffInput,
     HandoffReminderActivityResult,
     HandoffReminderInput,
+    LinkRequestOutcomeInput,
+    LinkRequestOutcomeResult,
     OrganizerChangeSignal,
     PendingLifecycleSignals,
     ReconcileOrganizerChangeInput,
@@ -665,6 +671,15 @@ async def _crash_after_handoff_reminder_commit(
     return result
 
 
+@activity.defn(name="link_request_outcome")
+async def _accept_request_outcome_link(
+    inp: LinkRequestOutcomeInput,
+) -> LinkRequestOutcomeResult:
+    """Keep focused parent protocol fixtures independent of request persistence."""
+    del inp
+    return LinkRequestOutcomeResult(status="linked")
+
+
 def _saga_activities(
     *,
     discovery_activity: object = discover_and_rank,
@@ -677,10 +692,13 @@ def _saga_activities(
     expiry_activity: object = expire_handoff,
     reminder_activity: object = enqueue_handoff_reminder,
     handoff_activity: object = route_to_handoff,
+    outcome_link_activity: object = _accept_request_outcome_link,
 ) -> list[object]:
     return [
         discovery_activity,
+        register_erasure_workflow_targets,
         finalize_no_candidate,
+        outcome_link_activity,
         membership_activity,
         policy_gate,
         close_failed_candidate,
@@ -983,10 +1001,15 @@ async def test_request_workflow_end_to_end_keeps_raw_request_text_out_of_history
         description="live jazz",
         is_free=True,
     )
+    discovery_policies = default_source_policies()
+    discovery_policies[Source.PUBLIC_JSONLD].automation_allowed[Modality.BROWSER] = True
     container = build_container(
         settings,
         discovery_sources=[PublicJsonLdSource(user_agent="test", fixture_events=[crawl_ev])],
         register_sources={},  # no autonomous register -> handoff lane through the full spine
+        discovery_policy_gate=StoreBackedDiscoveryPolicyGate(
+            MockDiscoveryPolicyReader(discovery_policies)
+        ),
     )
     set_container(container)
     # Source refresh is deliberately off the request workflow path. Seed this fixture catalog
@@ -1008,7 +1031,7 @@ async def test_request_workflow_end_to_end_keeps_raw_request_text_out_of_history
             env.client,
             task_queue="ec-test",
             workflows=[EventRequestWorkflow, RegistrationWorkflow],
-            activities=_saga_activities(),
+            activities=_saga_activities(outcome_link_activity=link_request_outcome),
         ):
             result = await env.client.execute_workflow(
                 EventRequestWorkflow.run,
@@ -1022,8 +1045,17 @@ async def test_request_workflow_end_to_end_keeps_raw_request_text_out_of_history
             )
             history = await env.client.get_workflow_handle(workflow_id).fetch_history()
 
+    projected = await container.consumer.list_requests(tenant_id, offset=0, limit=10)
+    request_summary = next(item for item in projected if item.request_id == request_id)
     assert result.outcome in ("handoff", "registered")
     assert result.attempts >= 1
+    assert request_summary.outcome is not None
+    assert request_summary.outcome.title == crawl_ev.title
+    assert request_summary.outcome.state in {
+        LifecycleState.HANDOFF,
+        LifecycleState.REGISTERED,
+        LifecycleState.SCHEDULED,
+    }
     assert b"find me some jazz" not in b"".join(
         event.SerializeToString() for event in history.events
     )
@@ -2470,7 +2502,10 @@ async def test_retained_handoff_reminder_retries_lost_ack_with_one_outbox_effect
                     id=workflow_id,
                     task_queue=f"ec-handoff-reminder-retry-{tag}",
                 )
-                for _ in range(500):
+                # Under the complete integration matrix the in-process Temporal runner can be
+                # CPU-starved for several seconds. Preserve the 10 ms polling cadence while
+                # allowing enough wall time for the activity's intentional retry.
+                for _ in range(1_500):
                     if _handoff_reminder_activity_recorder.attempts == [1, 2]:
                         break
                     await asyncio.sleep(0.01)
@@ -3532,9 +3567,17 @@ async def test_parent_demotes_the_best_handoff_eligible_failed_candidate(db: Non
     tag = uuid4().hex
     container = build_container(settings)
     set_container(container)
-    tenant_id = uuid4()
+    tenant_id, request_id = uuid4(), uuid4()
     await container.tenant_repo.add(
         Tenant(tenant_id, f"oidc|best-handoff-{tag}", f"{tag}@example.com", f"{tag}@u.test")
+    )
+    await container.request_repo.add(
+        EventRequest(
+            request_id=request_id,
+            tenant_id=tenant_id,
+            raw_text="choose the best handoff fixture",
+            constraints=RequestConstraints(categories=("music",)),
+        )
     )
     candidates = await container.catalog.upsert_candidates(
         [
@@ -3576,6 +3619,7 @@ async def test_parent_demotes_the_best_handoff_eligible_failed_candidate(db: Non
                 activities=_saga_activities(
                     discovery_activity=_fixed_discover_and_rank,
                     membership_activity=_fixed_resolve_membership,
+                    outcome_link_activity=link_request_outcome,
                 ),
             ):
                 with env.auto_time_skipping_disabled():
@@ -3583,7 +3627,7 @@ async def test_parent_demotes_the_best_handoff_eligible_failed_candidate(db: Non
                         EventRequestWorkflow.run,
                         RequestInput(
                             tenant_id=str(tenant_id),
-                            request_id=str(uuid4()),
+                            request_id=str(request_id),
                             attempt_budget=2,
                         ),
                         id=f"req-best-handoff-{tag}",
@@ -3602,11 +3646,18 @@ async def test_parent_demotes_the_best_handoff_eligible_failed_candidate(db: Non
         tenant_id, second.canonical_event_id, second_workflow_id
     )
     task = await container.handoff_repo.get(tenant_id, f"{first_workflow_id}:handoff")
+    request_projection = await container.consumer.list_requests(tenant_id, offset=0, limit=10)
+    selected_outcome = next(
+        item.outcome for item in request_projection if item.request_id == request_id
+    )
 
     assert result.outcome == "handoff"
     assert result.attempts == 2
     assert first_lifecycle.state is LifecycleState.HANDOFF
     assert second_lifecycle.state is LifecycleState.FAILED_NO_CANDIDATE
+    assert selected_outcome is not None
+    assert selected_outcome.canonical_event_id == first.canonical_event_id
+    assert selected_outcome.canonical_event_id != second.canonical_event_id
     assert task is not None and task.workflow_id == first_workflow_id
     assert await _outbox_topic_counts(tenant_id) == {
         "lifecycle.handoff": 1,
@@ -3881,7 +3932,10 @@ async def test_registered_change_buffers_through_confirmation_persistence_while_
                         id=workflow_id,
                         task_queue=f"ec-registered-race-{tag}",
                     )
-                    await asyncio.wait_for(_blocked_confirmation.entered.wait(), timeout=2)
+                    # This gate is an external asyncio event, so Temporal time skipping cannot
+                    # advance it. Allow normal full-suite scheduler contention without weakening
+                    # the workflow-state assertion that follows.
+                    await asyncio.wait_for(_blocked_confirmation.entered.wait(), timeout=10)
                     await handle.signal(
                         "unrsvp_requested", UnrsvpSignal(request_id=f"early-unrsvp-{tag}")
                     )

@@ -187,7 +187,7 @@ async def test_disabled_public_jsonld_source_never_fetches_a_populated_seed(
         del self, constraints
         raise AssertionError("disabled public_jsonld source was invoked")
 
-    monkeypatch.setattr("events_concierge.composition.init_engine", lambda _: None)
+    monkeypatch.setattr("events_concierge.composition.init_engine", lambda _, **kwargs: None)
     monkeypatch.setattr(PublicJsonLdSource, "discover", must_not_discover)
     container = build_container(
         Settings(

@@ -67,8 +67,46 @@ async def test_liveness_is_shallow_and_readiness_exposes_temporal_degradation(
     assert ready_status == 200
     assert ready == {
         "status": "ready",
-        "components": {"database": "ready", "temporal": "degraded"},
+        "components": {
+            "database": "ready",
+            "temporal": "degraded",
+            "identity": "not_configured",
+        },
     }
+
+
+async def test_release_identity_and_metrics_are_bounded_operational_surfaces(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    revision = "0123456789abcdef0123456789abcdef01234567"
+    digest = "sha256:" + "a" * 64
+    monkeypatch.setattr(
+        app_module,
+        "get_settings",
+        lambda: Settings(release_revision=revision, image_digest=digest),
+    )
+    monkeypatch.setattr(app_module, "_database_is_ready", _async_result(True))
+    monkeypatch.setattr(app_module, "_temporal_is_reachable", _async_result(False))
+    app = app_module.create_app()
+
+    async with AsyncClient(
+        transport=ASGITransport(app=app),
+        base_url="http://test",
+    ) as client:
+        await client.get("/readyz")
+        version = await client.get("/versionz")
+        metrics = await client.get("/metrics")
+
+    assert version.status_code == 200
+    assert version.json() == {"release_revision": revision, "image_digest": digest}
+    assert version.headers["cache-control"] == "no-store, max-age=0"
+    assert metrics.status_code == 200
+    assert metrics.headers["content-type"] == "text/plain; version=0.0.4; charset=utf-8"
+    assert f'release_revision="{revision}"' in metrics.text
+    assert 'dependency="database"} 1' in metrics.text
+    assert 'dependency="temporal"} 0' in metrics.text
+    assert 'dependency="identity"} 1' in metrics.text
+    assert 'route="/readyz"' in metrics.text
 
 
 async def test_readiness_fails_when_the_durable_database_is_unavailable(
@@ -82,7 +120,11 @@ async def test_readiness_fails_when_the_durable_database_is_unavailable(
     assert status == 503
     assert body == {
         "status": "not_ready",
-        "components": {"database": "unavailable", "temporal": "ready"},
+        "components": {
+            "database": "unavailable",
+            "temporal": "ready",
+            "identity": "not_configured",
+        },
     }
 
 

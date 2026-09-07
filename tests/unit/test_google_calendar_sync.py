@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import math
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from uuid import UUID, uuid4
@@ -76,6 +77,35 @@ def _service(
 ) -> GoogleCalendarIncrementalSyncService:
     provider = GoogleCalendarSyncAdapter(FixtureAccess(), client=client)
     return GoogleCalendarIncrementalSyncService(FixtureBindings(), states, provider, sink)
+
+
+async def test_injected_sync_client_gets_an_explicit_finite_request_timeout() -> None:
+    seen_timeout: object = None
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal seen_timeout
+        seen_timeout = request.extensions.get("timeout")
+        return httpx.Response(200, json={"items": [], "nextSyncToken": "next"})
+
+    async with httpx.AsyncClient(
+        transport=httpx.MockTransport(handler), timeout=None
+    ) as client:
+        provider = GoogleCalendarSyncAdapter(FixtureAccess(), client=client, timeout_s=2.5)
+        page = await provider.list_events(
+            uuid4(),
+            _WRITE_CALENDAR_ID,
+            sync_token=None,
+            page_token=None,
+        )
+
+    assert page.next_sync_token == "next"
+    assert seen_timeout == {"connect": 2.5, "read": 2.5, "write": 2.5, "pool": 2.5}
+
+
+@pytest.mark.parametrize("timeout_s", (0.0, 0.09, 60.01, math.inf, math.nan))
+def test_google_sync_timeout_must_be_bounded_and_finite(timeout_s: float) -> None:
+    with pytest.raises(ValueError, match="finite and between"):
+        GoogleCalendarSyncAdapter(FixtureAccess(), timeout_s=timeout_s)
 
 
 async def test_incremental_sync_preserves_sync_token_through_every_page_then_commits_once() -> None:

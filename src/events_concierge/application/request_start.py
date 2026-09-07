@@ -16,8 +16,14 @@ from ..domain import ids
 from ..domain.request import EventRequest
 from ..infra.logging import get_logger
 from ..ports.repositories import RequestRepository, RequestStartRecord
+from ..ports.tenant_effects import (
+    TenantEffectAuthority,
+    TenantEffectKind,
+    TenantEffectRequest,
+)
 from ..ports.workflows import RequestWorkflowStarter
 from .parsing import HeuristicRequestParser
+from .tenant_effects import DirectTenantEffectAuthority
 
 _log = get_logger(__name__)
 _START_RETRY_DELAYS = (
@@ -79,6 +85,8 @@ class RequestStartRelay:
         *,
         now: Callable[[], datetime] | None = None,
         lease_seconds: int = 60,
+        tenant_effect_authority: TenantEffectAuthority | None = None,
+        tenant_effect_timeout_seconds: float = 30.0,
     ) -> None:
         if lease_seconds < 1:
             raise ValueError("lease_seconds must be positive")
@@ -86,6 +94,13 @@ class RequestStartRelay:
         self._starter = starter
         self._now = now or (lambda: datetime.now(UTC))
         self._lease_seconds = lease_seconds
+        self._tenant_effects = tenant_effect_authority or DirectTenantEffectAuthority()
+        TenantEffectRequest(
+            tenant_id=UUID(int=0),
+            kind=TenantEffectKind.TEMPORAL_START,
+            timeout_seconds=tenant_effect_timeout_seconds,
+        )
+        self._tenant_effect_timeout_seconds = tenant_effect_timeout_seconds
 
     async def relay_once(self, *, limit: int = 50) -> RequestStartRelayStats:
         """Claim and attempt a bounded batch; the worker supplies the idle poll/reconnect loop."""
@@ -116,9 +131,33 @@ class RequestStartRelay:
                 # A fresh relay may now own the start row. Do not reach Temporal, acknowledge,
                 # or reschedule under the observed stale token; the durable queue recovers it.
                 return _with(stats, lost_leases=stats.lost_leases + 1)
-            # The start outbox deliberately carries only opaque identity.  Raw request text is
-            # re-read under RLS by the activity, keeping it out of Temporal history (ADR-011).
-            await self._starter.start(record.tenant_id, record.request_id)
+            # Acquire the erasure lock before re-reading the exact database-clock queue lease.
+            # This preserves one global lock order and lets Temporal's threshold-forced
+            # claim-check write re-enter this same tenant authority instead of self-deadlocking.
+            async def start_if_current() -> bool:
+                if not await self._requests.has_live_start_lease(record):
+                    return False
+                # The queue carries only opaque identity. Raw request text is re-read under RLS by
+                # the activity, keeping it out of Temporal history (ADR-011).
+                await self._starter.start(record.tenant_id, record.request_id)
+                return True
+
+            authorized = await self._tenant_effects.run(
+                TenantEffectRequest(
+                    tenant_id=record.tenant_id,
+                    kind=TenantEffectKind.TEMPORAL_START,
+                    timeout_seconds=self._tenant_effect_timeout_seconds,
+                ),
+                start_if_current,
+            )
+            if not authorized:
+                return _with(stats, lost_leases=stats.lost_leases + 1)
+            # Pair the non-transactional engine effect with the erasure fence. If begin committed
+            # first, this postcheck observes it and settles exact cancellation. If this read wins,
+            # a later begin snapshots the deterministic parent ID and cancels it itself.
+            if await self._requests.account_erasure_fenced(record.tenant_id):
+                await self._starter.cancel(record.tenant_id, record.request_id)
+                return _with(stats, lost_leases=stats.lost_leases + 1)
         except Exception as exc:
             return await self._retry(record, stats, str(exc))
 

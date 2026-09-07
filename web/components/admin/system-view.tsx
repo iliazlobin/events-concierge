@@ -1,5 +1,6 @@
 "use client";
 
+import { ArrowRight, CheckCircle2, CircleAlert, Play, RefreshCw } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState } from "react";
 
 import {
@@ -53,12 +54,24 @@ const WINDOWS = [
   { value: "720", label: "30d" },
 ] as const;
 
-type Lens = "all" | "carrying" | "exceptions" | "quiet";
+type Lens =
+  | "all"
+  | "exceptions"
+  | "failing"
+  | "late"
+  | "retrying"
+  | "empty"
+  | "carrying"
+  | "quiet";
 
 const LENSES: ReadonlyArray<{ value: Lens; label: string }> = [
   { value: "all", label: "All" },
+  { value: "exceptions", label: "Attention" },
+  { value: "failing", label: "Failing" },
+  { value: "late", label: "Late" },
+  { value: "retrying", label: "Retries" },
+  { value: "empty", label: "Empty" },
   { value: "carrying", label: "Carrying" },
-  { value: "exceptions", label: "Exceptions" },
   { value: "quiet", label: "Quiet" },
 ];
 
@@ -71,14 +84,37 @@ interface Snapshot {
   health: AdminSourceHealthList;
 }
 
+function isOnCadence(s: AdminSourceHealth): boolean {
+  return s.enabled && !s.retired_at;
+}
+
 function isException(s: AdminSourceHealth): boolean {
   return (
-    s.run_state === "failed"
-    || s.run_state === "never_run"
-    || (s.freshness_state !== "ok" && s.freshness_state !== "not_scheduled")
-    || s.retry_state !== "ok"
-    || s.yield_state === "zero_yield"
+    isOnCadence(s)
+    && (
+      s.run_state === "failed"
+      || s.run_state === "never_run"
+      || (s.freshness_state !== "ok" && s.freshness_state !== "not_scheduled")
+      || s.retry_state !== "ok"
+      || s.yield_state === "zero_yield"
+    )
   );
+}
+
+function isFailing(s: AdminSourceHealth): boolean {
+  return isOnCadence(s) && (s.run_state === "failed" || s.retry_state === "severe");
+}
+
+function isLate(s: AdminSourceHealth): boolean {
+  return isOnCadence(s) && (s.freshness_state === "late" || s.freshness_state === "down");
+}
+
+function isRetrying(s: AdminSourceHealth): boolean {
+  return isOnCadence(s) && (s.retry_state === "elevated" || s.retry_state === "severe");
+}
+
+function isEmpty(s: AdminSourceHealth): boolean {
+  return isOnCadence(s) && s.yield_state === "zero_yield";
 }
 
 function healthTone(s: AdminSourceHealth): Tone {
@@ -163,6 +199,10 @@ export function SystemView({
     const needle = query.trim().toLowerCase();
     let list = sources;
     if (lens === "exceptions") list = list.filter(isException);
+    if (lens === "failing") list = list.filter(isFailing);
+    if (lens === "late") list = list.filter(isLate);
+    if (lens === "retrying") list = list.filter(isRetrying);
+    if (lens === "empty") list = list.filter(isEmpty);
     if (lens === "quiet") list = list.filter((s) => !isException(s) && s.upcoming_events === 0);
     if (lens === "carrying") {
       list = [...list].sort((a, b) => b.upcoming_events - a.upcoming_events).slice(0, 15);
@@ -208,36 +248,62 @@ export function SystemView({
   const collectStage = stages.stages.find((s) => s.stage === "collect");
   const folded = stages.stages.filter((s) => s.evidence_status === "not_separately_instrumented");
   const yieldPct = fleet.candidates ? (fleet.canonicals / fleet.candidates) * 100 : null;
+  const failing = sources.filter(isFailing);
+  const late = sources.filter(isLate);
+  const retrying = sources.filter(isRetrying);
+  const empty = sources.filter(isEmpty);
+  const monitored = sources.filter(isOnCadence);
+  const nominal = monitored.length - exceptions.length;
+  const affectedEvents = exceptions.reduce((total, source) => total + source.upcoming_events, 0);
+  const nominalPct = monitored.length ? (nominal / monitored.length) * 100 : 0;
+
+  const selectLens = (next: Lens, focusRegistry = false) => {
+    setLens(next);
+    setOpenMode(null);
+    if (focusRegistry) {
+      window.requestAnimationFrame(() => {
+        document.getElementById("system-registry")?.scrollIntoView({
+          behavior: "smooth",
+          block: "start",
+        });
+      });
+    }
+  };
 
   const metrics: MetricSpec[] = [
-    { key: "all", label: "Sources", value: int(snap.health.total), note: `${scheduled} on cadence` },
-    { key: "carrying", label: "Serving now", value: int(concentration.total_events), note: "upcoming events" },
+    { key: "all", label: "Reviewed sources", value: int(snap.health.total), note: `${scheduled} on cadence`, interactive: true },
+    { key: "carrying", label: "Catalog now", value: int(concentration.total_events), note: "upcoming events", interactive: true },
     { key: "throughput", label: "Collected / day", value: int(perDay(fleet.candidates)), note: `${int(perDay(fleet.runs))} runs` },
-    { key: "yield", label: "Yield", value: yieldPct === null ? "—" : `${yieldPct.toFixed(1)}%`, note: "candidate → canonical", tone: "ok" },
+    { key: "yield", label: "Publish yield", value: yieldPct === null ? "—" : `${yieldPct.toFixed(1)}%`, note: "collected → published", tone: "ok" },
     {
       key: "exceptions",
-      label: "Exceptions",
+      label: "Needs attention",
       value: int(exceptions.length),
-      note: exceptions.length ? `${int(exceptions.reduce((t, s) => t + s.upcoming_events, 0))} events` : "all nominal",
+      note: exceptions.length ? `${int(affectedEvents)} events affected` : "all nominal",
       tone: exceptions.length ? "bad" : "ok",
+      interactive: true,
     },
   ];
 
   return (
     <div className={kit.page}>
       <PageHead
-        eyebrow="platform / system"
+        eyebrow="Control room / fleet overview"
         title="Ingestion system"
-        sub="The workflow end to end, the shape of the fleet against the catalog it produces, and the volume moving through it."
+        sub="Understand fleet health, protect catalog coverage, and move from an exception to its owning source without leaving the operating context."
+        statValue={age(fleet.generated_at)}
+        statLabel="snapshot age"
       />
 
       <div className={kit.toolbar}>
         <Segment options={WINDOWS} value={windowHours} onChange={setWindowHours} label="Window" />
         <span className={kit.spacer} />
         <Action onClick={() => void load(windowHours)} disabled={loading}>
-          {loading ? "Refreshing" : "Refresh"}
+          <RefreshCw aria-hidden="true" className={loading ? "spin" : undefined} />
+          {loading ? "Refreshing" : "Refresh data"}
         </Action>
         <Action onClick={onRefreshDue} disabled={refreshSubmitting || refreshDuePending} primary>
+          <Play aria-hidden="true" />
           {refreshDuePending ? "Run in flight" : "Run due sources"}
         </Action>
       </div>
@@ -247,13 +313,28 @@ export function SystemView({
         selected={lens === "all" ? null : lens}
         onSelect={(key) => {
           if (key === "throughput" || key === "yield") return;
-          setLens((current) => (current === key ? "all" : (key as Lens)));
-          setOpenMode(null);
+          selectLens(lens === key ? "all" : (key as Lens), true);
         }}
       />
 
+      <SystemHealthSummary
+        total={monitored.length}
+        nominal={nominal}
+        nominalPct={nominalPct}
+        exceptions={exceptions.length}
+        affectedEvents={affectedEvents}
+        lens={lens}
+        issues={[
+          { lens: "failing", label: "Failing", value: failing.length, note: "failed run or severe retry" },
+          { lens: "late", label: "Late", value: late.length, note: "outside freshness target" },
+          { lens: "retrying", label: "Retrying", value: retrying.length, note: "elevated claim pressure" },
+          { lens: "empty", label: "Empty", value: empty.length, note: "successful run, zero output" },
+        ]}
+        onSelect={(next) => selectLens(next, true)}
+      />
+
       {/* ---------------- flow ---------------- */}
-      <Section title="Flow" scope={`${days}-day daily mean`}>
+      <Section title="System flow" scope={`${days}-day daily mean`}>
         <FlowDiagram
           scheduled={scheduled}
           modes={shape.modes.length}
@@ -342,6 +423,7 @@ export function SystemView({
 
       {/* ---------------- registry ---------------- */}
       <Section
+        id="system-registry"
         title="Registry"
         scope={`${rows.length} of ${snap.health.total} sources${openMode ? ` · ${openMode}` : ""}`}
       >
@@ -352,7 +434,7 @@ export function SystemView({
             value={query}
             onChange={(e) => setQuery(e.target.value)}
           />
-          <Segment options={LENSES} value={lens} onChange={(v) => { setLens(v); setOpenMode(null); }} label="Lens" />
+          <Segment options={LENSES} value={lens} onChange={(value) => selectLens(value)} label="Lens" />
           {openMode ? <Action onClick={() => setOpenMode(null)}>Clear {openMode}</Action> : null}
         </div>
 
@@ -405,66 +487,133 @@ export function SystemView({
 
 /* ------------------------------------------------------------------ */
 
+function SystemHealthSummary({
+  total,
+  nominal,
+  nominalPct,
+  exceptions,
+  affectedEvents,
+  lens,
+  issues,
+  onSelect,
+}: {
+  total: number;
+  nominal: number;
+  nominalPct: number;
+  exceptions: number;
+  affectedEvents: number;
+  lens: Lens;
+  issues: ReadonlyArray<{ lens: Lens; label: string; value: number; note: string }>;
+  onSelect: (lens: Lens) => void;
+}): React.JSX.Element {
+  const attention = exceptions > 0;
+  return (
+    <section className={kit.systemSummary} aria-labelledby="fleet-health-title">
+      <div className={kit.summaryStatus}>
+        <span className={kit.summaryIcon} data-tone={attention ? "bad" : "ok"} aria-hidden="true">
+          {attention ? <CircleAlert /> : <CheckCircle2 />}
+        </span>
+        <div>
+          <span className={kit.summaryEyebrow}>Current posture</span>
+          <h2 className={kit.summaryTitle} id="fleet-health-title">
+            {attention ? "Fleet attention required" : "Fleet operating normally"}
+          </h2>
+          <p className={kit.summaryCopy}>
+            {attention
+              ? `${int(exceptions)} of ${int(total)} sources have an active health signal. ${int(affectedEvents)} upcoming events currently depend on those sources.`
+              : `All ${int(total)} reviewed sources are inside their current health targets.`}
+          </p>
+          {attention ? (
+            <button type="button" className={kit.summaryLink} onClick={() => onSelect("exceptions")}>
+              Review all affected sources <ArrowRight aria-hidden="true" />
+            </button>
+          ) : null}
+        </div>
+        <div className={kit.summaryMeter} aria-label={`${nominal} of ${total} sources nominal`}>
+          <span className={kit.summaryMeterValue}>{Math.round(nominalPct)}%</span>
+          <span className={kit.summaryMeterLabel}>nominal sources</span>
+          <div className={kit.summaryMeterTrack} aria-hidden="true">
+            <i style={{ width: `${Math.max(0, Math.min(100, nominalPct))}%` }} />
+          </div>
+          <span className={kit.summaryMeterNote}>{int(nominal)} nominal · {int(exceptions)} attention</span>
+        </div>
+      </div>
+
+      <div className={kit.issueGrid} role="group" aria-label="Filter registry by health signal">
+        {issues.map((issue) => (
+          <button
+            type="button"
+            key={issue.lens}
+            className={`${kit.issueButton} ${lens === issue.lens ? kit.issueButtonActive : ""}`}
+            onClick={() => onSelect(issue.lens)}
+            aria-pressed={lens === issue.lens}
+          >
+            <span className={kit.issueCount}>{int(issue.value)}</span>
+            <span className={kit.issueLabel}>{issue.label}</span>
+            <span className={kit.issueNote}>{issue.note}</span>
+            <ArrowRight aria-hidden="true" />
+          </button>
+        ))}
+      </div>
+    </section>
+  );
+}
+
 function FlowDiagram(props: {
   scheduled: number; modes: number; runsPerDay: number; collectedPerDay: number;
   publishedPerDay: number; upcoming: number; p50: number | null;
   collectPct: number | null; foldedCount: number;
 }): React.JSX.Element {
   const nodes = [
-    { x: 0, label: "Sources", a: `${props.scheduled} scheduled`, b: "4 cadence tiers" },
-    { x: 180, label: "Scheduler", a: "tick 300s", b: "picks due" },
-    { x: 350, label: "Slot", a: "concurrency 1", b: "fleet-wide" },
-    { x: 500, label: "Worker", a: `${int(props.runsPerDay)} runs / day`, b: `p50 ${ms(props.p50)}` },
-    { x: 665, label: "Adapters", a: `${props.modes} modes`, b: "fetch + parse" },
-    { x: 845, label: "Catalog", a: `${int(props.upcoming)} upcoming`, b: "served now" },
+    { label: "Sources", value: `${props.scheduled} scheduled`, note: "4 cadence tiers" },
+    { label: "Scheduler", value: "Every 5 min", note: "selects work that is due" },
+    { label: "Shared slot", value: "Concurrency 1", note: "fleet-wide constraint" },
+    { label: "Worker", value: `${int(props.runsPerDay)} runs / day`, note: `p50 ${ms(props.p50)}` },
+    { label: "Adapters", value: `${props.modes} modes`, note: "collect + parse" },
+    { label: "Catalog", value: `${int(props.upcoming)} upcoming`, note: "available to consumers" },
   ];
   return (
-    <svg className={kit.figure} viewBox="0 0 1000 250" role="img"
-      aria-label={`Pipeline: ${props.scheduled} scheduled sources, scheduler ticking every 300 seconds, one fleet slot, ${props.runsPerDay} runs per day across ${props.modes} adapters, ${props.collectedPerDay} collected and ${props.publishedPerDay} published per day, catalog of ${props.upcoming} upcoming events.`}>
-      <defs>
-        <marker id="sv-arrow" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto">
-          <path d="M0,1 L7,4 L0,7" fill="none" stroke="rgba(255,255,255,0.18)" strokeWidth="1" />
-        </marker>
-      </defs>
-      <line x1="0" y1="108" x2="1000" y2="108" stroke="rgba(255,255,255,0.1)" strokeWidth="1" />
-      {nodes.map((n, i) => (
-        <g key={n.label}>
-          <rect x={n.x} y={102} width={2} height={12} fill="#c9ff68" />
-          <text x={n.x} y={93} fontSize="12.5" fontWeight="600" fill="#f5f5f0">{n.label}</text>
-          <text x={n.x} y={132} fontSize="10" fontFamily="ui-monospace, monospace" fill="#9b9b96">{n.a}</text>
-          <text x={n.x} y={149} fontSize="10" fontFamily="ui-monospace, monospace" fill="#686865">{n.b}</text>
-          {i < nodes.length - 1 ? (
-            <line x1={n.x + 74} y1={108} x2={nodes[i + 1].x - 10} y2={108}
-              stroke="rgba(255,255,255,0.18)" strokeWidth="1" markerEnd="url(#sv-arrow)" />
+    <figure
+      className={kit.flowMap}
+      aria-label={`Pipeline: ${props.scheduled} scheduled sources, scheduler ticking every 300 seconds, one fleet slot, ${props.runsPerDay} runs per day across ${props.modes} adapters, ${props.collectedPerDay} collected and ${props.publishedPerDay} published per day, catalog of ${props.upcoming} upcoming events.`}
+    >
+      <div className={kit.flowThroughput}>
+        <span data-tone="info"><b>{int(props.collectedPerDay)}</b> collected / day</span>
+        <ArrowRight aria-hidden="true" />
+        <span data-tone="ok"><b>{int(props.publishedPerDay)}</b> published / day</span>
+      </div>
+      <div className={kit.flowNodes}>
+        {nodes.map((node, index) => (
+          <article className={kit.flowNode} key={node.label}>
+            <span className={kit.flowStep}>{String(index + 1).padStart(2, "0")}</span>
+            <strong>{node.label}</strong>
+            <span className={kit.flowValue}>{node.value}</span>
+            <small>{node.note}</small>
+          </article>
+        ))}
+      </div>
+      <div className={kit.stageProfile}>
+        <div className={kit.stageIntro}>
+          <span>Stage wall clock inside each run</span>
+          <strong>Collection owns {props.collectPct ?? "—"}%</strong>
+          {props.foldedCount > 0 ? (
+            <small>{props.foldedCount} of 5 stages are folded into measured boundaries.</small>
           ) : null}
-        </g>
-      ))}
-      <text x={660} y={72} fontSize="10" fontFamily="ui-monospace, monospace" fill="#a783ef">
-        {int(props.collectedPerDay)} collected / day
-      </text>
-      <text x={843} y={72} fontSize="10" fontFamily="ui-monospace, monospace" fill="#c9ff68">
-        {int(props.publishedPerDay)} published / day
-      </text>
-      <line x1="500" y1="182" x2="962" y2="182" stroke="rgba(255,255,255,0.1)" strokeWidth="1" />
-      <text x={500} y={201} fontSize="8.5" fontFamily="ui-monospace, monospace" fill="#686865" letterSpacing="1.6">
-        STAGE WALL CLOCK, INSIDE EACH RUN
-      </text>
-      <rect x={500} y={211} width={3} height={13} fill="#9b9b96" />
-      <rect x={506} y={211} width={446} height={13} fill="#ffd074" opacity="0.85" />
-      <rect x={955} y={211} width={3} height={13} fill="#9b9b96" />
-      <text x={500} y={240} fontSize="9" fontFamily="ui-monospace, monospace" fill="#686865">admission</text>
-      <text x={690} y={240} fontSize="9" fontFamily="ui-monospace, monospace" fill="#ffd98e">
-        collect{props.collectPct !== null ? ` · ${props.collectPct}%` : ""}
-      </text>
-      <text x={903} y={240} fontSize="9" fontFamily="ui-monospace, monospace" fill="#686865">publish</text>
-      {props.foldedCount > 0 ? (
-        <>
-          <text x={0} y={205} fontSize="9.5" fontFamily="ui-monospace, monospace" fill="#686865">{props.foldedCount} of 5 stages are</text>
-          <text x={0} y={221} fontSize="9.5" fontFamily="ui-monospace, monospace" fill="#686865">never timed separately —</text>
-          <text x={0} y={237} fontSize="9.5" fontFamily="ui-monospace, monospace" fill="#686865">folded into these.</text>
-        </>
-      ) : null}
-    </svg>
+        </div>
+        <div>
+          <div className={kit.stageTrack} aria-hidden="true">
+            <i className={kit.stageMarker} />
+            <i className={kit.stageMeasured} style={{ width: `${Math.max(0, Math.min(100, props.collectPct ?? 0))}%` }} />
+            <i className={kit.stageMarker} />
+          </div>
+          <div className={kit.stageLabels}>
+            <span>admission</span>
+            <span>collect</span>
+            <span>publish</span>
+          </div>
+        </div>
+      </div>
+    </figure>
   );
 }
 

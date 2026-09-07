@@ -388,7 +388,11 @@ async def test_localist_fails_closed_when_occurrence_identity_repeats_across_pag
             200, json=_page([_event(4000, 5000)], current=2, total=2), request=request
         )
 
-    fetcher = LocalistCatalogFetcher(user_agent="test", transport=httpx.MockTransport(handler))
+    fetcher = LocalistCatalogFetcher(
+        user_agent="test",
+        now=lambda: datetime(2026, 7, 17, 12, 0, tzinfo=UTC),
+        transport=httpx.MockTransport(handler),
+    )
 
     with pytest.raises(LocalistFetchError, match="repeated"):
         await fetcher.fetch(_source())

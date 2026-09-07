@@ -41,3 +41,20 @@ class HeaderAuthContext:
         if raw_tenant_id != str(tenant_id):
             raise AuthenticationFailedError("valid tenant authentication is required")
         return tenant_id
+
+
+class LocalHeaderCsrfProtection:
+    """No-op CSRF seam for local header authentication only.
+
+    The mock graph has no ambient browser credential: every tenant-scoped call explicitly carries
+    ``X-EC-Tenant-ID``. Non-mock composition never selects this adapter implicitly and requires a
+    deployment-provided session-bound implementation instead.
+    """
+
+    async def verify_state_change(
+        self,
+        tenant_id: UUID,
+        headers: Mapping[str, str],
+    ) -> None:
+        """Accept because the local header itself is explicit per-request authority."""
+        del tenant_id, headers

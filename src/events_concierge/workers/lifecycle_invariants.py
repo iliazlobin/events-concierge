@@ -7,7 +7,9 @@ the guarded workflow and orphan-only repair workers remain the authoritative wri
 
 from __future__ import annotations
 
+import argparse
 import asyncio
+from collections.abc import Sequence
 from dataclasses import asdict
 from typing import cast
 
@@ -39,8 +41,8 @@ class _UnavailableWorkflowLivenessInspector:
         raise _TemporalLivenessUnavailableError("Temporal liveness is unavailable")
 
 
-async def run_lifecycle_invariants() -> None:
-    """Continuously emit nightly aggregate integrity evidence without repairing detected drift."""
+async def run_lifecycle_invariants(*, once: bool = False) -> int:
+    """Emit aggregate integrity evidence continuously or for one scheduled pass."""
     settings = get_settings()
     configure_logging(settings.log_level, local=settings.env == "local")
     container = build_container(settings)
@@ -72,12 +74,16 @@ async def run_lifecycle_invariants() -> None:
                 "lifecycle invariant scan failed",
                 error_type=type(error).__name__,
             )
+            if once:
+                return 1
         else:
             _log_report(report)
             # A non-definitive liveness result can indicate a dropped Temporal connection. Drop
             # the client so the next scheduled observation establishes a fresh authoritative view.
             if report.uninspectable_nonterminal_workflows > 0:
                 client = None
+            if once:
+                return 0
         await asyncio.sleep(settings.lifecycle_invariant_poll_seconds)
 
 
@@ -117,8 +123,19 @@ def _report_fields(report: LifecycleInvariantReport) -> dict[str, int | bool | d
     }
 
 
-def main() -> None:
-    asyncio.run(run_lifecycle_invariants())
+def _parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument(
+        "--once",
+        action="store_true",
+        help="run one bounded read-only scan for a deployment CronJob, then exit",
+    )
+    return parser.parse_args(argv)
+
+
+def main(argv: Sequence[str] | None = None) -> None:
+    args = _parse_args(argv)
+    raise SystemExit(asyncio.run(run_lifecycle_invariants(once=args.once)))
 
 
 if __name__ == "__main__":

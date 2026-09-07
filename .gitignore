@@ -36,6 +36,7 @@ dist/
 build/
 
 # Spike outputs
+spikes/**/g1-report-*.json
 spikes/**/g2-report-*.json
 spikes/**/.venv/
 

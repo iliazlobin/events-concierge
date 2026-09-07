@@ -1,5 +1,6 @@
 "use client";
 
+import { RefreshCw } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState } from "react";
 
 import { getAdminRuns } from "@/lib/admin-api";
@@ -154,9 +155,11 @@ export function RunsView({ onOpenSource }: RunsViewProps): React.JSX.Element {
   return (
     <div className={kit.page}>
       <PageHead
-        eyebrow="operations / durable-runs"
+        eyebrow="Evidence / source runs"
         title="Run ledger"
         sub="One row per durable refresh slot. Expand a row for its stage evidence and the resources it consumed."
+        statValue={int(total)}
+        statLabel="runs in window"
       />
 
       <div className={kit.toolbar}>
@@ -165,7 +168,8 @@ export function RunsView({ onOpenSource }: RunsViewProps): React.JSX.Element {
         <Segment options={OUTCOMES} value={outcome} onChange={setOutcome} label="Outcome" />
         <span className={kit.spacer} />
         <Action onClick={() => void load(windowHours, outcome)} disabled={loading}>
-          {loading ? "Refreshing" : "Refresh"}
+          <RefreshCw aria-hidden="true" className={loading ? "spin" : undefined} />
+          {loading ? "Refreshing" : "Refresh data"}
         </Action>
       </div>
 

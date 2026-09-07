@@ -1,5 +1,6 @@
 "use client";
 
+import { RefreshCw } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState } from "react";
 
 import {
@@ -117,16 +118,19 @@ export function PipelineView(): React.JSX.Element {
   return (
     <div className={kit.page}>
       <PageHead
-        eyebrow="operations / bounded-pipeline-evidence"
+        eyebrow="Control room / pipeline"
         title="Collection pipeline"
         sub="Where wall time and records actually go. Records exist at two waypoints only; the stages between them are timing boundaries, not counters."
+        statValue={age(snap.stages.generated_at)}
+        statLabel="snapshot age"
       />
 
       <div className={kit.toolbar}>
         <Segment options={WINDOWS} value={windowHours} onChange={setWindowHours} label="Window" />
         <span className={kit.spacer} />
         <Action onClick={() => void load(windowHours)} disabled={loading}>
-          {loading ? "Refreshing" : "Refresh"}
+          <RefreshCw aria-hidden="true" className={loading ? "spin" : undefined} />
+          {loading ? "Refreshing" : "Refresh data"}
         </Action>
       </div>
 

@@ -18,6 +18,7 @@ from events_concierge.api.app import _parse
 from events_concierge.application.catalog_refresh import (
     CatalogRefreshOutcome,
     CatalogRefreshService,
+    catalog_refresh_lease_seconds,
 )
 from events_concierge.composition import Container
 from events_concierge.domain.catalog_sources import (
@@ -41,7 +42,11 @@ from events_concierge.domain.policy import (
 )
 from events_concierge.domain.request import EventRequest, RequestConstraints
 from events_concierge.ports.policy import PacerLease, PacerLeaseStatus, PacerOperation, PacerRequest
-from events_concierge.ports.sources import SourceAccessDeniedError, SourceRateLimitedError
+from events_concierge.ports.sources import (
+    SourceAccessDeniedError,
+    SourceRateLimitedError,
+    SourceTransientError,
+)
 
 
 class _MemorySourceRepository:
@@ -50,6 +55,7 @@ class _MemorySourceRepository:
         self.completed: set[tuple[str, str]] = set()
         self.claimed: dict[tuple[str, str], UUID] = {}
         self.failed: list[str] = []
+        self.paused: list[str] = []
         self.claim_leases: list[int] = []
         self.live_lease_checks: list[tuple[str, str, UUID]] = []
         self.live_lease_allowed = True
@@ -117,6 +123,21 @@ class _MemorySourceRepository:
         if self.claimed.get(key) != lease_token:
             return False
         self.failed.append(error)
+        self.claimed.pop(key)
+        return True
+
+    async def pause_refresh(
+        self,
+        source_key: str,
+        run_key: str,
+        *,
+        lease_token: UUID,
+        error: str,
+    ) -> bool:
+        key = (source_key, run_key)
+        if self.claimed.get(key) != lease_token:
+            return False
+        self.paused.append(error)
         self.claimed.pop(key)
         return True
 
@@ -329,7 +350,9 @@ async def test_refresh_claims_once_paces_and_never_refetches_a_completed_run() -
     assert repository.claim_leases == [300, 300]
 
 
-async def test_refresh_reports_busy_without_a_non_atomic_fallback_when_commit_lease_is_lost() -> None:
+async def test_refresh_reports_busy_without_a_non_atomic_fallback_when_commit_lease_is_lost() -> (
+    None
+):
     """A final lease rejection cannot make the generic service publish through older split writes (NFR-8)."""
     now = datetime(2026, 7, 16, 12, 0, tzinfo=UTC)
     repository = _MemorySourceRepository(_source(now))
@@ -366,7 +389,9 @@ async def test_refresh_does_not_fetch_after_its_lease_is_lost_while_waiting_for_
     observations = _Observations()
     fetcher = _Fetcher([_candidate(now)])
     committer = _Committer(repository, catalog, observations)
-    pacer = _RecordingPacer(on_first_acquire=lambda: setattr(repository, "live_lease_allowed", False))
+    pacer = _RecordingPacer(
+        on_first_acquire=lambda: setattr(repository, "live_lease_allowed", False)
+    )
     service = CatalogRefreshService(
         repository,
         committer,
@@ -721,6 +746,42 @@ async def test_refresh_lease_covers_the_reviewed_paced_request_cap() -> None:
     assert repository.claim_leases == [860]
 
 
+async def test_meetup_detail_enrichment_lease_covers_all_reviewed_request_units() -> None:
+    """Meetup's city request plus forty paced detail requests fit in one durable lease."""
+    now = datetime(2026, 7, 16, 12, 0, tzinfo=UTC)
+    source = CatalogSource(
+        source_key="meetup-sf",
+        display_name="Meetup San Francisco",
+        publisher="Meetup",
+        seed_url="https://www.meetup.com/find/?location=us--ca--San%20Francisco",
+        approved_origins=("https://www.meetup.com",),
+        region="bay_area_9_county",
+        mode=CatalogSourceMode.MEETUP_CITY_JSONLD,
+        enabled=True,
+        reviewed_at=now,
+        review_expires_at=None,
+        refresh_interval_minutes=120,
+        min_interval_ms=1_500,
+        page_limit=41,
+        source_revision=2,
+    )
+    repository = _MemorySourceRepository(source)
+    service = CatalogRefreshService(
+        repository,
+        _Committer(repository, _Catalog(), _Observations()),
+        {CatalogSourceMode.MEETUP_CITY_JSONLD: _Fetcher([_candidate(now)])},
+        _RecordingPacer(),
+        _MutableDiscoveryPolicyGate(),
+        lease_seconds=60,
+        now=lambda: now,
+    )
+
+    result = await service.refresh(source.source_key, "manual:meetup-detail-cap")
+
+    assert result.outcome is CatalogRefreshOutcome.SUCCEEDED
+    assert repository.claim_leases == [122]
+
+
 async def test_refresh_rejects_a_source_whose_paced_cap_exceeds_database_lease_bound() -> None:
     """An over-budget registry row makes zero Pacer, source, or catalog calls (FR-10.3/NFR-8)."""
     now = datetime(2026, 7, 16, 12, 0, tzinfo=UTC)
@@ -938,6 +999,32 @@ async def test_source_pacing_cap_widened_after_claim_releases_before_fetch() -> 
     assert observations.records == []
 
 
+async def test_bibliocommons_lease_reserves_bounded_catalog_persistence_time() -> None:
+    """Large library feeds retain lease authority through their atomic O(N) catalog merge."""
+    now = datetime(2026, 7, 16, 12, 0, tzinfo=UTC)
+    source = replace(
+        _source(now),
+        mode=CatalogSourceMode.BIBLIOCOMMONS_RSS,
+        min_interval_ms=5_000,
+        page_limit=150,
+    )
+    repository = _MemorySourceRepository(source)
+    fetcher = _Fetcher([_candidate(now)])
+    service = CatalogRefreshService(
+        repository,
+        _Committer(repository, _Catalog(), _Observations()),
+        {CatalogSourceMode.BIBLIOCOMMONS_RSS: fetcher},
+        _RecordingPacer(),
+        _MutableDiscoveryPolicyGate(),
+        now=lambda: now,
+    )
+
+    result = await service.refresh(source.source_key, "manual:large-library")
+
+    assert result.outcome is CatalogRefreshOutcome.SUCCEEDED
+    assert repository.claim_leases == [1_748]
+
+
 async def test_refresh_failure_is_recorded_then_the_same_run_can_retry() -> None:
     """A crashed fetch releases a durable failed run rather than poisoning future recovery (NFR-8)."""
     now = datetime(2026, 7, 16, 12, 0, tzinfo=UTC)
@@ -974,6 +1061,31 @@ async def test_refresh_failure_is_recorded_then_the_same_run_can_retry() -> None
     assert len(recovered_fetcher.calls) == 1
 
 
+async def test_transient_source_failure_is_recorded_as_deferred_retry_work() -> None:
+    """A normalized transport outage releases the run and supplies a durable retry delay."""
+    now = datetime(2026, 7, 16, 12, 0, tzinfo=UTC)
+    repository = _MemorySourceRepository(_source(now))
+    fetcher = _Fetcher(
+        [],
+        SourceTransientError("fixture DNS outage", retry_after_seconds=15.0),
+    )
+    service = CatalogRefreshService(
+        repository,
+        _Committer(repository, _Catalog(), _Observations()),
+        {CatalogSourceMode.PUBLIC_JSONLD: fetcher},
+        _RecordingPacer(),
+        _MutableDiscoveryPolicyGate(),
+        now=lambda: now,
+    )
+
+    result = await service.refresh("approved-calendar", "manual:transient")
+
+    assert result.outcome is CatalogRefreshOutcome.DEFERRED
+    assert result.retry_after_seconds == 15.0
+    assert result.detail == "fixture DNS outage"
+    assert repository.failed == ["Source transient failure: fixture DNS outage"]
+
+
 async def test_pacer_deferral_releases_the_catalog_claim_without_a_fetch() -> None:
     """A Pacer projection is not a reservation: the run can be safely re-claimed on retry."""
     now = datetime(2026, 7, 16, 12, 0, tzinfo=UTC)
@@ -1001,8 +1113,52 @@ async def test_pacer_deferral_releases_the_catalog_claim_without_a_fetch() -> No
     assert fetcher.calls == [_source(now)]
     assert len(catalog.batches) == 1
     assert observations.records[0][1] == "manual:paced"
-    assert repository.failed == ["Pacer wait: fixture quota"]
+    assert repository.failed == []
+    assert repository.paused == ["Pacer wait: fixture quota"]
     assert recovered.outcome is CatalogRefreshOutcome.SUCCEEDED
+
+
+async def test_pacer_deferral_reports_busy_when_the_pause_lease_is_lost() -> None:
+    """A failed pause fence must not claim that an unrecorded durable retry exists."""
+    now = datetime(2026, 7, 16, 12, 0, tzinfo=UTC)
+    repository = _MemorySourceRepository(_source(now))
+    catalog = _Catalog()
+    observations = _Observations()
+    fetcher = _Fetcher([_candidate(now)])
+    pacer = _RecordingPacer(
+        [PacerLease(PacerLeaseStatus.WAIT, retry_after_seconds=45.0, detail="fixture quota")]
+    )
+    service = CatalogRefreshService(
+        repository,
+        _Committer(repository, catalog, observations),
+        {CatalogSourceMode.PUBLIC_JSONLD: fetcher},
+        pacer,
+        _MutableDiscoveryPolicyGate(),
+        now=lambda: now,
+    )
+
+    original_pause = repository.pause_refresh
+
+    async def lose_pause(
+        source_key: str,
+        run_key: str,
+        *,
+        lease_token: UUID,
+        error: str,
+    ) -> bool:
+        del source_key, run_key, lease_token, error
+        return False
+
+    repository.pause_refresh = lose_pause  # type: ignore[method-assign]
+    result = await service.refresh("approved-calendar", "manual:lost-pause")
+    repository.pause_refresh = original_pause  # type: ignore[method-assign]
+
+    assert result.outcome is CatalogRefreshOutcome.BUSY
+    assert result.retry_after_seconds is None
+    assert result.detail == (
+        "catalog refresh lease was lost before the Pacer defer could be recorded"
+    )
+    assert fetcher.calls == []
 
 
 async def test_catalog_source_throttle_records_retry_after_and_releases_the_run() -> None:
@@ -1130,3 +1286,93 @@ async def test_api_parsing_reads_the_persisted_catalog_without_invoking_discover
 
     assert request.request_id == request_id
     assert request.raw_text == "find a local event"
+
+
+async def test_luma_detail_lease_covers_the_events_its_page_cap_can_carry() -> None:
+    """Both Luma modes make one paced detail request per retained event, not one per page.
+
+    Reserving pages alone left these sources leaning on the 300-second process default. A calendar
+    that grows past it does not fail loudly: the fetch keeps running, the lease expires underneath
+    it, and the commit is fenced out after every request has already been made.
+    """
+    now = datetime(2026, 7, 16, 12, 0, tzinfo=UTC)
+    source = CatalogSource(
+        source_key="luma-thecommons",
+        display_name="The Commons",
+        publisher="Luma Calendar",
+        seed_url=(
+            "https://api.luma.com/calendar/get-items"
+            "?calendar_api_id=cal-ahTi4ptrN9WCYkg&pagination_limit=20&period=future"
+        ),
+        approved_origins=("https://api.luma.com", "https://api2.luma.com"),
+        region="bay_area_9_county",
+        mode=CatalogSourceMode.LUMA_CALENDAR_JSON,
+        enabled=True,
+        reviewed_at=now,
+        review_expires_at=None,
+        refresh_interval_minutes=360,
+        min_interval_ms=1_500,
+        page_limit=30,
+    )
+    repository = _MemorySourceRepository(source)
+    catalog = _Catalog()
+    observations = _Observations()
+    service = CatalogRefreshService(
+        repository,
+        _Committer(repository, catalog, observations),
+        {CatalogSourceMode.LUMA_CALENDAR_JSON: _Fetcher([_candidate(now)])},
+        _RecordingPacer(),
+        _MutableDiscoveryPolicyGate(),
+        now=lambda: now,
+    )
+
+    result = await service.refresh(source.source_key, "manual:luma-calendar")
+
+    assert result.outcome is CatalogRefreshOutcome.SUCCEEDED
+    # 30 pages + 30 x 25 events = 780 paced units at 1.5s, plus the 60s completion buffer.
+    assert repository.claim_leases == [1_230]
+
+
+@pytest.mark.parametrize(
+    ("mode", "page_limit", "min_interval_ms", "expected"),
+    [
+        # 30 pages + 30 x 25 events = 780 units at 1.5s, plus the 60s completion buffer.
+        (CatalogSourceMode.LUMA_CALENDAR_JSON, 30, 1_500, 1_230),
+        (CatalogSourceMode.LUMA_DISCOVER_JSON, 40, 1_500, 1_620),
+        # Past this the reservation exceeds the one-hour database ceiling and the row fails closed.
+        (CatalogSourceMode.LUMA_CALENDAR_JSON, 90, 1_500, 3_570),
+        (CatalogSourceMode.LUMA_CALENDAR_JSON, 91, 1_500, None),
+        # A mode with no detail lane reserves for pages alone.
+        (CatalogSourceMode.PUBLIC_JSONLD, 30, 1_500, 300),
+    ],
+)
+def test_the_lease_reservation_is_the_real_upper_bound_on_a_reviewed_page_cap(
+    mode: CatalogSourceMode,
+    page_limit: int,
+    min_interval_ms: int,
+    expected: int | None,
+) -> None:
+    """A row whose reservation returns None is SKIPPED with no run recorded at all.
+
+    That is coverage disappearing with no failure to look at, so the ceiling is asserted here and
+    the registry is asserted against this same function.
+    """
+    now = datetime(2026, 8, 26, 12, 0, tzinfo=UTC)
+    source = CatalogSource(
+        source_key="lease-budget-fixture",
+        display_name="Lease budget fixture",
+        publisher="Lease budget publisher",
+        seed_url="https://lease.example.test/catalog",
+        approved_origins=("https://lease.example.test",),
+        region="bay_area_9_county",
+        mode=mode,
+        enabled=True,
+        reviewed_at=now,
+        review_expires_at=None,
+        refresh_interval_minutes=360,
+        min_interval_ms=min_interval_ms,
+        page_limit=page_limit,
+    )
+
+    assert catalog_refresh_lease_seconds(source, floor_seconds=300) == expected
+

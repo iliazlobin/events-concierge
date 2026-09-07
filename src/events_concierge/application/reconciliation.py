@@ -55,11 +55,17 @@ from ..ports.sources import (
     SourceAccessDeniedError,
     SourceRateLimitedError,
 )
+from ..ports.tenant_effects import (
+    TenantEffectAuthority,
+    TenantEffectKind,
+    TenantEffectRequest,
+)
 from ..ports.withdrawal import (
     RegistrationWithdrawalPort,
     WithdrawalOutcome,
     WithdrawalResult,
 )
+from .tenant_effects import DirectTenantEffectAuthority
 
 _DEFAULT_DURATION = timedelta(hours=2)
 _COMPLETION_GRACE = timedelta(hours=24)
@@ -226,6 +232,8 @@ class LifecycleReconciliationService:
         credential_vault: CredentialVault | None = None,
         browser_admission: BrowserAdmissionPort | None = None,
         source_quarantine: SourceQuarantinePort | None = None,
+        tenant_effect_authority: TenantEffectAuthority | None = None,
+        tenant_effect_timeout_seconds: float = 30.0,
         handoff_ttl_days: int = 7,
         now: Callable[[], datetime] | None = None,
     ) -> None:
@@ -238,6 +246,13 @@ class LifecycleReconciliationService:
         self._vault = credential_vault
         self._browser_admission = browser_admission
         self._source_quarantine = source_quarantine
+        self._tenant_effects = tenant_effect_authority or DirectTenantEffectAuthority()
+        TenantEffectRequest(
+            tenant_id=UUID(int=0),
+            kind=TenantEffectKind.WITHDRAWAL,
+            timeout_seconds=tenant_effect_timeout_seconds,
+        )
+        self._tenant_effect_timeout_seconds = tenant_effect_timeout_seconds
         self._handoff_ttl = timedelta(days=handoff_ttl_days)
         self._now = now or (lambda: datetime.now(UTC))
 
@@ -428,10 +443,17 @@ class LifecycleReconciliationService:
         # This is deliberately before the source read/mutation: the user's calendar intent is
         # immediately removed even when policy, Pacer, or a provider forces manual completion.
         calendar_event_id = ids.calendar_event_id(tenant_id, event.canonical_event_id)
-        await self._calendar.delete_event(
-            tenant_id,
-            calendar_event_id,
-            canonical_event_id=event.canonical_event_id,
+        await self._tenant_effects.run(
+            TenantEffectRequest(
+                tenant_id=tenant_id,
+                kind=TenantEffectKind.CALENDAR_DELETE,
+                timeout_seconds=self._tenant_effect_timeout_seconds,
+            ),
+            lambda: self._calendar.delete_event(
+                tenant_id,
+                calendar_event_id,
+                canonical_event_id=event.canonical_event_id,
+            ),
         )
 
         target = self._withdrawal_target(event, lifecycle)
@@ -553,10 +575,17 @@ class LifecycleReconciliationService:
                 detail=f"lifecycle {lifecycle.state.value} cannot be cancelled",
             )
         calendar_event_id = ids.calendar_event_id(lifecycle.tenant_id, event.canonical_event_id)
-        await self._calendar.delete_event(
-            lifecycle.tenant_id,
-            calendar_event_id,
-            canonical_event_id=event.canonical_event_id,
+        await self._tenant_effects.run(
+            TenantEffectRequest(
+                tenant_id=lifecycle.tenant_id,
+                kind=TenantEffectKind.CALENDAR_DELETE,
+                timeout_seconds=self._tenant_effect_timeout_seconds,
+            ),
+            lambda: self._calendar.delete_event(
+                lifecycle.tenant_id,
+                calendar_event_id,
+                canonical_event_id=event.canonical_event_id,
+            ),
         )
         await self._lifecycle.transition(
             lifecycle,
@@ -603,7 +632,14 @@ class LifecycleReconciliationService:
             conflict_warning = True
             conflict_detail = "rescheduled time could not be checked for calendar conflicts"
             _log.warning("reconcile_free_busy_failed", error=str(exc))
-        await self._calendar.upsert_event(lifecycle.tenant_id, entry)
+        await self._tenant_effects.run(
+            TenantEffectRequest(
+                tenant_id=lifecycle.tenant_id,
+                kind=TenantEffectKind.CALENDAR_UPSERT,
+                timeout_seconds=self._tenant_effect_timeout_seconds,
+            ),
+            lambda: self._calendar.upsert_event(lifecycle.tenant_id, entry),
+        )
         lifecycle.conflict_warning = conflict_warning
         await self._lifecycle.transition(
             lifecycle,
@@ -829,7 +865,19 @@ class LifecycleReconciliationService:
             if policy_denial is not None:
                 return policy_denial
             try:
-                return await adapter.withdraw(tenant_id, target, modality, idempotency_key)
+                return await self._tenant_effects.run(
+                    TenantEffectRequest(
+                        tenant_id=tenant_id,
+                        kind=TenantEffectKind.WITHDRAWAL,
+                        timeout_seconds=self._tenant_effect_timeout_seconds,
+                    ),
+                    lambda: adapter.withdraw(
+                        tenant_id,
+                        target,
+                        modality,
+                        idempotency_key,
+                    ),
+                )
             except SourceRateLimitedError as throttle:
                 return await self._source_throttle(request, throttle)
             except SourceAccessDeniedError as denied:

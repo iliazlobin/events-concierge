@@ -35,7 +35,7 @@ _MILPITAS_SEED_URL = "https://gateway.bibliocommons.com/v2/libraries/sccl/rss/ev
 def _source(
     *,
     seed_url: str = _SEED_URL,
-    page_limit: int = 50,
+    page_limit: int = 120,
     min_interval_ms: int = 5_000,
 ) -> CatalogSource:
     return CatalogSource(
@@ -301,14 +301,18 @@ async def test_sccld_rejects_query_pace_or_page_cap_tampering_before_a_request()
         with pytest.raises(ValueError, match="reviewed publisher RSS"):
             await fetcher.fetch(_source(seed_url=seed_url))
     with pytest.raises(ValueError, match="reviewed publisher RSS"):
-        await fetcher.fetch(replace(_source(), page_limit=49))
+        await fetcher.fetch(replace(_source(), page_limit=119))
     with pytest.raises(ValueError, match="reviewed publisher RSS"):
         await fetcher.fetch(_source(min_interval_ms=1_500))
     assert requested == []
 
 
-async def test_sccld_fails_closed_when_all_fifty_reviewed_pages_are_full() -> None:
-    """A full SCCLD cap stays retryable instead of publishing a partial discovery window (NFR-8)."""
+async def test_sccld_fails_closed_when_every_reviewed_page_is_full() -> None:
+    """A full SCCLD cap stays retryable instead of publishing a partial discovery window (NFR-8).
+
+    The cap was raised from 50 to 120 by migration 0167 after the feed grew to 1,207 items against
+    the 1,250 its old cap allowed and then published nothing for six days.
+    """
     requested: list[httpx.URL] = []
     current = 100.0
 
@@ -338,5 +342,5 @@ async def test_sccld_fails_closed_when_all_fifty_reviewed_pages_are_full() -> No
 
     with pytest.raises(BiblioCommonsFetchError, match="exceeds"):
         await fetcher.fetch(_source())
-    assert len(requested) == 50
-    assert requested[-1].params.get("page") == "50"
+    assert len(requested) == 120
+    assert requested[-1].params.get("page") == "120"

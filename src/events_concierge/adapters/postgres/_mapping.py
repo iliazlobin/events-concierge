@@ -6,8 +6,14 @@ from typing import Any
 
 from sqlalchemy import Row
 
-from ...domain.enums import EventStatus, PriceStatus, Source
-from ...domain.events import CanonicalEvent, EventSourceLink, GeoPoint
+from ...domain.enums import EventStatus, PriceStatus, RegistrationStatus, Source
+from ...domain.event_semantics import event_extraction_evidence_from_payload
+from ...domain.events import (
+    CanonicalEvent,
+    EventSourceLink,
+    GeoPoint,
+    event_entity_profiles_from_payload,
+)
 
 
 def vector_literal(vec: list[float]) -> str:
@@ -28,8 +34,26 @@ def canonical_from_row(row: Row[Any], links: list[EventSourceLink]) -> Canonical
         event_status=EventStatus(row.event_status),
         description=row.description,
         price_status=PriceStatus(row.price_status),
+        price_min_cents=getattr(row, "price_min_cents", None),
+        price_max_cents=getattr(row, "price_max_cents", None),
+        price_currency=getattr(row, "price_currency", None),
         normalizer_version=row.normalizer_version,
         merge_version=row.merge_version,
+        organizer_name=getattr(row, "organizer_name", None),
+        host_names=tuple(getattr(row, "host_names", ()) or ()),
+        speaker_names=tuple(getattr(row, "speaker_names", ()) or ()),
+        partner_names=tuple(getattr(row, "partner_names", ()) or ()),
+        entity_profiles=event_entity_profiles_from_payload(
+            getattr(row, "entity_profiles", []) or []
+        ),
+        attendance_count=getattr(row, "attendance_count", None),
+        registration_status=RegistrationStatus(
+            getattr(row, "registration_status", RegistrationStatus.UNKNOWN.value)
+        ),
+        topics=tuple(getattr(row, "topics", ()) or ()),
+        extraction_evidence=event_extraction_evidence_from_payload(
+            getattr(row, "extraction_evidence", []) or []
+        ),
     )
 
 
@@ -40,4 +64,7 @@ def link_from_row(row: Row[Any]) -> EventSourceLink:
         registration_url=row.registration_url,
         last_seen_at=row.last_seen_at,
         price_status=PriceStatus(row.price_status),
+        price_min_cents=getattr(row, "price_min_cents", None),
+        price_max_cents=getattr(row, "price_max_cents", None),
+        price_currency=getattr(row, "price_currency", None),
     )

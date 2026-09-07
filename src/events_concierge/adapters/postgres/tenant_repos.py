@@ -10,6 +10,8 @@ from __future__ import annotations
 
 import hashlib
 import json
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 from datetime import datetime
 from typing import Protocol, cast
 from uuid import UUID, uuid4
@@ -330,6 +332,35 @@ class PostgresRequestRepository:
             constraints=_constraints_from_json(row.constraints),
         )
 
+    async def register_workflow_targets(
+        self,
+        tenant_id: UUID,
+        workflow_ids: tuple[str, ...],
+    ) -> None:
+        """Commit the full child set before a parent can emit its first start-child command."""
+        if not workflow_ids:
+            return
+        expected_prefix = f"{tenant_id}:"
+        for workflow_id in workflow_ids:
+            if not workflow_id.startswith(expected_prefix):
+                raise ValueError("registered child workflow must use the tenant identity prefix")
+            try:
+                canonical_event_id = UUID(workflow_id.removeprefix(expected_prefix))
+            except ValueError as error:
+                raise ValueError("registered child workflow identity is malformed") from error
+            if registration_workflow_id(tenant_id, canonical_event_id) != workflow_id:
+                raise ValueError("registered child workflow identity is not deterministic")
+        async with tenant_session_scope(tenant_id) as session:
+            await session.execute(
+                text(
+                    """INSERT INTO public.tenant_workflow_registry (tenant_id, workflow_id)
+                       SELECT :tenant_id, target.workflow_id
+                       FROM unnest(CAST(:workflow_ids AS text[])) AS target(workflow_id)
+                       ON CONFLICT (tenant_id, workflow_id) DO NOTHING"""
+                ),
+                {"tenant_id": tenant_id, "workflow_ids": list(workflow_ids)},
+            )
+
     async def claim_start(
         self, tenant_id: UUID, request_id: UUID, lease_seconds: int
     ) -> RequestStartRecord | None:
@@ -407,7 +438,7 @@ class PostgresRequestRepository:
         intentionally reads ``clock_timestamp()`` only after the exact row lock can no longer
         wait, avoiding a stale pre-wait timestamp (FR-6.8, NFR-8, ADR-003).
         """
-        async with system_session_scope() as session:
+        async with tenant_session_scope(record.tenant_id) as session:
             row = (
                 await session.execute(
                     text(
@@ -440,7 +471,86 @@ class PostgresRequestRepository:
                     {"lease_expires_at": lease.lease_expires_at},
                 )
             ).scalar_one()
-        return bool(live)
+            permitted = (
+                await session.execute(
+                    text(
+                        """SELECT
+                               NOT EXISTS (
+                                   SELECT 1 FROM public.account_erasure_requests
+                                   WHERE tenant_id = :tenant_id
+                               )
+                               AND NOT COALESCE((
+                                   SELECT kill_switch FROM public.tenant_policy_control
+                                   WHERE tenant_id = :tenant_id
+                               ), false) AS permitted"""
+                    ),
+                    {"tenant_id": record.tenant_id},
+                )
+            ).scalar_one()
+        return bool(live and permitted)
+
+    async def account_erasure_fenced(self, tenant_id: UUID) -> bool:
+        """Pair a completed Temporal start with either exact cancel or begin's later snapshot."""
+        async with tenant_session_scope(tenant_id) as session:
+            return bool(
+                (
+                    await session.execute(
+                        text(
+                            """SELECT EXISTS (
+                                   SELECT 1 FROM public.account_erasure_requests
+                                   WHERE tenant_id = :tenant_id
+                               )"""
+                        ),
+                        {"tenant_id": tenant_id},
+                    )
+                ).scalar_one()
+            )
+
+    @asynccontextmanager
+    async def request_start_guard(self, record: RequestStartRecord) -> AsyncIterator[bool]:
+        """Order one Temporal parent start wholly before or after account-erasure begin."""
+        async with tenant_session_scope(record.tenant_id) as session:
+            await session.execute(
+                text(
+                    """SELECT pg_advisory_xact_lock(
+                           hashtextextended(
+                               'account-erasure:' || CAST(:tenant_id AS text), 0
+                           )
+                       )"""
+                ),
+                {"tenant_id": record.tenant_id},
+            )
+            permitted = (
+                await session.execute(
+                    text(
+                        """SELECT EXISTS (
+                               SELECT 1
+                               FROM public.request_start_outbox AS queue
+                               WHERE queue.tenant_id = :tenant_id
+                                 AND queue.request_id = :request_id
+                                 AND queue.lease_token = :lease_token
+                                 AND queue.lease_expires_at > clock_timestamp()
+                                 AND queue.started_at IS NULL
+                                 AND NOT EXISTS (
+                                     SELECT 1
+                                     FROM public.account_erasure_requests AS erasure
+                                     WHERE erasure.tenant_id = queue.tenant_id
+                                 )
+                                 AND NOT COALESCE((
+                                     SELECT control.kill_switch
+                                     FROM public.tenant_policy_control AS control
+                                     WHERE control.tenant_id = queue.tenant_id
+                                 ), false)
+                           )"""
+                    ),
+                    {
+                        "tenant_id": record.tenant_id,
+                        "request_id": record.request_id,
+                        "lease_token": record.lease_token,
+                    },
+                )
+            ).scalar_one()
+            yield bool(permitted)
 
     async def mark_start_started(self, record: RequestStartRecord) -> bool:
         """Acknowledge a start and request state together, only for the active relay lease."""
@@ -580,6 +690,36 @@ class PostgresLifecycleRepository:
                     text("SELECT * FROM lifecycle WHERE workflow_id = :wid"), {"wid": workflow_id}
                 )
             ).one()
+        return Lifecycle(
+            lifecycle_id=row.lifecycle_id,
+            tenant_id=row.tenant_id,
+            canonical_event_id=row.canonical_event_id,
+            workflow_id=row.workflow_id,
+            state=LifecycleState(row.state),
+            lane=Lane(row.lane) if row.lane else None,
+            registration_source=(
+                Source(row.registration_source) if row.registration_source else None
+            ),
+            conflict_warning=row.conflict_warning,
+        )
+
+    async def find_by_workflow_id(
+        self, tenant_id: UUID, workflow_id: str
+    ) -> Lifecycle | None:
+        """Read the exact deterministic lifecycle even after it becomes terminal."""
+        async with tenant_session_scope(tenant_id) as s:
+            row = (
+                await s.execute(
+                    text(
+                        """SELECT * FROM lifecycle
+                           WHERE tenant_id = :tenant_id
+                             AND workflow_id = :workflow_id"""
+                    ),
+                    {"tenant_id": tenant_id, "workflow_id": workflow_id},
+                )
+            ).first()
+        if row is None:
+            return None
         return Lifecycle(
             lifecycle_id=row.lifecycle_id,
             tenant_id=row.tenant_id,

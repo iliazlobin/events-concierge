@@ -1,0 +1,57 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "type": "object",
+  "required": ["global", "workloads", "serviceAccounts", "cloudSqlProxy", "secretManager"],
+  "properties": {
+    "global": {
+      "type": "object",
+      "required": ["releasePhase", "runtimeProviderReady", "releaseRevision", "appImage", "frontendImage"],
+      "properties": {
+        "releasePhase": {"enum": ["migration", "application", "operations", "role-rotation"]},
+        "runtimeProviderReady": {"type": "boolean"},
+        "releaseRevision": {"type": "string", "minLength": 1, "maxLength": 128},
+        "appImage": {"$ref": "#/definitions/image"},
+        "frontendImage": {"$ref": "#/definitions/image"}
+      }
+    },
+    "cloudSqlProxy": {
+      "type": "object",
+      "required": ["enabled", "instanceConnectionName", "image"],
+      "properties": {
+        "enabled": {"type": "boolean"},
+        "instanceConnectionName": {"type": "string", "minLength": 1},
+        "image": {"$ref": "#/definitions/image"}
+      }
+    },
+    "secretManager": {
+      "type": "object",
+      "required": ["enabled", "projectId", "runtimeSecrets", "migrationSecrets"],
+      "properties": {
+        "enabled": {"type": "boolean"},
+        "projectId": {"type": "string", "minLength": 1},
+        "runtimeSecrets": {"type": "array", "items": {"$ref": "#/definitions/secretFile"}},
+        "migrationSecrets": {"type": "array", "items": {"$ref": "#/definitions/secretFile"}}
+      }
+    }
+  },
+  "definitions": {
+    "image": {
+      "type": "object",
+      "required": ["repository", "digest", "pullPolicy"],
+      "properties": {
+        "repository": {"type": "string", "minLength": 1, "pattern": "^[^@]+$"},
+        "digest": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"},
+        "pullPolicy": {"enum": ["IfNotPresent", "Always", "Never"]}
+      }
+    },
+    "secretFile": {
+      "type": "object",
+      "required": ["fileName", "secretName", "version"],
+      "properties": {
+        "fileName": {"type": "string", "pattern": "^[A-Z][A-Z0-9_]+$"},
+        "secretName": {"type": "string", "minLength": 1},
+        "version": {"type": "string", "pattern": "^[1-9][0-9]*$"}
+      }
+    }
+  }
+}

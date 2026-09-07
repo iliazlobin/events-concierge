@@ -1,0 +1,188 @@
+{{- $root := . -}}
+{{- if and .Values.catalogDispatcher.enabled (or (eq .Values.global.releasePhase "all") (eq .Values.global.releasePhase "application")) }}
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: {{ include "events-concierge.fullname" . }}-catalog-dispatcher
+  labels:
+    {{- include "events-concierge.labels" (dict "root" . "component" "catalog-dispatcher") | nindent 4 }}
+spec:
+  schedule: {{ .Values.catalogDispatcher.schedule | quote }}
+  concurrencyPolicy: Forbid
+  startingDeadlineSeconds: {{ .Values.catalogDispatcher.startingDeadlineSeconds }}
+  successfulJobsHistoryLimit: 2
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      backoffLimit: 1
+      activeDeadlineSeconds: {{ .Values.catalogDispatcher.activeDeadlineSeconds }}
+      template:
+        metadata:
+          labels:
+            {{- include "events-concierge.selectorLabels" (dict "root" . "component" "catalog-dispatcher") | nindent 12 }}
+            app.kubernetes.io/part-of: events-concierge
+          annotations:
+            checksum/runtime-secret-versions: {{ .Values.secretManager.runtimeSecrets | toJson | sha256sum }}
+        spec:
+          restartPolicy: Never
+          serviceAccountName: {{ (index .Values.serviceAccounts "catalog-jobs").name }}
+          automountServiceAccountToken: true
+          enableServiceLinks: false
+          securityContext:
+            {{- include "events-concierge.podSecurityContext" . | nindent 12 }}
+          {{- if .Values.cloudSqlProxy.enabled }}
+          initContainers:
+            - name: cloud-sql-proxy
+              restartPolicy: Always
+              image: {{ include "events-concierge.image" .Values.cloudSqlProxy.image | quote }}
+              imagePullPolicy: {{ .Values.cloudSqlProxy.image.pullPolicy }}
+              args:
+                - --structured-logs
+                - --port=5432
+                - --address=0.0.0.0
+                {{- if .Values.cloudSqlProxy.privateIp }}
+                - --private-ip
+                {{- end }}
+                - {{ .Values.cloudSqlProxy.instanceConnectionName | quote }}
+              ports:
+                - name: cloud-sql
+                  containerPort: 5432
+              securityContext:
+                {{- include "events-concierge.appSecurityContext" . | nindent 16 }}
+              resources:
+                {{- toYaml .Values.cloudSqlProxy.resources | nindent 16 }}
+              startupProbe:
+                tcpSocket: {port: cloud-sql}
+                failureThreshold: 30
+                periodSeconds: 2
+          {{- end }}
+          containers:
+            - name: dispatcher
+              image: {{ include "events-concierge.image" .Values.global.appImage | quote }}
+              imagePullPolicy: {{ .Values.global.appImage.pullPolicy }}
+              command: [python, -m, events_concierge.workers.catalog_refresh_dispatcher]
+              envFrom:
+                - configMapRef:
+                    name: {{ include "events-concierge.fullname" . }}-runtime
+              securityContext:
+                {{- include "events-concierge.appSecurityContext" . | nindent 16 }}
+              resources:
+                requests: {cpu: 100m, memory: 192Mi}
+                limits: {cpu: 500m, memory: 512Mi}
+              volumeMounts:
+                - name: tmp
+                  mountPath: /tmp
+                {{- if .Values.secretManager.enabled }}
+                - name: runtime-secrets
+                  mountPath: /var/run/secrets/events-concierge
+                  readOnly: true
+                {{- end }}
+          volumes:
+            - name: tmp
+              emptyDir: {sizeLimit: 64Mi}
+            {{- if .Values.secretManager.enabled }}
+            - name: runtime-secrets
+              csi:
+                driver: secrets-store-gke.csi.k8s.io
+                readOnly: true
+                volumeAttributes:
+                  secretProviderClass: {{ include "events-concierge.runtimeSecretProviderClass" . | quote }}
+            {{- end }}
+{{- end }}
+{{- if and .Values.jobs.catalogRefresh.enabled (or (eq .Values.global.releasePhase "all") (eq .Values.global.releasePhase "operations")) }}
+{{- if not .Values.jobs.catalogRefresh.sourceKey }}
+{{- fail "jobs.catalogRefresh.sourceKey is required when the one-shot catalog refresh Job is enabled" }}
+{{- end }}
+{{- $jobRevision := printf "%s:%s" .Values.global.releaseRevision (.Values.secretManager.runtimeSecrets | toJson) | sha256sum | trunc 12 }}
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ include "events-concierge.fullname" . }}-catalog-refresh-{{ $jobRevision }}
+  labels:
+    {{- include "events-concierge.labels" (dict "root" . "component" "catalog-refresh") | nindent 4 }}
+spec:
+  backoffLimit: 1
+  activeDeadlineSeconds: {{ .Values.jobs.catalogRefresh.activeDeadlineSeconds }}
+  ttlSecondsAfterFinished: 86400
+  template:
+    metadata:
+      labels:
+        {{- include "events-concierge.selectorLabels" (dict "root" . "component" "catalog-refresh") | nindent 8 }}
+        app.kubernetes.io/part-of: events-concierge
+      annotations:
+        checksum/runtime-secret-versions: {{ .Values.secretManager.runtimeSecrets | toJson | sha256sum }}
+    spec:
+      restartPolicy: Never
+      serviceAccountName: {{ (index .Values.serviceAccounts "catalog-jobs").name }}
+      automountServiceAccountToken: true
+      enableServiceLinks: false
+      securityContext:
+        {{- include "events-concierge.podSecurityContext" . | nindent 8 }}
+      {{- if .Values.cloudSqlProxy.enabled }}
+      initContainers:
+        - name: cloud-sql-proxy
+          restartPolicy: Always
+          image: {{ include "events-concierge.image" .Values.cloudSqlProxy.image | quote }}
+          imagePullPolicy: {{ .Values.cloudSqlProxy.image.pullPolicy }}
+          args:
+            - --structured-logs
+            - --port=5432
+            - --address=0.0.0.0
+            {{- if .Values.cloudSqlProxy.privateIp }}
+            - --private-ip
+            {{- end }}
+            - {{ .Values.cloudSqlProxy.instanceConnectionName | quote }}
+          ports:
+            - name: cloud-sql
+              containerPort: 5432
+          securityContext:
+            {{- include "events-concierge.appSecurityContext" . | nindent 12 }}
+          resources:
+            {{- toYaml .Values.cloudSqlProxy.resources | nindent 12 }}
+          startupProbe:
+            tcpSocket: {port: cloud-sql}
+            failureThreshold: 30
+            periodSeconds: 2
+      {{- end }}
+      containers:
+        - name: catalog-refresh
+          image: {{ include "events-concierge.image" .Values.global.appImage | quote }}
+          imagePullPolicy: {{ .Values.global.appImage.pullPolicy }}
+          command:
+            - python
+            - -m
+            - events_concierge.workers.catalog_refresh
+            - {{ .Values.jobs.catalogRefresh.sourceKey | quote }}
+            {{- with .Values.jobs.catalogRefresh.runKey }}
+            - --run-key
+            - {{ . | quote }}
+            {{- end }}
+          envFrom:
+            - configMapRef:
+                name: {{ include "events-concierge.fullname" . }}-runtime
+          securityContext:
+            {{- include "events-concierge.appSecurityContext" . | nindent 12 }}
+          resources:
+            requests: {cpu: 100m, memory: 192Mi}
+            limits: {cpu: 500m, memory: 512Mi}
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+            {{- if .Values.secretManager.enabled }}
+            - name: runtime-secrets
+              mountPath: /var/run/secrets/events-concierge
+              readOnly: true
+            {{- end }}
+      volumes:
+        - name: tmp
+          emptyDir: {sizeLimit: 64Mi}
+        {{- if .Values.secretManager.enabled }}
+        - name: runtime-secrets
+          csi:
+            driver: secrets-store-gke.csi.k8s.io
+            readOnly: true
+            volumeAttributes:
+              secretProviderClass: {{ include "events-concierge.runtimeSecretProviderClass" . | quote }}
+        {{- end }}
+{{- end }}

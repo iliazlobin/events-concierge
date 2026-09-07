@@ -197,6 +197,7 @@ async def test_registration_action_audit_schema_excludes_raw_event_and_identity_
         "modality",
         "outcome",
         "phase",
+        "pii_shredded_at",
         "policy_decision",
         "source",
         "tenant_id",

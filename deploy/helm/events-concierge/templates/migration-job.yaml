@@ -1,0 +1,91 @@
+{{- if and .Values.jobs.migration.enabled (or (eq .Values.global.releasePhase "all") (eq .Values.global.releasePhase "migration")) }}
+{{- $jobRevision := printf "%s:%s" .Values.global.releaseRevision (.Values.secretManager.migrationSecrets | toJson) | sha256sum | trunc 12 }}
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ include "events-concierge.fullname" . }}-migrate-{{ $jobRevision }}
+  labels:
+    {{- include "events-concierge.labels" (dict "root" . "component" "migration") | nindent 4 }}
+spec:
+  backoffLimit: {{ .Values.jobs.migration.backoffLimit }}
+  activeDeadlineSeconds: {{ .Values.jobs.migration.activeDeadlineSeconds }}
+  ttlSecondsAfterFinished: {{ .Values.jobs.migration.ttlSecondsAfterFinished }}
+  template:
+    metadata:
+      labels:
+        {{- include "events-concierge.selectorLabels" (dict "root" . "component" "migration") | nindent 8 }}
+        app.kubernetes.io/part-of: events-concierge
+      annotations:
+        checksum/migration-secret-versions: {{ .Values.secretManager.migrationSecrets | toJson | sha256sum }}
+    spec:
+      restartPolicy: Never
+      serviceAccountName: {{ .Values.serviceAccounts.migration.name }}
+      automountServiceAccountToken: true
+      enableServiceLinks: false
+      activeDeadlineSeconds: {{ .Values.jobs.migration.activeDeadlineSeconds }}
+      securityContext:
+        {{- include "events-concierge.podSecurityContext" . | nindent 8 }}
+      {{- if .Values.cloudSqlProxy.enabled }}
+      initContainers:
+        - name: cloud-sql-proxy
+          restartPolicy: Always
+          image: {{ include "events-concierge.image" .Values.cloudSqlProxy.image | quote }}
+          imagePullPolicy: {{ .Values.cloudSqlProxy.image.pullPolicy }}
+          args:
+            - --structured-logs
+            - --port=5432
+            - --address=0.0.0.0
+            {{- if .Values.cloudSqlProxy.privateIp }}
+            - --private-ip
+            {{- end }}
+            - {{ .Values.cloudSqlProxy.instanceConnectionName | quote }}
+          ports:
+            - name: cloud-sql
+              containerPort: 5432
+          securityContext:
+            {{- include "events-concierge.appSecurityContext" . | nindent 12 }}
+          resources:
+            {{- toYaml .Values.cloudSqlProxy.resources | nindent 12 }}
+          startupProbe:
+            tcpSocket: {port: cloud-sql}
+            failureThreshold: 30
+            periodSeconds: 2
+      {{- end }}
+      containers:
+        - name: migrate
+          image: {{ include "events-concierge.image" .Values.global.appImage | quote }}
+          imagePullPolicy: {{ .Values.global.appImage.pullPolicy }}
+          command: [alembic, upgrade, head]
+          env:
+            - name: EC_MIGRATION_URL_FILE
+              value: /var/run/secrets/events-concierge/EC_MIGRATION_URL
+            - name: EC_APP_ROLE_PASSWORD_FILE
+              value: /var/run/secrets/events-concierge/EC_APP_ROLE_PASSWORD
+            - name: EC_RELEASE_REVISION
+              value: {{ .Values.global.releaseRevision | quote }}
+          securityContext:
+            {{- include "events-concierge.appSecurityContext" . | nindent 12 }}
+          resources:
+            requests: {cpu: 100m, memory: 128Mi}
+            limits: {cpu: 500m, memory: 512Mi}
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+            {{- if .Values.secretManager.enabled }}
+            - name: migration-secrets
+              mountPath: /var/run/secrets/events-concierge
+              readOnly: true
+            {{- end }}
+      volumes:
+        - name: tmp
+          emptyDir:
+            sizeLimit: 64Mi
+        {{- if .Values.secretManager.enabled }}
+        - name: migration-secrets
+          csi:
+            driver: secrets-store-gke.csi.k8s.io
+            readOnly: true
+            volumeAttributes:
+              secretProviderClass: {{ include "events-concierge.migrationSecretProviderClass" . | quote }}
+        {{- end }}
+{{- end }}

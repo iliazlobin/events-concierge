@@ -1,0 +1,13 @@
+{{- include "events-concierge.validateDeployment" . }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "events-concierge.fullname" . }}-runtime
+  labels:
+    {{- include "events-concierge.labels" (dict "root" . "component" "runtime-config") | nindent 4 }}
+data:
+  EC_RELEASE_REVISION: {{ .Values.global.releaseRevision | quote }}
+  EC_IMAGE_DIGEST: {{ .Values.global.appImage.digest | quote }}
+  {{- range $key, $value := .Values.applicationConfig }}
+  {{ $key }}: {{ $value | quote }}
+  {{- end }}

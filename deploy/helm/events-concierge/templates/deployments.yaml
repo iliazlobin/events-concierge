@@ -1,0 +1,190 @@
+{{- $root := . -}}
+{{- if or (eq .Values.global.releasePhase "all") (eq .Values.global.releasePhase "application") }}
+{{- range $name, $workload := .Values.workloads }}
+{{- if $workload.enabled }}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "events-concierge.fullname" $root }}-{{ $name }}
+  labels:
+    {{- include "events-concierge.labels" (dict "root" $root "component" $name) | nindent 4 }}
+spec:
+  replicas: {{ $workload.replicas }}
+  revisionHistoryLimit: 5
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
+  selector:
+    matchLabels:
+      {{- include "events-concierge.selectorLabels" (dict "root" $root "component" $name) | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "events-concierge.selectorLabels" (dict "root" $root "component" $name) | nindent 8 }}
+        app.kubernetes.io/part-of: events-concierge
+      annotations:
+        checksum/runtime-config: {{ include (print $root.Template.BasePath "/configmap.yaml") $root | sha256sum }}
+        {{- if $workload.runtimeSecrets }}
+        checksum/runtime-secret-versions: {{ $root.Values.secretManager.runtimeSecrets | toJson | sha256sum }}
+        {{- end }}
+        cluster-autoscaler.kubernetes.io/safe-to-evict: "true"
+    spec:
+      serviceAccountName: {{ (index $root.Values.serviceAccounts $workload.serviceAccount).name }}
+      automountServiceAccountToken: {{ $workload.needsIdentity }}
+      enableServiceLinks: false
+      terminationGracePeriodSeconds: 30
+      securityContext:
+        {{- include "events-concierge.podSecurityContext" $root | nindent 8 }}
+      topologySpreadConstraints:
+        - maxSkew: 1
+          topologyKey: topology.kubernetes.io/zone
+          whenUnsatisfiable: DoNotSchedule
+          labelSelector:
+            matchLabels:
+              {{- include "events-concierge.selectorLabels" (dict "root" $root "component" $name) | nindent 14 }}
+        - maxSkew: 1
+          topologyKey: kubernetes.io/hostname
+          whenUnsatisfiable: ScheduleAnyway
+          labelSelector:
+            matchLabels:
+              {{- include "events-concierge.selectorLabels" (dict "root" $root "component" $name) | nindent 14 }}
+      {{- if and $workload.database $root.Values.cloudSqlProxy.enabled }}
+      initContainers:
+        - name: cloud-sql-proxy
+          restartPolicy: Always
+          image: {{ include "events-concierge.image" $root.Values.cloudSqlProxy.image | quote }}
+          imagePullPolicy: {{ $root.Values.cloudSqlProxy.image.pullPolicy }}
+          args:
+            - --structured-logs
+            - --port=5432
+            - --address=0.0.0.0
+            {{- if $root.Values.cloudSqlProxy.privateIp }}
+            - --private-ip
+            {{- end }}
+            - {{ $root.Values.cloudSqlProxy.instanceConnectionName | quote }}
+          ports:
+            - name: cloud-sql
+              containerPort: 5432
+          securityContext:
+            {{- include "events-concierge.appSecurityContext" $root | nindent 12 }}
+          resources:
+            {{- toYaml $root.Values.cloudSqlProxy.resources | nindent 12 }}
+          startupProbe:
+            tcpSocket: {port: cloud-sql}
+            failureThreshold: 30
+            periodSeconds: 2
+          livenessProbe:
+            tcpSocket: {port: cloud-sql}
+            periodSeconds: 20
+            timeoutSeconds: 3
+          readinessProbe:
+            tcpSocket: {port: cloud-sql}
+            periodSeconds: 10
+            timeoutSeconds: 3
+      {{- end }}
+      containers:
+        - name: {{ $name }}
+          {{- if eq $name "frontend" }}
+          image: {{ include "events-concierge.image" $root.Values.global.frontendImage | quote }}
+          imagePullPolicy: {{ $root.Values.global.frontendImage.pullPolicy }}
+          env:
+            - name: EC_API_ORIGIN
+              value: {{ $root.Values.frontend.apiOrigin | quote }}
+            - name: NEXT_TELEMETRY_DISABLED
+              value: "1"
+          {{- else }}
+          image: {{ include "events-concierge.image" $root.Values.global.appImage | quote }}
+          imagePullPolicy: {{ $root.Values.global.appImage.pullPolicy }}
+          envFrom:
+            - configMapRef:
+                name: {{ include "events-concierge.fullname" $root }}-runtime
+          {{- with $workload.env }}
+          env:
+            {{- range $key, $value := . }}
+            - name: {{ $key }}
+              value: {{ $value | quote }}
+            {{- end }}
+          {{- end }}
+          {{- end }}
+          {{- with $workload.command }}
+          command:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          {{- with $workload.port }}
+          ports:
+            - name: http
+              containerPort: {{ . }}
+              protocol: TCP
+          {{- end }}
+          securityContext:
+            {{- include "events-concierge.appSecurityContext" $root | nindent 12 }}
+          resources:
+            {{- toYaml $workload.resources | nindent 12 }}
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+            {{- if and $workload.runtimeSecrets $root.Values.secretManager.enabled }}
+            - name: runtime-secrets
+              mountPath: /var/run/secrets/events-concierge
+              readOnly: true
+            {{- end }}
+          {{- if eq $workload.probeType "api" }}
+          startupProbe:
+            httpGet: {path: /healthz, port: http}
+            failureThreshold: 30
+            periodSeconds: 2
+          livenessProbe:
+            httpGet: {path: /healthz, port: http}
+            periodSeconds: 20
+            timeoutSeconds: 3
+            failureThreshold: 3
+          readinessProbe:
+            httpGet: {path: /readyz, port: http}
+            periodSeconds: 10
+            timeoutSeconds: 3
+            failureThreshold: 3
+          {{- else if eq $workload.probeType "frontend" }}
+          startupProbe:
+            tcpSocket: {port: http}
+            failureThreshold: 30
+            periodSeconds: 2
+          livenessProbe:
+            tcpSocket: {port: http}
+            periodSeconds: 20
+            timeoutSeconds: 3
+          readinessProbe:
+            httpGet: {path: /healthz, port: http}
+            periodSeconds: 10
+            timeoutSeconds: 3
+          {{- else }}
+          livenessProbe:
+            exec:
+              command: [python, -c, "import os; os.kill(1, 0)"]
+            initialDelaySeconds: 20
+            periodSeconds: 30
+            timeoutSeconds: 3
+          readinessProbe:
+            exec:
+              command: [python, -c, "import os; os.kill(1, 0)"]
+            initialDelaySeconds: 5
+            periodSeconds: 15
+            timeoutSeconds: 3
+          {{- end }}
+      volumes:
+        - name: tmp
+          emptyDir:
+            sizeLimit: 64Mi
+        {{- if and $workload.runtimeSecrets $root.Values.secretManager.enabled }}
+        - name: runtime-secrets
+          csi:
+            driver: secrets-store-gke.csi.k8s.io
+            readOnly: true
+            volumeAttributes:
+              secretProviderClass: {{ include "events-concierge.runtimeSecretProviderClass" $root | quote }}
+        {{- end }}
+{{- end }}
+{{- end }}
+{{- end }}

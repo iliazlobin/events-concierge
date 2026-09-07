@@ -7,6 +7,7 @@ creation are owner-gated integration concerns and are not performed here.
 
 from __future__ import annotations
 
+import math
 from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import datetime
@@ -30,6 +31,8 @@ from ...ports.calendar import (
 )
 from ...ports.google_calendar import (
     GOOGLE_CALENDAR_CANONICAL_EVENT_ID_KEY,
+    GOOGLE_CALENDAR_OWNER_KEY,
+    GOOGLE_CALENDAR_OWNER_VALUE,
     GoogleCalendarAccess,
     GoogleCalendarAccessPort,
     GoogleCalendarBinding,
@@ -56,6 +59,10 @@ _RETRYABLE_RATE_OR_QUOTA_REASONS: Final[frozenset[str]] = frozenset(
     }
 )
 _RETRYABLE_GOOGLE_STATUSES: Final[frozenset[str]] = frozenset({"RESOURCE_EXHAUSTED"})
+_ERASURE_PAGE_SIZE: Final = 250
+_MAX_ERASURE_PAGES: Final = 100
+_MIN_TIMEOUT_SECONDS: Final = 0.1
+_MAX_TIMEOUT_SECONDS: Final = 60.0
 
 
 class GoogleCalendarError(RuntimeError):
@@ -87,6 +94,7 @@ class _ListedCalendarEvent:
     start_at: datetime | None
     location: str | None
     is_cancelled: bool
+    is_concierge_owned: bool
 
 
 class GoogleCalendarAdapter:
@@ -111,8 +119,14 @@ class GoogleCalendarAdapter:
     ) -> None:
         if not base_url.startswith("https://"):
             raise ValueError("Google Calendar base URL must use HTTPS")
-        if timeout_s <= 0.0:
-            raise ValueError("Google Calendar timeout must be positive")
+        if (
+            isinstance(timeout_s, bool)
+            or not math.isfinite(timeout_s)
+            or not _MIN_TIMEOUT_SECONDS <= timeout_s <= _MAX_TIMEOUT_SECONDS
+        ):
+            raise ValueError(
+                "Google Calendar timeout must be finite and between 0.1 and 60 seconds"
+            )
         self._access = access
         self._bindings = bindings
         self._client = client
@@ -190,6 +204,74 @@ class GoogleCalendarAdapter:
         )
         if response.status_code != httpx.codes.NOT_FOUND:
             _raise_for_error(response)
+
+    async def delete_tenant_events(self, tenant_id: UUID) -> None:
+        """Enumerate and delete every app-owned event in the tenant's bound write calendar.
+
+        Lifecycle rows are only a local projection and cannot prove the absence of orphaned remote
+        writes. This sweep therefore paginates the provider collection and selects the private
+        fixed owner marker written by every concierge upsert. Deletion happens page-by-page, so a
+        safety-cap retry resumes from provider state instead of perpetually rebuilding an oversized
+        in-memory inventory. A complete empty rescan is required before success.
+        """
+        binding = await self._bindings.get_binding(tenant_id)
+        if binding is None:
+            raise GoogleCalendarBindingNotFoundError(
+                "Google app-calendar binding disappeared during account erasure"
+            )
+        access = await self._access.get_access(tenant_id)
+        page_token: str | None = None
+        seen_tokens: set[str] = set()
+        deleted_in_pass = False
+        for _page in range(_MAX_ERASURE_PAGES):
+            params = {
+                "showDeleted": "false",
+                "maxResults": str(_ERASURE_PAGE_SIZE),
+                "privateExtendedProperty": (
+                    f"{GOOGLE_CALENDAR_OWNER_KEY}={GOOGLE_CALENDAR_OWNER_VALUE}"
+                ),
+            }
+            if page_token is not None:
+                params["pageToken"] = page_token
+            response = await self._request(
+                "GET",
+                self._events_url(binding.write_calendar_id),
+                access,
+                params=params,
+            )
+            _raise_for_error(response)
+            events, next_page_token = _erasure_event_page(response.json())
+            provider_event_ids = tuple(
+                event.event_id
+                for event in events
+                if event.is_concierge_owned and not event.is_cancelled
+            )
+            for provider_event_id in provider_event_ids:
+                deleted = await self._request(
+                    "DELETE",
+                    self._event_url(binding.write_calendar_id, provider_event_id),
+                    access,
+                    params={"sendUpdates": "none"},
+                )
+                if deleted.status_code != httpx.codes.NOT_FOUND:
+                    _raise_for_error(deleted)
+                deleted_in_pass = True
+            if next_page_token is None:
+                if deleted_in_pass:
+                    # Provider page tokens need not remain stable while their collection changes.
+                    # Restart from page one and require an empty full pass before acknowledging.
+                    page_token = None
+                    seen_tokens.clear()
+                    deleted_in_pass = False
+                    continue
+                return
+            if next_page_token in seen_tokens:
+                raise GoogleCalendarError("Google Calendar erasure pagination repeated a token")
+            seen_tokens.add(next_page_token)
+            page_token = next_page_token
+        raise GoogleCalendarError(
+            "Google Calendar erasure made bounded progress; retry to continue"
+        )
 
     async def _existing_provider_event_id(
         self,
@@ -327,7 +409,12 @@ class GoogleCalendarAdapter:
         headers = {"Authorization": f"Bearer {access.bearer_token}"}
         if self._client is not None:
             return await self._client.request(
-                method, url, headers=headers, params=params, json=json_body
+                method,
+                url,
+                headers=headers,
+                params=params,
+                json=json_body,
+                timeout=self._timeout_s,
             )
         async with httpx.AsyncClient(timeout=self._timeout_s) as client:
             return await client.request(method, url, headers=headers, params=params, json=json_body)
@@ -367,6 +454,7 @@ def _private_metadata(entry: CalendarEntry) -> dict[str, str]:
                 "calendar private metadata must use non-empty string keys and string values"
             )
     metadata[GOOGLE_CALENDAR_CANONICAL_EVENT_ID_KEY] = str(entry.canonical_event_id)
+    metadata[GOOGLE_CALENDAR_OWNER_KEY] = GOOGLE_CALENDAR_OWNER_VALUE
     return metadata
 
 
@@ -424,13 +512,46 @@ def _listed_calendar_event(item: object) -> _ListedCalendarEvent:
         raise GoogleCalendarError("Google Calendar event list item must include an event id")
     summary = item.get("summary")
     location = item.get("location")
+    extended = item.get("extendedProperties")
+    private = extended.get("private") if isinstance(extended, Mapping) else None
     return _ListedCalendarEvent(
         event_id=event_id,
         summary=summary if isinstance(summary, str) else None,
         start_at=_listed_event_start(item.get("start")),
         location=location if isinstance(location, str) else None,
         is_cancelled=item.get("status") == "cancelled",
+        is_concierge_owned=_is_concierge_private_metadata(private),
     )
+
+
+def _is_concierge_private_metadata(private: object) -> bool:
+    """Require both the fixed owner schema and one canonical lowercase UUID marker."""
+    if not isinstance(private, Mapping):
+        return False
+    if private.get(GOOGLE_CALENDAR_OWNER_KEY) != GOOGLE_CALENDAR_OWNER_VALUE:
+        return False
+    raw_canonical_id = private.get(GOOGLE_CALENDAR_CANONICAL_EVENT_ID_KEY)
+    if not isinstance(raw_canonical_id, str):
+        return False
+    try:
+        canonical_id = UUID(raw_canonical_id)
+    except ValueError:
+        return False
+    return str(canonical_id) == raw_canonical_id
+
+
+def _erasure_event_page(payload: object) -> tuple[tuple[_ListedCalendarEvent, ...], str | None]:
+    """Validate one provider page without applying duplicate-resolution's no-pagination rule."""
+    if not isinstance(payload, Mapping):
+        raise GoogleCalendarError("Google Calendar erasure list response must be an object")
+    items = payload.get("items")
+    if not isinstance(items, list):
+        raise GoogleCalendarError("Google Calendar erasure list response must include items")
+    raw_token = payload.get("nextPageToken")
+    if raw_token is not None and not isinstance(raw_token, str):
+        raise GoogleCalendarError("Google Calendar erasure nextPageToken must be a string")
+    token = raw_token.strip() if isinstance(raw_token, str) else None
+    return tuple(_listed_calendar_event(item) for item in items), token or None
 
 
 def _listed_event_start(value: object) -> datetime | None:

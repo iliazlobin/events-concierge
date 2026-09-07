@@ -3,17 +3,21 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import os
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime, timedelta
 from uuid import UUID, uuid4
+from zoneinfo import ZoneInfo
 
 import pytest
 from sqlalchemy import text
 from sqlalchemy.exc import DBAPIError
 from sqlalchemy.ext.asyncio import AsyncConnection, create_async_engine
 
+from events_concierge.adapters.bibliocommons.source import _BIBLIOCOMMONS_PUBLISHERS
+from events_concierge.adapters.luma_calendar import reviewed_calendar_api_id
 from events_concierge.adapters.postgres.catalog_observations import (
     PostgresCatalogObservationRepository,
 )
@@ -24,35 +28,112 @@ from events_concierge.adapters.postgres.catalog_refresh_commit import (
     PostgresCatalogRefreshCommitter,
 )
 from events_concierge.adapters.postgres.catalog_sources import PostgresCatalogSourceRepository
+from events_concierge.application.catalog_refresh import catalog_refresh_lease_seconds
 from events_concierge.composition import build_container
 from events_concierge.config import get_settings
 from events_concierge.domain.catalog_sources import (
     CatalogSource,
     CatalogSourcePage,
+    catalog_candidate_content_hash,
     observation_for,
 )
 from events_concierge.domain.enums import (
     CatalogRefreshClaimOutcome,
     CatalogRefreshRunStatus,
     CatalogSourceMode,
+    PriceStatus,
+    RegistrationStatus,
     Source,
 )
-from events_concierge.domain.events import CandidateEvent
+from events_concierge.domain.events import CandidateEvent, EventEntityProfile
 from events_concierge.infra.db import system_session_scope
 
 pytestmark = pytest.mark.integration
 
 
-async def test_registry_contains_only_reviewed_bounded_bay_area_publishers(db: None) -> None:
-    """The registry records explicit publisher feeds, not a platform-wide crawl (FR-10.3)."""
+async def test_entity_profile_database_validator_rejects_search_and_detached_identities(
+    db: None,
+) -> None:
+    async def valid(profiles: list[dict[str, str]]) -> bool:
+        async with system_session_scope() as session:
+            return bool(
+                (
+                    await session.execute(
+                        text(
+                            """
+                            SELECT public.fn_event_entity_profiles_valid(
+                                CAST(:profiles AS jsonb),
+                                :organizer_name,
+                                CAST(:host_names AS text[]),
+                                CAST(:speaker_names AS text[]),
+                                CAST(:partner_names AS text[])
+                            )
+                            """
+                        ),
+                        {
+                            "profiles": json.dumps(profiles, separators=(",", ":")),
+                            "organizer_name": "City Clerk",
+                            "host_names": ["Ada Lovelace"],
+                            "speaker_names": [],
+                            "partner_names": [],
+                        },
+                    )
+                ).scalar_one()
+            )
+
+    direct = {
+        "name": "Ada Lovelace",
+        "role": "host",
+        "kind": "person",
+        "profile_url": "https://www.linkedin.com/in/ada-lovelace",
+    }
+    search = {
+        **direct,
+        "profile_url": (
+            "https://www.linkedin.com/search/results/people/?keywords=Ada%20Lovelace"
+        ),
+    }
+    detached = {
+        **direct,
+        "name": "Private Attendee",
+        "profile_url": "https://www.linkedin.com/in/private-attendee",
+    }
+
+    assert await valid([direct]) is True
+    assert await valid([search]) is False
+    assert await valid([detached]) is False
+
+
+async def test_registry_contains_only_reviewed_bounded_regional_publishers(db: None) -> None:
+    """The registry records only reviewed, region-bounded public sources (FR-10.3)."""
     repository = PostgresCatalogSourceRepository()
-    approved_luma = await repository.get("luma-genai-sf")
+    approved_luma = await repository.get("luma-sf")
     assert approved_luma is not None
     assert approved_luma.enabled is True
     assert approved_luma.handoff_only is True
-    assert approved_luma.allows_url("https://luma.com/genai-sf") is True
-    assert approved_luma.mode is CatalogSourceMode.PUBLIC_JSONLD
-    assert approved_luma.page_limit == 1
+    assert approved_luma.seed_url == (
+        "https://api.luma.com/discover/get-paginated-events"
+        "?discover_place_api_id=discplace-BDj7GNbGlsF7Cka&pagination_limit=25"
+    )
+    assert approved_luma.display_name == "Luma Bay Area"
+    assert approved_luma.approved_origins == (
+        "https://api.luma.com",
+        "https://api2.luma.com",
+    )
+    assert approved_luma.allows_url(approved_luma.seed_url) is True
+    assert approved_luma.allows_url("https://luma.com/sf") is False
+    assert approved_luma.allows_url(
+        "https://api2.luma.com/event/get?event_api_id=evt-reviewed"
+    ) is True
+    assert approved_luma.mode is CatalogSourceMode.LUMA_DISCOVER_JSON
+    assert approved_luma.page_limit == 40
+    assert approved_luma.source_revision == 2
+    # 0117 disabled this calendar believing the Discover cursor superseded it. Discover is a
+    # one-event-per-calendar shelf, so it never did; 0163 restored it.
+    genai_calendar = await repository.get("luma-genai-sf")
+    assert genai_calendar is not None
+    assert genai_calendar.enabled is True
+    assert genai_calendar.mode is CatalogSourceMode.LUMA_CALENDAR_JSON
     expected_jsonld_seeds: dict[str, str] = {}
     for source_key, seed_url in expected_jsonld_seeds.items():
         approved = await repository.get(source_key)
@@ -64,6 +145,98 @@ async def test_registry_contains_only_reviewed_bounded_bay_area_publishers(db: N
         assert approved.mode is CatalogSourceMode.PUBLIC_JSONLD
         assert approved.page_limit == 1
 
+
+async def test_every_reviewed_luma_calendar_row_resolves_to_a_calendar_identity(
+    db: None,
+) -> None:
+    """The registry, not a Python allowlist, is what admits a Luma host calendar.
+
+    ``LumaCalendarCatalogFetcher`` derives the calendar it walks from ``seed_url`` alone, so a row
+    whose seed is not the exact reviewed cursor shape is a source that fails at its first request
+    rather than at review.  This pins that registry-to-adapter contract for *every* row at once,
+    which is what makes adding a calendar a data change instead of a code change.
+    """
+    repository = PostgresCatalogSourceRepository()
+    refreshable = await repository.list_refreshable(datetime.now(UTC))
+    calendars = [
+        source
+        for source in refreshable
+        if source.mode is CatalogSourceMode.LUMA_CALENDAR_JSON
+        and not source.source_key.startswith("test-")
+    ]
+
+    assert calendars, "the reviewed fleet must retain at least one Luma host calendar"
+    for source in calendars:
+        assert source.handoff_only is True
+        # Both origins: the listing cursor and the detail record the adapter follows for every
+        # retained event. A row left on the listing origin alone refuses to run (migration 0169).
+        assert source.approved_origins == ("https://api.luma.com", "https://api2.luma.com")
+        assert source.allows_url(source.seed_url) is True
+        assert source.allows_url(
+            "https://api2.luma.com/event/get?event_api_id=evt-reviewed"
+        ) is True
+        calendar_api_id = reviewed_calendar_api_id(source.seed_url)
+        assert calendar_api_id is not None, f"{source.source_key} seed is not the reviewed cursor"
+        assert calendar_api_id.startswith("cal-")
+        # page_limit is a cliff, not a budget: exceeding it discards the whole refresh, so a
+        # reviewed calendar must carry real headroom over the pages it needs today.
+        assert source.page_limit >= 20, f"{source.source_key} has too little page headroom"
+        # And an UPPER bound, because _lease_seconds_for reserves page_limit * (1 + 25) paced units
+        # for a Luma row: past the one-hour lease ceiling it returns None and the source is SKIPPED
+        # with no run recorded at all — coverage disappears with no failure to look at.
+        lease = catalog_refresh_lease_seconds(source, floor_seconds=300)
+        assert lease is not None, (
+            f"{source.source_key} page_limit {source.page_limit} exceeds the one-hour lease budget"
+        )
+
+    keys = {source.source_key for source in calendars}
+    assert len(keys) == len(calendars)
+    seeds = {reviewed_calendar_api_id(source.seed_url) for source in calendars}
+    assert len(seeds) == len(calendars), "two reviewed rows point at the same calendar"
+
+
+async def test_every_bibliocommons_row_agrees_with_its_code_pinned_page_cap(db: None) -> None:
+    """A BiblioCommons page cap lives in two places and both must say the same number.
+
+    ``_publisher_for_source`` refuses a row whose ``page_limit`` differs from its code profile, so
+    raising the reviewed cap in a migration alone does not widen the walk -- it takes the source
+    dark *before* its first request, which looks nothing like the cap failure it was meant to fix.
+    """
+    repository = PostgresCatalogSourceRepository()
+    for source_key, publisher in _BIBLIOCOMMONS_PUBLISHERS.items():
+        source = await repository.get(source_key)
+        if source is None or not source.enabled:
+            continue
+        assert source.page_limit == publisher.page_limit, (
+            f"{source_key} registry cap {source.page_limit} != code cap {publisher.page_limit}"
+        )
+        if publisher.min_interval_ms is not None:
+            assert source.min_interval_ms == publisher.min_interval_ms
+
+
+async def test_registry_contains_reviewed_new_york_luma_source(db: None) -> None:
+    repository = PostgresCatalogSourceRepository()
+    approved_nyc = await repository.get("luma-nyc")
+    assert approved_nyc is not None
+    assert approved_nyc.enabled is True
+    assert approved_nyc.handoff_only is True
+    assert approved_nyc.display_name == "Luma New York"
+    assert approved_nyc.seed_url == (
+        "https://api.luma.com/discover/get-paginated-events"
+        "?discover_place_api_id=discplace-Izx1rQVSh8njYpP&pagination_limit=25"
+    )
+    assert approved_nyc.approved_origins == (
+        "https://api.luma.com",
+        "https://api2.luma.com",
+    )
+    assert approved_nyc.region == "new_york_metro"
+    assert approved_nyc.mode is CatalogSourceMode.LUMA_DISCOVER_JSON
+    assert approved_nyc.page_limit == 40
+    assert approved_nyc.source_revision == 1
+
+
+async def test_registry_contains_reviewed_livewhale_sources(db: None) -> None:
+    repository = PostgresCatalogSourceRepository()
     expected_livewhale_sources = {
         "berkeley-events": (
             "https://events.berkeley.edu/live/json/events/response_fields/location,summary,description",
@@ -119,7 +292,8 @@ async def test_registry_contains_only_reviewed_bounded_bay_area_publishers(db: N
             "locations=SA&locations=WO",
             ("https://gateway.bibliocommons.com",),
             CatalogSourceMode.BIBLIOCOMMONS_RSS,
-            50,
+            # Raised from 50 by migration 0167 after the feed outgrew that cap and went dark.
+            120,
         ),
         "palo-alto-library-events": (
             "https://gateway.bibliocommons.com/v2/libraries/paloalto/rss/events",
@@ -176,7 +350,8 @@ async def test_registry_contains_only_reviewed_bounded_bay_area_publishers(db: N
             "locations=26",
             ("https://gateway.bibliocommons.com",),
             CatalogSourceMode.BIBLIOCOMMONS_RSS,
-            160,
+            # Raised from 160 by migration 0167 after the feed outgrew that cap and went dark.
+            320,
         ),
         "contra-costa-county-library-events": (
             "https://gateway.bibliocommons.com/v2/libraries/ccclib/rss/events?"
@@ -683,7 +858,42 @@ async def test_p15b_paged_catalog_control_plane_is_capability_only_and_reclaims_
                                    current_user,
                                    'public.fn_stage_paged_catalog_refresh_page(text,text,uuid,integer,integer,integer,jsonb,jsonb)',
                                    'EXECUTE'
+                               ) AS legacy_stage_access,
+                               has_function_privilege(
+                                   current_user,
+                                   'public.fn_stage_paged_catalog_refresh_page_v2(text,text,uuid,integer,integer,integer,jsonb,jsonb)',
+                                   'EXECUTE'
+                               ) AS stage_v2_access,
+                               has_function_privilege(
+                                   current_user,
+                                   'public.fn_stage_paged_catalog_refresh_page_v3(text,text,uuid,integer,integer,integer,jsonb,jsonb)',
+                                   'EXECUTE'
+                               ) AS stage_v3_access,
+                               has_function_privilege(
+                                   current_user,
+                                   'public.fn_stage_paged_catalog_refresh_page_v4(text,text,uuid,integer,integer,integer,jsonb,jsonb)',
+                                   'EXECUTE'
                                ) AS stage_access,
+                               has_function_privilege(
+                                   current_user,
+                                   'public.fn_read_paged_catalog_refresh_stage(text,text,uuid,integer)',
+                                   'EXECUTE'
+                               ) AS legacy_read_access,
+                               has_function_privilege(
+                                   current_user,
+                                   'public.fn_read_paged_catalog_refresh_stage_v2(text,text,uuid,integer)',
+                                   'EXECUTE'
+                               ) AS read_v2_access,
+                               has_function_privilege(
+                                   current_user,
+                                   'public.fn_read_paged_catalog_refresh_stage_v3(text,text,uuid,integer)',
+                                   'EXECUTE'
+                               ) AS read_v3_access,
+                               has_function_privilege(
+                                   current_user,
+                                   'public.fn_read_paged_catalog_refresh_stage_v4(text,text,uuid,integer)',
+                                   'EXECUTE'
+                               ) AS read_access,
                                has_function_privilege(
                                    current_user,
                                    'public.fn_pause_paged_catalog_refresh(text,text,uuid,text)',
@@ -707,7 +917,14 @@ async def test_p15b_paged_catalog_control_plane_is_capability_only_and_reclaims_
         "candidates_access": False,
         "event_ids_access": False,
         "prepare_access": True,
+        "legacy_stage_access": False,
+        "stage_v2_access": True,
+        "stage_v3_access": True,
         "stage_access": True,
+        "legacy_read_access": False,
+        "read_v2_access": True,
+        "read_v3_access": True,
+        "read_access": True,
         "pause_access": True,
         "abort_access": True,
     }
@@ -793,13 +1010,40 @@ async def test_p15b_terminal_stage_promotes_catalog_observation_and_run_in_one_t
     assert source is not None
     run_key = f"manual:p15b-promote-{uuid4().hex}"
     remote_id = str(2 * 10**12 + (uuid4().int % 10**11))
+    start_at = datetime.now(ZoneInfo("America/Los_Angeles")) + timedelta(days=60)
     candidate = CandidateEvent(
         source=Source.PUBLIC_JSONLD,
         source_event_id=f"p15b-promoted:{remote_id}",
         title="P15b promoted civic meeting",
-        start_at=datetime.now(UTC) + timedelta(days=60),
+        start_at=start_at,
+        end_at=start_at + timedelta(hours=2),
         registration_url=f"https://sanjose.legistar.com/MeetingDetail.aspx?LEGID={remote_id}",
         venue_name="City Hall",
+        city="San Jose",
+        price_status=PriceStatus.PAID,
+        price_min_cents=1_500,
+        price_max_cents=3_000,
+        price_currency="usd",
+        organizer_name="Office of the City Clerk",
+        host_names=("Planning Commission",),
+        speaker_names=("Jordan Lee",),
+        partner_names=("Department of Transportation",),
+        entity_profiles=(
+            EventEntityProfile(
+                name="Office of the City Clerk",
+                role="organizer",
+                kind="organization",
+                profile_url="https://www.sanjoseca.gov/city-clerk",
+            ),
+            EventEntityProfile(
+                name="Jordan Lee",
+                role="speaker",
+                kind="person",
+                profile_url="https://www.linkedin.com/in/jordan-lee",
+            ),
+        ),
+        attendance_count=184,
+        registration_status=RegistrationStatus.OPEN,
     )
     claim = await repository.claim_refresh(source.source_key, run_key, lease_seconds=120)
     assert claim.lease_token is not None
@@ -841,6 +1085,41 @@ async def test_p15b_terminal_stage_promotes_catalog_observation_and_run_in_one_t
         item for item in observations if item.source_event_id == candidate.source_event_id
     )
     assert observation.last_run_key == run_key
+    assert observation.content_hash == catalog_candidate_content_hash(candidate)
+    assert (
+        observation.price_min_cents,
+        observation.price_max_cents,
+        observation.price_currency,
+    ) == (1_500, 3_000, "USD")
+    async with system_session_scope() as session:
+        enrichment = (
+            await session.execute(
+                text(
+                    """
+                    SELECT price_min_cents, price_max_cents, price_currency,
+                           organizer_name, host_names, speaker_names, partner_names,
+                           entity_profiles, attendance_count, registration_status
+                    FROM public.canonical_events
+                    WHERE canonical_event_id = :canonical_event_id
+                    """
+                ),
+                {"canonical_event_id": observation.canonical_event_id},
+            )
+        ).one()
+    assert enrichment.organizer_name == candidate.organizer_name
+    assert (
+        enrichment.price_min_cents,
+        enrichment.price_max_cents,
+        enrichment.price_currency,
+    ) == (1_500, 3_000, "USD")
+    assert tuple(enrichment.host_names) == candidate.host_names
+    assert tuple(enrichment.speaker_names) == candidate.speaker_names
+    assert tuple(enrichment.partner_names) == candidate.partner_names
+    assert enrichment.entity_profiles == [
+        profile.as_payload() for profile in candidate.entity_profiles
+    ]
+    assert enrichment.attendance_count == candidate.attendance_count
+    assert enrichment.registration_status == candidate.registration_status.value
 
 
 async def test_p15b_source_revision_change_discards_a_prior_page_stage_before_reclaim(
@@ -1767,7 +2046,9 @@ async def test_generic_catalog_commit_rolls_back_stale_publication_before_reclai
         seed.source_event_id,
         fresh_candidate.source_event_id,
     }
-    observations_after_replay = await PostgresCatalogObservationRepository().list_for_source(source_key)
+    observations_after_replay = await PostgresCatalogObservationRepository().list_for_source(
+        source_key
+    )
     assert [item.source_event_id for item in observations_after_replay] == [
         fresh_candidate.source_event_id
     ]
@@ -1879,9 +2160,7 @@ async def test_paged_full_page_late_lease_rolls_back_stage_and_cursor_before_rec
     assert prepared.progress is not None
     assert prepared.progress.next_page == 0
 
-    async with _owner_paged_catalog_lock(
-        source.source_key, run_key, lock_source=True
-    ) as owner:
+    async with _owner_paged_catalog_lock(source.source_key, run_key, lock_source=True) as owner:
         staging = asyncio.create_task(
             repository.stage_paged_page(
                 source.source_key,
@@ -1976,9 +2255,7 @@ async def test_paged_terminal_stage_after_late_lease_remains_recoverable_and_pro
 
     # P28 intentionally permits this terminal stage to remain after expiry: it is not a
     # publish effect, and a fresh lease must later promote the exact durable input once.
-    async with _owner_paged_catalog_lock(
-        source.source_key, run_key, lock_source=True
-    ) as owner:
+    async with _owner_paged_catalog_lock(source.source_key, run_key, lock_source=True) as owner:
         staging = asyncio.create_task(
             repository.stage_paged_page(
                 source.source_key,
@@ -2059,9 +2336,7 @@ async def test_paged_prepare_late_run_lock_lease_loss_leaves_no_cursor_before_re
     claim = await repository.claim_refresh(source.source_key, run_key, lease_seconds=2)
     assert claim.acquired and claim.lease_token is not None
 
-    async with _owner_paged_catalog_lock(
-        source.source_key, run_key, lock_source=False
-    ) as owner:
+    async with _owner_paged_catalog_lock(source.source_key, run_key, lock_source=False) as owner:
         preparation = asyncio.create_task(
             repository.prepare_paged_refresh(
                 source.source_key,
@@ -2479,7 +2754,9 @@ async def _wait_for_catalog_refresh_lease_expiry(
         if bool(expired):
             return
         await asyncio.sleep(0.025)
-    raise RuntimeError("catalog refresh fixture lease did not expire while the app call was blocked")
+    raise RuntimeError(
+        "catalog refresh fixture lease did not expire while the app call was blocked"
+    )
 
 
 async def _wait_for_paged_refresh_lease_expiry(
@@ -2530,9 +2807,10 @@ async def _owner_refresh_state(source_key: str, run_key: str) -> dict[str, objec
     try:
         async with owner.connect() as connection:
             row = (
-                await connection.execute(
-                    text(
-                        """
+                (
+                    await connection.execute(
+                        text(
+                            """
                         SELECT refresh.status,
                                refresh.lease_token,
                                refresh.lease_expires_at,
@@ -2594,10 +2872,13 @@ async def _owner_refresh_state(source_key: str, run_key: str) -> dict[str, objec
                         WHERE refresh.source_key = :source_key
                           AND refresh.run_key = :run_key
                         """
-                    ),
-                    {"source_key": source_key, "run_key": run_key},
+                        ),
+                        {"source_key": source_key, "run_key": run_key},
+                    )
                 )
-            ).mappings().one()
+                .mappings()
+                .one()
+            )
         return {str(key): value for key, value in row.items()}
     finally:
         await owner.dispose()

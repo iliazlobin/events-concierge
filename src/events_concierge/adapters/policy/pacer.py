@@ -132,6 +132,15 @@ class InMemoryPacer:
         return self._source_budgets.get(request.source, self._default_budget)
 
 
+# How long a shared bucket's tokens/timestamp survive idleness. It must comfortably exceed the
+# gap between two ordinary uses of the same bucket, or steady-state operation keeps landing in the
+# state-loss branch. Reviewed catalog sources refresh on cadences up to a full day, so a floor of
+# one week leaves room for the slowest of them plus any operator pause. Retention costs one small
+# hash per bucket and never hands back spent capacity: an idle bucket refills from its own
+# recorded timestamp and caps at burst, exactly as a continuously used one does.
+_DEFAULT_STATE_RETENTION_SECONDS = 604_800.0
+
+
 class RedisPacer:
     """Shared Redis token buckets that fail throttle-first on every store failure.
 
@@ -461,6 +470,7 @@ class RedisPacer:
         burst: int = 10,
         *,
         unavailable_retry_seconds: float = 2.0,
+        state_retention_seconds: float = _DEFAULT_STATE_RETENTION_SECONDS,
         key_prefix: str = "pacer",
         redis_client: aioredis.Redis | None = None,
         source_budgets: Mapping[Source, PacerBudget] | None = None,
@@ -472,6 +482,8 @@ class RedisPacer:
         _validate_config(rate_per_sec, burst)
         if not math.isfinite(unavailable_retry_seconds) or unavailable_retry_seconds <= 0.0:
             raise ValueError("unavailable_retry_seconds must be finite and positive")
+        if not math.isfinite(state_retention_seconds) or state_retention_seconds <= 0.0:
+            raise ValueError("state_retention_seconds must be finite and positive")
         if not key_prefix:
             raise ValueError("key_prefix must not be empty")
         if meetup_app_quota_scope == "":
@@ -498,6 +510,7 @@ class RedisPacer:
         self._default_budget = PacerBudget(rate_per_sec=rate_per_sec, burst=burst)
         self._source_budgets = dict(source_budgets or {})
         self._unavailable_retry_seconds = unavailable_retry_seconds
+        self._state_retention_seconds = state_retention_seconds
         self._key_prefix = key_prefix.rstrip(":")
         self._meetup_app_quota_scope = meetup_app_quota_scope
         self._meetup_app_degrade_after_seconds = meetup_app_degrade_after_seconds
@@ -592,7 +605,25 @@ class RedisPacer:
             return
 
     def _base_ttl_seconds(self, budget: PacerBudget) -> float:
-        return max(float(budget.burst) / budget.rate_per_sec, self._unavailable_retry_seconds)
+        """Retain shared bucket state well past one refill window.
+
+        A bucket is only ever missing for two reasons: real state loss, or ordinary idleness.
+        Redis cannot tell them apart, and the take script deliberately treats a missing bucket as
+        empty (ADR-005), so retention decides which case dominates. Retaining only one refill
+        window made idleness the common case: a catalog source refreshed on an hourly interval
+        found its bucket expired on every single attempt, was told to wait, and had its durable
+        run paused before any provider call - roughly one refresh per dispatch pass instead of a
+        full batch.
+
+        Longer retention also makes the limiter *more* faithful, not less: a bucket that expires
+        forgets the tokens it just spent, while a retained bucket keeps refilling from its own
+        recorded timestamp. Genuine state loss still cold-starts empty and throttle-first.
+        """
+        return max(
+            float(budget.burst) / budget.rate_per_sec,
+            self._unavailable_retry_seconds,
+            self._state_retention_seconds,
+        )
 
     def _uses_meetup_app_fairness(self, request: PacerRequest) -> bool:
         """Restrict the G2 contingency to Meetup; all other source buckets remain unchanged."""
@@ -822,7 +853,11 @@ def _wait(seconds: float, detail: str) -> PacerLease:
     return PacerLease(PacerLeaseStatus.WAIT, max(safe_seconds, 0.001), detail)
 
 
-def _parse_lease(raw: object, *, detail: str = "shared token bucket is unavailable") -> PacerLease:
+def _parse_lease(
+    raw: object,
+    *,
+    detail: str = "shared token bucket is refilling or source backoff is active",
+) -> PacerLease:
     if isinstance(raw, bytes):
         raw = raw.decode("utf-8")
     if not isinstance(raw, str):

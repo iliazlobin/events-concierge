@@ -1,0 +1,791 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+    <meta name="theme-color" content="#173f35">
+    <meta
+      name="description"
+      content="Operational visibility and durable controls for Events Concierge catalog ingestion."
+    >
+    <title>Ingestion admin · Events Concierge</title>
+    <link rel="icon" href="/favicon.svg" type="image/svg+xml">
+    <link rel="stylesheet" href="/assets/app.css">
+    <link rel="stylesheet" href="/assets/admin.css">
+    <script type="module" src="/assets/admin.js"></script>
+  </head>
+  <body class="admin-body">
+    <div class="paper-grain" aria-hidden="true"></div>
+    <a class="skip-link" href="#admin-main">Skip to ingestion controls</a>
+
+    <div id="admin-boot" class="admin-boot" role="status" aria-live="polite">
+      <img src="/assets/mark.svg" alt="" width="38" height="38">
+      <p>Reading the ingestion control plane…</p>
+    </div>
+
+    <div id="admin-shell" class="admin-shell" hidden>
+      <header class="admin-header">
+        <a class="admin-brand" href="/app" aria-label="Events Concierge consumer app">
+          <img src="/assets/mark.svg" alt="" width="32" height="32">
+          <span>
+            <strong>Events Concierge</strong>
+            <small>Ingestion operations</small>
+          </span>
+        </a>
+
+        <nav class="console-tabs" aria-label="Ingestion admin views">
+          <a class="console-tab is-active" data-admin-tab href="#overview">Overview</a>
+          <a class="console-tab" data-admin-tab href="#sources">Sources</a>
+          <a class="console-tab" data-admin-tab href="#runs">Runs</a>
+          <a class="console-tab" data-admin-tab href="#commands">Commands</a>
+          <a class="console-tab" data-admin-tab href="#logic" aria-label="Logic and changes">
+            Changes
+          </a>
+        </nav>
+
+        <div class="admin-header-actions">
+          <div id="connection-status" class="admin-connection" role="status">
+            <span class="status-dot" aria-hidden="true"></span>
+            <span>Connecting</span>
+          </div>
+          <button
+            id="refresh-dashboard"
+            class="icon-button"
+            type="button"
+            title="Refresh all operational data"
+            aria-label="Refresh all operational data"
+          >
+            ↻
+          </button>
+          <details id="operator-access" class="operator-access">
+            <summary>
+              <span class="operator-avatar" aria-hidden="true">OP</span>
+              <span id="operator-access-state">Local operator</span>
+            </summary>
+            <form id="operator-token-form" class="operator-token-form" novalidate>
+              <label for="operator-token">
+                Production bearer token
+                <span>Kept only in this page’s memory and cleared on reload.</span>
+              </label>
+              <input
+                id="operator-token"
+                name="operator-token"
+                type="password"
+                autocomplete="off"
+                autocapitalize="none"
+                spellcheck="false"
+                maxlength="8192"
+                aria-describedby="operator-token-note operator-token-error"
+                placeholder="Paste token"
+              >
+              <div class="operator-token-controls">
+                <button class="button button-primary" type="submit">Use token</button>
+                <button id="clear-operator-token" class="button button-secondary" type="button">
+                  Clear
+                </button>
+              </div>
+              <p id="operator-token-note" class="form-note">
+                This value is never written to browser storage or included in the page URL.
+              </p>
+              <p id="operator-token-error" class="form-error" role="alert" hidden></p>
+            </form>
+          </details>
+          <a class="button button-secondary admin-consumer-link" href="/app">
+            Consumer app <span aria-hidden="true">↗</span>
+          </a>
+        </div>
+      </header>
+
+      <main id="admin-main" class="admin-main" tabindex="-1">
+        <section class="admin-hero" aria-labelledby="admin-title">
+          <div class="admin-title-copy">
+            <p class="eyebrow">Control plane / production data</p>
+            <div class="admin-title-row">
+              <h1 id="admin-title">Ingestion operations</h1>
+              <span class="environment-badge">Local</span>
+            </div>
+            <p class="admin-intro">
+              Trace each crawler from reviewed source through collection, normalization, dedupe,
+              and canonical catalog publication.
+            </p>
+          </div>
+          <div class="hero-actions">
+            <p id="overview-generated" class="data-age">Waiting for a snapshot</p>
+            <button
+              id="open-refresh-due"
+              class="button button-primary command-control"
+              type="button"
+              disabled
+            >
+              <span aria-hidden="true">↻</span> Refresh due sources
+            </button>
+          </div>
+        </section>
+
+        <section
+          id="policy-banner"
+          class="policy-banner"
+          aria-labelledby="policy-title"
+          role="status"
+        >
+          <span id="policy-symbol" class="policy-symbol" aria-hidden="true">…</span>
+          <div class="policy-copy">
+            <strong id="policy-title">Checking source policy</strong>
+            <span id="policy-reason">Refresh controls remain unavailable until policy is known.</span>
+          </div>
+          <code id="policy-code">checking</code>
+        </section>
+
+        <section
+          id="overview-panel"
+          class="admin-panel overview-panel"
+          data-admin-panel
+          aria-labelledby="overview-title"
+        >
+          <div class="management-heading">
+            <div>
+              <p class="eyebrow">Operations workspace</p>
+              <h2 id="overview-title">Run the catalog</h2>
+              <p>
+                Find a named source, act on the queue, or trace today’s data through the pipeline.
+              </p>
+            </div>
+            <div id="management-state" class="management-state" role="status">
+              <span class="status-dot" aria-hidden="true"></span>
+              <span>Loading operator state</span>
+            </div>
+          </div>
+
+          <div class="management-grid">
+            <section class="control-card source-launcher-card" aria-labelledby="source-launcher-title">
+              <header class="control-card-header">
+                <div>
+                  <p class="eyebrow">Source launcher</p>
+                  <h3 id="source-launcher-title">Open any source</h3>
+                </div>
+                <button id="overview-browse-sources" class="button-link" type="button">
+                  Browse all
+                </button>
+              </header>
+              <form id="overview-source-search" class="source-launcher" role="search">
+                <label for="overview-source-query">
+                  <span class="visually-hidden">Find a source by name, publisher, URL, or key</span>
+                  <span class="search-icon" aria-hidden="true">⌕</span>
+                  <input
+                    id="overview-source-query"
+                    type="search"
+                    maxlength="160"
+                    autocomplete="off"
+                    placeholder="Find source by name, URL, publisher, or key — try “Luma”"
+                    aria-controls="overview-source-results"
+                  >
+                </label>
+                <button class="button button-secondary" type="submit">Open</button>
+              </form>
+              <div
+                id="overview-source-results"
+                class="source-launcher-results"
+                aria-live="polite"
+              >
+                <p class="admin-empty-copy">Named sources load with the control-plane snapshot.</p>
+              </div>
+              <p id="overview-source-index-summary" class="control-card-note">
+                Loading reviewed source names…
+              </p>
+            </section>
+
+            <section class="control-card attention-card" aria-labelledby="attention-title">
+              <header class="control-card-header">
+                <div>
+                  <p class="eyebrow">Operator queue</p>
+                  <h3 id="attention-title">Needs attention</h3>
+                </div>
+                <span id="attention-summary" class="card-meta">Reading current state</span>
+              </header>
+              <div class="attention-controls" aria-label="Operational queues">
+                <button type="button" data-overview-route="failed-runs">
+                  <span>Failed</span>
+                  <strong id="attention-failed">—</strong>
+                  <small>last 24h</small>
+                </button>
+                <button type="button" data-overview-route="due-sources">
+                  <span>Due</span>
+                  <strong id="attention-due">—</strong>
+                  <small>sources</small>
+                </button>
+                <button type="button" data-overview-route="running-runs">
+                  <span>Running</span>
+                  <strong id="attention-running">—</strong>
+                  <small>runs</small>
+                </button>
+                <button type="button" data-overview-route="pending-commands">
+                  <span>Controls</span>
+                  <strong id="attention-commands">—</strong>
+                  <small>pending</small>
+                </button>
+              </div>
+              <div id="attention-source-list" class="attention-source-list" aria-live="polite"></div>
+            </section>
+          </div>
+
+          <section class="ops-card operational-flow-card" aria-labelledby="pipeline-title">
+            <header class="ops-card-header">
+              <div>
+                <p class="eyebrow">Live topology</p>
+                <h3 id="pipeline-title">Source → catalog</h3>
+              </div>
+              <span id="pipeline-window-copy" class="card-meta">Last 24 hours</span>
+            </header>
+            <div
+              id="pipeline-chart"
+              class="operations-flow"
+              role="group"
+              aria-label="Interactive ingestion pipeline"
+            >
+              <p class="admin-empty-copy">Pipeline state loads with recent runs.</p>
+            </div>
+            <div id="overview-stage-detail" class="overview-stage-detail" aria-live="polite"></div>
+          </section>
+
+          <details id="operational-diagnostics" class="operational-diagnostics">
+            <summary>
+              <span>
+                <span class="eyebrow">Diagnostics</span>
+                <strong>Operational metrics</strong>
+              </span>
+              <span id="diagnostics-summary">Detailed adapter and throughput data</span>
+            </summary>
+            <div class="diagnostics-body">
+              <div class="diagnostics-toolbar">
+                <p>
+                  Secondary measurements are grouped here so the primary workspace stays
+                  action-oriented.
+                </p>
+                <div class="panel-tools" aria-label="Overview time window">
+                  <button class="segmented-button is-active" type="button">24 hours</button>
+                  <button class="segmented-button" type="button">7 days</button>
+                  <button class="segmented-button" type="button">30 days</button>
+                </div>
+              </div>
+
+              <div id="overview-metrics" class="admin-metrics" aria-live="polite">
+                <article class="admin-metric">
+                  <span>Total sources</span>
+                  <strong id="metric-sources">—</strong>
+                  <small>Reviewed registry</small>
+                </article>
+                <article class="admin-metric">
+                  <span>Active</span>
+                  <strong id="metric-active">—</strong>
+                  <small>Policy admitted</small>
+                </article>
+                <article class="admin-metric metric-due">
+                  <span>Due now</span>
+                  <strong id="metric-due">—</strong>
+                  <small>Cadence slots</small>
+                </article>
+                <article class="admin-metric metric-running">
+                  <span>Running</span>
+                  <strong id="metric-running">—</strong>
+                  <small>Live executions</small>
+                </article>
+                <article class="admin-metric metric-failed">
+                  <span>Failed · 24h</span>
+                  <strong id="metric-failed">—</strong>
+                  <small>Needs inspection</small>
+                </article>
+                <article class="admin-metric">
+                  <span>Catalog events</span>
+                  <strong id="metric-events">—</strong>
+                  <small>Canonical records</small>
+                </article>
+                <article class="admin-metric">
+                  <span>Pending</span>
+                  <strong id="metric-commands">—</strong>
+                  <small>Durable commands</small>
+                </article>
+              </div>
+
+              <div class="diagnostics-grid">
+                <article class="ops-card health-card">
+                  <header class="ops-card-header">
+                    <div>
+                      <p class="eyebrow">Reliability</p>
+                      <h3>Source state</h3>
+                    </div>
+                  </header>
+                  <div id="health-distribution" class="health-distribution"></div>
+                </article>
+
+                <article class="ops-card breakdown-card">
+                  <header class="ops-card-header">
+                    <div>
+                      <p class="eyebrow">Implementation</p>
+                      <h3>Collection adapters</h3>
+                    </div>
+                    <button class="button-link" type="button" data-overview-route="all-sources">
+                      Named sources
+                    </button>
+                  </header>
+                  <p class="diagnostic-note">
+                    Adapter families are implementation details. A Luma source, for example,
+                    appears here as Public JSON-LD.
+                  </p>
+                  <div
+                    id="source-type-breakdown"
+                    class="bar-chart"
+                    aria-label="Sources by collection adapter"
+                  ></div>
+                </article>
+
+                <article class="ops-card activity-card">
+                  <header class="ops-card-header">
+                    <div>
+                      <p class="eyebrow">Throughput</p>
+                      <h3>Collection activity</h3>
+                    </div>
+                    <button class="button-link" type="button" data-overview-route="all-runs">
+                      Run ledger
+                    </button>
+                  </header>
+                  <div
+                    id="activity-summary"
+                    class="activity-summary"
+                    aria-label="Recent ingestion activity"
+                  ></div>
+                </article>
+              </div>
+
+              <p class="latest-success">
+                Latest successful refresh:
+                <strong id="latest-success-at">No successful refresh reported</strong>
+                <span id="fixture-summary"></span>
+              </p>
+            </div>
+          </details>
+        </section>
+
+        <section
+          id="sources-panel"
+          class="admin-panel sources-panel"
+          data-admin-panel
+          aria-labelledby="sources-title"
+        >
+          <div class="panel-heading">
+            <div>
+              <p class="eyebrow">Source registry</p>
+              <h2 id="sources-title" tabindex="-1">Sources</h2>
+            </div>
+            <p id="sources-count" class="section-count">No sources loaded</p>
+          </div>
+
+          <form id="source-filters" class="filter-console" role="search">
+            <label class="filter-search" for="source-query">
+              <span class="visually-hidden">Search sources</span>
+              <span class="search-icon" aria-hidden="true">⌕</span>
+              <input
+                id="source-query"
+                name="query"
+                type="search"
+                maxlength="160"
+                placeholder="Search source, key, publisher, or region"
+              >
+            </label>
+            <label for="source-state">
+              <span>State</span>
+              <select id="source-state" name="state">
+                <option value="all">All states</option>
+                <option value="active">Active</option>
+                <option value="due">Due now</option>
+                <option value="blocked">Blocked</option>
+                <option value="failed">Latest run failed</option>
+              </select>
+            </label>
+            <label for="source-mode">
+              <span>Crawler</span>
+              <select id="source-mode" name="mode">
+                <option value="">All crawlers</option>
+              </select>
+            </label>
+            <label for="source-publisher">
+              <span>Publisher</span>
+              <select id="source-publisher" name="publisher">
+                <option value="">All publishers</option>
+              </select>
+            </label>
+            <label for="source-region">
+              <span>Region</span>
+              <select id="source-region" name="region">
+                <option value="">All regions</option>
+              </select>
+            </label>
+            <label for="source-health">
+              <span>Health</span>
+              <select id="source-health" name="health">
+                <option value="">Any health</option>
+                <option value="healthy">Healthy</option>
+                <option value="degraded">Degraded</option>
+                <option value="failing">Failing</option>
+                <option value="never_run">Never run</option>
+              </select>
+            </label>
+            <label class="fixture-toggle" for="include-fixtures">
+              <input id="include-fixtures" name="include-fixtures" type="checkbox">
+              <span>Fixtures</span>
+            </label>
+            <button class="button button-secondary" type="submit">Apply</button>
+          </form>
+
+          <div class="active-filter-row" aria-label="Source list hints">
+            <span>Tip: search <code>luma</code>, then open a source to trace its full pipeline.</span>
+            <button class="text-button" type="reset" form="source-filters">Clear filters</button>
+          </div>
+
+          <div id="sources-error" class="inline-alert" role="alert" hidden></div>
+          <div class="admin-table-frame">
+            <table class="admin-table source-table">
+              <caption class="visually-hidden">
+                Reviewed catalog sources and their current ingestion state
+              </caption>
+              <thead>
+                <tr>
+                  <th scope="col">Source / crawler</th>
+                  <th scope="col">Admission</th>
+                  <th scope="col">Cadence</th>
+                  <th scope="col">Catalog yield</th>
+                  <th scope="col">Latest execution</th>
+                  <th scope="col">Controls</th>
+                </tr>
+              </thead>
+              <tbody id="source-rows"></tbody>
+            </table>
+            <div id="sources-empty" class="admin-empty" hidden>
+              <span aria-hidden="true">◎</span>
+              <h3>No sources match these filters</h3>
+              <p>Adjust crawler, state, health, search text, or fixture visibility.</p>
+            </div>
+          </div>
+
+          <nav class="pagination" aria-label="Source pages">
+            <button id="sources-previous" class="button button-secondary" type="button" disabled>
+              ← Previous
+            </button>
+            <span id="sources-page">Page 1</span>
+            <button id="sources-next" class="button button-secondary" type="button" disabled>
+              Next →
+            </button>
+          </nav>
+        </section>
+
+        <section
+          id="runs-panel"
+          class="admin-panel runs-panel"
+          data-admin-panel
+          aria-labelledby="runs-title"
+        >
+          <div class="panel-heading">
+            <div>
+              <p class="eyebrow">Refresh ledger</p>
+              <h2 id="runs-title">Runs</h2>
+            </div>
+            <div class="ledger-summary" aria-label="Run ledger guarantees">
+              <span><i class="legend-dot healthy"></i> Durable history</span>
+              <span>Lease fenced</span>
+              <span>Fixture aware</span>
+            </div>
+          </div>
+          <form id="run-filters" class="filter-console run-filters">
+            <label class="filter-search" for="run-source">
+              <span class="search-icon" aria-hidden="true">⌕</span>
+              <span class="visually-hidden">Source key</span>
+              <input
+                id="run-source"
+                name="source-key"
+                type="search"
+                maxlength="80"
+                placeholder="Exact source key, for example luma-sf"
+              >
+            </label>
+            <label for="run-status">
+              <span>Status</span>
+              <select id="run-status" name="status">
+                <option value="">Any status</option>
+                <option value="running">Running</option>
+                <option value="succeeded">Succeeded</option>
+                <option value="failed">Failed</option>
+              </select>
+            </label>
+            <label for="run-window">
+              <span>Window</span>
+              <select id="run-window" name="window">
+                <option value="24h">Last 24 hours</option>
+                <option value="7d">Last 7 days</option>
+                <option value="30d">Last 30 days</option>
+                <option value="">All retained</option>
+              </select>
+            </label>
+            <button class="button button-secondary" type="submit">Apply</button>
+          </form>
+          <div id="runs-error" class="inline-alert" role="alert" hidden></div>
+          <ol id="run-list" class="activity-list ledger-list"></ol>
+          <div id="runs-empty" class="admin-empty compact-empty" hidden>
+            <span aria-hidden="true">○</span>
+            <h3>No refresh runs found</h3>
+            <p>The selected filters have no durable run records.</p>
+          </div>
+        </section>
+
+        <section
+          id="commands-panel"
+          class="admin-panel commands-panel"
+          data-admin-panel
+          aria-labelledby="commands-title"
+        >
+          <div class="panel-heading">
+            <div>
+              <p class="eyebrow">Operator control log</p>
+              <h2 id="commands-title">Commands</h2>
+            </div>
+            <span id="command-polling" class="polling-label" hidden>Following pending work</span>
+          </div>
+          <form class="filter-console command-filters" aria-label="Command filters">
+            <label class="filter-search" for="command-source">
+              <span class="search-icon" aria-hidden="true">⌕</span>
+              <span class="visually-hidden">Command source</span>
+              <input id="command-source" type="search" placeholder="Source key or command ID">
+            </label>
+            <label for="command-status">
+              <span>Status</span>
+              <select id="command-status">
+                <option value="">Any status</option>
+                <option value="pending">Pending</option>
+                <option value="completed">Completed</option>
+                <option value="failed">Failed</option>
+              </select>
+            </label>
+            <label for="command-action">
+              <span>Action</span>
+              <select id="command-action">
+                <option value="">All actions</option>
+                <option value="refresh_source">Refresh source</option>
+                <option value="refresh_due">Refresh due sources</option>
+              </select>
+            </label>
+          </form>
+          <div id="commands-error" class="inline-alert" role="alert" hidden></div>
+          <ol id="command-list" class="activity-list ledger-list"></ol>
+          <div id="commands-empty" class="admin-empty compact-empty" hidden>
+            <span aria-hidden="true">◇</span>
+            <h3>No commands yet</h3>
+            <p>Queue a source or cadence refresh to see durable progress here.</p>
+          </div>
+        </section>
+
+        <section
+          id="logic-panel"
+          class="admin-panel logic-panel"
+          data-admin-panel
+          aria-labelledby="logic-title"
+        >
+          <div class="panel-heading">
+            <div>
+              <p class="eyebrow">Change intelligence</p>
+              <h2 id="logic-title">Logic &amp; changes</h2>
+            </div>
+            <p class="section-count">Map data outcomes to code and configuration revisions</p>
+          </div>
+          <div class="logic-grid">
+            <article class="ops-card">
+              <header class="ops-card-header">
+                <div>
+                  <p class="eyebrow">Revision timeline</p>
+                  <h3>Deployed ingestion logic</h3>
+                </div>
+              </header>
+              <div id="revision-ledger">
+                <div id="logic-revision-timeline" class="revision-timeline">
+                  <div class="revision-empty">
+                    Revision attribution appears here when run provenance includes a build SHA,
+                    parser version, policy revision, or registry revision.
+                  </div>
+                </div>
+              </div>
+            </article>
+            <article class="ops-card">
+              <header class="ops-card-header">
+                <div>
+                  <p class="eyebrow">Outcome comparison</p>
+                  <h3>Before / after</h3>
+                </div>
+              </header>
+              <div id="logic-impact-summary" class="impact-summary">
+                <dl>
+                  <div><dt>Candidate yield</dt><dd>—</dd></div>
+                  <div><dt>Canonical yield</dt><dd>—</dd></div>
+                  <div><dt>Success rate</dt><dd>—</dd></div>
+                  <div><dt>Median duration</dt><dd>—</dd></div>
+                </dl>
+                <p>Select a source and revision boundary to compare operational outcomes.</p>
+              </div>
+            </article>
+          </div>
+          <article class="ops-card build-card">
+            <header class="ops-card-header">
+              <div>
+                <p class="eyebrow">Running release</p>
+                <h3>Current build identity</h3>
+              </div>
+            </header>
+            <div id="current-build" class="current-build">
+              <p class="detail-placeholder">Build provenance is loading from the service.</p>
+            </div>
+            <p id="provenance-note" class="provenance-note">
+              Run attribution distinguishes verified revision matches from partial or legacy
+              provenance.
+            </p>
+          </article>
+          <article class="ops-card code-map-card">
+            <header class="ops-card-header">
+              <div>
+                <p class="eyebrow">Pipeline ownership</p>
+                <h3>Code map</h3>
+              </div>
+            </header>
+            <div id="logic-code-map" class="code-map">
+              <div><code>registry</code><strong>Source admission</strong><span>review + policy</span></div>
+              <div><code>collectors</code><strong>Network collection</strong><span>crawler adapters</span></div>
+              <div><code>normalization</code><strong>Candidate shaping</strong><span>schema + quality</span></div>
+              <div><code>identity</code><strong>Entity resolution</strong><span>dedupe + merge</span></div>
+              <div><code>ingestion</code><strong>Durable orchestration</strong><span>leases + commands</span></div>
+            </div>
+          </article>
+        </section>
+      </main>
+
+      <footer class="admin-footer">
+        <p>Queued means durable acceptance, not completed collection.</p>
+        <div>
+          <a href="/readyz">Service readiness</a>
+          <a href="/docs">API documentation</a>
+        </div>
+      </footer>
+    </div>
+
+    <dialog
+      id="source-detail-dialog"
+      class="source-detail-dialog"
+      aria-labelledby="source-detail-title"
+    >
+      <div class="source-detail-shell">
+        <header class="source-detail-header">
+          <div>
+            <p class="eyebrow">Source workspace</p>
+            <h2 id="source-detail-title">Source details</h2>
+            <code id="source-detail-key">No source selected</code>
+          </div>
+          <div class="source-detail-header-actions">
+            <label class="detail-window" for="source-detail-window">
+              <span>History</span>
+              <select id="source-detail-window">
+                <option value="24">24 hours</option>
+                <option value="168" selected>7 days</option>
+                <option value="720">30 days</option>
+              </select>
+            </label>
+            <span id="source-detail-status" class="status-badge">Unknown</span>
+            <button
+              id="source-detail-refresh"
+              class="button button-primary command-control"
+              type="button"
+              disabled
+            >
+              Refresh source
+            </button>
+            <button
+              id="source-detail-close"
+              class="dialog-close"
+              type="button"
+              aria-label="Close source details"
+            >×</button>
+          </div>
+        </header>
+        <div id="source-detail-error" class="inline-alert" role="alert" hidden></div>
+        <div class="source-detail-nav" aria-label="Source detail sections">
+          <a href="#source-detail-summary">Summary</a>
+          <a href="#source-detail-pipeline">Pipeline</a>
+          <a href="#source-detail-history">History</a>
+          <a href="#source-detail-config">Configuration</a>
+          <a href="#source-detail-logic">Logic</a>
+        </div>
+        <div class="source-detail-body">
+          <section id="source-detail-summary" class="detail-section detail-kpis">
+            <p class="detail-placeholder">Loading source summary…</p>
+          </section>
+          <section id="source-detail-pipeline" class="detail-section">
+            <h3>End-to-end pipeline</h3>
+            <p class="detail-placeholder">No pipeline observations loaded.</p>
+          </section>
+          <section id="source-detail-history" class="detail-section">
+            <h3>Run history &amp; yield</h3>
+            <p class="detail-placeholder">No source history loaded.</p>
+          </section>
+          <section id="source-detail-config" class="detail-section">
+            <h3>Reviewed configuration</h3>
+            <p class="detail-placeholder">No safe configuration snapshot loaded.</p>
+          </section>
+          <section id="source-detail-logic" class="detail-section">
+            <h3>Logic revisions</h3>
+            <div id="source-detail-provenance">
+              <p class="detail-placeholder">No code provenance loaded.</p>
+            </div>
+          </section>
+        </div>
+      </div>
+    </dialog>
+
+    <dialog
+      id="refresh-due-dialog"
+      class="completion-dialog admin-confirm-dialog"
+      aria-labelledby="refresh-due-title"
+      aria-describedby="refresh-due-copy"
+    >
+      <form method="dialog">
+        <button class="dialog-close" value="cancel" aria-label="Close">×</button>
+        <span class="dialog-symbol" aria-hidden="true">↻</span>
+        <p class="eyebrow">Bounded cadence pass</p>
+        <h2 id="refresh-due-title">Refresh every source currently due?</h2>
+        <p id="refresh-due-copy">
+          This queues one durable command. Each source still passes its reviewed registry,
+          quarantine, policy, pacing, and lease checks before any network request.
+        </p>
+        <p id="refresh-due-count" class="confirmation-detail"></p>
+        <div class="dialog-actions">
+          <button class="button button-secondary" value="cancel">Not now</button>
+          <button id="confirm-refresh-due" class="button button-primary" value="confirm">
+            Queue due refreshes
+          </button>
+        </div>
+      </form>
+    </dialog>
+
+    <div id="admin-toast" class="admin-toast" role="status" aria-live="polite" hidden>
+      <span class="toast-icon" aria-hidden="true">✓</span>
+      <span id="admin-toast-copy"></span>
+      <button id="admin-toast-close" type="button" aria-label="Dismiss message">×</button>
+    </div>
+
+    <p
+      id="admin-live-status"
+      class="visually-hidden"
+      role="status"
+      aria-live="polite"
+      aria-atomic="true"
+    ></p>
+
+    <noscript>
+      <div class="noscript-notice" role="alert">
+        The ingestion admin requires JavaScript. Enable JavaScript and reload this page.
+      </div>
+    </noscript>
+  </body>
+</html>

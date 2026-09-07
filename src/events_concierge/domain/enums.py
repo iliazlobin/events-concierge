@@ -117,6 +117,15 @@ class PriceStatus(StrEnum):
         return cls.UNKNOWN
 
 
+class RegistrationStatus(StrEnum):
+    """Public registration posture reported by a discovery source."""
+
+    OPEN = "open"
+    WAITLIST = "waitlist"
+    SOLD_OUT = "sold_out"
+    UNKNOWN = "unknown"
+
+
 class CatalogSourceMode(StrEnum):
     """Approved public-catalog ingestion mechanism (FR-3.1/FR-10.3)."""
 
@@ -140,6 +149,9 @@ class CatalogSourceMode(StrEnum):
     BERKELEY_REP_HTML = "berkeley_rep_html"
     YBCA_HTML = "ybca_html"
     OAKLAND_HTML = "oakland_html"
+    LUMA_CALENDAR_JSON = "luma_calendar_json"
+    LUMA_DISCOVER_JSON = "luma_discover_json"
+    MEETUP_CITY_JSONLD = "meetup_city_jsonld"
 
 
 class CatalogRefreshRunStatus(StrEnum):

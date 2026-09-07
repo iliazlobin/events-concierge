@@ -22,6 +22,7 @@ from events_concierge.adapters.policy.pacer import (
 )
 from events_concierge.composition import _build_pacer
 from events_concierge.config import Settings
+from events_concierge.domain.catalog_sources import MAX_SOURCE_REFRESH_INTERVAL_MINUTES
 from events_concierge.domain.enums import Modality, Source
 from events_concierge.domain.policy import SourcePolicy
 from events_concierge.ports.policy import (
@@ -220,6 +221,11 @@ class _ScriptUnavailableRedis:
         raise aioredis.ResponseError("fixture scripts disabled")
 
 
+class _WaitingRedis:
+    async def eval(self, *_: object) -> object:
+        return "W|1"
+
+
 async def test_redis_pacer_outage_never_fails_open() -> None:
     """A Redis transport outage returns a durable wait projection before any source call (ADR-005)."""
     pacer = RedisPacer(
@@ -234,6 +240,22 @@ async def test_redis_pacer_outage_never_fails_open() -> None:
     assert lease.status is PacerLeaseStatus.WAIT
     assert lease.retry_after_seconds == 2.0
     assert "unavailable" in lease.detail
+
+
+async def test_redis_pacer_valid_wait_is_not_reported_as_a_store_outage() -> None:
+    """A healthy bucket refill/backoff must remain distinguishable from Redis unavailability."""
+    pacer = RedisPacer(
+        rate_per_sec=5.0,
+        burst=10,
+        redis_client=cast(aioredis.Redis, _WaitingRedis()),
+    )
+
+    lease = await pacer.acquire(_pacer_request())
+
+    assert lease.status is PacerLeaseStatus.WAIT
+    assert lease.retry_after_seconds == 1.0
+    assert lease.detail == "shared token bucket is refilling or source backoff is active"
+    assert "unavailable" not in lease.detail
 
 
 async def test_meetup_app_scope_refuses_an_unidentified_fair_queue_item() -> None:
@@ -323,10 +345,28 @@ def test_validated_meetup_per_app_mode_forces_shared_redis() -> None:
         rate_per_sec=settings.pacer_rate_per_second,
         burst=settings.pacer_burst,
         unavailable_retry_seconds=settings.pacer_unavailable_retry_seconds,
+        state_retention_seconds=settings.pacer_state_retention_seconds,
         source_budgets=default_source_budgets(),
         meetup_app_quota_scope="meetup-app-fixture",
         meetup_app_degrade_after_seconds=301.0,
     )
+
+
+def test_shared_pacer_retains_bucket_state_past_ordinary_cadence_gaps() -> None:
+    """A bucket must not expire between two ordinary uses, or idleness reads as state loss.
+
+    A missing bucket deliberately cold-starts empty and fails throttle-first (ADR-005). When
+    retention covered only one refill window, every catalog source on a multi-hour cadence found
+    its bucket gone on every attempt and was deferred before any provider call.
+    """
+    settings = Settings(mock_cloud=True)
+
+    refill_window = settings.pacer_burst / settings.pacer_rate_per_second
+    slowest_source_gap = MAX_SOURCE_REFRESH_INTERVAL_MINUTES * 60
+    assert settings.pacer_state_retention_seconds > refill_window
+    assert settings.pacer_state_retention_seconds > settings.pacer_unavailable_retry_seconds
+    # The binding requirement: even the slowest reviewed cadence must find its bucket intact.
+    assert settings.pacer_state_retention_seconds > slowest_source_gap
 
 
 def test_non_mock_composition_rejects_process_local_pacing() -> None:

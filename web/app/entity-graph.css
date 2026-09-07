@@ -1,0 +1,1673 @@
+/*
+ * Entity graph — a separate stylesheet on purpose.
+ *
+ * `globals.css` is being edited concurrently, so everything this feature needs lives here and
+ * nothing above is touched.  The design language is the existing one, not a new one: the same dark
+ * palette, the same 999px pills, the same 18–22px cards, the same accent eyebrow, and the stage
+ * sized by the exact rule `.map-frame` already uses so the graph frame and the map frame line up
+ * pixel for pixel on the same screen.
+ */
+
+:root {
+  /*
+   * Per-kind node fills.  Never the only encoding: every node also carries a glyph, and shape
+   * separates real records (circle) from computed groupings (rounded square).
+   */
+  --node-person: #7aa2ff;
+  --node-org: #8ee28a;
+  --node-unknown: #686865;
+  --node-event: #c9ff68;
+  --node-topic: #bb9cff;
+  /*
+   * Per-role edge strokes.  Role belongs on the edge because the graph is bipartite: two 'host'
+   * edges into one event node ARE a co-host pair, with no synthesized relation in between.
+   */
+  --edge-host: rgba(122, 162, 255, 0.55);
+  --edge-organizer: rgba(201, 255, 104, 0.55);
+  --edge-speaker: rgba(255, 134, 200, 0.55);
+  --edge-partner: rgba(246, 196, 83, 0.55);
+  --edge-topic: rgba(187, 156, 255, 0.3);
+  --edge-dim: rgba(255, 255, 255, 0.12);
+}
+
+/* ---------- shell ---------- */
+
+.entity-graph-shell {
+  margin: 0 auto;
+  max-width: 1600px;
+  padding-bottom: 34px;
+  width: 100%;
+}
+
+.entity-graph-heading {
+  align-items: end;
+  display: grid;
+  gap: 8px 18px;
+  grid-template-columns: 1fr auto;
+  margin: 0 0 16px;
+}
+
+.entity-graph-heading > .entity-back,
+.entity-graph-heading > .entity-graph-nav {
+  grid-column: 1 / -1;
+  margin-bottom: 8px;
+}
+
+/*
+ * Two ways out, side by side, because they answer two different questions.
+ *
+ * "Back" retraces the walk one entity at a time and "All entities" leaves it entirely; keeping
+ * them adjacent is what makes the difference legible without a label explaining it.  Back is
+ * disabled rather than removed at the start of a walk so the header does not reflow the moment a
+ * reader takes their first hop.
+ */
+.entity-graph-nav {
+  align-items: center;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.entity-graph-nav .entity-back[disabled] {
+  cursor: default;
+  opacity: 0.4;
+}
+
+.entity-graph-nav .entity-back:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 3px;
+}
+
+.entity-graph-heading p {
+  color: var(--accent);
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: 0.18em;
+  margin: 0;
+  text-transform: uppercase;
+}
+
+.entity-graph-heading h1 {
+  font-size: clamp(22px, 2vw, 28px);
+  font-weight: 560;
+  letter-spacing: -0.035em;
+  line-height: 1.1;
+  margin: 6px 0 0;
+}
+
+.entity-graph-heading > div > span {
+  color: var(--muted);
+  display: block;
+  font-size: 12px;
+  margin-top: 6px;
+}
+
+.entity-graph-modes {
+  display: inline-flex;
+  gap: 6px;
+}
+
+.entity-graph-modes button,
+.entity-graph-show-graph {
+  align-items: center;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  color: var(--muted);
+  cursor: pointer;
+  display: inline-flex;
+  font: inherit;
+  font-size: 12px;
+  gap: 7px;
+  min-height: 36px;
+  padding: 0 15px;
+  transition: border-color 160ms var(--ease), color 160ms var(--ease);
+}
+
+.entity-graph-modes button svg {
+  height: 15px;
+  width: 15px;
+}
+
+.entity-graph-modes button[data-state="active"] {
+  border-color: color-mix(in srgb, var(--accent) 52%, var(--line));
+  color: var(--accent);
+}
+
+.entity-graph-modes button:hover,
+.entity-graph-show-graph:hover {
+  border-color: color-mix(in srgb, var(--accent) 45%, var(--line));
+  color: var(--ink);
+}
+
+.entity-graph-show-graph {
+  margin-top: 14px;
+}
+
+.entity-graph-stage {
+  align-items: start;
+  display: grid;
+  gap: 16px;
+  grid-template-columns: minmax(0, 1fr) minmax(320px, 400px);
+}
+
+.entity-graph-stage[data-mode="text"] {
+  grid-template-columns: minmax(0, 1fr) minmax(300px, 360px);
+}
+
+/*
+ * The drawing column, and the box the layout is measured against.
+ *
+ * `min-width: 0` is load-bearing: a grid item defaults to `min-width: auto`, so without it the
+ * canvas frame's contents could push this column wider than its `minmax(0, 1fr)` track and the
+ * measurement would report a width the frame does not have.
+ */
+.entity-graph-column {
+  min-width: 0;
+}
+
+/* ---------- the frame, sized exactly like .map-frame ---------- */
+
+.entity-graph-frame {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 20px;
+  cursor: grab;
+  height: clamp(560px, calc(100dvh - var(--header-height) - 166px), 900px);
+  overflow: hidden;
+  position: relative;
+  touch-action: none;
+}
+
+.entity-graph-frame:active {
+  cursor: grabbing;
+}
+
+.entity-graph-frame:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 3px;
+}
+
+.entity-graph-canvas {
+  height: 100%;
+  inset: 0;
+  position: absolute;
+  width: 100%;
+}
+
+.entity-graph-nodes {
+  height: 100%;
+  inset: 0;
+  pointer-events: none;
+  position: absolute;
+  width: 100%;
+}
+
+/* ---------- nodes ---------- */
+
+.entity-graph-node {
+  align-items: center;
+  background: var(--panel-raised);
+  border: 1.5px solid transparent;
+  border-radius: 999px;
+  color: var(--ink);
+  cursor: pointer;
+  display: flex;
+  justify-content: center;
+  left: 0;
+  padding: 0;
+  pointer-events: auto;
+  position: absolute;
+  top: 0;
+  transition: background-color 140ms var(--ease), box-shadow 140ms var(--ease);
+  will-change: transform;
+}
+
+/*
+ * One tint token per kind, so the fill, the inner ring and the selection ring can all be composed
+ * in a single box-shadow.  Written as one declaration on purpose: a second box-shadow rule further
+ * down would silently drop the inner ring rather than add to it.
+ */
+.entity-graph-node[data-kind="person"] { --node-tint: var(--node-person); }
+.entity-graph-node[data-kind="organization"] { --node-tint: var(--node-org); }
+.entity-graph-node[data-kind="unknown"] { --node-tint: var(--node-unknown); }
+.entity-graph-node[data-kind="event"] { --node-tint: var(--node-event); }
+.entity-graph-node[data-kind="topic"] { --node-tint: var(--node-topic); }
+
+.entity-graph-node[data-kind] {
+  background: color-mix(in srgb, var(--node-tint) 26%, var(--panel-raised));
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--node-tint) 58%, transparent);
+}
+
+/* Real records draw as circles; a computed grouping draws as a rounded square. */
+.entity-graph-node[data-kind="topic"] {
+  border-radius: 10px;
+}
+
+/* Past events read at the same 0.72 the existing past-event cards use. */
+.entity-graph-node[data-past="true"] {
+  opacity: 0.72;
+}
+
+/*
+ * Identity is encoded by the border's STYLE, not by a colour: a dashed ring literally means
+ * "scoped to the source that asserted it".  Focus keeps `outline` to itself so the two rings can
+ * never fight for the same pixels.
+ */
+.entity-graph-node[data-identity="profile_verified"] {
+  border-color: var(--ink);
+  border-style: solid;
+}
+
+.entity-graph-node[data-identity="source_scoped"] {
+  border-color: var(--line-strong);
+  border-style: dashed;
+}
+
+/*
+ * The accent ring marks the one node the reader is looking *at*, so it is keyed to the ego and not
+ * to ring 0. In the overview every hub is ring 0 — the endpoint returns forty of them — so keying
+ * it to the ring drew forty accent rings, which says "all of this is important" and therefore
+ * says nothing. The overview has no ego, and now draws none.
+ */
+.entity-graph-node[data-ego="true"] {
+  border-color: var(--accent);
+  border-width: 2px;
+}
+
+/*
+ * Two hover owners, two attributes.  `data-state` is React's, written from the inspector's
+ * hover and from selection; `data-pointer` is the canvas's, written imperatively on
+ * pointerenter so a hover costs no re-render.  They must not share an attribute — a re-render
+ * would reconcile the imperative value away mid-hover.
+ */
+.entity-graph-node[data-kind][data-state="hovered"],
+.entity-graph-node[data-kind][data-pointer="hovered"] {
+  background: color-mix(in srgb, var(--node-tint) 44%, var(--panel-raised));
+}
+
+.entity-graph-node[data-kind][data-state="selected"] {
+  box-shadow:
+    inset 0 0 0 1px color-mix(in srgb, var(--node-tint) 58%, transparent),
+    0 0 0 3px color-mix(in srgb, var(--accent) 42%, transparent);
+}
+
+.entity-graph-node:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 3px;
+}
+
+.entity-graph-node__glyph {
+  align-items: center;
+  display: flex;
+  justify-content: center;
+  pointer-events: none;
+}
+
+.entity-graph-node__glyph svg {
+  height: 46%;
+  max-height: 18px;
+  min-height: 11px;
+  width: auto;
+}
+
+.entity-graph-node__label {
+  color: var(--muted);
+  font-size: 11px;
+  left: 50%;
+  max-width: 132px;
+  opacity: 0;
+  overflow: hidden;
+  pointer-events: none;
+  position: absolute;
+  text-overflow: ellipsis;
+  top: calc(100% + 5px);
+  transform: translateX(-50%);
+  transition: opacity 140ms var(--ease);
+  white-space: nowrap;
+}
+
+/*
+ * A label rests visible only where it was measured to fit.
+ *
+ * `data-label="rest"` is written by the canvas on every camera frame, from the boxes the labels
+ * would actually occupy on screen — so this is a measurement, not a guess at crowding. Everything
+ * without it waits for hover, focus or selection, which the rule below still grants.
+ */
+.entity-graph-node[data-label="rest"] .entity-graph-node__label {
+  opacity: 0.72;
+}
+
+.entity-graph-node:hover .entity-graph-node__label,
+.entity-graph-node:focus-visible .entity-graph-node__label,
+.entity-graph-node[data-state="selected"] .entity-graph-node__label,
+.entity-graph-node[data-state="hovered"] .entity-graph-node__label,
+.entity-graph-node[data-pointer="hovered"] .entity-graph-node__label {
+  color: var(--ink);
+  opacity: 1;
+}
+
+/* ---------- zoom rail ---------- */
+
+.entity-graph-zoom {
+  align-items: center;
+  background: rgba(10, 10, 11, 0.9);
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  bottom: 14px;
+  color: var(--muted);
+  display: flex;
+  font-size: 11px;
+  gap: 4px;
+  padding: 4px;
+  position: absolute;
+  right: 14px;
+}
+
+.entity-graph-zoom button {
+  background: transparent;
+  border-radius: 999px;
+  color: var(--muted);
+  cursor: pointer;
+  font: inherit;
+  font-size: 12px;
+  min-height: 26px;
+  padding: 0 10px;
+}
+
+.entity-graph-zoom button:hover {
+  color: var(--accent);
+}
+
+.entity-graph-zoom span {
+  min-width: 42px;
+  text-align: center;
+}
+
+/* ---------- inspector ---------- */
+
+.entity-graph-inspector {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  max-height: clamp(560px, calc(100dvh - var(--header-height) - 166px), 900px);
+  overflow-y: auto;
+  padding: 22px;
+}
+
+.entity-graph-inspector__head {
+  align-items: start;
+  display: grid;
+  gap: 14px;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+}
+
+.entity-graph-inspector__head p {
+  color: var(--accent);
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: 0.18em;
+  margin: 0;
+  text-transform: uppercase;
+}
+
+.entity-graph-inspector__head h2 {
+  font-size: 21px;
+  font-weight: 560;
+  letter-spacing: -0.02em;
+  margin: 6px 0 0;
+}
+
+.entity-graph-inspector__head > div > span {
+  color: var(--muted);
+  display: block;
+  font-size: 12px;
+  margin-top: 6px;
+}
+
+.entity-graph-inspector__close {
+  background: transparent;
+  border-radius: 999px;
+  color: var(--muted);
+  cursor: pointer;
+  height: 32px;
+  width: 32px;
+}
+
+.entity-graph-inspector__close:hover {
+  color: var(--accent);
+}
+
+.entity-graph-inspector__refocus {
+  background: transparent;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  color: var(--ink);
+  cursor: pointer;
+  font: inherit;
+  font-size: 12px;
+  min-height: 34px;
+  padding: 0 14px;
+}
+
+.entity-graph-inspector__refocus:hover {
+  border-color: color-mix(in srgb, var(--accent) 45%, var(--line));
+  color: var(--accent);
+}
+
+.entity-graph-inspector h3,
+.entity-graph-text h3 {
+  color: var(--muted);
+  font-size: 10px;
+  font-weight: 750;
+  letter-spacing: 0.18em;
+  margin: 0 0 10px;
+  text-transform: uppercase;
+}
+
+.entity-graph-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.entity-graph-tabs button {
+  align-items: center;
+  background: transparent;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  color: var(--muted);
+  cursor: pointer;
+  display: inline-flex;
+  font: inherit;
+  font-size: 12px;
+  gap: 6px;
+  min-height: 32px;
+  padding: 0 13px;
+}
+
+.entity-graph-tabs button[data-state="active"] {
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+  border-color: color-mix(in srgb, var(--accent) 40%, var(--line));
+  color: var(--accent);
+}
+
+.entity-graph-tabs button small {
+  color: var(--quiet);
+  font-size: 10px;
+}
+
+.entity-graph-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+}
+
+.entity-graph-inspector__mentions,
+.entity-graph-inspector__appearances {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.entity-graph-inspector__mentions button,
+.entity-graph-inspector__appearances button {
+  background: var(--panel-raised);
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  color: var(--ink);
+  cursor: pointer;
+  display: flex;
+  flex-direction: column;
+  font: inherit;
+  gap: 3px;
+  padding: 12px 14px;
+  text-align: left;
+  width: 100%;
+}
+
+.entity-graph-inspector__mentions button:hover,
+.entity-graph-inspector__appearances button:hover {
+  border-color: color-mix(in srgb, var(--accent) 40%, var(--line));
+}
+
+.entity-graph-inspector__mentions strong,
+.entity-graph-inspector__appearances strong {
+  font-size: 14px;
+  font-weight: 560;
+}
+
+.entity-graph-inspector__mentions small,
+.entity-graph-inspector__appearances small,
+.entity-graph-inspector__appearances span {
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.entity-graph-inspector__appearances li[data-past="true"] button {
+  opacity: 0.72;
+}
+
+.entity-graph-inspector__cta {
+  align-items: center;
+  align-self: start;
+  background: var(--accent);
+  border-radius: 999px;
+  color: var(--accent-ink);
+  display: inline-flex;
+  font-size: 13px;
+  gap: 6px;
+  min-height: 38px;
+  padding: 0 17px;
+  text-decoration: none;
+}
+
+.entity-graph-identity a {
+  color: var(--accent);
+  font-size: 12px;
+  overflow-wrap: anywhere;
+  text-decoration: none;
+}
+
+.entity-graph-identity a:hover {
+  text-decoration: underline;
+}
+
+.entity-graph-samename__caveat {
+  background: color-mix(in srgb, var(--danger) 10%, transparent);
+  border: 1px solid color-mix(in srgb, var(--danger) 34%, var(--line));
+  border-radius: 14px;
+  color: var(--ink);
+  font-size: 12px;
+  line-height: 1.5;
+  margin: 0;
+  padding: 12px 14px;
+}
+
+.entity-graph-samename {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.entity-graph-samename button {
+  background: var(--panel-raised);
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  color: var(--ink);
+  cursor: pointer;
+  display: flex;
+  flex-direction: column;
+  font: inherit;
+  gap: 3px;
+  padding: 12px 14px;
+  text-align: left;
+  width: 100%;
+}
+
+.entity-graph-samename span {
+  color: var(--muted);
+  font-size: 11px;
+}
+
+/* ---------- text equivalent ---------- */
+
+.entity-graph-text {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 26px;
+  padding: 26px;
+}
+
+.entity-graph-text > header p {
+  color: var(--accent);
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: 0.18em;
+  margin: 0;
+  text-transform: uppercase;
+}
+
+.entity-graph-text > header h2 {
+  font-size: 24px;
+  font-weight: 560;
+  letter-spacing: -0.025em;
+  margin: 7px 0 6px;
+}
+
+.entity-graph-text > header small {
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.entity-graph-text__identity {
+  display: grid;
+  gap: 12px 22px;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  margin: 0;
+}
+
+.entity-graph-text__identity dt {
+  color: var(--quiet);
+  font-size: 10px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+
+.entity-graph-text__identity dd {
+  color: var(--ink);
+  font-size: 13px;
+  line-height: 1.55;
+  margin: 5px 0 0;
+}
+
+.entity-graph-text__identity a {
+  color: var(--accent);
+  overflow-wrap: anywhere;
+  text-decoration: none;
+}
+
+.entity-graph-text__events {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.entity-graph-text__events > li {
+  background: var(--panel-raised);
+  border: 1px solid var(--line);
+  border-radius: 18px;
+  padding: 14px 16px;
+}
+
+.entity-graph-text__event {
+  align-items: center;
+  background: transparent;
+  color: var(--ink);
+  cursor: pointer;
+  display: flex;
+  font: inherit;
+  gap: 14px;
+  padding: 0;
+  text-align: left;
+  width: 100%;
+}
+
+.entity-graph-text__event time {
+  align-items: center;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  display: flex;
+  flex-direction: column;
+  min-width: 54px;
+  padding: 7px 0;
+}
+
+.entity-graph-text__event time span {
+  color: var(--accent);
+  font-size: 10px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+
+.entity-graph-text__event time strong {
+  font-size: 19px;
+}
+
+.entity-graph-text__event time small {
+  color: var(--quiet);
+  font-size: 10px;
+}
+
+.entity-graph-text__event > span {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
+}
+
+.entity-graph-text__event strong {
+  font-size: 15px;
+  font-weight: 560;
+}
+
+.entity-graph-text__event > span > span,
+.entity-graph-text__event small {
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.entity-graph-text__through {
+  color: var(--muted);
+  font-size: 11px;
+  margin: 10px 0 0;
+}
+
+.entity-graph-text__through button {
+  background: transparent;
+  color: var(--accent);
+  cursor: pointer;
+  font: inherit;
+  font-size: 11px;
+  padding: 0;
+  text-decoration: underline;
+}
+
+.entity-graph-text__events a {
+  color: var(--accent);
+  display: inline-flex;
+  font-size: 12px;
+  gap: 5px;
+  margin-top: 10px;
+  text-decoration: none;
+}
+
+.entity-graph-text__events a svg,
+.entity-graph-text__identity a svg {
+  height: 13px;
+  width: 13px;
+}
+
+.entity-graph-text__peers,
+.entity-graph-text__same-name {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.entity-graph-text__peers button,
+.entity-graph-text__same-name button {
+  background: var(--panel-raised);
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  color: var(--ink);
+  cursor: pointer;
+  display: flex;
+  flex-direction: column;
+  font: inherit;
+  gap: 3px;
+  padding: 12px 14px;
+  text-align: left;
+  width: 100%;
+}
+
+.entity-graph-text__peers span,
+.entity-graph-text__same-name span {
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.entity-graph-text__peers li > small {
+  color: var(--quiet);
+  display: block;
+  font-size: 11px;
+  margin: 6px 0 0 14px;
+}
+
+.entity-graph-text__topics {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.entity-graph-text__topics button {
+  align-items: center;
+  background: color-mix(in srgb, var(--node-topic) 12%, transparent);
+  border: 1px solid color-mix(in srgb, var(--node-topic) 36%, var(--line));
+  border-radius: 999px;
+  color: var(--ink);
+  cursor: pointer;
+  display: inline-flex;
+  font: inherit;
+  font-size: 12px;
+  gap: 8px;
+  min-height: 34px;
+  padding: 0 14px;
+}
+
+.entity-graph-text__topics small {
+  color: var(--muted);
+  font-size: 10px;
+}
+
+.entity-graph-text__truncation {
+  color: var(--quiet);
+  font-size: 11px;
+  margin: 0;
+}
+
+/* ---------- legend ---------- */
+
+.entity-graph-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 16px;
+  list-style: none;
+  margin: 16px 0 0;
+  padding: 0;
+}
+
+.entity-graph-legend li {
+  align-items: center;
+  color: var(--muted);
+  display: inline-flex;
+  font-size: 11px;
+  gap: 7px;
+}
+
+.entity-graph-legend li[data-kind]::before {
+  border-radius: 999px;
+  content: "";
+  height: 10px;
+  width: 10px;
+}
+
+.entity-graph-legend li[data-kind="person"]::before { background: var(--node-person); }
+.entity-graph-legend li[data-kind="organization"]::before { background: var(--node-org); }
+.entity-graph-legend li[data-kind="unknown"]::before { background: var(--node-unknown); }
+.entity-graph-legend li[data-kind="event"]::before { background: var(--node-event); }
+
+.entity-graph-legend li[data-kind="topic"]::before {
+  background: var(--node-topic);
+  border-radius: 3px;
+}
+
+.entity-graph-legend__note {
+  color: var(--quiet);
+  flex-basis: 100%;
+}
+
+/* ---------- ranked directory front door ---------- */
+
+.entity-directory-panel {
+  display: flex;
+  flex-direction: column;
+  margin: 0 auto;
+  max-width: var(--content-width);
+  width: 100%;
+}
+
+.entity-directory-coverage {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 18px;
+  color: var(--ink);
+  font-size: 12px;
+  line-height: 1.6;
+  margin: 0 0 16px;
+  padding: 14px 18px;
+}
+
+.entity-directory-filters {
+  align-items: center;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 14px;
+}
+
+.entity-directory-filters__divider {
+  background: var(--line);
+  height: 22px;
+  width: 1px;
+}
+
+/*
+ * Scopes the identity chips that follow it.  Their counts are drawn from the ranked slice, not
+ * from the whole catalog, and the label is what makes that readable rather than merely true.
+ */
+.entity-directory-filters__scope {
+  color: var(--quiet);
+  font-size: 11px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.entity-filter-chip {
+  align-items: center;
+  background: transparent;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  color: var(--muted);
+  cursor: pointer;
+  display: inline-flex;
+  font: inherit;
+  font-size: 12px;
+  gap: 8px;
+  min-height: 34px;
+  padding: 0 14px;
+  transition: border-color 160ms var(--ease), color 160ms var(--ease);
+}
+
+.entity-filter-chip:hover {
+  border-color: color-mix(in srgb, var(--accent) 45%, var(--line));
+  color: var(--ink);
+}
+
+.entity-filter-chip[data-state="active"] {
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+  border-color: color-mix(in srgb, var(--accent) 40%, var(--line));
+  color: var(--accent);
+}
+
+.entity-filter-chip small {
+  color: var(--quiet);
+  font-size: 10px;
+}
+
+.entity-directory-matched {
+  color: var(--quiet);
+  font-size: 11px;
+  margin: 0;
+}
+
+.entity-hub-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.entity-hub-row {
+  align-items: center;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 18px;
+  color: var(--ink);
+  cursor: pointer;
+  display: grid;
+  font: inherit;
+  gap: 16px;
+  grid-template-columns: 34px 46px minmax(0, 1fr);
+  padding: 14px 18px;
+  text-align: left;
+  transition: border-color 160ms var(--ease);
+  width: 100%;
+}
+
+.entity-hub-row:hover {
+  border-color: color-mix(in srgb, var(--accent) 40%, var(--line));
+}
+
+.entity-hub-row:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 3px;
+}
+
+.entity-hub-row__rank {
+  color: var(--quiet);
+  font-size: 15px;
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+}
+
+.entity-hub-row__icon {
+  align-items: center;
+  border: 1.5px solid var(--line-strong);
+  border-radius: 999px;
+  color: var(--muted);
+  display: flex;
+  height: 46px;
+  justify-content: center;
+  width: 46px;
+}
+
+/* The identity ring again, same grammar as the graph: solid means a direct profile URL is held. */
+.entity-hub-row[data-identity="profile_verified"] .entity-hub-row__icon {
+  border-color: var(--ink);
+  border-style: solid;
+  color: var(--ink);
+}
+
+.entity-hub-row[data-identity="source_scoped"] .entity-hub-row__icon {
+  border-style: dashed;
+}
+
+.entity-hub-row__icon svg {
+  height: 19px;
+  width: 19px;
+}
+
+.entity-hub-row__copy {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+
+.entity-hub-row__copy strong {
+  font-size: 17px;
+  font-weight: 560;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.entity-hub-row__copy > span {
+  color: var(--accent);
+  font-size: 12px;
+}
+
+.entity-hub-row__copy small {
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.entity-directory-legend {
+  color: var(--quiet);
+  font-size: 11px;
+  margin: 16px 0 0;
+}
+
+/* ---------- responsive ---------- */
+
+@media (max-width: 1100px) {
+  .entity-graph-stage,
+  .entity-graph-stage[data-mode="text"] {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  /* Below this width the inspector stops being a column and becomes a bottom sheet. */
+  .entity-graph-inspector {
+    border-radius: 20px 20px 0 0;
+    bottom: 0;
+    left: 0;
+    max-height: 62vh;
+    position: sticky;
+    z-index: 4;
+  }
+
+  .entity-graph-frame {
+    height: clamp(420px, calc(100dvh - var(--header-height) - 300px), 700px);
+  }
+}
+
+@media (max-width: 700px) {
+  .entity-graph-heading {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .entity-hub-row {
+    grid-template-columns: 26px minmax(0, 1fr);
+  }
+
+  .entity-hub-row__icon {
+    display: none;
+  }
+}
+
+/*
+ * The global reduce-motion rule already flattens transitions.  These two are the ones that would
+ * otherwise still move: the node hover lift and the label fade.  There is nothing else to disable,
+ * because the layout is deterministic and there is no simulation to settle.
+ */
+@media (prefers-reduced-motion: reduce) {
+  .entity-graph-node,
+  .entity-graph-node__label,
+  .entity-filter-chip,
+  .entity-hub-row {
+    transition: none;
+  }
+}
+
+/* ---------- inspector: public data + refresh ---------- */
+
+.entity-graph-sources__heading {
+  align-items: baseline;
+  display: flex;
+  gap: 12px;
+  justify-content: space-between;
+}
+
+.entity-graph-refresh {
+  align-items: center;
+  background: transparent;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  color: var(--muted);
+  cursor: pointer;
+  display: inline-flex;
+  font: inherit;
+  font-size: 11px;
+  font-weight: 600;
+  gap: 6px;
+  padding: 5px 11px;
+  transition: border-color 180ms var(--ease), color 180ms var(--ease);
+  white-space: nowrap;
+}
+
+.entity-graph-refresh svg {
+  height: 12px;
+  width: 12px;
+}
+
+.entity-graph-refresh:hover:not(:disabled) {
+  border-color: color-mix(in srgb, var(--accent) 38%, var(--line));
+  color: var(--ink);
+}
+
+.entity-graph-refresh:disabled {
+  cursor: progress;
+  opacity: 0.7;
+}
+
+.entity-graph-refresh:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 3px;
+}
+
+.entity-graph-facts p {
+  color: var(--ink);
+  font-size: 13px;
+  line-height: 1.55;
+  margin: 0 0 12px;
+}
+
+.entity-graph-facts dl {
+  display: grid;
+  gap: 10px 18px;
+  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+  margin: 0;
+}
+
+.entity-graph-facts dt {
+  color: var(--quiet);
+  font-size: 10px;
+  font-weight: 750;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+}
+
+.entity-graph-facts dd {
+  color: var(--ink);
+  font-size: 13px;
+  margin: 3px 0 0;
+}
+
+.entity-graph-facts dd a {
+  align-items: center;
+  color: var(--ink);
+  display: inline-flex;
+  gap: 4px;
+  text-decoration: none;
+}
+
+.entity-graph-facts dd a:hover {
+  color: var(--accent);
+}
+
+.entity-graph-facts dd svg {
+  height: 11px;
+  width: 11px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .entity-graph-refresh {
+    transition: none;
+  }
+}
+
+/* ---------- the landing graph ---------- */
+
+/*
+ * The Entities tab opens here.
+ *
+ * One column, the same `--content-width` measure the ranked directory used, so the tab's front
+ * door did not move when its content changed shape.  Everything above the frame is a control or a
+ * disclosure; the frame itself is the same `.entity-graph-frame` the ego view draws in, so the two
+ * screens are visibly the same instrument pointed at two different questions.
+ */
+.entity-overview {
+  display: flex;
+  flex-direction: column;
+  margin: 0 auto;
+  max-width: var(--content-width);
+  width: 100%;
+}
+
+/*
+ * Shorter than the ego frame, because this screen carries a search box, two disclosure lines and a
+ * chip row above it.  Without the override the frame's own clamp assumes it starts near the top of
+ * the page and the graph is pushed below the fold on a laptop.
+ */
+.entity-overview .entity-graph-frame {
+  height: clamp(420px, calc(100dvh - var(--header-height) - 430px), 760px);
+}
+
+/*
+ * Counts and disclosures on one quiet line above the figure.
+ *
+ * The two disclosures are not optional — the graph is drawn from 5% of the catalog, and one drawn
+ * line stands for a pair's whole shared history — but as stacked prose they were a wall in front
+ * of the picture, and a wall gets read once and skipped forever. As a disclosure they stay one
+ * click away and cost nothing at rest.
+ */
+.entity-overview-meta {
+  align-items: baseline;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 14px;
+  margin: 0 0 12px;
+  padding: 0 2px;
+}
+
+.entity-overview-about {
+  color: var(--quiet);
+  font-size: 11px;
+}
+
+.entity-overview-about summary {
+  cursor: pointer;
+  list-style: none;
+  text-decoration: underline;
+  text-decoration-color: var(--line-strong);
+  text-underline-offset: 3px;
+}
+
+.entity-overview-about summary::-webkit-details-marker {
+  display: none;
+}
+
+.entity-overview-about summary:hover {
+  color: var(--ink);
+}
+
+.entity-overview-about summary:focus-visible {
+  border-radius: 4px;
+  outline: 2px solid var(--accent);
+  outline-offset: 3px;
+}
+
+.entity-overview-about > div {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.6;
+  margin-top: 10px;
+  max-width: 76ch;
+  padding: 12px 16px;
+}
+
+.entity-overview-about p {
+  margin: 0;
+}
+
+.entity-overview-about p + p {
+  margin-top: 8px;
+}
+
+.entity-overview-about strong {
+  color: var(--ink);
+  font-weight: 600;
+}
+
+.entity-overview-hint {
+  color: var(--quiet);
+  font-size: 11px;
+  margin: 12px 0 0;
+}
+
+/* ---------- the selection strip ---------- */
+
+/*
+ * What one clicked node says, answered from the payload already in hand.
+ *
+ * It replaces the hint line rather than appearing beside it, so the space below the frame holds
+ * exactly one thing at a time and the graph never jumps when a node is clicked.
+ */
+.entity-overview-selection {
+  align-items: center;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 18px;
+  display: grid;
+  gap: 14px;
+  grid-template-columns: 36px minmax(0, 1fr) auto;
+  margin-top: 12px;
+  padding: 12px 16px;
+}
+
+.entity-overview-selection__glyph {
+  align-items: center;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  color: var(--ink);
+  display: inline-flex;
+  height: 36px;
+  justify-content: center;
+  width: 36px;
+}
+
+.entity-overview-selection__glyph svg {
+  height: 17px;
+  width: 17px;
+}
+
+.entity-overview-selection__glyph[data-kind="person"] { color: var(--node-person); }
+.entity-overview-selection__glyph[data-kind="organization"] { color: var(--node-org); }
+.entity-overview-selection__glyph[data-kind="unknown"] { color: var(--node-unknown); }
+.entity-overview-selection__glyph[data-kind="event"] { color: var(--node-event); }
+.entity-overview-selection__glyph[data-kind="topic"] { color: var(--node-topic); }
+
+.entity-overview-selection__copy {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
+}
+
+.entity-overview-selection__copy strong {
+  font-size: 14px;
+  font-weight: 560;
+  letter-spacing: -0.01em;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.entity-overview-selection__copy span {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.entity-overview-selection__copy small {
+  color: var(--quiet);
+  font-size: 11px;
+}
+
+.entity-overview-selection__open {
+  appearance: none;
+  background: var(--accent);
+  border: 0;
+  border-radius: 999px;
+  color: var(--accent-ink);
+  cursor: pointer;
+  font: inherit;
+  font-size: 12px;
+  font-weight: 600;
+  padding: 8px 16px;
+  text-decoration: none;
+  transition: filter 160ms var(--ease);
+  white-space: nowrap;
+}
+
+.entity-overview-selection__open:hover {
+  filter: brightness(1.08);
+}
+
+.entity-overview-selection__open:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 3px;
+}
+
+@media (max-width: 700px) {
+  .entity-overview-selection {
+    grid-template-columns: 36px minmax(0, 1fr);
+  }
+
+  .entity-overview-selection__open {
+    grid-column: 1 / -1;
+    justify-self: start;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .entity-overview-selection__open {
+    transition: none;
+  }
+}
+
+/*
+ * A failure the reader can leave.
+ *
+ * Kept in the same quiet register as the rest of the view rather than shouting: a dropped
+ * connection is ordinary, and the useful thing on screen is the button, not the alarm.
+ */
+.entity-graph-failure {
+  align-items: center;
+  background: color-mix(in srgb, var(--danger) 8%, var(--panel));
+  border: 1px solid color-mix(in srgb, var(--danger) 32%, transparent);
+  border-radius: 14px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px 16px;
+  margin: 0 0 16px;
+  padding: 12px 16px;
+}
+
+.entity-graph-failure p {
+  color: var(--ink);
+  font-size: 13px;
+  margin: 0;
+}
+
+.entity-graph-failure button {
+  background: transparent;
+  border: 1px solid var(--line-strong);
+  border-radius: 999px;
+  color: var(--ink);
+  cursor: pointer;
+  font: inherit;
+  font-size: 12px;
+  padding: 6px 14px;
+  transition: background-color 140ms var(--ease), border-color 140ms var(--ease);
+}
+
+.entity-graph-failure button:hover {
+  background: var(--panel-raised);
+  border-color: var(--ink);
+}
+
+.entity-graph-failure button:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+
+/* ------------------------------------------------------------------ *
+ * Inspector — Overview
+ *
+ * `.entity-activity-grid` (globals.css) still supplies the dt/dd shape; these rules only add what
+ * the identity row needs, so the two files stay separable and nothing here re-declares the grid.
+ * ------------------------------------------------------------------ */
+
+.entity-insight-grid__identity {
+  border-top: 1px solid var(--line);
+  padding-top: 12px;
+}
+
+.entity-insight-grid__url {
+  color: var(--accent);
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 12px;
+  overflow-wrap: anywhere;
+  text-decoration: none;
+}
+
+.entity-insight-grid__url:hover {
+  text-decoration: underline;
+}
+
+.entity-insight-grid__url svg {
+  flex: none;
+  height: 13px;
+  width: 13px;
+}
+
+/* The caveat travels with the URL and is never smaller than the body's smallest readable size. */
+.entity-insight-grid__caveat {
+  color: var(--muted);
+  display: block;
+  font-size: 11px;
+  line-height: 1.5;
+  margin-top: 5px;
+}
+
+/* ------------------------------------------------------------------ *
+ * Inspector — Appearances
+ * ------------------------------------------------------------------ */
+
+/*
+ * No margin between groups: they are direct children of `.entity-graph-panel`, whose column gap
+ * already separates them, and adding one here would double the space.
+ */
+.entity-appearance-group h3 {
+  align-items: baseline;
+  display: flex;
+  gap: 6px;
+}
+
+.entity-appearance-group h3 small {
+  color: var(--quiet);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+}
+
+/*
+ * The date is the row's anchor, so it is the one secondary line allowed the ink of the title.
+ * Everything below it — role, series, asserting source — stays at `small` weight and colour.
+ */
+.entity-graph-inspector__appearances .entity-appearance__when {
+  color: var(--ink);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+
+/*
+ * Stated explicitly rather than inherited from globals.css: these rows are the panel's primary
+ * navigation, and a keyboard reader must be able to see which one holds focus even if the global
+ * reset is ever scoped away from this subtree.
+ */
+.entity-graph-inspector__appearances button:focus-visible,
+.entity-graph-inspector__mentions button:focus-visible,
+.entity-graph-samename button:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+/* ------------------------------------------------------------------ *
+ * Inspector — Profile & sources
+ * ------------------------------------------------------------------ */
+
+.entity-source-group + .entity-source-group {
+  margin-top: 16px;
+}
+
+.entity-source-group h4 {
+  color: var(--muted);
+  font-size: 10px;
+  font-weight: 750;
+  letter-spacing: 0.18em;
+  margin: 0 0 8px;
+  text-transform: uppercase;
+}
+
+/*
+ * The identity-bearing group is set apart by a rail rather than by colour alone, so the grouping
+ * survives a monochrome or high-contrast rendering.
+ */
+.entity-source-group[data-group="profile"] {
+  border-left: 2px solid color-mix(in srgb, var(--accent) 40%, var(--line));
+  padding-left: 12px;
+}
+
+.entity-source-group__caveat {
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1.5;
+  margin: 0 0 10px;
+}
+
+.entity-source-group .entity-source-list > li > svg {
+  flex: none;
+}
+
+/*
+ * The identity row.
+ *
+ * Neutral glyph plus the network's name, in the panel's own register. No brand mark and no brand
+ * colour: next to a URL a source merely asserted, a platform's own mark reads as that platform
+ * verifying the account, which is a claim this record cannot make. The full URL is on the hover
+ * title and in the Profile & sources tab for anyone who wants to read it.
+ */
+.entity-identity-links {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  list-style: none;
+  margin: 0 0 6px;
+  padding: 0;
+}
+
+.entity-identity-links a {
+  align-items: center;
+  background: var(--panel-raised);
+  border: 1px solid var(--line-strong);
+  border-radius: 999px;
+  color: color-mix(in srgb, var(--ink) 78%, transparent);
+  display: inline-flex;
+  font-size: 11px;
+  gap: 5px;
+  line-height: 1;
+  padding: 6px 10px;
+  transition:
+    background-color 140ms var(--ease),
+    border-color 140ms var(--ease),
+    color 140ms var(--ease);
+}
+
+.entity-identity-links svg {
+  flex: none;
+  height: 13px;
+  width: 13px;
+}
+
+.entity-identity-links a:hover {
+  border-color: var(--ink);
+  color: var(--ink);
+  /* Stated because the row also renders inside `.entity-graph-identity`, which underlines its
+     links on hover — a chip is not a run of body text and must not grow a rule under it. */
+  text-decoration: none;
+}
+
+.entity-identity-links a:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+/* The provenance every named entity on this event shares, said once above the list. */
+.entity-graph-inspector__provenance {
+  color: var(--quiet);
+  font-size: 11px;
+  line-height: 1.5;
+  margin: -4px 0 10px;
+}
+

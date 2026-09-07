@@ -10,6 +10,7 @@ from __future__ import annotations
 import hashlib
 import hmac
 from collections.abc import Sequence
+from functools import partial
 from uuid import UUID
 
 from temporalio.api.common.v1 import Payload
@@ -23,7 +24,13 @@ from temporalio.converter import (
     StorageDriverWorkflowInfo,
 )
 
+from ..application.tenant_effects import DirectTenantEffectAuthority
 from ..ports.object_store import ObjectStorePort
+from ..ports.tenant_effects import (
+    TenantEffectAuthority,
+    TenantEffectKind,
+    TenantEffectRequest,
+)
 
 _DRIVER_NAME = "events-concierge.claim-check.v1"
 _CLAIM_PREFIX = "temporal"
@@ -40,8 +47,21 @@ class ClaimCheckStorageDriver(StorageDriver):
     UUID carried by the immutable history claim and verifies the bytes' SHA-256 before deserializing.
     """
 
-    def __init__(self, object_store: ObjectStorePort) -> None:
+    def __init__(
+        self,
+        object_store: ObjectStorePort,
+        *,
+        tenant_effect_authority: TenantEffectAuthority | None = None,
+        tenant_effect_timeout_seconds: float = 30.0,
+    ) -> None:
         self._object_store = object_store
+        self._tenant_effects = tenant_effect_authority or DirectTenantEffectAuthority()
+        TenantEffectRequest(
+            tenant_id=UUID(int=0),
+            kind=TenantEffectKind.CLAIM_CHECK_WRITE,
+            timeout_seconds=tenant_effect_timeout_seconds,
+        )
+        self._tenant_effect_timeout_seconds = tenant_effect_timeout_seconds
 
     def name(self) -> str:
         return _DRIVER_NAME
@@ -61,7 +81,14 @@ class ClaimCheckStorageDriver(StorageDriver):
             serialized = payload.SerializeToString()
             digest = hashlib.sha256(serialized).hexdigest()
             key = _claim_key(digest)
-            await self._object_store.put(tenant_id, key, serialized)
+            await self._tenant_effects.run(
+                TenantEffectRequest(
+                    tenant_id=tenant_id,
+                    kind=TenantEffectKind.CLAIM_CHECK_WRITE,
+                    timeout_seconds=self._tenant_effect_timeout_seconds,
+                ),
+                partial(self._object_store.put, tenant_id, key, serialized),
+            )
             claims.append(
                 StorageDriverClaim(
                     claim_data={
@@ -96,13 +123,22 @@ class ClaimCheckStorageDriver(StorageDriver):
 def build_claim_check_data_converter(
     object_store: ObjectStorePort,
     threshold_bytes: int,
+    *,
+    tenant_effect_authority: TenantEffectAuthority | None = None,
+    tenant_effect_timeout_seconds: float = 30.0,
 ) -> DataConverter:
     """Build the shared converter; callers must pass it to every Temporal client (ADR-010)."""
     if threshold_bytes < 0:
         raise ValueError("claim-check threshold must be non-negative")
     return DataConverter(
         external_storage=ExternalStorage(
-            drivers=[ClaimCheckStorageDriver(object_store)],
+            drivers=[
+                ClaimCheckStorageDriver(
+                    object_store,
+                    tenant_effect_authority=tenant_effect_authority,
+                    tenant_effect_timeout_seconds=tenant_effect_timeout_seconds,
+                )
+            ],
             payload_size_threshold=threshold_bytes,
         )
     )

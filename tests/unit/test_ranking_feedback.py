@@ -104,6 +104,7 @@ def test_feature_extraction_is_server_owned_bounded_and_signed_by_kind() -> None
     scroll = feedback_feature_deltas(event, FeedbackSignalKind.SCROLL)
     dwell = feedback_feature_deltas(event, FeedbackSignalKind.DWELL)
     click = feedback_feature_deltas(event, FeedbackSignalKind.CLICK)
+    like = feedback_feature_deltas(event, FeedbackSignalKind.LIKE)
     dismiss = feedback_feature_deltas(event, FeedbackSignalKind.DISMISS)
 
     assert len(click) == 24
@@ -112,8 +113,9 @@ def test_feature_extraction_is_server_owned_bounded_and_signed_by_kind() -> None
     assert math.isclose(sum(scroll.values()), 0.25)
     assert math.isclose(sum(dwell.values()), 0.75)
     assert math.isclose(sum(click.values()), 1.0)
+    assert math.isclose(sum(like.values()), 1.0)
     assert math.isclose(sum(dismiss.values()), -1.0)
-    assert set(click) == set(dismiss)
+    assert set(click) == set(like) == set(dismiss)
 
 
 async def test_feedback_replays_exact_signal_once_and_rejects_changed_payload() -> None:

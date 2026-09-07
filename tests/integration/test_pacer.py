@@ -275,3 +275,65 @@ async def test_redis_pacer_honors_shared_retry_after_and_script_fallback(
     assert reset_blocked.retry_after_seconds >= 29.0
     assert cold.status is PacerLeaseStatus.WAIT
     assert fallback_grant.status is PacerLeaseStatus.GRANTED
+
+
+def _catalog_refresh_request(quota_scope: str) -> PacerRequest:
+    return PacerRequest(
+        source=Source.PUBLIC_JSONLD,
+        quota_scope=quota_scope,
+        operation=PacerOperation.CATALOG_REFRESH,
+    )
+
+
+async def test_an_idle_catalog_bucket_outlives_its_refill_window_and_still_grants() -> None:
+    """An hourly source must not be deferred purely because its bucket expired between runs.
+
+    A missing bucket is treated as lost state and fails throttle-first, which is correct for a
+    real eviction. When retention covered only one refill window, ordinary idleness produced the
+    same signal: every source on an hourly cadence found its bucket gone on every attempt, was
+    told to wait, and had its durable refresh paused before any provider call.
+    """
+    async with _redis_namespace() as (raw, prefix):
+        pacer = RedisPacer(
+            os.environ["EC_REDIS_URL"],
+            rate_per_sec=5.0,
+            burst=10,
+            key_prefix=prefix,
+        )
+        request = _catalog_refresh_request("catalog:hourly-source")
+        try:
+            first = await pacer.acquire(request)
+            ttl_ms = await raw.pttl(pacer.bucket_key(request))
+            # Idling past a full refill window must not discard the bucket.
+            await asyncio.sleep(2.5)
+            second = await pacer.acquire(request)
+            third = await pacer.acquire(request)
+        finally:
+            await pacer.aclose()
+
+    # The very first touch of a never-seen bucket still starts empty.
+    assert first.status is PacerLeaseStatus.WAIT
+    # ...but the bucket must survive far longer than the burst/rate refill window.
+    assert ttl_ms > 60_000, "an idle bucket must outlive ordinary cadence gaps"
+    assert second.status is PacerLeaseStatus.GRANTED
+    assert third.status is PacerLeaseStatus.GRANTED
+
+
+async def test_retained_bucket_still_enforces_the_shared_rate() -> None:
+    """Retaining state longer must not hand back capacity that was already spent."""
+    async with _redis_namespace() as (raw, prefix):
+        pacer = RedisPacer(
+            os.environ["EC_REDIS_URL"],
+            rate_per_sec=0.001,
+            burst=2,
+            key_prefix=prefix,
+        )
+        request = _catalog_refresh_request("catalog:spent-source")
+        try:
+            await _seed_bucket(raw, pacer, request, tokens=2.0)
+            leases = [await pacer.acquire(request) for _ in range(4)]
+        finally:
+            await pacer.aclose()
+
+    assert sum(lease.status is PacerLeaseStatus.GRANTED for lease in leases) == 2
+    assert sum(lease.status is PacerLeaseStatus.WAIT for lease in leases) == 2

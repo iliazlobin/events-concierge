@@ -1,5 +1,6 @@
 "use client";
 
+import { Play, RefreshCw } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState } from "react";
 
 import { getAdminCommands } from "@/lib/admin-api";
@@ -136,16 +137,22 @@ export function CommandsView({
   return (
     <div className={kit.page}>
       <PageHead
-        eyebrow="operations / durable-queue"
+        eyebrow="Control room / command queue"
         title="Command queue"
         sub="The fleet executes one refresh command at a time. This is who holds that slot, how long they have held it, and what is waiting behind them."
+        statValue={running ? "Held" : "Free"}
+        statLabel="shared slot"
       />
 
       <div className={kit.toolbar}>
         <Segment options={FILTERS} value={filter} onChange={setFilter} label="Status" />
         <span className={kit.spacer} />
-        <Action onClick={() => void load()} disabled={loading}>{loading ? "Refreshing" : "Refresh"}</Action>
+        <Action onClick={() => void load()} disabled={loading}>
+          <RefreshCw aria-hidden="true" className={loading ? "spin" : undefined} />
+          {loading ? "Refreshing" : "Refresh data"}
+        </Action>
         <Action onClick={onRefreshDue} disabled={refreshSubmitting || refreshDuePending} primary>
+          <Play aria-hidden="true" />
           {refreshDuePending ? "Run in flight" : "Run due sources"}
         </Action>
       </div>
