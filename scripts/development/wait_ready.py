@@ -11,6 +11,7 @@ expected = {
     "events-concierge-" + name
     for name in [
         "api",
+        "admin",
         "frontend",
         "temporal-transactional",
         "temporal-catalog",
@@ -42,7 +43,9 @@ for _ in range(120):
         ):
             pending.append(name)
     if not pending:
-        print("All eight application deployments have one updated, available, ready replica")
+        print(
+            "All nine application and admin deployments have one updated, available, ready replica"
+        )
         break
     print("Waiting:", ", ".join(pending), flush=True)
     time.sleep(5)
