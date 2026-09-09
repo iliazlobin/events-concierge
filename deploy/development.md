@@ -30,7 +30,7 @@ State is in `gs://iz27-foundation-development-state/events-concierge/development
 export KUBECONFIG="$PWD/.local/kubeconfig"
 gcloud container clusters get-credentials ec-dev --zone=us-west1-a --dns-endpoint --project=project-9c8cce04-f94d-40fc-aa6 --account=iliazlobin27@gmail.com
 kubectl create namespace events-concierge-dev --dry-run=client -o yaml | kubectl apply -f -
-python3 scripts/development/secrets.py --project-to-kubernetes
+python3 scripts/development/bootstrap_secrets.py --project-to-kubernetes
 helm upgrade --install ec-dev-data deploy/helm/events-concierge-dev-data -n events-concierge-dev --wait --timeout 10m
 helm upgrade --install ec-dev-temporal temporal --repo https://go.temporal.io/helm-charts --version 1.6.0 -n events-concierge-dev -f deploy/helm/temporal-development.yaml --wait --timeout 15m
 ```
@@ -46,10 +46,12 @@ python3 scripts/development/release_values.py --app-image "$APP_IMAGE" --web-ima
 helm upgrade --install events-concierge deploy/helm/events-concierge -n events-concierge-dev -f deploy/helm/events-concierge/values-development.yaml -f .local/release-values.yaml --wait --wait-for-jobs --timeout 10m
 # After migration succeeds, deploy the explicitly tested development provider.
 helm upgrade events-concierge deploy/helm/events-concierge -n events-concierge-dev -f deploy/helm/events-concierge/values-development.yaml -f .local/release-values.yaml --set global.releasePhase=application --set global.runtimeProviderReady=true --wait --timeout 10m
-kubectl -n events-concierge-dev port-forward service/events-concierge-frontend 3000:3000
+kubectl -n events-concierge-dev exec -i deployment/events-concierge-api -- python - < scripts/development/promote_workers.py
+kubectl -n events-concierge-dev exec -i deployment/events-concierge-api -- python - < scripts/development/smoke.py
+kubectl -n events-concierge-dev port-forward service/events-concierge-frontend 13000:3000
 ```
 
-Browse http://localhost:3000. Access remains localhost-only. Recurring jobs and autoscaling are disabled. One node and one replica mean downtime during replacement and upgrades; disks remain zonal. Do not use this profile as production.
+Browse http://localhost:13000. Access remains localhost-only. Recurring jobs and autoscaling are disabled. One node and one replica mean downtime during replacement and upgrades; disks remain zonal. Do not use this profile as production.
 
 ## Manual recovery
 

@@ -1,4 +1,4 @@
-# Explicit private test environment. Real external integrations remain disabled.
+# Private low-traffic development. Real external integrations remain disabled.
 global:
   deploymentProfile: development
   environment: development
@@ -6,65 +6,132 @@ global:
   releasePhase: migration
 applicationConfig:
   EC_ENV: development
-  EC_MOCK_CLOUD: "true"
+  EC_MOCK_CLOUD: 'true'
   EC_RUNTIME_PROVIDER_FACTORY: events_concierge.deployment.development_runtime:build_runtime_ports
   EC_GCP_PROJECT: project-9c8cce04-f94d-40fc-aa6
   EC_GCS_CLAIM_CHECK_BUCKET: iz27-ec-dev-payloads
   EC_GCS_CLAIM_CHECK_PREFIX: events-concierge/claim-check/v1
-  EC_PUBLIC_BASE_URL: http://localhost:3000
+  EC_PUBLIC_BASE_URL: http://localhost:13000
   EC_UI_AUTH_START_URL: /auth/login
-  EC_OIDC_BFF_ENABLED: "false"
-  EC_OIDC_CLIENT_SECRET_FILE: ""
-  EC_EMAIL_PROVIDER_TOKEN_FILE: ""
+  EC_OIDC_BFF_ENABLED: 'false'
+  EC_OIDC_CLIENT_SECRET_FILE: null
   EC_TEMPORAL_TARGET: ec-dev-temporal-frontend:7233
   EC_TEMPORAL_NAMESPACE: events-development
-  EC_TEMPORAL_TLS_ENABLED: "false"
-  EC_TEMPORAL_TLS_DOMAIN: ""
-  EC_TEMPORAL_API_KEY_FILE: ""
-  EC_TEMPORAL_WORKER_VERSIONING_ENABLED: "true"
-  EC_TEMPORAL_WORKER_MAX_CONCURRENT_WORKFLOW_TASKS: "1"
-  EC_TEMPORAL_WORKER_MAX_CONCURRENT_ACTIVITIES: "1"
+  EC_TEMPORAL_TLS_ENABLED: 'false'
+  EC_TEMPORAL_TLS_DOMAIN: ''
+  EC_TEMPORAL_API_KEY_FILE: null
+  EC_TEMPORAL_WORKER_VERSIONING_ENABLED: 'true'
+  EC_TEMPORAL_WORKER_MAX_CONCURRENT_WORKFLOW_TASKS: '2'
+  EC_TEMPORAL_WORKER_MAX_CONCURRENT_ACTIVITIES: '1'
   EC_DATABASE_CONNECTION_MODE: development_plaintext
-  EC_DATABASE_POOL_SIZE: "2"
-  EC_DATABASE_MAX_OVERFLOW: "0"
+  EC_DATABASE_POOL_SIZE: '2'
+  EC_DATABASE_MAX_OVERFLOW: '0'
   EC_PACER_BACKEND: redis
-  EC_ADMIN_INGESTION_ENABLED: "false"
-  EC_CATALOG_INGESTION_SCHEDULER_ENABLED: "false"
-  EC_GOOGLE_CALENDAR_ENABLED: "false"
+  EC_ADMIN_INGESTION_ENABLED: 'false'
+  EC_CATALOG_INGESTION_SCHEDULER_ENABLED: 'false'
+  EC_GOOGLE_CALENDAR_ENABLED: 'false'
 cloudSqlProxy:
   enabled: false
 secretManager:
   enabled: true
   projectId: project-9c8cce04-f94d-40fc-aa6
   runtimeSecrets:
-    - {fileName: EC_DATABASE_URL, secretName: ec-dev-database-url, version: "1"}
-    - {fileName: EC_REDIS_URL, secretName: ec-dev-redis-url, version: "1"}
+  - fileName: EC_DATABASE_URL
+    secretName: ec-dev-database-url
+    version: '1'
+  - fileName: EC_REDIS_URL
+    secretName: ec-dev-redis-url
+    version: '1'
   migrationSecrets:
-    - {fileName: EC_MIGRATION_URL, secretName: ec-dev-migration-url, version: "1"}
-    - {fileName: EC_APP_ROLE_PASSWORD, secretName: ec-dev-app-role-password, version: "1"}
+  - fileName: EC_MIGRATION_URL
+    secretName: ec-dev-migration-url
+    version: '1'
+  - fileName: EC_APP_ROLE_PASSWORD
+    secretName: ec-dev-app-role-password
+    version: '1'
 workloads:
-  frontend: {replicas: 1, pdb: {enabled: false}}
-  api: {replicas: 1, pdb: {enabled: false}}
-  temporal-transactional: {replicas: 1, pdb: {enabled: false}, resources: {requests: {cpu: 100m, memory: 256Mi}}}
-  temporal-catalog: {replicas: 1, pdb: {enabled: false}, resources: {requests: {cpu: 100m, memory: 256Mi}}}
-  request-starter: {replicas: 1, pdb: {enabled: false}}
-  notifier: {replicas: 1, pdb: {enabled: false}}
-  account-erasure: {replicas: 1, pdb: {enabled: false}}
-  change-delivery: {replicas: 1, pdb: {enabled: false}}
+  frontend:
+    replicas: 1
+    pdb:
+      enabled: false
+    resources:
+      requests:
+        cpu: 25m
+  api:
+    replicas: 1
+    pdb:
+      enabled: false
+    resources:
+      requests:
+        cpu: 100m
+  temporal-transactional:
+    replicas: 1
+    pdb:
+      enabled: false
+    resources:
+      requests:
+        cpu: 50m
+        memory: 256Mi
+  temporal-catalog:
+    replicas: 1
+    pdb:
+      enabled: false
+    resources:
+      requests:
+        cpu: 50m
+        memory: 256Mi
+  request-starter:
+    replicas: 1
+    pdb:
+      enabled: false
+    resources:
+      requests:
+        cpu: 25m
+  notifier:
+    replicas: 1
+    pdb:
+      enabled: false
+    resources:
+      requests:
+        cpu: 25m
+  account-erasure:
+    replicas: 1
+    pdb:
+      enabled: false
+    resources:
+      requests:
+        cpu: 25m
+  change-delivery:
+    replicas: 1
+    pdb:
+      enabled: false
+    resources:
+      requests:
+        cpu: 25m
 jobs:
-  catalogRefresh: {enabled: false}
-  catalogRetry: {enabled: false}
+  catalogRefresh:
+    enabled: false
+  catalogRetry:
+    enabled: false
 maintenance:
   enabled: false
-gateway: {enabled: false}
-networkPolicy: {enabled: true}
-monitoring: {enabled: false}
+gateway:
+  enabled: false
+networkPolicy:
+  enabled: true
+monitoring:
+  enabled: false
 autoscaling:
-  frontend: {enabled: false}
-  api: {enabled: false}
-
-catalogDispatcher: {enabled: false}
+  frontend:
+    enabled: false
+  api:
+    enabled: false
+catalogDispatcher:
+  enabled: false
 maintenanceCronJobs:
-  handoff-expiry: {enabled: false}
-  lifecycle-invariants: {enabled: false}
-podMonitoring: {enabled: false}
+  handoff-expiry:
+    enabled: false
+  lifecycle-invariants:
+    enabled: false
+podMonitoring:
+  enabled: false

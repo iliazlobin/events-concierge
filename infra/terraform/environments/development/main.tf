@@ -69,7 +69,10 @@ resource "google_container_cluster" "development" {
     cluster_secondary_range_name  = "gke-pods"
     services_secondary_range_name = "gke-services"
   }
-  private_cluster_config { enable_private_nodes = true }
+  private_cluster_config {
+    enable_private_nodes    = true
+    enable_private_endpoint = true
+  }
   control_plane_endpoints_config {
     dns_endpoint_config { allow_external_traffic = true }
     ip_endpoints_config { enabled = false }
