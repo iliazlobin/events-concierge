@@ -10,6 +10,7 @@ from concurrent.futures import ThreadPoolExecutor
 import httpx
 from temporalio import workflow
 from temporalio.client import WorkflowExecutionStatus
+from temporalio.service import RPCError, RPCStatusCode
 from temporalio.worker import UnsandboxedWorkflowRunner, Worker
 
 from events_concierge.config import get_settings
@@ -67,6 +68,16 @@ async def main():
         handle = client.get_workflow_handle(
             request_workflow_id(uuid.UUID(tenant), uuid.UUID(request))
         )
+        # Intake may durably defer the start to RequestStartWorker.
+        async with asyncio.timeout(60):
+            while True:
+                try:
+                    await handle.describe()
+                    break
+                except RPCError as error:
+                    if error.status != RPCStatusCode.NOT_FOUND:
+                        raise
+                    await asyncio.sleep(0.5)
         result = await asyncio.wait_for(handle.result(), timeout=180)
         description = await handle.describe()
         assert description.status == WorkflowExecutionStatus.COMPLETED

@@ -49,7 +49,7 @@ helm upgrade events-concierge deploy/helm/events-concierge -n events-concierge-d
 python3 scripts/development/wait_ready.py
 kubectl -n events-concierge-dev exec -i deployment/events-concierge-api -- python - < scripts/development/promote_workers.py
 kubectl -n events-concierge-dev exec -i deployment/events-concierge-api -- python - < scripts/development/smoke.py
-kubectl -n events-concierge-dev port-forward service/events-concierge-frontend 13000:3000
+kubectl -n events-concierge-dev port-forward service/events-concierge-frontend 13000:80
 ```
 
 Browse http://localhost:13000. Access remains localhost-only. Recurring jobs and autoscaling are disabled. Helm readiness alone is insufficient with `maxUnavailable=1`; the explicit replica check is required. One node and one replica mean downtime during replacement and upgrades; disks remain zonal. Do not use this profile as production.
