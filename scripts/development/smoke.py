@@ -1,5 +1,6 @@
 """Execute in the private API pod. Creates only synthetic development fixtures."""
 
+import argparse
 import asyncio
 import json
 import os
@@ -113,4 +114,14 @@ async def main():
     await dispose_engine()
 
 
-asyncio.run(main())
+async def repeated():
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--repeat", type=int, default=1, choices=range(1, 21))
+    args = parser.parse_args()
+    for index in range(args.repeat):
+        await main()
+        if index + 1 < args.repeat:
+            await asyncio.sleep(10)
+
+
+asyncio.run(repeated())

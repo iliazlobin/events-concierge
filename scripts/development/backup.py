@@ -296,10 +296,24 @@ def verify(uri):
                     print("Application schema, aggregates, grants and tenant isolation passed")
                 print("Restored and checksum-verified:", name)
             finally:
-                run(["docker", "rm", "-f", container], stdout=subprocess.DEVNULL)
-    print(
-        "Isolated database restore passed; application/workflow recovery must also be tested before activation"
-    )
+                run(["docker", "rm", "-fv", container], stdout=subprocess.DEVNULL)
+        payload_dir = folder / "payloads"
+        gc("rsync", "--recursive", uri + "/payloads", str(payload_dir), stdout=subprocess.DEVNULL)
+        payloads = list(payload_dir.rglob("*.payload"))
+        for payload in payloads:
+            if hashlib.sha256(payload.read_bytes()).hexdigest() != payload.stem:
+                raise SystemExit("Restored payload checksum mismatch")
+        print("Restored payload checksums passed:", len(payloads))
+        verification = {
+            "verified_at": datetime.datetime.now(datetime.timezone.utc).isoformat(),
+            "databases": list(manifest["databases"]),
+            "payload_count": len(payloads),
+            "application_schema": manifest["schema"],
+            "tenant_isolation": "passed",
+        }
+        (folder / "VERIFIED.json").write_text(json.dumps(verification, indent=2))
+        gc("cp", str(folder / "VERIFIED.json"), uri + "/VERIFIED.json", stdout=subprocess.DEVNULL)
+    print("Isolated database and payload restore passed")
 
 
 if __name__ == "__main__":

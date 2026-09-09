@@ -191,7 +191,10 @@ jobs:
           EC_IMAGE: events-concierge:ci
           EC_WEB_IMAGE: events-concierge-web:ci
           EC_RELEASE_REVISION: ${{ github.sha }}
-        run: docker compose --profile app up -d --wait
+        run: |
+          docker compose --profile app up -d
+          # Worker images intentionally have no healthcheck; verify them separately below.
+          docker compose --profile app up -d --wait api frontend
 
       - name: Run non-mutating candidate-stack canary
         run: |
