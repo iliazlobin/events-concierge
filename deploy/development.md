@@ -42,16 +42,17 @@ Secret values are generated directly into Secret Manager. Version 1 is pinned an
 Build the backend and `web/Dockerfile` with `docker buildx build --platform linux/amd64`, using the committed revision as backend `VCS_REF`. Push to `us-west1-docker.pkg.dev/project-9c8cce04-f94d-40fc-aa6/ec-dev/`. Bind immutable registry digests:
 
 ```bash
-python3 scripts/development/release_values.py --app-image "$APP_IMAGE" --web-image "$WEB_IMAGE" --output .local/release-values.yaml
+python3 scripts/development/release_values.py --app-image "$APP_IMAGE" --web-image "$WEB_IMAGE" --revision "$BACKEND_REVISION" --output .local/release-values.yaml
 helm upgrade --install events-concierge deploy/helm/events-concierge -n events-concierge-dev -f deploy/helm/events-concierge/values-development.yaml -f .local/release-values.yaml --wait --wait-for-jobs --timeout 10m
 # After migration succeeds, deploy the explicitly tested development provider.
 helm upgrade events-concierge deploy/helm/events-concierge -n events-concierge-dev -f deploy/helm/events-concierge/values-development.yaml -f .local/release-values.yaml --set global.releasePhase=application --set global.runtimeProviderReady=true --wait --timeout 10m
+python3 scripts/development/wait_ready.py
 kubectl -n events-concierge-dev exec -i deployment/events-concierge-api -- python - < scripts/development/promote_workers.py
 kubectl -n events-concierge-dev exec -i deployment/events-concierge-api -- python - < scripts/development/smoke.py
 kubectl -n events-concierge-dev port-forward service/events-concierge-frontend 13000:3000
 ```
 
-Browse http://localhost:13000. Access remains localhost-only. Recurring jobs and autoscaling are disabled. One node and one replica mean downtime during replacement and upgrades; disks remain zonal. Do not use this profile as production.
+Browse http://localhost:13000. Access remains localhost-only. Recurring jobs and autoscaling are disabled. Helm readiness alone is insufficient with `maxUnavailable=1`; the explicit replica check is required. One node and one replica mean downtime during replacement and upgrades; disks remain zonal. Do not use this profile as production.
 
 ## Manual recovery
 

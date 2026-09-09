@@ -15,7 +15,7 @@ concurrency:
   cancel-in-progress: true
 
 env:
-  UV_FROZEN: "1"
+  UV_LOCKED: "1"
 
 jobs:
   static-and-unit:

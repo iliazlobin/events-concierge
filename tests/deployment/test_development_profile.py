@@ -10,6 +10,7 @@ import yaml
 from events_concierge.adapters.gcs import GcsObjectStore
 from events_concierge.config import Settings
 from events_concierge.runtime import load_runtime_ports
+from events_concierge.workflows.temporal_client import validate_temporal_settings
 
 ROOT = pathlib.Path(__file__).resolve().parents[2]
 HELM = os.environ.get("HELM", "helm")
@@ -115,6 +116,7 @@ class DevelopmentTests(unittest.TestCase):
         config["EC_REDIS_URL"] = "redis://:test@ec-dev-redis:6379/0"
         with patch.dict(os.environ, config, clear=True):
             settings = Settings(_env_file=None)
+        validate_temporal_settings(settings)
         self.assertEqual(settings.env, "development")
         self.assertTrue(settings.mock_cloud)
         self.assertEqual(settings.temporal_worker_max_concurrent_workflow_tasks, 2)

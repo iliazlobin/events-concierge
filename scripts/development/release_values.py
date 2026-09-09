@@ -13,7 +13,10 @@ p = argparse.ArgumentParser()
 p.add_argument("--app-image", required=True)
 p.add_argument("--web-image", required=True)
 p.add_argument("--output", required=True)
+p.add_argument("--revision", required=True, help="Backend image source commit")
 a = p.parse_args()
+if not re.fullmatch("[0-9a-f]{40}", a.revision):
+    raise SystemExit("Full backend source commit required")
 
 
 def image(value):
@@ -35,7 +38,7 @@ v = {
     "global": {
         "appImage": image(a.app_image),
         "frontendImage": image(a.web_image),
-        "releaseRevision": subprocess.check_output(["git", "rev-parse", "HEAD"], text=True).strip(),
+        "releaseRevision": a.revision,
     },
     "serviceAccounts": {
         k: {"name": "events-concierge-" + k, "gcpServiceAccount": email}
