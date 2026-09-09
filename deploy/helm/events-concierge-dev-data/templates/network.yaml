@@ -1,0 +1,57 @@
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata: {name: ec-dev-default-deny}
+spec:
+  podSelector: {}
+  policyTypes: [Ingress, Egress]
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata: {name: ec-dev-internal}
+spec:
+  podSelector:
+    matchLabels: {app.kubernetes.io/part-of: events-concierge}
+  policyTypes: [Ingress, Egress]
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels: {app.kubernetes.io/part-of: events-concierge}
+      ports:
+        - {port: 5432, protocol: TCP}
+        - {port: 6379, protocol: TCP}
+        - {port: 7233, protocol: TCP}
+        - {port: 7234, protocol: TCP}
+        - {port: 7235, protocol: TCP}
+        - {port: 7239, protocol: TCP}
+        - {port: 6933, protocol: TCP}
+        - {port: 6934, protocol: TCP}
+        - {port: 6935, protocol: TCP}
+        - {port: 6939, protocol: TCP}
+        - {port: 8000, protocol: TCP}
+  egress:
+    - to:
+        - podSelector:
+            matchLabels: {app.kubernetes.io/part-of: events-concierge}
+      ports:
+        - {port: 5432, protocol: TCP}
+        - {port: 6379, protocol: TCP}
+        - {port: 7233, protocol: TCP}
+        - {port: 7234, protocol: TCP}
+        - {port: 7235, protocol: TCP}
+        - {port: 7239, protocol: TCP}
+        - {port: 6933, protocol: TCP}
+        - {port: 6934, protocol: TCP}
+        - {port: 6935, protocol: TCP}
+        - {port: 6939, protocol: TCP}
+        - {port: 8000, protocol: TCP}
+    - to:
+        - namespaceSelector:
+            matchLabels: {kubernetes.io/metadata.name: kube-system}
+      ports: [{port: 53, protocol: UDP}, {port: 53, protocol: TCP}]
+    - to: [{ipBlock: {cidr: 169.254.169.254/32}}]
+      ports: [{port: 80, protocol: TCP}]
+    - to:
+        - ipBlock:
+            cidr: 0.0.0.0/0
+            except: [10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16, 169.254.0.0/16]
+      ports: [{port: 443, protocol: TCP}]

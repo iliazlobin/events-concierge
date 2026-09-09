@@ -42,3 +42,13 @@ spikes/**/.venv/
 
 # OS
 .DS_Store
+
+# Isolated development deployment credentials and plans
+.local/
+infra/terraform/environments/development/backend.tf
+
+# Terraform working directories and sensitive local state/plans
+**/.terraform/
+*.tfstate
+*.tfstate.*
+*.tfplan

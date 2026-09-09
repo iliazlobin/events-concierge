@@ -15,8 +15,8 @@ spec:
   strategy:
     type: RollingUpdate
     rollingUpdate:
-      maxSurge: 1
-      maxUnavailable: 0
+      maxSurge: {{ ternary 0 1 (eq (default "managed" $root.Values.global.deploymentProfile) "development") }}
+      maxUnavailable: {{ ternary 1 0 (eq (default "managed" $root.Values.global.deploymentProfile) "development") }}
   selector:
     matchLabels:
       {{- include "events-concierge.selectorLabels" (dict "root" $root "component" $name) | nindent 6 }}

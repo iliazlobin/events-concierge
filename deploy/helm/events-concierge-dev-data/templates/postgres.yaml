@@ -1,0 +1,60 @@
+{{- range $db := list "application" "temporal" }}
+{{- $application := eq $db "application" }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: ec-dev-{{ $db }}-postgres
+spec:
+  type: ClusterIP
+  selector: {ec-store: {{ $db }}-postgres}
+  ports: [{name: postgres, port: 5432, targetPort: 5432}]
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: ec-dev-{{ $db }}-postgres
+spec:
+  serviceName: ec-dev-{{ $db }}-postgres
+  replicas: 1
+  selector:
+    matchLabels: {ec-store: {{ $db }}-postgres}
+  template:
+    metadata:
+      labels:
+        ec-store: {{ $db }}-postgres
+        app.kubernetes.io/part-of: events-concierge
+    spec:
+      automountServiceAccountToken: false
+      terminationGracePeriodSeconds: 60
+      securityContext: {fsGroup: 999, seccompProfile: {type: RuntimeDefault}}
+      containers:
+        - name: postgres
+          image: {{ ternary $.Values.postgres.applicationImage $.Values.postgres.temporalImage $application | quote }}
+          args: ["-c", "max_connections=80", "-c", "shared_buffers=128MB"]
+          env:
+            - {name: PGDATA, value: /var/lib/postgresql/data/pgdata}
+            - {name: POSTGRES_USER, value: {{ ternary "ec_owner" "temporal" $application }}}
+            - {name: POSTGRES_DB, value: {{ ternary "events" "temporal" $application }}}
+            - name: POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef: {name: ec-dev-{{ $db }}-postgres, key: password}
+          ports: [{name: postgres, containerPort: 5432}]
+          resources:
+            requests: {cpu: 100m, memory: 256Mi}
+            limits: {cpu: "1", memory: 768Mi}
+          startupProbe:
+            exec: {command: [sh, -c, 'pg_isready -U "$POSTGRES_USER" -d "$POSTGRES_DB"']}
+            periodSeconds: 2
+            failureThreshold: 90
+          readinessProbe:
+            exec: {command: [sh, -c, 'pg_isready -U "$POSTGRES_USER" -d "$POSTGRES_DB"']}
+          livenessProbe:
+            exec: {command: [sh, -c, 'pg_isready -U "$POSTGRES_USER" -d "$POSTGRES_DB"']}
+            periodSeconds: 20
+          volumeMounts:
+            - {name: data, mountPath: /var/lib/postgresql/data}
+      volumes:
+        - name: data
+          persistentVolumeClaim: {claimName: ec-dev-{{ $db }}}
+{{- end }}
