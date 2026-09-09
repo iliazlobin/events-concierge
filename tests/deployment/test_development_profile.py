@@ -67,6 +67,19 @@ class DevelopmentTests(unittest.TestCase):
                 self.assertEqual(d["spec"]["replicas"], 1)
                 self.assertFalse(d["spec"]["template"]["spec"].get("initContainers"))
 
+    def test_admin_is_loopback_only_and_scheduler_stays_disabled(self):
+        docs = [d for d in yaml.safe_load_all(self.render().stdout) if d]
+        admin = next(d for d in docs if d.get("metadata", {}).get("name") == "events-concierge-admin")
+        containers = {c["name"]: c for c in admin["spec"]["template"]["spec"]["containers"]}
+        api = containers["api"]
+        env = {e["name"]: e["value"] for e in api["env"]}
+        self.assertEqual(env["EC_ADMIN_INGESTION_ENABLED"], "true")
+        self.assertEqual(env["EC_CATALOG_INGESTION_SCHEDULER_ENABLED"], "false")
+        self.assertEqual(api["command"][api["command"].index("--host") + 1], "127.0.0.1")
+        web_env = {e["name"]: e["value"] for e in containers["frontend"]["env"]}
+        self.assertEqual(web_env["HOSTNAME"], "127.0.0.1")
+        self.assertFalse(any(d["kind"] == "Service" and d["spec"].get("selector", {}).get("app.kubernetes.io/name") == "events-concierge-admin" for d in docs))
+
     def test_profile_rejects_other_namespaces_and_public_gateway(self):
         self.assertNotEqual(self.render("production").returncode, 0)
         self.assertNotEqual(self.render(extra=("--set", "gateway.enabled=true")).returncode, 0)

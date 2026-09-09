@@ -54,6 +54,16 @@ kubectl -n events-concierge-dev port-forward service/events-concierge-frontend 1
 
 Browse http://localhost:13000. Access remains localhost-only. Recurring jobs and autoscaling are disabled. Helm readiness alone is insufficient with `maxUnavailable=1`; the explicit replica check is required. One node and one replica mean downtime during replacement and upgrades; disks remain zonal. Do not use this profile as production.
 
+## Private admin
+
+The development admin runs in `events-concierge-admin`: its frontend and API both bind to pod loopback. There is no Service; access requires Kubernetes port-forward permission. The ordinary API keeps administration disabled. Scheduled ingestion remains disabled; operator commands are explicit actions.
+
+```bash
+kubectl -n events-concierge-dev port-forward deployment/events-concierge-admin 13001:3000
+```
+
+Open http://localhost:13001/admin. The dedicated pod uses the same live development database and current immutable images. Its readiness checks exercise the admin overview through both API and frontend.
+
 ## Manual recovery
 
 ```bash
