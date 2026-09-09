@@ -183,7 +183,7 @@ jobs:
           docker run --rm --entrypoint python events-concierge:ci -c "import events_concierge"
           test "$(docker run --rm --entrypoint id events-concierge:ci -u)" != "0"
           test "$(docker run --rm --entrypoint id events-concierge-web:ci -u)" != "0"
-          test "$(docker inspect --format '{{ index .Config.Labels \"org.opencontainers.image.revision\" }}' events-concierge:ci)" = "${GITHUB_SHA}"
+          test "$(docker inspect --format '{{ index .Config.Labels "org.opencontainers.image.revision" }}' events-concierge:ci)" = "${GITHUB_SHA}"
           test "$(docker inspect --format '{{ json .Config.Healthcheck }}' events-concierge:ci)" = "null"
 
       - name: Start the exact candidate image

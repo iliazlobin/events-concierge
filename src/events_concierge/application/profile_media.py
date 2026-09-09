@@ -27,7 +27,8 @@ from PIL import Image, ImageOps
 
 # A decompression-bomb ceiling applied by Pillow itself, set well under the default so a hostile
 # upload trips it before allocation rather than after.
-Image.MAX_IMAGE_PIXELS = 8_000_000
+_MAX_IMAGE_PIXELS: Final = 8_000_000
+Image.MAX_IMAGE_PIXELS = _MAX_IMAGE_PIXELS
 
 _ACCEPTED_UPLOAD_TYPES: Final = frozenset({"image/png", "image/jpeg", "image/webp"})
 _MAX_UPLOAD_BYTES: Final = 32 * 1024
@@ -140,7 +141,7 @@ def _reject_unsupported_shape(source: Image.Image) -> None:
         raise AvatarRejectedError("That image could not be read.")
     if width > _MAX_SOURCE_EDGE or height > _MAX_SOURCE_EDGE:
         raise AvatarRejectedError("Images must be 4096 pixels or smaller on each side.")
-    if width * height > Image.MAX_IMAGE_PIXELS:
+    if width * height > _MAX_IMAGE_PIXELS:
         raise AvatarRejectedError("That image is too large to process.")
     if getattr(source, "n_frames", 1) > 1:
         # One stored still cannot represent an animation, and multi-frame decoding multiplies the

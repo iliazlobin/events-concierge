@@ -14,6 +14,7 @@ from temporalio.worker import UnsandboxedWorkflowRunner, Worker
 from events_concierge.config import get_settings
 from events_concierge.deployment.development_runtime import build_runtime_ports
 from events_concierge.domain.ids import request_workflow_id
+from events_concierge.infra.db import dispose_engine, init_engine
 from events_concierge.workflows.temporal_client import connect_temporal
 
 
@@ -28,6 +29,7 @@ async def main():
     s = get_settings()
     if s.env != "development" or not s.mock_cloud:
         raise SystemExit("Synthetic development profile required")
+    init_engine(s.database_url, pool_size=2, max_overflow=0)
     ports = build_runtime_ports(s)
     store = ports.object_store
     fixture = uuid.uuid4()
@@ -107,6 +109,8 @@ async def main():
                 encoded = b"".join(e.SerializeToString() for e in history.events)
                 assert large.encode() not in encoded and len(encoded) < 256 * 1024
         print("Real Temporal / GCS claim-check >2 MiB round-trip passed:", claim_handle.id)
+
+    await dispose_engine()
 
 
 asyncio.run(main())
