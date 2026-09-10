@@ -1,0 +1,38 @@
+.page { min-width: 0; max-width: 1680px; margin: 0 auto; }
+.root {
+  --panel: var(--kit-surface);
+  --panel-raised: var(--kit-surface-raised);
+  --line: var(--kit-line);
+  --line-strong: var(--kit-line-strong);
+  min-width: 0; border: 1px solid var(--kit-line); border-radius: 12px;
+  background: var(--kit-surface); padding: 24px; scroll-margin-top: 80px;
+}
+.button { display: inline-flex; align-items: center; justify-content: center; gap: 7px; color: #c5d3b9; background: #141b0f; border: 1px solid #36422c; border-radius: 6px; padding: 8px 10px; font-size: 11px; cursor: pointer; white-space: nowrap; }
+.button:hover { background: #1d2915; border-color: #62794a; }
+.button:disabled { opacity: .35; cursor: default; }
+.button svg { width: 13px; height: 13px; }
+.root button:focus-visible { outline: 2px solid #c9ff68; outline-offset: 3px; }
+.note { color: #829079; font-size: 11px; line-height: 1.65; margin: 15px 0 0; }
+.note code { overflow-wrap: anywhere; }
+.actions { display: flex; flex-wrap: wrap; gap: 8px; }
+@media (max-width: 760px) {
+  .root { padding: 16px; }
+}
+
+.filters { display: flex; align-items: flex-end; gap: 10px; flex-wrap: wrap; flex: 1 1 540px; min-width: 0; }
+.filters label { display: flex; flex-direction: column; gap: 5px; min-width: 110px; }
+.filters label > span { color: #91a180; font-size: 11px; }
+.filters .sourceFilter { flex: 1 1 200px; max-width: 300px; min-width: 0; }
+.filters select { width: 100%; min-width: 0; height: 40px; padding: 0 10px; color: #d3dec7; border: 1px solid var(--kit-line); border-radius: 6px; background: var(--kit-surface-raised); font: inherit; font-size: 12px; }
+.filters select:focus-visible { outline: 2px solid #c9ff68; outline-offset: 2px; }
+.clear { display: inline-flex; align-items: center; gap: 6px; color: #a7b59b; background: transparent; border: 0; padding: 10px 0; font-size: 12px; cursor: pointer; }
+.clear svg { width: 13px; height: 13px; }
+.runContext { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; margin-bottom: 20px; padding-bottom: 16px; border-bottom: 1px solid #293223; }
+.runContext > span { flex: 1 1 360px; color: #c7dcb5; font-size: 12px; min-width: 0; }
+.runContext code { display: block; color: #8a9b7b; overflow-wrap: anywhere; margin-top: 5px; }
+.runContext p { flex-basis: 100%; color: #829079; font-size: 11px; margin: 0; }
+@media (max-width: 760px) {
+  .filters { flex: 1 1 100%; }
+  .filters .sourceFilter { flex-basis: 100%; max-width: none; }
+  .filters label:not(.sourceFilter) { flex: 1; }
+}

@@ -13,6 +13,7 @@ from temporalio.client import Client
 from temporalio.common import VersioningBehavior, WorkerDeploymentVersion
 from temporalio.worker import Worker, WorkerDeploymentConfig
 
+from ..catalog_runtime import build_catalog_container, verify_catalog_executor_database
 from ..composition import build_container
 from ..config import Settings, get_settings
 from ..infra.logging import configure_logging, get_logger
@@ -35,6 +36,7 @@ from .activities import (
     register_or_rsvp,
     resolve_membership,
     route_to_handoff,
+    set_catalog_container,
     set_container,
     unrsvp,
     write_to_calendar,
@@ -270,10 +272,20 @@ async def run_worker() -> None:
     settings = get_settings()
     configure_logging(settings.log_level, local=settings.env == "local")
     validate_temporal_settings(settings)
-    container = build_container(settings)
-    set_container(container)
+    catalog_profile = (
+        settings.temporal_worker_role == "catalog" and settings.ingestion_executor_enabled
+    )
+    if catalog_profile:
+        catalog_container = build_catalog_container(settings)
+        await verify_catalog_executor_database()
+        set_catalog_container(catalog_container)
+        object_store = catalog_container.object_store
+    else:
+        container = build_container(settings)
+        set_container(container)
+        object_store = container.object_store
 
-    client = await connect_temporal(settings, container.object_store)
+    client = await connect_temporal(settings, object_store, catalog_only=catalog_profile)
     executors: list[ThreadPoolExecutor] = []
     try:
         workers: list[Worker] = []

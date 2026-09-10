@@ -12,6 +12,8 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 from .secret_files import read_secret_file
 
 _MAX_UI_AUTH_URL_LENGTH = 2048
+_MAX_OPERATOR_SUBJECT_LENGTH = 200
+_MAX_OPERATOR_SUBJECTS = 100
 _MIN_PRINTABLE_CODEPOINT = 0x20
 _MAX_URL_PORT = 65535
 _RELEASE_REVISION_PATTERN = r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$"
@@ -20,6 +22,12 @@ _TEMPORAL_TASK_QUEUE_PATTERN = r"^[A-Za-z0-9][A-Za-z0-9._-]{0,199}$"
 _TEMPORAL_WORKER_DEPLOYMENT_PATTERN = r"^[A-Za-z0-9][A-Za-z0-9_-]{0,95}$"
 _SECRET_FILE_FIELDS = (
     ("database_url", "database_url_file", "EC_DATABASE_URL"),
+    ("operator_database_url", "operator_database_url_file", "EC_OPERATOR_DATABASE_URL"),
+    (
+        "ingestion_executor_database_url",
+        "ingestion_executor_database_url_file",
+        "EC_INGESTION_EXECUTOR_DATABASE_URL",
+    ),
     ("redis_url", "redis_url_file", "EC_REDIS_URL"),
     ("temporal_api_key", "temporal_api_key_file", "EC_TEMPORAL_API_KEY"),
     ("oidc_client_secret", "oidc_client_secret_file", "EC_OIDC_CLIENT_SECRET"),
@@ -28,7 +36,9 @@ _SECRET_FILE_FIELDS = (
 
 
 class Settings(BaseSettings):
-    model_config = SettingsConfigDict(env_prefix="EC_", env_file=".env", extra="ignore")
+    model_config = SettingsConfigDict(
+        env_prefix="EC_", env_file=".env", extra="ignore", hide_input_in_errors=True
+    )
 
     env: str = "local"
     log_level: str = "info"
@@ -127,6 +137,8 @@ class Settings(BaseSettings):
     media_local_root: str = "/var/lib/events-concierge/media"
     gcp_project: str | None = None
     gcs_claim_check_bucket: str | None = None
+    # Explicit catalog executors override this to a distinct events-concierge/catalog/ prefix;
+    # their converter and Workload Identity cannot retrieve consumer tenant payloads.
     gcs_claim_check_prefix: str = "events-concierge/claim-check/v1"
 
     # Discovery -- free-crawl first; API connectors are a future adapter swap.
@@ -146,9 +158,23 @@ class Settings(BaseSettings):
     # deployment provides a distinct operator identity/session and database role.  Consumer
     # tenant authentication is never treated as administration authority.
     admin_ingestion_enabled: bool = False
-    # Explicit local/mock-only recurrence for the durable ingestion command queue. The scheduler
-    # performs no provider I/O itself and remains independently disabled outside the Compose app
-    # profile; production recurrence is deployment-owned.
+    # Hosted operators run a separate entrypoint, identity verifier, and database pool. These
+    # settings never install operator routes into the consumer app.
+    operator_api_enabled: bool = False
+    operator_iap_audience: str | None = Field(default=None, min_length=1, max_length=512)
+    operator_public_origin: str | None = None
+    operator_subject_roles: dict[str, Literal["viewer", "operator", "reviewer"]] = Field(
+        default_factory=dict,
+        repr=False,
+    )
+    operator_database_url: str | None = Field(default=None, exclude=True, repr=False)
+    operator_database_url_file: str | None = Field(default=None, exclude=True, repr=False)
+    ingestion_executor_enabled: bool = False
+    ingestion_executor_database_url: str | None = Field(default=None, exclude=True, repr=False)
+    ingestion_executor_database_url_file: str | None = Field(default=None, exclude=True, repr=False)
+    # The local profile runs a loop; production runs this enqueue-only worker with --once from
+    # the deployment scheduler. Both persist the same deterministic command receipts and perform
+    # no provider I/O. Recurrence never depends on whether the hosted operator UI is enabled.
     catalog_ingestion_scheduler_enabled: bool = False
     catalog_ingestion_scheduler_interval_seconds: int = Field(
         default=300,
@@ -351,6 +377,44 @@ class Settings(BaseSettings):
         return value
 
     @model_validator(mode="after")
+    def validate_operator_configuration(self) -> Settings:
+        """Keep a partially provisioned operator process from accepting any request."""
+        if (
+            any(
+                not subject
+                or len(subject) > _MAX_OPERATOR_SUBJECT_LENGTH
+                or not subject.isprintable()
+                or any(char.isspace() for char in subject)
+                for subject in self.operator_subject_roles
+            )
+            or len(self.operator_subject_roles) > _MAX_OPERATOR_SUBJECTS
+        ):
+            raise ValueError("operator subjects must be a bounded explicit identity allowlist")
+        if self.operator_api_enabled:
+            if self.mock_cloud or self.admin_ingestion_enabled:
+                raise ValueError("hosted operator API cannot use the local mock admin profile")
+            if not self.operator_iap_audience or not self.operator_subject_roles:
+                raise ValueError("operator API requires IAP audience and explicit subject roles")
+            if not self.operator_database_url:
+                raise ValueError("operator API requires a separate operator database credential")
+            origin = urlsplit(self.operator_public_origin or "")
+            if (
+                origin.scheme != "https"
+                or not origin.hostname
+                or origin.username
+                or origin.password
+                or origin.path
+                or origin.query
+                or origin.fragment
+            ):
+                raise ValueError(
+                    "operator API requires an exact HTTPS public origin without a path"
+                )
+        if self.ingestion_executor_enabled and not self.ingestion_executor_database_url:
+            raise ValueError("ingestion executor requires a separate database credential")
+        return self
+
+    @model_validator(mode="after")
     def validate_development_database(self) -> Settings:
         if self.database_connection_mode == "development_plaintext" and (
             self.env != "development" or not self.mock_cloud
@@ -361,8 +425,13 @@ class Settings(BaseSettings):
     @model_validator(mode="after")
     def validate_oidc_bff_configuration(self) -> Settings:
         """Reject partial or local BFF activation before any listener can become ready."""
-        if self.catalog_ingestion_scheduler_enabled and not self.admin_ingestion_enabled:
-            raise ValueError("ingestion cadence scheduler requires the local ingestion admin")
+        if self.catalog_ingestion_scheduler_enabled:
+            if self.mock_cloud and not self.admin_ingestion_enabled:
+                raise ValueError("local ingestion cadence scheduler requires local ingestion admin")
+            if not self.mock_cloud and not self.operator_database_url:
+                raise ValueError(
+                    "production cadence requires a separate controller database credential"
+                )
         if self.admin_ingestion_enabled and not self.mock_cloud:
             raise ValueError(
                 "ingestion admin is local-only until a production operator identity is configured"

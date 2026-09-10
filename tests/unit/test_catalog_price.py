@@ -16,7 +16,7 @@ def test_catalog_free_only_predicate_requires_explicit_free_status() -> None:
     """Unknown catalog rows cannot pass a free-only retrieval constraint (FR-4.6)."""
     where, params = PostgresCatalogRepository._constraint_sql(RequestConstraints(budget_free=True))
 
-    assert "start_at >= CURRENT_TIMESTAMP" in where
+    assert "coalesce(end_at, start_at) > CURRENT_TIMESTAMP" in where
     assert "price_status = :price_status" in where
     assert params == {"price_status": "free"}
 
@@ -25,7 +25,8 @@ def test_catalog_retrieval_always_excludes_elapsed_events() -> None:
     """A missing request window cannot allow durable stale rows back into the feed."""
     where, params = PostgresCatalogRepository._constraint_sql(RequestConstraints())
 
-    assert where == "start_at >= CURRENT_TIMESTAMP"
+    assert "coalesce(end_at, start_at) > CURRENT_TIMESTAMP" in where
+    assert "event_status <> 'cancelled'" in where
     assert params == {}
 
 

@@ -5,6 +5,8 @@ from __future__ import annotations
 
 import json
 import re
+from collections.abc import Callable
+from contextlib import AbstractAsyncContextManager
 from datetime import UTC, date, datetime, timedelta
 from typing import Any, cast
 from uuid import UUID, uuid4
@@ -172,23 +174,22 @@ def _catalog_browse_ranges(
     requested = (
         date_ranges
         if date_ranges
-        else (
-            ((starts_after, cast(datetime, starts_before)),)
-            if starts_after is not None
-            else ()
-        )
+        else (((starts_after, cast(datetime, starts_before)),) if starts_after is not None else ())
     )
     if len(requested) > _MAX_CATALOG_DATE_RANGES:
         raise ValueError("catalog browse has too many date ranges")
-    if any(
-        start.tzinfo is None
-        or start.utcoffset() is None
-        or end.tzinfo is None
-        or end.utcoffset() is None
-        or end <= start
-        or end - start > max_window
-        for start, end in requested
-    ) or sum((end - start for start, end in requested), timedelta()) > max_window:
+    if (
+        any(
+            start.tzinfo is None
+            or start.utcoffset() is None
+            or end.tzinfo is None
+            or end.utcoffset() is None
+            or end <= start
+            or end - start > max_window
+            for start, end in requested
+        )
+        or sum((end - start for start, end in requested), timedelta()) > max_window
+    ):
         raise ValueError("catalog browse window is invalid")
     return requested
 
@@ -255,14 +256,22 @@ def _conservative_shared_entities(
 class PostgresCatalogRepository:
     """Implements CatalogRepository. Embeds at normalize time so any index rebuild is model-free."""
 
-    def __init__(self, embedding: EmbeddingPort) -> None:
+    def __init__(
+        self,
+        embedding: EmbeddingPort,
+        *,
+        session_scope: Callable[
+            [], AbstractAsyncContextManager[AsyncSession]
+        ] = system_session_scope,
+    ) -> None:
         self._embedding = embedding
+        self._session_scope = session_scope
 
     async def upsert_candidates(self, candidates: list[CandidateEvent]) -> list[CanonicalEvent]:
         if not candidates:
             return []
         vectors = await self.embed_candidates(candidates)
-        async with system_session_scope() as s:  # catalog is tenant-neutral
+        async with self._session_scope() as s:  # catalog is tenant-neutral
             return await self.upsert_candidates_in_session(s, candidates, vectors)
 
     async def embed_candidates(self, candidates: list[CandidateEvent]) -> list[list[float]]:
@@ -910,6 +919,22 @@ class PostgresCatalogRepository:
         self, constraints: RequestConstraints, intent_embedding: list[float] | None, limit: int
     ) -> list[CanonicalEvent]:
         where, params = self._constraint_sql(constraints)
+        # Request-discovered events may have no registry observation. Once registry-owned,
+        # require the same current/retained admission as catalog browse: rolloff is not cancel.
+        where += """
+            AND (
+                NOT EXISTS (SELECT 1 FROM catalog_event_observations observation
+                            WHERE observation.canonical_event_id = canonical_events.canonical_event_id)
+                OR canonical_event_id IN (
+                    SELECT admitted.canonical_event_id
+                    FROM public.fn_list_retained_catalog_browse_observations_v2(
+                        NULL, :admission_start, :admission_end
+                    ) admitted
+                )
+            )
+        """
+        params["admission_start"] = constraints.time_window.start if constraints.time_window else None
+        params["admission_end"] = constraints.time_window.end if constraints.time_window else None
         params["lim"] = limit
         if intent_embedding is not None:
             params["emb"] = vector_literal(intent_embedding)
@@ -917,11 +942,11 @@ class PostgresCatalogRepository:
                 WITH filtered AS (SELECT * FROM canonical_events WHERE {where}),
                 dense AS (
                     SELECT canonical_event_id,
-                           row_number() OVER (ORDER BY embedding <=> (:emb)::vector) AS r
+                           row_number() OVER (ORDER BY embedding <=> (:emb)::vector, canonical_event_id) AS r
                     FROM filtered WHERE embedding IS NOT NULL LIMIT 200),
                 sparse AS (
                     SELECT canonical_event_id,
-                           row_number() OVER (ORDER BY ts_rank_cd(tsv, plainto_tsquery('english', :q)) DESC) AS r
+                           row_number() OVER (ORDER BY ts_rank_cd(tsv, plainto_tsquery('english', :q)) DESC, canonical_event_id) AS r
                     FROM filtered WHERE tsv @@ plainto_tsquery('english', :q) LIMIT 200),
                 fused AS (
                     SELECT canonical_event_id, sum(1.0/({RRF_K} + r)) AS score
@@ -929,18 +954,18 @@ class PostgresCatalogRepository:
                     GROUP BY canonical_event_id)
                 SELECT ce.* FROM canonical_events ce
                 JOIN fused f USING (canonical_event_id)
-                ORDER BY f.score DESC LIMIT :lim
+                ORDER BY f.score DESC, ce.canonical_event_id LIMIT :lim
             """
             params["q"] = " ".join(constraints.categories) or ""
         else:
-            sql = f"SELECT * FROM canonical_events WHERE {where} ORDER BY start_at ASC LIMIT :lim"
+            sql = f"SELECT * FROM canonical_events WHERE {where} ORDER BY start_at ASC, canonical_event_id ASC LIMIT :lim"
 
-        async with system_session_scope() as s:
+        async with self._session_scope() as s:
             rows = (await s.execute(text(sql), params)).all()
             return [await self._load(s, row.canonical_event_id) for row in rows]
 
     async def get(self, canonical_event_id: UUID) -> CanonicalEvent | None:
-        async with system_session_scope() as s:
+        async with self._session_scope() as s:
             exists = (
                 await s.execute(
                     text("SELECT 1 FROM canonical_events WHERE canonical_event_id = :cid"),
@@ -1024,7 +1049,7 @@ class PostgresCatalogRepository:
         }
         rows: list[Any] = []
         provider_rows: list[Any] = []
-        async with system_session_scope() as session:
+        async with self._session_scope() as session:
             for window_start, window_end in windows:
                 window_params = {
                     **params,
@@ -1135,7 +1160,7 @@ class PostgresCatalogRepository:
 
     async def list_city_facets(self) -> list[CatalogBrowseCity]:
         """Return the bounded global city inventory used by the filter composer."""
-        async with system_session_scope() as session:
+        async with self._session_scope() as session:
             rows = (
                 await session.execute(
                     text(
@@ -1147,8 +1172,7 @@ class PostgresCatalogRepository:
                 )
             ).all()
         return [
-            CatalogBrowseCity(city=str(row.city), event_count=int(row.event_count))
-            for row in rows
+            CatalogBrowseCity(city=str(row.city), event_count=int(row.event_count)) for row in rows
         ]
 
     async def list_topic_facets(
@@ -1190,7 +1214,7 @@ class PostgresCatalogRepository:
             "availability": availability,
         }
         rows: list[Any] = []
-        async with system_session_scope() as session:
+        async with self._session_scope() as session:
             for window_start, window_end in windows:
                 rows.extend(
                     (
@@ -1283,7 +1307,7 @@ class PostgresCatalogRepository:
             "time_zone": time_zone,
         }
         rows: list[Any] = []
-        async with system_session_scope() as session:
+        async with self._session_scope() as session:
             for window_start, window_end in windows:
                 rows.extend(
                     (
@@ -1350,16 +1374,21 @@ class PostgresCatalogRepository:
 
     @staticmethod
     def _constraint_sql(c: RequestConstraints) -> tuple[str, dict[str, object]]:
-        # Source adapters reject elapsed rows when they ingest them, but the durable catalog keeps
-        # those rows after wall time advances. Reapply the invariant at read time so an omitted
-        # request window can never surface—or attempt registration for—an elapsed event.
-        clauses = ["start_at >= CURRENT_TIMESTAMP"]
+        # Archive identity and current eligibility are separate. Ordinary discovery excludes
+        # ended/cancelled events before ranking; explicit windows can retrieve retained history.
+        # Known end times allow ongoing events, with end-exclusive interval boundaries.
+        clauses = [
+            "event_status <> 'cancelled'",
+            "(end_at IS NULL OR end_at > start_at)",
+        ]
+        if c.time_window is None:
+            clauses.append("coalesce(end_at, start_at) > CURRENT_TIMESTAMP")
         params: dict[str, object] = {}
         if c.budget_free:
             clauses.append("price_status = :price_status")
             params["price_status"] = "free"
         if c.time_window is not None:
-            clauses.append("start_at BETWEEN :tw_lo AND :tw_hi")
+            clauses.append("coalesce(end_at, start_at) > :tw_lo AND start_at < :tw_hi")
             params["tw_lo"] = c.time_window.start
             params["tw_hi"] = c.time_window.end
         if c.geo is not None:

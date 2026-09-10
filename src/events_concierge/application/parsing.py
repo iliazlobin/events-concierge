@@ -13,6 +13,8 @@ from ..domain.request import EventRequest, RequestConstraints
 from ..ports.ranking import EmbeddingPort
 
 _CATEGORY_KEYWORDS = {
+    "library": ("library", "libraries"),
+    "family": ("children", "kids", "family"),
     "music": ("music", "concert", "gig", "jazz", "band", "dj", "live"),
     "comedy": ("comedy", "standup", "stand-up", "improv"),
     "tech": ("tech", "technology", "hackathon", "startup", "ai", "developer", "coding"),

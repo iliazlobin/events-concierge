@@ -1,0 +1,57 @@
+{{- if eq (default "managed" .Values.global.deploymentProfile) "development" }}
+apiVersion: secrets-store.csi.x-k8s.io/v1
+kind: SecretProviderClass
+metadata:
+  name: {{ include "events-concierge.fullname" . }}-development-operator
+spec:
+  provider: gke
+  parameters:
+    secrets: |
+      {{- range .Values.developmentAdmin.operatorSecrets }}
+      - resourceName: "projects/{{ $.Values.secretManager.projectId }}/secrets/{{ .secretName }}/versions/{{ .version }}"
+        path: {{ .fileName | quote }}
+      {{- end }}
+{{- if .Values.developmentCatalog.enabled }}
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "events-concierge.fullname" . }}-development-executor
+data:
+  EC_ENV: development
+  EC_MOCK_CLOUD: "true"
+  EC_RELEASE_REVISION: {{ .Values.global.releaseRevision | quote }}
+  EC_IMAGE_DIGEST: {{ .Values.global.appImage.digest | quote }}
+  EC_DATABASE_CONNECTION_MODE: development_plaintext
+  EC_DATABASE_POOL_SIZE: "2"
+  EC_DATABASE_MAX_OVERFLOW: "0"
+  EC_ADMIN_INGESTION_ENABLED: "false"
+  EC_OIDC_BFF_ENABLED: "false"
+  EC_GOOGLE_CALENDAR_ENABLED: "false"
+  EC_CATALOG_INGESTION_SCHEDULER_ENABLED: "false"
+  EC_INGESTION_EXECUTOR_ENABLED: "true"
+  EC_INGESTION_EXECUTOR_DATABASE_URL_FILE: /var/run/secrets/events-concierge/EC_INGESTION_EXECUTOR_DATABASE_URL
+  EC_REDIS_URL_FILE: /var/run/secrets/events-concierge/EC_REDIS_URL
+  EC_PACER_BACKEND: redis
+  EC_RUNTIME_PROVIDER_FACTORY: events_concierge.deployment.development_runtime:build_runtime_ports
+  EC_GCS_CLAIM_CHECK_PREFIX: {{ .Values.developmentCatalog.claimCheckPrefix | quote }}
+  {{- range $key, $value := .Values.applicationConfig }}
+  {{- if or (hasPrefix "EC_TEMPORAL_" $key) (has $key (list "EC_GCP_PROJECT" "EC_GCS_CLAIM_CHECK_BUCKET")) }}
+  {{ $key }}: {{ $value | quote }}
+  {{- end }}
+  {{- end }}
+---
+apiVersion: secrets-store.csi.x-k8s.io/v1
+kind: SecretProviderClass
+metadata:
+  name: {{ include "events-concierge.fullname" . }}-development-executor
+spec:
+  provider: gke
+  parameters:
+    secrets: |
+      {{- range .Values.developmentCatalog.executorSecrets }}
+      - resourceName: "projects/{{ $.Values.secretManager.projectId }}/secrets/{{ .secretName }}/versions/{{ .version }}"
+        path: {{ .fileName | quote }}
+      {{- end }}
+{{- end }}
+{{- end }}

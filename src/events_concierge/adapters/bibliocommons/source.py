@@ -22,7 +22,13 @@ from zoneinfo import ZoneInfo
 import httpx
 from selectolax.parser import HTMLParser
 
+from ...application.ingestion_telemetry import record_ingestion_collection_progress
 from ...domain.catalog_sources import CatalogSource
+from ...domain.catalog_window import (
+    collection_end_at,
+    collection_end_day,
+    collection_reference_time,
+)
 from ...domain.enums import CatalogSourceMode, PriceStatus, Source
 from ...domain.events import CandidateEvent, GeoPoint
 from ...infra.logging import get_logger
@@ -374,8 +380,8 @@ class BiblioCommonsCatalogFetcher:
         if publisher is None:
             raise ValueError("BiblioCommons source must use a reviewed publisher RSS endpoint")
 
-        now = _as_utc(self._now())
-        window = _window_for_publisher(publisher, now)
+        now = _as_utc(collection_reference_time(source, self._now()))
+        window = _window_for_publisher(publisher, now, source)
         candidates = await self._fetch_pages(source, publisher, now, window)
         return _deduplicate(candidates)
 
@@ -426,6 +432,12 @@ class BiblioCommonsCatalogFetcher:
                     )
                     if candidate is not None:
                         candidates.append(candidate)
+                await record_ingestion_collection_progress(
+                    source_key=source.source_key,
+                    request_completed=True,
+                    page_completed=True,
+                    candidate_count=len(candidates),
+                )
                 if len(items) < _ITEMS_PER_PAGE:
                     return candidates
         raise BiblioCommonsFetchError(
@@ -603,14 +615,17 @@ def _request_parameters(
 
 
 def _window_for_publisher(
-    publisher: _BiblioCommonsPublisher, now: datetime
+    publisher: _BiblioCommonsPublisher, now: datetime, source: CatalogSource | None = None
 ) -> _BiblioCommonsWindow | None:
     """Create a closed local-date discovery window only for publishers reviewed with one (FR-3.1)."""
     if publisher.window_days is None:
         return None
     start_date = now.astimezone(_PACIFIC).date()
-    end_date = start_date + timedelta(days=publisher.window_days)
+    end_date = start_date + timedelta(days=source.collection_horizon_days if source is not None else publisher.window_days)
     horizon_end = datetime.combine(end_date, time.min, tzinfo=_PACIFIC).astimezone(UTC)
+    if source is not None:
+        horizon_end = collection_end_at(source, horizon_end)
+        end_date = collection_end_day(source, horizon_end.astimezone(_PACIFIC).date(), _PACIFIC)
     return _BiblioCommonsWindow(start_date, end_date, horizon_end)
 
 

@@ -22,10 +22,11 @@ variable "machine_type" {
   }
 }
 locals {
-  project   = "project-9c8cce04-f94d-40fc-aa6"
-  namespace = "events-concierge-dev"
-  names     = toset(["api", "frontend", "temporal-transactional", "temporal-catalog", "request-starter", "notifier", "account-erasure", "change-delivery", "handoff-expiry", "lifecycle-invariants", "catalog-jobs", "migration", "stores"])
-  secrets   = toset(["database-url", "migration-url", "app-role-password", "postgres-admin", "temporal-postgres-admin", "redis-password", "redis-url"])
+  project           = "project-9c8cce04-f94d-40fc-aa6"
+  namespace         = "events-concierge-dev"
+  names             = toset(["api", "frontend", "temporal-transactional", "temporal-catalog", "request-starter", "notifier", "account-erasure", "change-delivery", "handoff-expiry", "lifecycle-invariants", "catalog-jobs", "migration", "stores", "development-admin", "ingestion-executor"])
+  catalog_executors = toset(["ingestion-executor", "temporal-catalog"])
+  secrets           = toset(["database-url", "migration-url", "app-role-password", "postgres-admin", "temporal-postgres-admin", "redis-password", "redis-url", "operator-database-url", "ingestion-executor-database-url", "operator-role-password", "ingestion-executor-role-password"])
 }
 resource "google_project_service" "api" {
   for_each           = toset(["container.googleapis.com", "artifactregistry.googleapis.com", "secretmanager.googleapis.com", "iamcredentials.googleapis.com", "storage.googleapis.com", "logging.googleapis.com", "monitoring.googleapis.com"])
@@ -166,8 +167,10 @@ resource "google_secret_manager_secret" "development" {
 locals {
   secret_access = merge(
     { for s in ["postgres-admin", "temporal-postgres-admin", "redis-password"] : "stores/${s}" => { name = "stores", secret = s } },
-    { for s in ["migration-url", "app-role-password"] : "migration/${s}" => { name = "migration", secret = s } },
-    { for pair in setproduct(setsubtract(local.names, toset(["frontend", "stores", "migration"])), toset(["database-url", "redis-url"])) : "${pair[0]}/${pair[1]}" => { name = pair[0], secret = pair[1] } }
+    { for s in ["migration-url", "app-role-password", "operator-role-password", "ingestion-executor-role-password"] : "migration/${s}" => { name = "migration", secret = s } },
+    { for s in ["operator-database-url", "database-url", "redis-url"] : "development-admin/${s}" => { name = "development-admin", secret = s } },
+    { for pair in setproduct(local.catalog_executors, toset(["ingestion-executor-database-url", "redis-url"])) : "${pair[0]}/${pair[1]}" => { name = pair[0], secret = pair[1] } },
+    { for pair in setproduct(setsubtract(local.names, setunion(local.catalog_executors, toset(["frontend", "stores", "migration", "development-admin"]))), toset(["database-url", "redis-url"])) : "${pair[0]}/${pair[1]}" => { name = pair[0], secret = pair[1] } }
   )
 }
 resource "google_secret_manager_secret_iam_member" "reader" {
@@ -190,10 +193,30 @@ resource "google_storage_bucket" "data" {
   lifecycle { prevent_destroy = true }
 }
 resource "google_storage_bucket_iam_member" "payloads" {
-  for_each = setsubtract(local.names, toset(["frontend", "stores", "migration"]))
+  for_each = setsubtract(local.names, setunion(local.catalog_executors, toset(["frontend", "stores", "migration", "development-admin"])))
   bucket   = google_storage_bucket.data["payloads"].name
   role     = "roles/storage.objectUser"
   member   = google_service_account.workload[each.key].member
+}
+# The development admin retains the consumer object's existing capability for its app graph.
+resource "google_storage_bucket_iam_member" "development_admin_payloads" {
+  bucket = google_storage_bucket.data["payloads"].name
+  role   = "roles/storage.objectUser"
+  member = google_service_account.workload["development-admin"].member
+  condition {
+    title      = "development_consumer_payloads"
+    expression = "resource.name.startsWith('projects/_/buckets/iz27-ec-dev-payloads/objects/events-concierge/claim-check/v1/')"
+  }
+}
+resource "google_storage_bucket_iam_member" "catalog_payloads" {
+  for_each = local.catalog_executors
+  bucket   = google_storage_bucket.data["payloads"].name
+  role     = "roles/storage.objectUser"
+  member   = google_service_account.workload[each.key].member
+  condition {
+    title      = "development_catalog_payloads"
+    expression = "resource.name.startsWith('projects/_/buckets/iz27-ec-dev-payloads/objects/events-concierge/catalog/v1/')"
+  }
 }
 output "cluster" { value = google_container_cluster.development.name }
 output "namespace" { value = local.namespace }

@@ -1,6 +1,7 @@
 {{- if or (eq .Values.global.releasePhase "all") (eq .Values.global.releasePhase "application") }}
 {{- $root := . -}}
 {{- range $name, $service := .Values.services }}
+{{- if or (not $service.operatorOnly) $root.Values.operator.enabled }}
 ---
 apiVersion: v1
 kind: Service
@@ -17,5 +18,6 @@ spec:
       port: {{ $service.port }}
       targetPort: {{ $service.targetPort }}
       protocol: TCP
+{{- end }}
 {{- end }}
 {{- end }}

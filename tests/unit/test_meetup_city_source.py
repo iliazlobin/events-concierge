@@ -8,12 +8,13 @@ from datetime import UTC, datetime
 
 import httpx
 import pytest
+from tests.support.ingestion_telemetry import capture_collection_progress
 
 from events_concierge.adapters.meetup_city.source import (
     MeetupCityCatalogFetcher,
     MeetupCityFetchError,
 )
-from events_concierge.domain.catalog_sources import CatalogSource
+from events_concierge.domain.catalog_sources import CatalogCollectionWindow, CatalogSource
 from events_concierge.domain.enums import (
     CatalogSourceMode,
     PriceStatus,
@@ -207,7 +208,12 @@ async def test_meetup_city_parses_only_future_public_event_jsonld_and_deduplicat
         now=lambda: _NOW,
         transport=httpx.MockTransport(handler),
     )
-    events = await fetcher.fetch(_source())
+    async with capture_collection_progress(_source().source_key) as progress:
+        events = await fetcher.fetch(_source())
+
+    assert progress[-1].request_count == 2
+    assert progress[-1].page_count == 1
+    assert progress[-1].candidate_count == 1
 
     assert len(requests) == 2
     assert requests[0].method == "GET"
@@ -848,3 +854,29 @@ async def test_repeated_city_fetches_observe_the_per_host_pacing_floor() -> None
     assert await fetcher.fetch(_source()) == []
     assert await fetcher.fetch(_source()) == []
     assert sleeps == [1.5]
+
+
+async def test_meetup_collection_window_excludes_details_before_the_request_cap() -> None:
+    window = CatalogCollectionWindow(1, 2, _NOW, datetime(2026, 8, 1, 12, tzinfo=UTC), 1)
+    inside = _event("315000001")
+    outside = _event("315000002", start_at="2026-08-02T01:00:00.000Z")
+    outside["endDate"] = "2026-08-02T03:00:00.000Z"
+    requested: list[str] = []
+
+    async def no_sleep(_seconds: float) -> None:
+        pass
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requested.append(str(request.url))
+        if str(request.url) == _CITY_URLS["meetup-sf"][1]:
+            return _response(request, _html([outside, inside]))
+        assert str(request.url) == inside["url"]
+        return _response(request, _detail_html(inside))
+
+    fetcher = MeetupCityCatalogFetcher(
+        user_agent="test", now=lambda: datetime(2026, 8, 15, tzinfo=UTC),
+        clock=lambda: 0.0, sleep=no_sleep, transport=httpx.MockTransport(handler),
+    )
+    candidates = await fetcher.fetch(replace(_source(), collection_window=window))
+    assert len(candidates) == 1
+    assert requested == [_CITY_URLS["meetup-sf"][1], inside["url"]]

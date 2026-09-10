@@ -20,6 +20,7 @@ from ..adapters.postgres.tenant_effects import PostgresTenantEffectAuthority
 from ..config import Settings
 from ..ports.object_store import ObjectStorePort
 from ..ports.tenant_effects import TenantEffectAuthority, TenantEffectAuthorityConfig
+from .catalog_claim_check import build_catalog_claim_check_data_converter
 from .claim_check import build_claim_check_data_converter
 
 _LOCAL_ENVIRONMENTS = frozenset({"", "dev", "development", "local", "test", "testing"})
@@ -96,6 +97,7 @@ async def connect_temporal(
     object_store: ObjectStorePort,
     *,
     lazy: bool = False,
+    catalog_only: bool = False,
     tenant_effect_authority: TenantEffectAuthority | None = None,
 ) -> Client:
     """Connect with one consistent namespace, claim-check converter, TLS, and API-key posture.
@@ -103,15 +105,31 @@ async def connect_temporal(
     API composition uses a lazy client so a cold-start engine outage can retain database-backed
     intake and reconnect through the same client later. Workers use the eager default so an
     unavailable task queue makes the process exit and restart under its supervisor.
+    The explicit catalog profile installs a separate driver against its own storage prefix;
+    it never constructs tenant effects or accepts tenant claim references.
     """
     validate_temporal_settings(settings)
     api_key = _temporal_api_key(settings)
     tls = _temporal_tls(settings, api_key=api_key)
-    effect_authority = tenant_effect_authority or PostgresTenantEffectAuthority(
-        TenantEffectAuthorityConfig(
-            lock_timeout_seconds=settings.tenant_effect_lock_timeout_seconds
+    if catalog_only:
+        if tenant_effect_authority is not None:
+            raise ValueError("catalog Temporal storage cannot use a tenant effect authority")
+        converter = build_catalog_claim_check_data_converter(
+            object_store,
+            settings.claim_check_threshold_bytes,
         )
-    )
+    else:
+        effect_authority = tenant_effect_authority or PostgresTenantEffectAuthority(
+            TenantEffectAuthorityConfig(
+                lock_timeout_seconds=settings.tenant_effect_lock_timeout_seconds
+            )
+        )
+        converter = build_claim_check_data_converter(
+            object_store,
+            settings.claim_check_threshold_bytes,
+            tenant_effect_authority=effect_authority,
+            tenant_effect_timeout_seconds=settings.tenant_effect_timeout_seconds,
+        )
     connection = Client.connect(
         settings.temporal_target,
         namespace=settings.temporal_namespace,
@@ -124,12 +142,7 @@ async def connect_temporal(
                 catalog_queue=settings.temporal_catalog_queue,
             )
         ],
-        data_converter=build_claim_check_data_converter(
-            object_store,
-            settings.claim_check_threshold_bytes,
-            tenant_effect_authority=effect_authority,
-            tenant_effect_timeout_seconds=settings.tenant_effect_timeout_seconds,
-        ),
+        data_converter=converter,
     )
     if lazy:
         # The SDK's lazy client deliberately performs no eager transport handshake. Keep API

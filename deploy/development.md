@@ -1,6 +1,6 @@
 # Private GKE development
 
-Current setup and remaining acceptance checks: [GCP & Operations](https://app.notion.com/p/3a5d865005a881f288dfdc9993b8fdd2).
+Target infrastructure: [Cloud Design](https://app.notion.com/p/3a5d865005a881f288dfdc9993b8fdd2). Release status and access: [Deployment](https://app.notion.com/p/3d3d865005a881339dc1f760bf5277e9). Tasks and acceptance: [Project Management](https://app.notion.com/p/bf0d138f979c442c888eafd175c4ec28).
 
 This profile uses real PostgreSQL, Redis, Temporal and GCS with explicit mock external product adapters. No real email, booking or Calendar actions. The older staging Terraform root remains separate.
 
@@ -24,7 +24,7 @@ terraform -chdir=infra/terraform/environments/development apply ../../../../.loc
 
 State is in `gs://iz27-foundation-development-state/events-concierge/development`. Foundation owns networking/NAT and deployer grants; this root only reads its existing network. The fixed node is e2-standard-2; changing size requires a reviewed capacity/cost decision. Deletion protection and retained database PVCs intentionally block accidental removal. The deployer has powerful development-project IAM; runtime identities have separate scoped grants.
 
-## Connect and initialize
+## Connect and initialize a new environment
 
 ```bash
 export KUBECONFIG="$PWD/.local/kubeconfig"
@@ -35,24 +35,73 @@ helm upgrade --install ec-dev-data deploy/helm/events-concierge-dev-data -n even
 helm upgrade --install ec-dev-temporal temporal --repo https://go.temporal.io/helm-charts --version 1.6.0 -n events-concierge-dev -f deploy/helm/temporal-development.yaml --wait --timeout 15m
 ```
 
+For an existing environment, connect using its task-local kubeconfig and follow the application cutover below. Do not rerun the data-chart installation as part of an application update.
+
 Secret values are generated directly into Secret Manager. Version 1 is pinned and existing credentials are reused; rotation requires a reviewed release. Databases and Redis use separately projected Kubernetes secrets; application pods use the GKE Secret Manager CSI driver.
 
 ## Application release
 
-Build the backend and `web/Dockerfile` with `docker buildx build --platform linux/amd64`, using the committed revision as backend `VCS_REF`. Push to `us-west1-docker.pkg.dev/project-9c8cce04-f94d-40fc-aa6/ec-dev/`. Bind immutable registry digests:
+The development admin uses a separate `ec_dev_operator` login with controller capability. The command executor and catalog Temporal worker share an `ec_dev_ingestion` login with executor capability; each has its own workload identity. Both catalog processes use GCS under `events-concierge/catalog/v1`. The consumer `ec_app` role has neither capability.
+
+### Prepare and review
+
+1. Select one committed candidate with passing CI. Build the backend and `web/Dockerfile` for `linux/amd64`, using that full commit as backend `VCS_REF`. Publish to `us-west1-docker.pkg.dev/project-9c8cce04-f94d-40fc-aa6/ec-dev/` and retain the immutable image digests.
+2. Save and review the Terraform plan. For the operator cutover, run `python3 scripts/development/check_plan.py --operator-cutover .local/development-plan.json`. This permits only the two exact old catalog IAM revocations in addition to normal additions; default mode remains initial-additions only. Apply after quiescing below, because the old catalog worker still needs those grants.
+3. Rehearse the candidate migration and logins against disposable PostgreSQL. Existing login collisions and pinned-password mismatches must fail before Alembic. Check controller/executor separation, catalog payload exchange, and the rendered private-development profile. Keep the customer release-scope decision separate from this private development update.
+
+### Quiesce and back up
+
+Disable access/new submissions and wait for current work to settle. Confirm there are no open Temporal workflows, active catalog/command leases or pending request-start/notification records. Repeat the check after application workers stop to close the race. Worker-version promotion does not move existing pinned workflows to the new version; do not remove workers needed by outstanding executions.
 
 ```bash
+python3 scripts/development/backup.py backup --hold-stopped
+python3 scripts/development/backup.py verify gs://iz27-ec-dev-backups/SET_ID
+```
+
+Use the exact completed set printed by backup. It saves all three PostgreSQL databases, payloads, image/schema metadata and original replica counts. Application writers stop before Temporal; PostgreSQL and Redis remain running. A failed backup restores original writer replicas. A successful `--hold-stopped` backup leaves writers stopped until the cutover is accepted. Do not run the data-chart upgrade here: Redis persistence and PostgreSQL probe changes require their own storage rehearsal.
+
+### Apply credentials and application
+
+Apply the reviewed Terraform plan while the old workers are stopped, then initialize the new pinned secret versions. Existing versions and login passwords are preserved.
+
+```bash
+terraform -chdir=infra/terraform/environments/development apply ../../../../.local/development.tfplan
+python3 scripts/development/bootstrap_secrets.py
 python3 scripts/development/release_values.py --app-image "$APP_IMAGE" --web-image "$WEB_IMAGE" --revision "$BACKEND_REVISION" --output .local/release-values.yaml
 helm upgrade --install events-concierge deploy/helm/events-concierge -n events-concierge-dev -f deploy/helm/events-concierge/values-development.yaml -f .local/release-values.yaml --wait --wait-for-jobs --timeout 10m
-# After migration succeeds, deploy the explicitly tested development provider.
+```
+
+The migration Job preflights existing reserved logins and authenticates their pinned credentials, upgrades the schema, provisions missing logins, then authenticates both. It never grants operator authority to `ec_app`. If bootstrap fails after Alembic commits, keep the application stopped and repair/retry the Job. Migration `0187` has no downgrade: **do not restart schema-0180 images or use Helm rollback after schema-0193 migration**. Recovery uses the verified coordinated database/payload backup and compatible images.
+
+The migration Helm phase removes the old application Deployments. Restore the four `ec-dev-temporal-*` server Deployments to the replica counts in the backup manifest and wait for readiness, then recreate the application:
+
+```bash
 helm upgrade events-concierge deploy/helm/events-concierge -n events-concierge-dev -f deploy/helm/events-concierge/values-development.yaml -f .local/release-values.yaml --set global.releasePhase=application --set global.runtimeProviderReady=true --wait --timeout 10m
 python3 scripts/development/wait_ready.py
 kubectl -n events-concierge-dev exec -i deployment/events-concierge-api -- python - < scripts/development/promote_workers.py
 kubectl -n events-concierge-dev exec -i deployment/events-concierge-api -- python - < scripts/development/smoke.py
+```
+
+### Acceptance and access
+
+- Require all ten application/admin/executor Deployments to have one updated, available, ready replica. Helm readiness alone can accept zero ready replicas with `maxUnavailable=1`.
+- Verify schema, separate controller/executor login access, API/admin reads, Temporal pollers and catalog-prefix GCS access. Process probes alone do not prove worker execution.
+- `smoke.py` proves a completed synthetic request workflow and a GCS round trip; a business outcome such as `failed_no_candidate` is not a successful registration. Isolated catalog/Temporal tests cover executor and publication behavior. A deployed catalog end-to-end check needs a reviewed source refresh; do not bypass fixture exclusion or insert fixture sources in the runtime database.
+- Create and verify a fresh schema-0193 backup before accepting the cutover. Preserve the pre-cutover backup.
+
+```bash
 kubectl -n events-concierge-dev port-forward service/events-concierge-frontend 13000:80
 ```
 
-Browse http://localhost:13000. Access remains localhost-only. Recurring jobs and autoscaling are disabled. Helm readiness alone is insufficient with `maxUnavailable=1`; the explicit replica check is required. One node and one replica mean downtime during replacement and upgrades; disks remain zonal. Do not use this profile as production.
+Browse http://localhost:13000. Access remains localhost-only. Recurring jobs and autoscaling remain disabled. One node and one replica mean downtime during replacement and upgrades; disks remain zonal. This is private development, not production.
+
+## Persistent storage and self-healing
+
+Pending deployment: Redis disk persistence and recovery-probe changes are prepared in this branch but have not been applied or rehearsed. The existing Redis deployment remains ephemeral until that rollout completes.
+
+Application PostgreSQL and Temporal PostgreSQL each mount a retained 20 GiB GCP `pd-balanced` disk. The prepared Redis configuration mounts a retained 10 GiB disk at `/data`, with AOF synced every second and periodic RDB snapshots. Redis can lose roughly the last second of writes in a crash; persistence does not make it highly available. Its single-replica Deployment uses `Recreate` so updates stop the old writer before starting the replacement.
+
+Startup probes allow database recovery before liveness checks begin. Failed processes restart; controllers replace missing pods and remount their PVCs. GKE node auto-repair and auto-upgrade are enabled. Disks remain in `us-west1-a`: a node replacement can reattach them, but node repair causes downtime and a zone outage needs separate recovery. Retained disks are not backups; the manual GCS database/payload backup remains the recovery path for those stores. Redis disk loss requires separate restoration/reconstruction; Redis is not included in that GCS backup routine.
 
 ## Private admin
 
@@ -71,4 +120,4 @@ python3 scripts/development/backup.py backup
 python3 scripts/development/backup.py verify gs://iz27-ec-dev-backups/SET_ID
 ```
 
-Backup temporarily stops namespace writers, exports all three databases and current payload objects, records image/schema metadata, uploads a completion marker last, then restores replica counts. Only completed sets are candidates. Keep at least three successful sets; no automatic deletion is configured. Verification restores dumps into disposable local Docker databases and validates checksums; the live smoke test also checks workflow completion and real GCS claim checks. Use `smoke.py --repeat 12` inside the API pod for a small sustained development load test. Production disaster recovery remains separate. Never restore over the running development stores. Backups share the same project administrative boundary.
+Backup temporarily stops application writers and Temporal while retaining PostgreSQL/Redis, exports all three databases and current payload objects, records image/schema metadata, uploads a completion marker last, then restores writer replica counts. Use `--hold-stopped` only for a coordinated cutover; read its saved manifest to resume the original replica counts. Only completed sets are candidates. Keep at least three successful sets; no automatic deletion is configured. Verification restores dumps into disposable local Docker databases and validates checksums; the live smoke test also checks workflow completion and real GCS claim checks. Use `smoke.py --repeat 12` inside the API pod for a small sustained development load test. Production disaster recovery remains separate. Never restore over the running development stores. Backups share the same project administrative boundary.

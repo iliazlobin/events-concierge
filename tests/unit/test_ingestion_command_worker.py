@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 from collections.abc import Callable
 from types import SimpleNamespace
+from unittest.mock import AsyncMock
 
 import pytest
 
@@ -78,7 +79,7 @@ async def test_disabled_worker_returns_before_building_any_runtime_graph(
     log = _RecordingLog()
     monkeypatch.setattr(worker_module, "get_settings", lambda: settings)
     monkeypatch.setattr(worker_module, "_log", log)
-    monkeypatch.setattr(worker_module, "build_container", built.append)
+    monkeypatch.setattr(worker_module, "build_catalog_container", built.append)
 
     await worker_module.run_ingestion_commands()
 
@@ -93,20 +94,19 @@ async def test_worker_runtime_guard_refuses_an_injected_non_mock_configuration(
         log_level="info",
         env="production",
         admin_ingestion_enabled=True,
+        ingestion_executor_enabled=False,
         mock_cloud=False,
     )
     built: list[object] = []
     log = _RecordingLog()
     monkeypatch.setattr(worker_module, "get_settings", lambda: settings)
     monkeypatch.setattr(worker_module, "_log", log)
-    monkeypatch.setattr(worker_module, "build_container", built.append)
+    monkeypatch.setattr(worker_module, "build_catalog_container", built.append)
 
-    await worker_module.run_ingestion_commands()
+    with pytest.raises(ValueError, match="explicit executor"):
+        await worker_module.run_ingestion_commands()
 
     assert built == []
-    assert log.warnings == [
-        ("ingestion command worker refused outside local mock mode", {})
-    ]
 
 
 async def test_enabled_worker_wires_repository_router_and_all_bounded_settings(
@@ -132,6 +132,7 @@ async def test_enabled_worker_wires_repository_router_and_all_bounded_settings(
             self,
             received_repository: object,
             received_router: object,
+            received_store: object,
             *,
             lease_seconds: int,
             cadence_batch_size: int,
@@ -142,6 +143,7 @@ async def test_enabled_worker_wires_repository_router_and_all_bounded_settings(
                 {
                     "repository": received_repository,
                     "router": received_router,
+                    "store": received_store,
                     "lease_seconds": lease_seconds,
                     "cadence_batch_size": cadence_batch_size,
                     "release_revision": release_revision,
@@ -169,9 +171,13 @@ async def test_enabled_worker_wires_repository_router_and_all_bounded_settings(
         )
 
     monkeypatch.setattr(worker_module, "get_settings", lambda: settings)
-    monkeypatch.setattr(worker_module, "build_container", lambda value: container)
+    monkeypatch.setattr(worker_module, "build_catalog_container", lambda value: container)
+    monkeypatch.setattr(worker_module, "verify_catalog_executor_database", AsyncMock())
+    monkeypatch.setattr(worker_module, "dispose_engine", AsyncMock())
     monkeypatch.setattr(worker_module, "build_catalog_refresh_router", build_router)
-    monkeypatch.setattr(worker_module, "IngestionAdminService", _Service)
+    store = object()
+    monkeypatch.setattr(worker_module, "CommandInvestigationStore", lambda: store)
+    monkeypatch.setattr(worker_module, "ResumableIngestionCommandProcessor", _Service)
     monkeypatch.setattr(worker_module, "_run_ingestion_command_loop", stop_loop)
 
     await worker_module.run_ingestion_commands()
@@ -180,6 +186,7 @@ async def test_enabled_worker_wires_repository_router_and_all_bounded_settings(
         {
             "repository": repository,
             "router": router,
+            "store": store,
             "lease_seconds": 1_200,
             "cadence_batch_size": 17,
             "release_revision": "abc123",

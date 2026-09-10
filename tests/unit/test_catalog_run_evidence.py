@@ -49,7 +49,7 @@ async def test_shared_activity_records_wall_time_but_omits_unattributable_proces
         "cadence:libcal-events:20260731T120000Z",
         include_process_metrics=False,
     )
-    stage = session.start_stage("collect")
+    stage = await session.start_stage("collect")
 
     await stage.finish("succeeded")
     await session.finish("succeeded")

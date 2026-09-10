@@ -1,0 +1,69 @@
+.panel { width: 100%; min-width: 0; color: #dce7d2; }
+.header { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 13px; }
+.header h2 { margin: 0; color: #8e9f80; font-size: 10px; font-weight: 500; letter-spacing: .09em; text-transform: uppercase; }
+.header > div { display: flex; gap: 8px; }
+.header button { display: grid; place-items: center; padding: 5px; background: none; border: 1px solid transparent; border-radius: 4px; color: #a8b69b; cursor: pointer; }
+.header button:hover { background: #ffffff06; border-color: #536443; }
+.header svg { width: 14px; height: 14px; }
+.sourceName { margin: 0 0 7px; font-size: 21px; font-weight: 550; letter-spacing: -.025em; line-height: 1.35; overflow-wrap: anywhere; }
+.sourceKey { display: block; color: #899b79; font-family: var(--mono, ui-monospace, monospace); font-size: 11px; line-height: 1.7; overflow-wrap: anywhere; }
+.context { display: flex; flex-wrap: wrap; gap: 7px 16px; margin: 14px 0 17px; color: #9fae90; font-size: 10px; line-height: 1.7; }
+.intro, .note, .draftNote { color: #9fac91; font-size: 11px; line-height: 1.7; margin: 14px 0 17px; }
+.draftNote { color: #c0d5a3; }
+.notice { padding: 12px; margin: 14px 0; border: 1px solid #e8b87933; border-radius: 6px; background: #e8b87908; color: #d7bd99; font-size: 11px; line-height: 1.7; }
+.notice p { margin: 0 0 8px; }
+.notice > div { display: flex; flex-wrap: wrap; gap: 8px 14px; }
+.notice button, .empty button { padding: 0; background: none; color: #d4e1c2; font: inherit; font-size: 11px; text-decoration: underline; text-underline-offset: 3px; cursor: pointer; }
+.empty { color: #a8b79b; font-size: 12px; line-height: 1.7; padding: 18px 0; }
+.empty p { margin: 0 0 12px; }
+.panel button:disabled { opacity: .4; cursor: default; }
+.panel button:focus-visible, .panel summary:focus-visible, .panel:focus-visible { outline: 2px solid #c9ff68; outline-offset: 3px; }
+.editor { border: 0; padding: 0; margin: 0; min-width: 0; }
+.editor :global(.admin-config__toolbar), .editor :global(.admin-config-form__toolbar) { flex-wrap: wrap; gap: 10px; margin-bottom: 14px; }
+.editor :global(.admin-config__toolbar code), .editor :global(.admin-config__toolbar span) { font-size: 10px; }
+.editor :global(.admin-config__toolbar > button) { font-family: inherit; font-size: 11px; height: auto; min-height: 33px; padding: 7px 9px; cursor: pointer; }
+.editor :global(.admin-config__toolbar > button svg) { height: 12px; width: 12px; }
+.editor :global(.admin-config-section__heading) { flex-wrap: wrap; gap: 8px; }
+.editor :global(.admin-config-section__heading strong) { font-family: inherit; font-size: 12px; font-weight: 550; }
+.editor :global(.admin-config-section__heading span) { font-size: 11px; line-height: 1.65; }
+.editor :global(.admin-config-section__heading small) { font-family: inherit; font-size: 9px; letter-spacing: 0; }
+.editor :global(.admin-definition-grid) { grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
+.editor :global(.admin-definition-grid > div) { padding: 10px; border-radius: 6px; }
+.editor :global(.admin-definition-grid dt) { font-size: 9px; font-weight: 500; letter-spacing: .035em; line-height: 1.6; }
+.editor :global(.admin-definition-grid dd), .editor :global(.admin-definition-grid dd.is-code) { font-size: 11px; line-height: 1.65; overflow-wrap: anywhere; }
+.editor :global(.admin-definition-grid__wide) { grid-column: 1 / -1; }
+.editor :global(.admin-config-section--managed) { margin-top: 12px; padding-top: 17px; }
+.editor :global(.admin-config-section--managed summary) { cursor: pointer; }
+.editor :global(.admin-config-form) { padding: 14px; min-width: 0; }
+.editor :global(.admin-config-form__toolbar strong) { font-family: inherit; font-size: 12px; }
+.editor :global(.admin-config-form__toolbar span) { font-family: inherit; font-size: 10px; line-height: 1.7; }
+.editor :global(.admin-config-form__grid) { grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 14px 10px; }
+.editor :global(.admin-config-form__grid > label) { min-width: 0; }
+.editor :global(.admin-config-form__grid label > span) { font-family: inherit; font-size: 10px; line-height: 1.6; }
+.editor :global(.admin-config-form input), .editor :global(.admin-config-form select), .editor :global(.admin-config-form textarea) { width: 100%; min-width: 0; font-family: inherit; font-size: 12px; line-height: 1.5; }
+.editor :global(.admin-config-form input), .editor :global(.admin-config-form select) { height: 36px; }
+.editor :global(.admin-config-form textarea) { min-height: 76px; resize: vertical; }
+.editor :global(.admin-config-toggle > button) { font-family: inherit; font-size: 11px; min-height: 36px; }
+.editor :global(.admin-config-form__managed span) { font-size: 9px; letter-spacing: .035em; }
+.editor :global(.admin-config-form__managed strong), .editor :global(.admin-config-policy strong) { font-family: inherit; font-size: 11px; line-height: 1.6; }
+.editor :global(.admin-config-form__managed small), .editor :global(.admin-config-policy span) { font-family: inherit; font-size: 10px; line-height: 1.65; }
+.editor :global(.admin-config-form__actions) { flex-wrap: wrap; gap: 11px; margin-top: 17px; }
+.editor :global(.admin-config-form__actions > label) { flex: 1 1 100%; font-family: inherit; font-size: 10px; line-height: 1.65; }
+.editor :global(.admin-config-form__actions > label input) { width: 15px; height: 15px; margin-top: 2px; }
+.editor :global(.admin-config-form__actions > button) { height: 34px; font-family: inherit; font-size: 11px; }
+.editor :global(.admin-config-form__actions > button svg) { height: 12px; width: 12px; }
+.editor :global(.admin-inline-error) { font-size: 11px; line-height: 1.7; overflow-wrap: anywhere; }
+
+.embedded .context { margin: 0 0 12px; color: var(--muted); }
+.embedded .editor :global(.admin-config-form) { padding: 0; border: 0; border-radius: 0; background: transparent; }
+.embedded .editor :global(.admin-config-form__toolbar) { margin-bottom: 18px; padding-bottom: 12px; border-bottom: 1px solid var(--kit-line, var(--line)); }
+.embedded .editor :global(.admin-config-form__grid) { align-items: start; gap: 18px 16px; }
+.embedded .editor :global(.admin-config-form__grid > label) { align-content: start; }
+.embedded .editor :global(.admin-config-form__grid label > span) { font-size: 11px; }
+.embedded .editor :global(.admin-config-form__actions) { justify-content: flex-end; padding-top: 16px; border-top: 1px solid var(--kit-line, var(--line)); }
+.embedded .editor :global(.admin-config-form__actions) > p { flex: 1 1 22rem; margin: 0; }
+.embedded .editor :global(.admin-config-section--managed) { margin-top: 20px; }
+
+@media (max-width: 760px) {
+  .editor :global(.admin-config-form__grid), .editor :global(.admin-definition-grid) { grid-template-columns: minmax(0, 1fr); }
+}

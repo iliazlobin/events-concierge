@@ -16,6 +16,7 @@ from uuid import UUID
 import httpx
 
 from ...domain.catalog_sources import CatalogSource
+from ...domain.catalog_window import collection_reference_time
 from ...domain.enums import CatalogSourceMode, GroupCondition, Modality, RsvpState, Source
 from ...domain.events import CandidateEvent
 from ...domain.request import RequestConstraints
@@ -87,7 +88,7 @@ class PublicJsonLdSource:
         if not source.handoff_only:
             raise ValueError("public JSON-LD catalog sources must remain handoff-only")
         candidates = await self._crawl_urls([source.seed_url], catalog_source=source)
-        now = self._now()
+        now = collection_reference_time(source, self._now())
         return [
             candidate
             for candidate in candidates

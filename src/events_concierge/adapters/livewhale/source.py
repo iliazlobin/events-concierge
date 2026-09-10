@@ -21,6 +21,7 @@ import httpx
 from selectolax.parser import HTMLParser
 
 from ...domain.catalog_sources import CatalogSource
+from ...domain.catalog_window import collection_reference_time
 from ...domain.enums import CatalogSourceMode, PriceStatus, Source
 from ...domain.events import CandidateEvent, GeoPoint, aggregate_price_status
 from ...infra.logging import get_logger
@@ -66,7 +67,7 @@ class LiveWhaleCatalogFetcher:
             raise ValueError("LiveWhale catalog sources must remain handoff-only")
 
         candidates = await self._fetch_pages(source)
-        now = self._now()
+        now = collection_reference_time(source, self._now())
         return [candidate for candidate in _deduplicate(candidates) if candidate.start_at >= now]
 
     async def _fetch_pages(self, source: CatalogSource) -> list[CandidateEvent]:

@@ -60,6 +60,12 @@ def product_server(tmp_path_factory: pytest.TempPathFactory) -> Iterator[str]:
     environment.update(
         {
             "EC_ADMIN_INGESTION_ENABLED": "true",
+            # The admin shell still constructs its dedicated pool. Browser routes replace all
+            # evidence requests; closed loopback ports prevent an accidental runtime DB read.
+            "EC_DATABASE_URL": "postgresql+psycopg://ec_app:fixture@127.0.0.1:1/browser_fixture",
+            "EC_OPERATOR_DATABASE_URL": "postgresql+psycopg://ec_browser_operator:fixture@127.0.0.1:1/browser_fixture",
+            "EC_PACER_BACKEND": "memory",
+            "EC_REDIS_URL": "redis://127.0.0.1:1/0",
             "EC_LOG_LEVEL": "warning",
             "EC_MOCK_CLOUD": "true",
             "EC_TEMPORAL_TARGET": "127.0.0.1:1",

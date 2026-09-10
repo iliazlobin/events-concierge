@@ -1,4 +1,4 @@
-export type AdminTab = "overview" | "pipeline" | "sources" | "runs" | "commands";
+export type AdminTab = "overview" | "pipeline" | "sources" | "catalog" | "run-stats" | "runs" | "commands";
 export type SourceState = "all" | "active" | "due" | "blocked" | "failed";
 export type SourceStatus =
   | "active"
@@ -15,6 +15,7 @@ export type AdminSourceSort =
   | "source"
   | "health"
   | "catalog"
+  | "catalog_total"
   | "last_success"
   | "latest_run"
   | "output";
@@ -33,11 +34,24 @@ export interface AdminRunSourceConfiguration {
   refresh_interval_minutes: number;
   min_interval_ms: number;
   page_limit: number;
+  collection_horizon_days?: number | null;
+}
+
+export interface AdminRunExecutionConfiguration extends AdminRunSourceConfiguration {
+  source_revision: number;
+  collection_horizon_days: number;
+}
+
+export interface AdminRunCollectionWindow {
+  window_source_revision: number;
+  horizon_days: number;
+  start_at: string;
+  end_at: string;
 }
 
 export interface AdminRunCommandLink {
   command_id: string;
-  action: "refresh_source";
+  action: "refresh_source" | "refresh_due";
   requested_at: string;
   started_at: string | null;
   completed_at: string | null;
@@ -316,6 +330,24 @@ export interface AdminSourceHealthList {
   sources: AdminSourceHealth[];
 }
 
+export interface AdminSourceRegistrationHistory {
+  generated_at: string;
+  window_days: 7 | 30 | 90;
+  bucket_hours: 24;
+  window_start: string;
+  baseline_sources: number;
+  total_sources: number;
+  added_sources: number;
+  include_fixtures: boolean;
+  history_scope: "retained_registry";
+  items: Array<{
+    bucket_start: string;
+    bucket_end: string;
+    registered_sources: number;
+    added_sources: number;
+  }>;
+}
+
 export interface AdminRunCore {
   run_key: string;
   status: RunStatus;
@@ -335,6 +367,10 @@ export interface AdminRunCore {
     | "legacy_unavailable";
   trigger: "admin_source" | "cadence_or_manual";
   source_configuration: AdminRunSourceConfiguration | null;
+  /** Current-attempt snapshot; never substitute the current registry for legacy runs. */
+  execution_configuration?: AdminRunExecutionConfiguration | null;
+  /** Frozen for the run, including when a later attempt uses a newer registry revision. */
+  collection_window?: AdminRunCollectionWindow | null;
   command: AdminRunCommandLink | null;
   execution: AdminRunExecutionDescriptor | null;
   resources: AdminRunResourceEvidence | null;
@@ -367,6 +403,9 @@ export interface AdminSource {
   last_succeeded_at: string | null;
   next_due_at: string | null;
   event_count: number;
+  /** Distinct retained Catalog events, using the Catalog date predicates. */
+  total_event_count?: number | null;
+  upcoming_event_count?: number | null;
   latest_run: AdminRunCore | null;
 }
 
@@ -412,6 +451,8 @@ export interface AdminSourceConfiguration extends AdminSource {
   refresh_interval_minutes: number;
   min_interval_ms: number;
   page_limit: number;
+  /** Absent in legacy responses; absence does not establish a recorded default. */
+  collection_horizon_days?: number | null;
   source_revision: number;
   policy_blocked: boolean;
 }
@@ -427,6 +468,8 @@ export interface AdminSourceConfigurationInput {
   refresh_interval_minutes: number;
   min_interval_ms: number;
   page_limit: number;
+  /** Omit for legacy backends that do not report support for this setting. */
+  collection_horizon_days?: number;
   review_acknowledged: true;
 }
 
@@ -551,6 +594,32 @@ export interface AdminCatalogEventPage {
   next_start_at: string | null;
   next_canonical_event_id: string | null;
   query: string | null;
+  run_key?: string | null;
+}
+
+export interface AdminCatalogListingEvent extends AdminCatalogEvent {
+  source_key: string;
+  source_display_name: string;
+}
+
+export interface AdminCatalogListingPage {
+  generated_at: string;
+  upcoming_total: number;
+  source_count: number;
+  source_counts_truncated: boolean;
+  source_counts: Array<{ source_key: string; source_display_name: string; events: number }>;
+
+  items: AdminCatalogListingEvent[];
+  total: number;
+  limit: number;
+  has_more: boolean;
+  next_start_at: string | null;
+  next_canonical_event_id: string | null;
+  query: string | null;
+  source_key: string | null;
+  run_key: string | null;
+  date_scope: "all" | "upcoming" | "past";
+  price_status: "all" | "free" | "paid" | "unknown";
 }
 
 export interface AdminCommand {
@@ -644,6 +713,71 @@ export interface AdminCommandDetail {
   runs: AdminCommandLinkedRun[];
 }
 
+export interface AdminCommandAttempt {
+  attempt_count: number;
+  kind: "initial" | "continuation" | "retry" | "reclaim" | "adopted";
+  observed_at: string;
+  claimed_at: string | null;
+  last_heartbeat_at: string | null;
+  last_progress_at: string | null;
+  ended_at: string | null;
+  outcome_code: string | null;
+  worker_id: string | null;
+  release_revision: string | null;
+  image_digest: string | null;
+}
+
+export interface AdminCommandTask {
+  position: number;
+  source_key: string;
+  run_key: string;
+  status: "pending" | "running" | "succeeded" | "already_succeeded" | "queued" | "skipped" | "failed" | "deferred" | "busy";
+  attempt_count: number;
+  available_at: string | null;
+  started_at: string | null;
+  completed_at: string | null;
+  last_outcome_code: string | null;
+  candidate_count: number | null;
+  canonical_count: number | null;
+  lease_state: "not_running" | "live" | "expired";
+  last_progress_at: string | null;
+  run?: AdminRun | null;
+}
+
+export interface AdminCommandEvent {
+  event_id: string;
+  observed_at: string;
+  event_code: string;
+  command_attempt: number;
+  source_key: string | null;
+  run_key: string | null;
+  task_attempt: number | null;
+  stage: string | null;
+  outcome_code: string | null;
+  duration_ms: number | null;
+  candidate_count: number | null;
+  canonical_count: number | null;
+  request_count: number | null;
+  page_count: number | null;
+  error_type: string | null;
+  worker_id: string | null;
+  release_revision: string | null;
+  image_digest: string | null;
+}
+
+export interface AdminCommandInvestigation {
+  generated_at: string;
+  command_id: string;
+  plan: { status: "unplanned" | "fixed" | "adopted"; created_at: string | null; tasks: AdminCommandTask[] };
+  attempts: AdminCommandAttempt[];
+  attempts_total?: number;
+  attempts_truncated?: boolean;
+  events: AdminCommandEvent[];
+  next_event_id: string | null;
+  has_more: boolean;
+  evidence: { events_since: string | null; history_complete: false; logs: "structured_events_only" };
+}
+
 export interface AdminSourceFilters {
   query: string;
   state: SourceState;
@@ -660,4 +794,11 @@ export interface AdminRunFilters {
   sourceKey: string;
   windowHours: number;
   includeFixtures: boolean;
+  /** Anchored start-time interval, inclusive start and exclusive end. Overrides windowHours. */
+  startedAfter?: string;
+  startedBefore?: string;
+  stage?: AdminRunStageEvidence["stage"];
+  stageOutcome?: "failed";
 }
+
+export type AdminRunSort = "source" | "status" | "started" | "duration" | "attempts" | "output" | "stage_duration";

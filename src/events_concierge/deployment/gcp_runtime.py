@@ -107,7 +107,9 @@ def build_runtime_ports(
     """
     if settings.mock_cloud:
         raise GcpRuntimeConfigurationError("the GCP runtime provider requires EC_MOCK_CLOUD=false")
-
+    prefix = settings.gcs_claim_check_prefix.strip().rstrip("/")
+    if prefix == "events-concierge/catalog" or prefix.startswith("events-concierge/catalog/"):
+        raise GcpRuntimeConfigurationError("consumer payload storage cannot use the reserved catalog prefix")
     object_store = build_gcs_object_store(settings, storage_client=storage_client)
 
     google_access, google_bindings, calendar = _google_calendar_ports(settings)

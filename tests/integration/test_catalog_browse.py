@@ -32,7 +32,7 @@ from events_concierge.domain.enums import (
     Source,
 )
 from events_concierge.domain.events import CandidateEvent, EventEntityProfile, GeoPoint
-from events_concierge.domain.request import RequestConstraints
+from events_concierge.domain.request import RequestConstraints, TimeWindow
 
 pytestmark = pytest.mark.integration
 
@@ -251,8 +251,9 @@ async def test_repository_browses_latest_nonfixture_source_observations_by_keyse
         intent_embedding=None,
         limit=10_000,
     )
-    stale_id = next(item.canonical_event_id for item in stale_event if item.title == stale.title)
-    assert stale_id not in visible_ids
+    assert stale.title not in {item.title for item in stale_event}
+    # Rolloff removes an observation from current recommendations without deleting its record.
+    assert stale.title not in {item.canonical_event.title for item in [*first_page, *second_page]}
     assert synthetic_event.canonical_event_id not in visible_ids
 
     fixture_source_key, _, _, _ = await _source_with_current_events(
@@ -1093,12 +1094,15 @@ async def test_registration_availability_filters_before_paging_and_facets(db: No
     run_key = f"manual:browse-availability-{uuid4().hex}"
     claim = await runs.claim_refresh(source_key, run_key, lease_seconds=300)
     assert claim.lease_token is not None
-    assert await committer.commit_refresh(
-        source_key,
-        run_key,
-        lease_token=claim.lease_token,
-        candidates=[sold_out, current[1], available, waitlist],
-    ) is not None
+    assert (
+        await committer.commit_refresh(
+            source_key,
+            run_key,
+            lease_token=claim.lease_token,
+            candidates=[sold_out, current[1], available, waitlist],
+        )
+        is not None
+    )
 
     open_page, _ = await catalog.browse_current(
         source_keys=(source_key,), after=None, limit=1, availability="available"
@@ -1148,15 +1152,9 @@ async def test_source_selection_is_a_union_and_price_bounds_describe_a_band(db: 
     left_key, left_events, _, catalog = await _source_with_current_events(event_count=1)
     right_key, right_events, _, _ = await _source_with_current_events(event_count=1)
 
-    only_left, _ = await catalog.browse_current(
-        source_keys=(left_key,), after=None, limit=10
-    )
-    only_right, _ = await catalog.browse_current(
-        source_keys=(right_key,), after=None, limit=10
-    )
-    both, _ = await catalog.browse_current(
-        source_keys=(left_key, right_key), after=None, limit=10
-    )
+    only_left, _ = await catalog.browse_current(source_keys=(left_key,), after=None, limit=10)
+    only_right, _ = await catalog.browse_current(source_keys=(right_key,), after=None, limit=10)
+    both, _ = await catalog.browse_current(source_keys=(left_key, right_key), after=None, limit=10)
     left_titles = {item.canonical_event.title for item in only_left}
     right_titles = {item.canonical_event.title for item in only_right}
     both_titles = {item.canonical_event.title for item in both}
@@ -1709,9 +1707,7 @@ async def test_day_summary_agrees_with_the_paged_page_it_replaces(db: None) -> N
     for day in body["days"]:
         start_day = str(day["start_day"])
         assert day["event_count"] == len(expected_days[start_day])
-        assert {
-            topic["topic"]: topic["event_count"] for topic in day["topics"]
-        } == {
+        assert {topic["topic"]: topic["event_count"] for topic in day["topics"]} == {
             topic: len(ids) for topic, ids in expected_topics[start_day].items()
         }
         # A day's total counts distinct events, so a multi-topic event is counted
@@ -1763,9 +1759,8 @@ async def test_day_summary_buckets_by_the_requested_zone_and_rejects_an_invalid_
     # Both zones see the same events; only the day each one lands on differs, so
     # the totals must agree while at least one boundary moves.
     assert pacific.json()["total_event_count"] == kiritimati.json()["total_event_count"]
-    assert (
-        min(day["start_day"] for day in kiritimati.json()["days"])
-        >= min(day["start_day"] for day in pacific.json()["days"])
+    assert min(day["start_day"] for day in kiritimati.json()["days"]) >= min(
+        day["start_day"] for day in pacific.json()["days"]
     )
     assert invalid.status_code == 422
     assert missing.status_code == 422
@@ -1792,9 +1787,7 @@ async def test_day_summary_applies_the_topic_selection(db: None) -> None:
             ("time_zone", "America/Los_Angeles"),
         ]
 
-        unfiltered = await client.get(
-            "/v1/catalog/events/summary", params=shared, headers=headers
-        )
+        unfiltered = await client.get("/v1/catalog/events/summary", params=shared, headers=headers)
         filtered = await client.get(
             "/v1/catalog/events/summary",
             params=[*shared, ("topic", "chess")],
@@ -1810,3 +1803,48 @@ async def test_day_summary_applies_the_topic_selection(db: None) -> None:
     assert filtered.status_code == 200
     assert filtered.json()["total_event_count"] <= unfiltered.json()["total_event_count"]
     assert rejected.status_code == 422
+
+
+async def test_recommendation_lifecycle_filters_and_explicit_archive(db: None) -> None:
+    """Read-time boundaries survive wall-clock aging; archive reads never delete evidence."""
+    catalog = PostgresCatalogRepository(embedding=DeterministicEmbedding())
+    now = datetime.now(UTC)
+    tag = uuid4().hex
+    candidates = [
+        _candidate(f"lifecycle-future-{tag}", f"Future {tag}", now + timedelta(days=2)),
+        _candidate(f"lifecycle-ongoing-{tag}", f"Ongoing {tag}", now - timedelta(minutes=30)),
+        _candidate(f"lifecycle-past-{tag}", f"Past {tag}", now - timedelta(days=2)),
+        _candidate(f"lifecycle-cancelled-{tag}", f"Cancelled {tag}", now + timedelta(days=3)),
+    ]
+    records = await catalog.upsert_candidates(candidates)
+    by_title = {r.title: r for r in records}
+    owner = create_async_engine(os.environ["EC_MIGRATION_URL"])
+    try:
+        async with owner.begin() as connection:
+            await connection.execute(
+                text(
+                    "UPDATE canonical_events SET event_status='cancelled' WHERE canonical_event_id=:id"
+                ),
+                {"id": by_title[f"Cancelled {tag}"].canonical_event_id},
+            )
+    finally:
+        await owner.dispose()
+    live = await catalog.retrieve(RequestConstraints(), None, 10_000)
+    relevant = {r.title for r in live if tag in r.title}
+    assert relevant == {f"Future {tag}", f"Ongoing {tag}"}
+    (intent,) = await DeterministicEmbedding().embed([tag])
+    hybrid = await catalog.retrieve(RequestConstraints(), intent, 10_000)
+    assert {r.title for r in hybrid if tag in r.title} == relevant
+
+    archive = await catalog.retrieve(
+        RequestConstraints(
+            time_window=TimeWindow(now - timedelta(days=3), now - timedelta(days=1))
+        ),
+        None,
+        10_000,
+    )
+    assert {r.title for r in archive if tag in r.title} == {f"Past {tag}"}
+    assert await catalog.get(by_title[f"Past {tag}"].canonical_event_id) is not None
+    assert (
+        await catalog.get(by_title[f"Cancelled {tag}"].canonical_event_id)
+    ).event_status.value == "cancelled"

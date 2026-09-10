@@ -342,23 +342,40 @@ authoritative. Follow [the Meetup ingestion runbook](meetup-ingestion-runbook.md
 verification and containment. Never substitute the local recurring scheduler or the tenant OAuth
 adapter for the reviewed production scheduling/control plane.
 
-The repository's `/admin` ingestion surface and `ingestion-commands` relay are deliberately
-local/mock-only. Production settings reject their activation. Do not expose them by changing that
-guard: first provide a distinct operator identity/session with CSRF and recent-authentication
-controls, an append-only actor audit, and preferably a dedicated control-plane database role. The
-consumer tenant claim and local tenant header are never operator authority.
+The hosted management profile is a separate IAP-protected frontend and operator API. It verifies
+signed identity, exact-Origin JSON mutations, assigned viewer/operator/reviewer capabilities, and
+server-derived receipt actors. Consumer authentication never grants operator authority. See
+[ingestion administration](ingestion-admin.md#hosted-operator-boundary) for exact settings and roles.
+`EC_ADMIN_INGESTION_ENABLED` remains local/mock-only.
 
-The Compose app profile includes an equally local/mock-only `ingestion-cadence` convenience
-scheduler. It probes for due reviewed sources at a bounded 300-second default interval and appends
-an idempotent durable fleet command; it does not execute a source refresh. Its deterministic UTC
-slot identity handles restarts, while the database's unique active fleet-command target handles
-operator/scheduler races. This process is not production schedule authority: a production
-deployment must call the one-shot dispatcher from its reviewed scheduler after the operator-plane
-requirements above are satisfied.
+Migration `0181` enforces stored adapter identity while preserving configuration OCC and audit;
+`0182` separates controller/viewer/executor capabilities and removes consumer admin access. Drain
+cadence and command execution before applying the authority split. Provision separate non-owner
+LOGIN principals and versioned URL secrets, then deploy the matching API/executor images together.
+Do not roll back to a consumer-credential admin image: `0182` is forward-only and does not restore
+old grants. The local fixture bootstrap is never a production provisioning procedure.
+The new aggregate definer requires CREATEROLE plus owner/grant authority over its eleven input
+tables and the public schema; it needs no SUPERUSER/BYPASSRLS. It has SELECT-only privileges, with
+an explicit policy for FORCE-RLS account erasure. On PostgreSQL 16 only trusted migrator ADMIN
+metadata remains, with SET and INHERIT false. Earlier migrations still have their own privileged
+owner requirements; target Cloud SQL compatibility for the full migration chain remains unproven.
+
+With `operator.enabled`, the existing deployment CronJob invokes `ingestion_cadence --once` and
+appends a deterministic durable due command. The executor owns leases and linked refresh outcomes.
+The local recurring cadence loop is not production schedule authority; Temporal Schedule cutover
+has not been activated. The legacy direct refresh Job is rejected by the operator profile.
+
+Operator `/metrics` exports aggregate queue counts and available progress timestamps through a
+private GMP scrape. It contains no tenant, command, or source labels. `ready` and `leased` describe
+pending work; failure signals can overlap pending. Use scrape failure/age and backlog age together;
+absence of a progress sample is unknown, not zero. Multiple API replicas expose the same DB totals:
+use a max across replicas, never a sum. Worker liveness and Temporal poller health need independent
+runtime evidence. Entity refresh remains an unleased due projection and must not be scaled based
+on this snapshot.
 
 ### Entity-profile, Pacer, command-lease, and ingestion-evidence migration rollout
 
-The current migration head is `0152`. Migrations `0128`–`0130` are deliberately ordered but should
+The current source migration head is `0182`. Migrations `0128`–`0130` are deliberately ordered but should
 not be treated as a migrate-first rolling change. `0128` adds and validates checked JSONB
 columns/functions for verified entity profiles, `0129` reconciles historical terminal Pacer
 deferrals into retryable paused runs, and `0130` installs renewable command leases plus overview v2.

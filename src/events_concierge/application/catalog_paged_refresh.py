@@ -11,14 +11,17 @@ ADR-001/003/005).
 from __future__ import annotations
 
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 from uuid import UUID
 
 from ..domain.catalog_sources import CatalogPagedRefreshProgress, CatalogSource
+from ..domain.catalog_window import in_collection_window
 from ..domain.enums import CatalogRefreshClaimOutcome, CatalogSourceMode, Modality, Source
 from ..domain.policy import PolicyDecision, PolicyDecisionCode
 from ..ports.catalog_sources import (
+    CatalogCollectionWindowRepository,
+    CatalogCollectionWindowUnavailableError,
     CatalogPagedRefreshPromoter,
     CatalogPagedRefreshRepository,
     CatalogPagedSourceFetcher,
@@ -28,7 +31,11 @@ from ..ports.catalog_sources import (
 from ..ports.discovery_policy import DiscoveryPolicyGate
 from ..ports.policy import Pacer, PacerOperation, PacerRequest, SourceQuarantinePort
 from ..ports.sources import SourceAccessDeniedError, SourceRateLimitedError
-from .catalog_refresh import CatalogRefreshOutcome, CatalogRefreshResult
+from .catalog_refresh import (
+    CatalogRefreshOutcome,
+    CatalogRefreshResult,
+    collection_window_unavailable_detail,
+)
 from .catalog_run_evidence import CatalogRunEvidenceSession
 
 _MAX_LEGISTAR_PAGES = 5
@@ -59,6 +66,7 @@ class PagedCatalogRefreshService:
         source_quarantine: SourceQuarantinePort | None = None,
         run_evidence: CatalogRunEvidenceRecorder | None = None,
         *,
+        collection_windows: CatalogCollectionWindowRepository | None = None,
         lease_seconds: int = 300,
         now: Callable[[], datetime] | None = None,
     ) -> None:
@@ -74,6 +82,7 @@ class PagedCatalogRefreshService:
         self._policy_gate = policy_gate
         self._source_quarantine = source_quarantine
         self._run_evidence = run_evidence
+        self._collection_windows = collection_windows
         self._lease_seconds = lease_seconds
         self._now = now or (lambda: datetime.now(UTC))
 
@@ -89,8 +98,8 @@ class PagedCatalogRefreshService:
         )
         try:
             result = await self._refresh_page_observed(source_key, run_key, evidence)
-        except Exception:
-            await evidence.finish("failed")
+        except Exception as exc:
+            await evidence.finish("failed", error=exc)
             raise
         await evidence.finish(result.outcome.value)
         return result
@@ -102,7 +111,7 @@ class PagedCatalogRefreshService:
         evidence: CatalogRunEvidenceSession,
     ) -> CatalogRefreshResult:
         """Advance one page while recording closed, monotonic stage observations."""
-        admission = evidence.start_stage("admission")
+        admission = await evidence.start_stage("admission")
         preflight = await self._preflight(source_key, run_key)
         if isinstance(preflight, CatalogRefreshResult):
             await admission.finish(preflight.outcome.value)
@@ -170,18 +179,22 @@ class PagedCatalogRefreshService:
         # The paged provider adapter combines the HTTP request and response parsing.  Record the
         # observable adapter boundary as collection; extraction/enrichment remains explicitly
         # marked as included rather than receiving an invented timing.
-        collect = evidence.start_stage("collect")
+        collect = await evidence.start_stage("collect")
         try:
             page = await prepared.fetcher.fetch_page(
                 prepared.source,
                 window_start_day=prepared.progress.window_start_day,
                 page_number=prepared.progress.next_page,
             )
+            page = replace(page, candidates=tuple(
+                candidate for candidate in page.candidates
+                if in_collection_window(prepared.source, candidate)
+            ))
         except SourceRateLimitedError as error:
-            await collect.finish(CatalogRefreshOutcome.DEFERRED.value)
+            await collect.finish(CatalogRefreshOutcome.DEFERRED.value, error=error)
             return await self._rate_limited(source_key, run_key, lease_token, pacer_request, error)
         except SourceAccessDeniedError as error:
-            await collect.finish(CatalogRefreshOutcome.SKIPPED.value)
+            await collect.finish(CatalogRefreshOutcome.SKIPPED.value, error=error)
             await self._quarantine_after_access_denied(error)
             await self._progress.abort_paged_refresh(
                 source_key,
@@ -196,7 +209,7 @@ class PagedCatalogRefreshService:
                 detail="source access denied; source quarantined",
             )
         except Exception as exc:
-            await collect.finish("failed")
+            await collect.finish("failed", error=exc)
             # An untyped transport/parser failure is not provider backoff, so do not invent a
             # shared throttle window.  Preserve already staged pages and let the failed Temporal
             # execution be restarted under the same source/run identity after the source recovers.
@@ -210,9 +223,10 @@ class PagedCatalogRefreshService:
                 error=f"Legistar page fetch failed: {type(exc).__name__}",
             )
             raise
+        await collect.progress(candidate_count=len(page.candidates))
         await collect.finish(CatalogRefreshOutcome.SUCCEEDED.value)
 
-        publish = evidence.start_stage("catalog_publish")
+        publish = await evidence.start_stage("catalog_publish")
         try:
             staged = await self._progress.stage_paged_page(
                 source_key,
@@ -222,7 +236,7 @@ class PagedCatalogRefreshService:
                 page=page,
             )
         except Exception as exc:
-            await publish.finish("failed")
+            await publish.finish("failed", error=exc)
             # A database contract fence can reject a page after its GET if an owner edit won the
             # race. Discard that old revision and fail the workflow so its stable source/slot ID
             # can restart against the newly reviewed contract; never leave a running lease behind.
@@ -281,6 +295,37 @@ class PagedCatalogRefreshService:
         )
         if preparation.status == "ready":
             assert preparation.progress is not None
+            if self._collection_windows is not None:
+                try:
+                    window = await self._collection_windows.prepare_collection_window(
+                        source_key, run_key, lease_token=lease_token,
+                        expected_revision=source.source_revision,
+                    )
+                except CatalogCollectionWindowUnavailableError as exc:
+                    # Legacy/expired windows cannot become a fresh collection by retrying.
+                    # Preserve staged rows, release the lease, and use the source-changed retry
+                    # gate to park this run rather than repeatedly trying to promote it.
+                    failed = await self._sources.fail_refresh(
+                        source_key, run_key, lease_token=lease_token,
+                        error=f"source changed: {exc.code}",
+                    )
+                    return CatalogRefreshResult(
+                        source_key, run_key,
+                        CatalogRefreshOutcome.SKIPPED if failed else CatalogRefreshOutcome.BUSY,
+                        detail=collection_window_unavailable_detail(exc.code),
+                    )
+                if window is None:
+                    released = await self._sources.fail_refresh(
+                        source_key, run_key, lease_token=lease_token,
+                        error="source changed: collection window admission changed",
+                    )
+                    return CatalogRefreshResult(
+                        source_key, run_key,
+                        CatalogRefreshOutcome.DEFERRED if released else CatalogRefreshOutcome.BUSY,
+                        detail="collection window could not be admitted under the current source lease",
+                        retry_after_seconds=1.0 if released else None,
+                    )
+                source = replace(source, collection_window=window)
             fetcher = self._fetchers.get(source.mode)
             if fetcher is None:
                 await self._progress.abort_paged_refresh(
@@ -460,7 +505,7 @@ class PagedCatalogRefreshService:
         # retries promotion without another source GET. The concrete promoter rolls back all of its
         # catalog writes on an error, so retaining this normalized stage is the safe recovery path
         # (NFR-8, ADR-001/003).
-        publish = evidence.start_stage("catalog_publish")
+        publish = await evidence.start_stage("catalog_publish")
         try:
             promotion = await self._promoter.promote_paged_refresh(
                 source_key,
@@ -468,10 +513,14 @@ class PagedCatalogRefreshService:
                 lease_token=lease_token,
                 source_revision=prepared.progress.source_revision,
             )
-        except Exception:
-            await publish.finish("failed")
+        except Exception as exc:
+            await publish.finish("failed", error=exc)
             raise
-        await publish.finish(CatalogRefreshOutcome.SUCCEEDED.value)
+        await publish.finish(
+            CatalogRefreshOutcome.SUCCEEDED.value,
+            candidate_count=promotion.candidate_count,
+            canonical_count=promotion.canonical_count,
+        )
         return CatalogRefreshResult(
             source_key,
             run_key,

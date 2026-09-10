@@ -10,6 +10,8 @@ from ..domain.catalog_sources import CatalogRefreshDue
 from ..domain.ingestion_admin import (
     CatalogConcentrationEntry,
     CatalogFreshnessBucket,
+    IngestionCatalogEventPage,
+    IngestionCatalogRecordPage,
     IngestionCommand,
     IngestionCommandAction,
     IngestionCommandDetail,
@@ -21,11 +23,13 @@ from ..domain.ingestion_admin import (
     IngestionOverview,
     IngestionRunExecutionDescriptor,
     IngestionRunPage,
+    IngestionRunStatus,
     IngestionSourceConfigurationUpdate,
     IngestionSourceDetail,
     IngestionSourceEnabledBulkUpdate,
     IngestionSourceHealth,
     IngestionSourcePage,
+    IngestionSourceRegistrationHistory,
     IngestionSourceRevisionTarget,
     IngestionStageSummaryEntry,
     IngestionThroughputBucket,
@@ -105,6 +109,13 @@ class IngestionAdminRepository(Protocol):
         include_fixtures: bool,
     ) -> list[IngestionSourceHealth]: ...
 
+    async def source_registration_history(
+        self,
+        *,
+        window_days: int,
+        include_fixtures: bool,
+    ) -> IngestionSourceRegistrationHistory: ...
+
     async def fleet_shape(self) -> list[IngestionFleetShapeEntry]: ...
 
     async def throughput(
@@ -147,8 +158,19 @@ class IngestionAdminRepository(Protocol):
         window_hours: int | None,
         include_fixtures: bool,
         limit: int,
+        query: str | None = None,
+        sort_by: str = "started",
+        sort_direction: str = "desc",
+        started_after: datetime | None = None,
+        started_before: datetime | None = None,
+        stage: str | None = None,
+        stage_outcome: str | None = None,
         offset: int,
     ) -> IngestionRunPage: ...
+
+    async def lookup_run(
+        self, source_key: str, run_key: str, *, include_fixtures: bool = False
+    ) -> IngestionRunStatus | None: ...
 
     async def get_filter_metadata(
         self,
@@ -170,6 +192,30 @@ class IngestionAdminRepository(Protocol):
         include_fixtures: bool,
     ) -> IngestionSourceDetail | None: ...
 
+    async def browse_catalog_records(
+        self,
+        *,
+        source_key: str | None,
+        run_key: str | None,
+        query: str | None,
+        date_scope: str,
+        price_status: str,
+        after_start_at: datetime | None,
+        after_canonical_event_id: UUID | None,
+        limit: int,
+    ) -> IngestionCatalogRecordPage: ...
+
+    async def browse_run_events(
+        self,
+        source_key: str,
+        run_key: str,
+        *,
+        query: str | None,
+        after_start_at: datetime | None,
+        after_canonical_event_id: UUID | None,
+        limit: int,
+    ) -> IngestionCatalogEventPage: ...
+
     async def update_source_configuration(
         self,
         source_key: str,
@@ -185,6 +231,7 @@ class IngestionAdminRepository(Protocol):
         min_interval_ms: int,
         page_limit: int,
         requested_by: str,
+        collection_horizon_days: int | None = None,
     ) -> IngestionSourceConfigurationUpdate: ...
 
     async def set_sources_enabled(

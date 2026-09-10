@@ -32,8 +32,8 @@ from sqlalchemy import text
 from sqlalchemy.exc import DBAPIError
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
+from ..application.discovery_results import lifecycle
 from ..application.feed import MAX_FEED_OFFSET
-from ..application.ingestion_admin import IngestionAdminService
 from ..application.profile_media import AvatarRejectedError, normalize_avatar
 from ..application.ranking_feedback import UnknownFeedbackEventError
 from ..application.request_start import RequestIntakeService, RequestStartRelay
@@ -85,6 +85,9 @@ from ..ports.tenant_roles import TenantRole
 from ..ports.workflows import RegistrationLifecycleSignaler
 from ..workflows.temporal_client import connect_temporal, validate_temporal_settings
 from .admin import install_ingestion_admin_routes
+from .command_investigation import install_command_investigation_routes
+from .operator import build_operator_services, install_operator_session_routes
+from .operator_operations import install_operator_operations_routes
 
 _log = get_logger("api")
 _READINESS_TIMEOUT_SECONDS = 2.0
@@ -322,7 +325,17 @@ class EventExtractionEvidenceOut(BaseModel):
     rule: str
 
 
+class EventOccurrenceOut(BaseModel):
+    canonical_event_id: UUID
+    start_at: str
+    end_at: str | None
+    registration_urls: list[str]
+
+
 class FeedItemOut(BaseModel):
+    additional_dates: list[EventOccurrenceOut] = Field(default_factory=list)
+    discovery_state: str = "upcoming"
+    source_freshness: str = "unknown"
     canonical_event_id: UUID
     title: str
     start_at: str
@@ -364,6 +377,7 @@ class FeedUnderstandingOut(BaseModel):
 
 
 class FeedOut(BaseModel):
+    signals: dict[str, float] = Field(default_factory=dict)
     request_id: UUID
     items: list[FeedItemOut]
     next_cursor: str | None
@@ -384,6 +398,8 @@ class CatalogBrowseSourceOut(FeedSourceOut):
 class CatalogBrowseItemOut(BaseModel):
     """Feed-shaped catalog data with explicit not-ranked/not-conflict-checked sentinels."""
 
+    discovery_state: str = "upcoming"
+    source_freshness: str = "unknown"
     canonical_event_id: UUID
     title: str
     start_at: str
@@ -1142,6 +1158,7 @@ def _feed_out(feed: Feed, constraints: RequestConstraints | None = None) -> Feed
     constraints = constraints or RequestConstraints()
     return FeedOut(
         request_id=feed.request_id,
+        signals=feed.signals,
         next_cursor=feed.next_cursor,
         understood=FeedUnderstandingOut(
             categories=list(constraints.categories),
@@ -1165,6 +1182,14 @@ def _feed_out(feed: Feed, constraints: RequestConstraints | None = None) -> Feed
                 price_currency=item.canonical_event.price_currency,
                 score=item.score,
                 rationale=item.rationale,
+                additional_dates=[EventOccurrenceOut(
+                    canonical_event_id=e.canonical_event_id,
+                    start_at=e.start_at.isoformat(),
+                    end_at=e.end_at.isoformat() if e.end_at else None,
+                    registration_urls=e.registration_urls(),
+                ) for e in item.additional_dates],
+                discovery_state=item.discovery_state,
+                source_freshness=item.source_freshness,
                 conflict=item.conflict_verdict.value,
                 lanes=[lane.value for lane in item.lane_plan],
                 registration_urls=item.canonical_event.registration_urls(),
@@ -1450,9 +1475,7 @@ def _normalize_catalog_date_ranges(
         )
     if not parsed:
         return ()
-    max_window = (
-        _MAX_SOURCE_CATALOG_ARCHIVE_WINDOW if source_keys else _MAX_CATALOG_BROWSE_WINDOW
-    )
+    max_window = _MAX_SOURCE_CATALOG_ARCHIVE_WINDOW if source_keys else _MAX_CATALOG_BROWSE_WINDOW
     normalized = _merge_catalog_date_ranges(parsed)
     if sum((end - start for start, end in normalized), timedelta()) > max_window:
         raise ValueError("catalog date range is invalid")
@@ -1482,7 +1505,15 @@ def _catalog_browse_item_out(item: CatalogBrowseEvent) -> CatalogBrowseItemOut:
         )
         for source in item.sources
     ]
+    now = datetime.now(UTC)
+    source_checked = max((source.last_seen_at for source in item.sources), default=None)
+    source_freshness = (
+        "unknown" if source_checked is None or source_checked > now
+        else "stale" if now - source_checked > timedelta(days=7) else "recent"
+    )
     return CatalogBrowseItemOut(
+        discovery_state=lifecycle(event, now),
+        source_freshness=source_freshness,
         canonical_event_id=event.canonical_event_id,
         title=event.title,
         start_at=event.start_at.isoformat(),
@@ -1491,7 +1522,7 @@ def _catalog_browse_item_out(item: CatalogBrowseEvent) -> CatalogBrowseItemOut:
         price_max_cents=event.price_max_cents,
         price_currency=event.price_currency,
         score=None,
-        rationale="Current catalog observation; chronological browse is not personalized.",
+        rationale="Retained catalog observation." if lifecycle(event, now) == "past" else "Current catalog observation; chronological browse is not personalized.",
         conflict="not_evaluated",
         lanes=["handoff"],
         registration_urls=_unique([source.registration_url for source in item.sources]),
@@ -1591,9 +1622,7 @@ def _catalog_entity_detail_out(detail: Any) -> CatalogEntityDetailOut:
         ],
         refresh_due=detail.refresh_due,
         insights=(
-            _catalog_entity_insights_out(detail.insights)
-            if detail.insights is not None
-            else None
+            _catalog_entity_insights_out(detail.insights) if detail.insights is not None else None
         ),
     )
 
@@ -2020,9 +2049,7 @@ def _api_key_out(record: ApiKeyRecord) -> ApiKeyOut:
         name=record.name,
         key_prefix=record.key_prefix,
         created_at=record.created_at.isoformat(),
-        last_used_at=(
-            record.last_used_at.isoformat() if record.last_used_at is not None else None
-        ),
+        last_used_at=(record.last_used_at.isoformat() if record.last_used_at is not None else None),
         revoked_at=record.revoked_at.isoformat() if record.revoked_at is not None else None,
         active=record.active,
     )
@@ -2324,20 +2351,15 @@ def create_app() -> FastAPI:
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> Any:
         app.state.container = build_container(settings)
-        app.state.ingestion_admin = (
-            IngestionAdminService(
-                app.state.container.ingestion_admin_repo,
-                catalog=app.state.container.catalog,
-                release_revision=settings.release_revision,
-                image_digest=settings.image_digest,
-            )
-            if settings.admin_ingestion_enabled
-            else None
-        )
+        operator_database = None
         try:
+            if settings.admin_ingestion_enabled:
+                operator_database = build_operator_services(app, settings)
             await _configure_temporal(app, settings, app.state.container)
             yield
         finally:
+            if operator_database is not None:
+                await operator_database.aclose()
             browser_session = app.state.container.browser_session
             if browser_session is not None:
                 await browser_session.aclose()
@@ -2996,9 +3018,7 @@ def create_app() -> FastAPI:
         """
         container: Container = app.state.container
         secret, prefix, digest = _mint_api_key()
-        record = await container.api_keys.issue(
-            tenant_id, uuid4(), body.name, prefix, digest
-        )
+        record = await container.api_keys.issue(tenant_id, uuid4(), body.name, prefix, digest)
         return IssuedApiKeyOut(key=_api_key_out(record), secret=secret)
 
     @app.delete("/v1/me/api-keys/{key_id}", response_model=ApiKeyOut)
@@ -3358,7 +3378,9 @@ def create_app() -> FastAPI:
                 time_zone=time_zone,
             )
         except ValueError:
-            raise HTTPException(status_code=422, detail="catalog summary query is invalid") from None
+            raise HTTPException(
+                status_code=422, detail="catalog summary query is invalid"
+            ) from None
         return CatalogDaySummaryOut(
             days=[
                 CatalogDayOut(
@@ -3383,9 +3405,7 @@ def create_app() -> FastAPI:
     async def browse_catalog_entities(
         tenant_id: AuthenticatedTenant,
         q: str | None = Query(default=None, max_length=_MAX_CATALOG_FILTER_LENGTH),
-        kind: Annotated[
-            list[Literal["person", "organization", "unknown"]] | None, Query()
-        ] = None,
+        kind: Annotated[list[Literal["person", "organization", "unknown"]] | None, Query()] = None,
         limit: int = Query(default=80, ge=1, le=100),
     ) -> list[CatalogEntityOut]:
         """Browse the indexed role graph without ever merging identities by display name."""
@@ -3477,9 +3497,7 @@ def create_app() -> FastAPI:
     async def get_catalog_entity_directory(
         tenant_id: AuthenticatedTenant,
         q: str | None = Query(default=None, max_length=_MAX_CATALOG_FILTER_LENGTH),
-        kind: Annotated[
-            list[Literal["person", "organization", "unknown"]] | None, Query()
-        ] = None,
+        kind: Annotated[list[Literal["person", "organization", "unknown"]] | None, Query()] = None,
         city: Annotated[list[str] | None, Query()] = None,
         limit: int = Query(default=48, ge=1, le=60),
         min_events: int = Query(default=1, ge=1, le=10),
@@ -3507,9 +3525,7 @@ def create_app() -> FastAPI:
     async def get_catalog_entity_overview_graph(
         tenant_id: AuthenticatedTenant,
         q: str | None = Query(default=None, max_length=_MAX_CATALOG_FILTER_LENGTH),
-        kind: Annotated[
-            list[Literal["person", "organization", "unknown"]] | None, Query()
-        ] = None,
+        kind: Annotated[list[Literal["person", "organization", "unknown"]] | None, Query()] = None,
         identity: Annotated[
             list[Literal["profile_verified", "source_scoped"]] | None, Query()
         ] = None,
@@ -3659,6 +3675,9 @@ def create_app() -> FastAPI:
     )(_mark_handoff_done)
 
     install_ingestion_admin_routes(app)
+    install_command_investigation_routes(app)
+    install_operator_operations_routes(app)
+    install_operator_session_routes(app)
     _install_agent_chat(app, settings)
     return app
 
@@ -3681,6 +3700,7 @@ def _install_agent_chat(app: FastAPI, settings: Settings) -> None:
     if not api_key:
         _log.warning("agent_chat_disabled", reason="EC_OPENROUTER_API_KEY is not set")
         return
+
     def build_toolset(tenant_id: UUID) -> ConciergeToolsetImpl:
         container: Container = app.state.container
         return ConciergeToolsetImpl(

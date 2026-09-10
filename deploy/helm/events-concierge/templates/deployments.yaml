@@ -1,7 +1,11 @@
 {{- $root := . -}}
+{{- $devCatalog := and (eq (default "managed" .Values.global.deploymentProfile) "development") .Values.developmentCatalog.enabled -}}
 {{- if or (eq .Values.global.releasePhase "all") (eq .Values.global.releasePhase "application") }}
 {{- range $name, $workload := .Values.workloads }}
-{{- if $workload.enabled }}
+{{- if and $workload.enabled (or (not $workload.operatorProfile) $root.Values.operator.enabled (and $devCatalog (eq $name "ingestion-executor"))) }}
+{{- $profile := default "runtime" $workload.operatorProfile }}
+{{- if and (eq $name "temporal-catalog") $root.Values.operator.enabled }}{{- $profile = "executor" }}{{- end }}
+{{- if and $devCatalog (has $name (list "ingestion-executor" "temporal-catalog")) }}{{- $profile = "development-executor" }}{{- end }}
 ---
 apiVersion: apps/v1
 kind: Deployment
@@ -27,12 +31,15 @@ spec:
         app.kubernetes.io/part-of: events-concierge
       annotations:
         checksum/runtime-config: {{ include (print $root.Template.BasePath "/configmap.yaml") $root | sha256sum }}
+        {{- if eq $profile "development-executor" }}
+        checksum/development-executor-config: {{ include (print $root.Template.BasePath "/development-operator-config.yaml") $root | sha256sum }}
+        {{- end }}
         {{- if $workload.runtimeSecrets }}
-        checksum/runtime-secret-versions: {{ $root.Values.secretManager.runtimeSecrets | toJson | sha256sum }}
+        checksum/runtime-secret-versions: {{ $root.Values.developmentCatalog | toJson | sha256sum }}-{{ $root.Values.operator | toJson | sha256sum }}-{{ $root.Values.secretManager.runtimeSecrets | toJson | sha256sum }}
         {{- end }}
         cluster-autoscaler.kubernetes.io/safe-to-evict: "true"
     spec:
-      serviceAccountName: {{ (index $root.Values.serviceAccounts $workload.serviceAccount).name }}
+      serviceAccountName: {{ (index $root.Values.serviceAccounts (ternary "ingestion-executor" $workload.serviceAccount (eq $profile "executor"))).name }}
       automountServiceAccountToken: {{ $workload.needsIdentity }}
       enableServiceLinks: false
       terminationGracePeriodSeconds: 30
@@ -87,12 +94,20 @@ spec:
       {{- end }}
       containers:
         - name: {{ $name }}
-          {{- if eq $name "frontend" }}
+          {{- if or (eq $name "frontend") (eq $name "operator-frontend") }}
           image: {{ include "events-concierge.image" $root.Values.global.frontendImage | quote }}
           imagePullPolicy: {{ $root.Values.global.frontendImage.pullPolicy }}
           env:
             - name: EC_API_ORIGIN
-              value: {{ $root.Values.frontend.apiOrigin | quote }}
+              value: {{ ternary (printf "http://%s-operator-api:8000" (include "events-concierge.fullname" $root)) $root.Values.frontend.apiOrigin (eq $name "operator-frontend") | quote }}
+            - name: EC_OPERATOR_API_ENABLED
+              value: {{ ternary "true" "false" (eq $name "operator-frontend") | quote }}
+            {{- if eq $name "operator-frontend" }}
+            - name: EC_OPERATOR_API_ORIGIN
+              value: {{ printf "http://%s-operator-api:8000" (include "events-concierge.fullname" $root) | quote }}
+            - name: EC_OPERATOR_PUBLIC_ORIGIN
+              value: {{ printf "https://%s" $root.Values.operator.hostname | quote }}
+            {{- end }}
             - name: NEXT_TELEMETRY_DISABLED
               value: "1"
           {{- else }}
@@ -100,7 +115,7 @@ spec:
           imagePullPolicy: {{ $root.Values.global.appImage.pullPolicy }}
           envFrom:
             - configMapRef:
-                name: {{ include "events-concierge.fullname" $root }}-runtime
+                name: {{ include "events-concierge.fullname" $root }}-{{ $profile }}
           {{- with $workload.env }}
           env:
             {{- range $key, $value := . }}
@@ -183,7 +198,7 @@ spec:
             driver: secrets-store-gke.csi.k8s.io
             readOnly: true
             volumeAttributes:
-              secretProviderClass: {{ include "events-concierge.runtimeSecretProviderClass" $root | quote }}
+              secretProviderClass: {{ printf "%s-%s" (include "events-concierge.fullname" $root) $profile | quote }}
         {{- end }}
 {{- end }}
 {{- end }}

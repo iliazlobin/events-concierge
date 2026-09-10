@@ -130,7 +130,7 @@ jobs:
         run: make reset CONFIRM=reset
 
   browser-e2e:
-    name: Consumer browser E2E
+    name: Consumer and admin browser E2E
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
@@ -149,11 +149,46 @@ jobs:
       - name: Install locked development dependencies
         run: uv sync --locked --extra dev
 
+      - name: Install Node.js
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      - name: Build admin frontend
+        working-directory: web
+        run: |
+          npm ci
+          npm run build
+
       - name: Install Chromium and Linux browser dependencies
         run: uv run playwright install --with-deps chromium
 
-      - name: Run consumer browser gate
-        run: make test-browser
+      - name: Run consumer and admin browser gates
+        env:
+          EC_ADMIN_WEB_URL: http://127.0.0.1:3302
+          EC_API_ORIGIN: http://127.0.0.1:1
+          EC_OPERATOR_API_ENABLED: "false"
+        run: |
+          cd web
+          ./node_modules/.bin/next start --hostname 127.0.0.1 --port 3302 > "${RUNNER_TEMP}/admin-browser-server.log" 2>&1 &
+          admin_server_pid=$!
+          trap 'kill "$admin_server_pid" 2>/dev/null || true' EXIT
+          cd ..
+          ready=false
+          for attempt in {1..30}; do
+            if curl --fail --silent --output /dev/null "$EC_ADMIN_WEB_URL/admin"; then
+              ready=true
+              break
+            fi
+            sleep 1
+          done
+          if [ "$ready" != true ]; then
+            cat "${RUNNER_TEMP}/admin-browser-server.log"
+            exit 1
+          fi
+          make test-browser
 
   container:
     name: Container build

@@ -17,6 +17,7 @@ from temporalio.exceptions import ApplicationError
 
 from ..application.reconciliation import OrganizerChange, completion_deadline
 from ..application.registration import PacerDeferredError
+from ..catalog_runtime import CatalogContainer
 from ..composition import Container
 from ..domain.enums import (
     ConflictVerdict,
@@ -70,11 +71,31 @@ from .dto import (
 
 _container: Container | None = None
 
+_catalog_container: CatalogContainer | None = None
+
 
 def set_container(container: Container) -> None:
     """Bind the worker's dependency graph for the activity functions."""
-    global _container
+    global _container, _catalog_container
     _container = container
+    _catalog_container = None
+
+
+def set_catalog_container(container: CatalogContainer) -> None:
+    """Bind a catalog-only worker without constructing consumer or tenant-effect adapters."""
+    global _catalog_container, _container
+    _catalog_container = container
+    _container = None
+
+
+def _require_catalog() -> CatalogContainer | Container:
+    # Combined workers and older integration fixtures own only the full binding. There must
+    # never be a cached second copy which survives replacement of that authoritative graph.
+    if _container is not None:
+        return _container
+    if _catalog_container is None:
+        raise RuntimeError("catalog activity container not configured")
+    return _catalog_container
 
 
 def _require() -> Container:
@@ -138,7 +159,7 @@ async def refresh_catalog_single_get(inp: CatalogRefreshInput) -> CatalogRefresh
     The service rejects any multi-request source before a lease or source call, so a retry carries
     no unpersisted page cursor (FR-10.3/10.4, NFR-8, ADR-003/005).
     """
-    c = _require()
+    c = _require_catalog()
     if not c.settings.uses_shared_pacer_redis:
         raise RuntimeError(
             "P15a catalog refresh requires a shared Redis Pacer before source egress"
@@ -168,7 +189,7 @@ async def refresh_catalog_paged_legistar(inp: CatalogRefreshInput) -> CatalogRef
     source/run identifiers; no source JSON or cursor payload enters Temporal history (FR-10.3/10.4,
     NFR-1/NFR-8, ADR-003/005).
     """
-    c = _require()
+    c = _require_catalog()
     if not c.settings.uses_shared_pacer_redis:
         raise RuntimeError(
             "paged catalog refresh requires a shared Redis Pacer before source egress"

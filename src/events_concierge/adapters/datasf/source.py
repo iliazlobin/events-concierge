@@ -25,6 +25,7 @@ import httpx
 from selectolax.parser import HTMLParser
 
 from ...domain.catalog_sources import CatalogSource
+from ...domain.catalog_window import collection_end_day, collection_reference_time
 from ...domain.enums import CatalogSourceMode, PriceStatus, Source
 from ...domain.events import CandidateEvent, GeoPoint
 from ...infra.logging import get_logger
@@ -128,7 +129,7 @@ class DataSfOur415CatalogFetcher:
         if not _is_supported_seed(source.seed_url):
             raise ValueError("DataSF source must use the reviewed Our415 Socrata endpoint")
 
-        now = _as_sf_time(self._now())
+        now = _as_sf_time(collection_reference_time(source, self._now()))
         records = await self._fetch_records(source, now.date())
         duplicate_publisher_ids = _duplicate_publisher_ids(records)
         candidates: list[CandidateEvent] = []
@@ -146,7 +147,11 @@ class DataSfOur415CatalogFetcher:
         self, source: CatalogSource, start_day: date
     ) -> list[dict[str, object]]:
         """Count then page one fixed query, failing before any partial catalog effect (NFR-8)."""
-        end_exclusive = start_day + timedelta(days=_HORIZON_DAYS)
+        end_exclusive = (
+            collection_end_day(source, start_day, _SF_TIME_ZONE)
+            if source.collection_window is not None
+            else start_day + timedelta(days=source.collection_horizon_days)
+        )
         where = _where_clause(start_day, end_exclusive)
         headers = {"User-Agent": self._user_agent}
         async with httpx.AsyncClient(
@@ -379,7 +384,11 @@ def _candidates_from_record(
     ):
         _log.warning("datasf_event_incomplete", source_key=source.source_key)
         return []
-    occurrence_days = _occurrence_days(start_day, end_day, weekdays, now.date())
+    occurrence_days = _occurrence_days(
+        start_day, end_day, weekdays, now.date(),
+        source.collection_window.horizon_days if source.collection_window is not None else source.collection_horizon_days,
+        end_exclusive=collection_end_day(source, now.date() + timedelta(days=source.collection_horizon_days), _SF_TIME_ZONE),
+    )
     if occurrence_days is None:
         _log.warning("datasf_event_schedule_invalid", source_key=source.source_key)
         return []
@@ -390,7 +399,7 @@ def _candidates_from_record(
     candidates: list[CandidateEvent] = []
     for occurrence_day in occurrence_days:
         start_at = datetime.combine(occurrence_day, start_clock, tzinfo=_SF_TIME_ZONE)
-        if start_at < now:
+        if start_at < now or (source.collection_window is not None and start_at >= source.collection_window.end_at):
             continue
         end_at = _end_at(occurrence_day, start_clock, end_clock)
         candidates.append(
@@ -414,7 +423,8 @@ def _candidates_from_record(
 
 
 def _occurrence_days(
-    start_day: date, end_day: date | None, weekdays: frozenset[int], today: date
+    start_day: date, end_day: date | None, weekdays: frozenset[int], today: date,
+    horizon_days: int = _HORIZON_DAYS, *, end_exclusive: date | None = None,
 ) -> list[date] | None:
     """Materialize only exact source-declared sessions in the approved 90-day window (FR-3.7)."""
     if not weekdays:
@@ -422,7 +432,7 @@ def _occurrence_days(
     if end_day is None or end_day < start_day:
         return None
     window_start = max(start_day, today)
-    window_end = min(end_day, today + timedelta(days=_HORIZON_DAYS - 1))
+    window_end = min(end_day, (end_exclusive - timedelta(days=1)) if end_exclusive is not None else today + timedelta(days=horizon_days - 1))
     if window_end < window_start:
         return []
     span_days = (window_end - window_start).days

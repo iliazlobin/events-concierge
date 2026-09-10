@@ -22,6 +22,11 @@ import httpx
 from selectolax.parser import HTMLParser
 
 from ...domain.catalog_sources import CatalogSource
+from ...domain.catalog_window import (
+    collection_end_at,
+    collection_end_day,
+    collection_reference_time,
+)
 from ...domain.enums import CatalogSourceMode, PriceStatus, Source
 from ...domain.events import CandidateEvent, GeoPoint
 from ...infra.logging import get_logger
@@ -111,11 +116,13 @@ class LocalistCatalogFetcher:
         if publisher is None:
             raise ValueError("Localist source must use one of the reviewed public events endpoints")
 
-        now = _as_stanford_time(self._now())
+        now = _as_stanford_time(collection_reference_time(source, self._now()))
         horizon_start = datetime.combine(now.date(), datetime.min.time(), _STANFORD_TIME_ZONE)
-        horizon_end = horizon_start + timedelta(days=_HORIZON_DAYS)
+        horizon_end = collection_end_at(
+            source, horizon_start + timedelta(days=source.collection_horizon_days),
+        ).astimezone(_STANFORD_TIME_ZONE)
         events = await self._fetch_pages(
-            source, publisher, horizon_start.date(), horizon_end.date()
+            source, publisher, horizon_start.date(), collection_end_day(source, horizon_end.date(), _STANFORD_TIME_ZONE)
         )
         candidates: list[CandidateEvent] = []
         seen_source_ids: set[str] = set()

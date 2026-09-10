@@ -1,0 +1,45 @@
+.summary { min-width: 0; border: 1px solid var(--kit-line, #ffffff15); border-radius: 9px; background: #0e120d; padding: 15px 17px 10px; }
+.heading { display: flex; justify-content: space-between; align-items: center; gap: 12px; margin-bottom: 15px; }
+.heading > div { display: flex; align-items: center; flex-wrap: wrap; gap: 9px; min-width: 0; }
+.heading svg { width: 14px; height: 14px; color: #92a77e; }
+.heading h2 { margin: 0; font-size: 13px; font-weight: 550; color: #d5dfcb; }
+.heading span { color: #8e9c83; font-size: 10px; }
+.grid { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; }
+.panel { min-width: 0; }
+.panel + .panel { border-left: 1px solid #ffffff0b; padding-left: 20px; }
+.panel h3 { display: flex; align-items: baseline; justify-content: space-between; margin: 0 0 12px; color: #bdcbb1; font-size: 11px; font-weight: 500; gap: 8px; }
+.panel h3 span { color: #76866b; font-size: 9px; white-space: nowrap; }
+.panel p { margin: 10px 0 0; color: #7f9073; font-size: 10px; line-height: 1.6; }
+.panel p b { color: #b9c9a9; font-weight: 550; }
+.outcomes { display: grid; gap: 7px; }
+.countBar { display: grid; grid-template-columns: 76px minmax(0, 1fr) 24px; gap: 8px; align-items: center; text-align: left; background: transparent; color: #a2b395; border: 1px solid transparent; border-radius: 3px; padding: 2px 4px; font-size: 10px; }
+.countBar > strong { text-align: right; font-weight: 500; color: #d0dec2; font-variant-numeric: tabular-nums; }
+.track { display: block; width: 100%; height: 5px; background: #ffffff05; border-radius: 2px; overflow: hidden; }
+.track > i { display: block; height: 100%; background: var(--signal, #9fba81); border-radius: 2px; }
+.volume { display: grid; gap: 6px; }
+.volume button { min-width: 0; width: 100%; background: none; padding: 1px 4px 4px; color: #b5c6a6; text-align: left; border: 1px solid transparent; border-radius: 4px; }
+.volumeTitle { display: flex; align-items: center; gap: 8px; font-size: 10px; margin-bottom: 5px; }
+.volumeTitle > span { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; flex: 1; min-width: 0; }
+.volumeTitle strong { color: #cadcba; font-size: 10px; font-weight: 500; font-variant-numeric: tabular-nums; }
+.volumeTitle svg { width: 11px; height: 11px; color: #7c926b; }
+.outputCoverage { color: #738368 !important; }
+.footer { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 9px 15px; border-top: 1px solid #ffffff0a; padding-top: 10px; margin-top: 13px; }
+.errors { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; min-width: 0; }
+.errors > span { color: #829574; font-size: 10px; margin-right: 5px; }
+.errors > small { color: #758969; font-size: 10px; }
+.errors button { display: inline-flex; align-items: center; gap: 6px; border: 1px solid #b7947830; border-radius: 4px; background: #b7947807; padding: 4px 6px; color: #c2a78d; font-size: 10px; overflow-wrap: anywhere; }
+.errors b { font-size: 10px; font-weight: 550; }
+.scope, .empty { margin: 10px 0 2px; color: #91a483; font-size: 11px; line-height: 1.6; }
+.stale { display: flex; align-items: center; gap: 7px; margin: 8px 0 14px; color: #d4b288; font-size: 11px; line-height: 1.6; }
+.stale svg { width: 14px; height: 14px; flex: 0 0 auto; }
+.summary [data-tone="ok"] { --signal: #abc888; }
+.summary [data-tone="bad"] { --signal: #c58c77; }
+.summary [data-tone="warn"] { --signal: #bea36e; }
+.summary [data-tone="info"] { --signal: #87a9bd; }
+.summary button:hover:not(:disabled) { border-color: #9cbf7455; background-color: #b8df8610; }
+.summary button[aria-pressed="true"] { background-color: #b8df8612; border-color: #accc7d80; color: #d0e5b9; }
+.summary button:focus-visible { outline: 2px solid #bedc9c; outline-offset: 2px; }
+.summary button:disabled { opacity: .55; cursor: default; }
+@media (max-width: 1200px) { .grid { gap: 14px; } .panel + .panel { padding-left: 14px; } }
+
+@media (max-width: 540px) { .summary { padding: 13px 12px 10px; } .grid { grid-template-columns: minmax(0, 1fr); gap: 15px; } .panel + .panel { border-left: none; border-top: 1px solid #ffffff0b; padding: 13px 0 0; } .panel:last-child { grid-column: auto; } .volume { grid-template-columns: minmax(0, 1fr); } }

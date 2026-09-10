@@ -49,12 +49,41 @@ def _https_origin(url: str) -> str | None:
     suffix = f":{port}" if port is not None else ""
     return f"https://{hostname.lower()}{suffix}"
 
+
 # The slowest cadence a reviewed source may be scheduled on. It bounds how long a shared Pacer
 # bucket can sit idle between two ordinary uses, which is what
 # ``Settings.pacer_state_retention_seconds`` has to outlast: a bucket that expires between one
 # refresh and the next is indistinguishable from lost state and is deferred before any provider
 # call (ADR-005).
 MAX_SOURCE_REFRESH_INTERVAL_MINUTES = 1_440
+MAX_COLLECTION_HORIZON_DAYS = 90
+
+
+@dataclass(frozen=True, slots=True)
+class CatalogCollectionWindow:
+    """Database-anchored event-start interval, frozen across retries of one run key."""
+
+    source_revision: int
+    horizon_days: int
+    start_at: datetime
+    end_at: datetime
+    attempt_count: int
+
+    def __post_init__(self) -> None:
+        if (
+            not 1 <= self.horizon_days <= MAX_COLLECTION_HORIZON_DAYS
+            or self.source_revision < 1
+            or self.attempt_count < 1
+        ):
+            raise ValueError("catalog collection window identity is invalid")
+        if any(
+            value.tzinfo is None or value.utcoffset() is None
+            for value in (self.start_at, self.end_at)
+        ):
+            raise ValueError("catalog collection window must be timezone-aware")
+        if self.end_at <= self.start_at:
+            raise ValueError("catalog collection window must have positive duration")
+
 
 @dataclass(frozen=True, slots=True)
 class CatalogSource:
@@ -75,6 +104,8 @@ class CatalogSource:
     page_limit: int = 1
     handoff_only: bool = True
     source_revision: int = 1
+    collection_horizon_days: int = MAX_COLLECTION_HORIZON_DAYS
+    collection_window: CatalogCollectionWindow | None = None
 
     def __post_init__(self) -> None:
         """Reject unsafe registry records before an adapter can be called (FR-10.3)."""
@@ -90,6 +121,11 @@ class CatalogSource:
             )
         if self.source_revision <= 0:
             raise ValueError("catalog source_revision must be positive")
+        if (
+            isinstance(self.collection_horizon_days, bool)
+            or not 1 <= self.collection_horizon_days <= MAX_COLLECTION_HORIZON_DAYS
+        ):
+            raise ValueError("catalog collection horizon must be between 1 and 90 days")
         seed_origin = _https_origin(self.seed_url)
         if seed_origin is None:
             raise ValueError("catalog source seed_url must use HTTPS and include a host")

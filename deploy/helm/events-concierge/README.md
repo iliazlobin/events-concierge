@@ -1,7 +1,7 @@
 # Events Concierge Helm chart
 
 The chart packages the public Next.js frontend, internal FastAPI API, separately versioned
-transactional and catalog Temporal workers, durable relay Deployments, one-shot repair/scanner
+transactional and catalog Temporal workers, durable worker Deployments, one-shot repair/scanner
 CronJobs, a schema migration Job, a bounded catalog dispatcher CronJob, and an opt-in one-source
 operational Job. PostgreSQL, Redis, Temporal Server, and shared filesystem volumes are intentionally
 absent.
@@ -75,3 +75,45 @@ phase intentionally removes application workloads while the rotation runs. The s
 database role has no overlap window: plan a maintenance interval. Rollback requires
 running the same gated Job with the previous password version before redeploying the previous DSN;
 rolling back only Helm values cannot restore database access.
+
+
+## Hosted operator profile
+
+`operator.enabled` is disabled by default. Enable it only with a reviewed deployment configuration.
+
+Prepare the [Terraform foundation](../../../infra/terraform/README.md) with its separate
+`operator_enabled = true` opt-in. After authorized provisioning, `tofu output -json
+operator_helm_values` provides the chart's two GCP identity annotations and catalog claim-check
+prefix; `secret_ids` provides the environment-prefixed database-secret names. Terraform creates
+empty secret containers and restricted IAM bindings. It does not populate passwords or secret
+versions, assign operators in IAP or `operator.subjectRoles`, or enable this chart profile.
+Pin the audited secret versions and keep `operator.executorClaimCheckPrefix` disjoint from the
+consumer `EC_GCS_CLAIM_CHECK_PREFIX`.
+
+The deployment requires:
+
+- A distinct operator hostname and TLS Secret, IAP OAuth client ID and existing client-secret Secret,
+  exact IAP backend audience, and explicit subject-role map. The chart renders a separate Gateway,
+  HTTPRoute, IAP GCPBackendPolicy and health check. IAP IAM access and the application role allowlist
+  must both be assigned. See [GKE Gateway IAP configuration](https://cloud.google.com/kubernetes-engine/docs/how-to/configure-gateway-resources#configure_iap).
+- Separate non-owner PostgreSQL LOGIN principals belonging to `ec_operator_controller` and
+  `ec_ingestion_executor`, created by approved provisioning after migration `0182`. Neither login
+  may inherit `ec_app` or owner/elevated privileges. Mount immutable numeric secret versions through
+  `operator.operatorSecrets` and `operator.executorSecrets`; these never enter the shared runtime
+  SecretProviderClass. The operator API receives only its database URL. The executor receives only
+  its own URL, Redis and Temporal credentials; GCS uses its workload identity.
+- Distinct `operator-api` and `ingestion-executor` GCP identities, with access limited to their own
+  secrets and required Cloud SQL/Redis/Temporal/GCS capabilities. The catalog Temporal workload uses
+  the executor identity/profile. The operator frontend receives no database/provider secrets.
+
+The profile starts a dedicated ingestion-command worker and changes the existing hourly catalog
+CronJob to enqueue-only `ingestion_cadence --once`. Its controller credential cannot claim or finish
+commands. The legacy direct `jobs.catalogRefresh` is rejected; manual work uses operator commands.
+The recurring local cadence process and Temporal Schedules are not deployed by this profile.
+
+The API validates the signed IAP assertion even after the proxy; private NetworkPolicy only permits
+its operator frontend and GMP. Aggregate `/metrics` is not forwarded by the frontend. PodMonitoring
+scrapes queue state and progress timestamps, not worker liveness. Production field proof still needs
+IAP grant/revocation, credential separation, command replay/restart/fencing, eventual publication,
+alert routing, and the unchanged full-product provider validation gate. Rendering does not activate
+these prerequisites or authorize a migration/deployment.

@@ -9,15 +9,16 @@ from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
+from typing import Any
 from uuid import UUID, uuid4
 
 import pytest
 from sqlalchemy import text
 from sqlalchemy.exc import DBAPIError
-from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine
+from sqlalchemy.ext.asyncio import AsyncConnection, AsyncEngine, AsyncSession, create_async_engine
 
 from events_concierge.adapters.postgres.ingestion_admin import (
-    PostgresIngestionAdminRepository,
+    PostgresIngestionAdminRepository as _PostgresIngestionAdminRepository,
 )
 from events_concierge.domain.ingestion_admin import (
     IngestionCommandAction,
@@ -39,6 +40,72 @@ from events_concierge.ports.ingestion_admin import (
 pytestmark = pytest.mark.integration
 
 
+@dataclass(slots=True)
+class _OperatorConnections:
+    engine: AsyncEngine | None = None
+
+
+_operator_connections_state = _OperatorConnections()
+
+
+@pytest.fixture(autouse=True)
+async def _operator_connections() -> AsyncIterator[None]:
+    """Use explicit operator capabilities while preserving ec_app for denial assertions."""
+    migration_url = os.environ.get("EC_MIGRATION_URL")
+    if migration_url is None:
+        pytest.skip("EC_MIGRATION_URL not set; run the isolated integration suite")
+    engine = create_async_engine(migration_url, pool_pre_ping=True)
+    _operator_connections_state.engine = engine
+    try:
+        yield
+    finally:
+        await engine.dispose()
+        _operator_connections_state.engine = None
+
+
+@asynccontextmanager
+async def _operator_session_scope(role: str) -> AsyncIterator[AsyncSession]:
+    assert role in {"ec_operator_controller", "ec_ingestion_executor"}
+    assert _operator_connections_state.engine is not None
+    async with AsyncSession(_operator_connections_state.engine) as session, session.begin():
+        await session.execute(text(f"SET LOCAL ROLE {role}"))
+        await session.execute(text("SELECT set_config('app.tenant_id', '', true)"))
+        yield session
+
+
+def _controller_session_scope() -> Any:
+    return _operator_session_scope("ec_operator_controller")
+
+
+def _executor_session_scope() -> Any:
+    return _operator_session_scope("ec_ingestion_executor")
+
+
+class PostgresIngestionAdminRepository:
+    """Test facade across the two real process roles; no runtime role receives both grants."""
+
+    _EXECUTOR_METHODS = frozenset(
+        {
+            "claim_batch",
+            "renew_lease",
+            "link_command_runs",
+            "complete",
+            "defer",
+            "fail",
+        }
+    )
+
+    def __init__(self) -> None:
+        self._controller = _PostgresIngestionAdminRepository(
+            session_scope=_controller_session_scope
+        )
+        self._executor = _PostgresIngestionAdminRepository(session_scope=_executor_session_scope)
+
+    def __getattr__(self, name: str) -> Any:
+        repository = self._executor if name in self._EXECUTOR_METHODS else self._controller
+        return getattr(repository, name)
+
+
 @dataclass(frozen=True, slots=True)
 class _Fixture:
     owner: AsyncEngine
@@ -47,6 +114,31 @@ class _Fixture:
     fixture_sources: tuple[str, str, str]
     live_event_id: UUID
     fixture_event_id: UUID
+
+
+async def _delete_fixture_commands(connection: AsyncConnection, requested_by: str) -> None:
+    """Explicitly remove this fixture's evidence; production history stays restrictive."""
+    command_ids = list(
+        (
+            await connection.scalars(
+                text(
+                    "SELECT command_id FROM public.ingestion_admin_commands WHERE requested_by=:requested_by"
+                ),
+                {"requested_by": requested_by},
+            )
+        ).all()
+    )
+    for table in (
+        "ingestion_command_events",
+        "ingestion_command_attempts",
+        "ingestion_command_tasks",
+        "ingestion_command_plans",
+        "ingestion_admin_commands",
+    ):
+        await connection.execute(
+            text(f"DELETE FROM public.{table} WHERE command_id=ANY(CAST(:command_ids AS uuid[]))"),
+            {"command_ids": command_ids},
+        )
 
 
 @asynccontextmanager
@@ -153,15 +245,7 @@ async def _ingestion_fixture() -> AsyncIterator[_Fixture]:
         )
     finally:
         async with owner.begin() as connection:
-            await connection.execute(
-                text(
-                    """
-                    DELETE FROM public.ingestion_admin_commands
-                    WHERE requested_by = :requested_by
-                    """
-                ),
-                {"requested_by": requested_by},
-            )
+            await _delete_fixture_commands(connection, requested_by)
             await connection.execute(
                 text(
                     """
@@ -389,15 +473,7 @@ async def test_retired_source_commands_are_terminalized_before_claim_and_cannot_
         assert running_attempt_count == 1
     finally:
         async with owner.begin() as connection:
-            await connection.execute(
-                text(
-                    """
-                    DELETE FROM public.ingestion_admin_commands
-                    WHERE requested_by = :requested_by
-                    """
-                ),
-                {"requested_by": requested_by},
-            )
+            await _delete_fixture_commands(connection, requested_by)
         await owner.dispose()
 
 
@@ -423,9 +499,7 @@ async def test_bulk_source_enabled_update_is_atomic_audited_and_revision_guarded
         assert changed.requested == 2
         assert changed.updated == 2
         assert changed.unchanged == 0
-        assert {
-            (item.source_key, item.source_revision) for item in changed.items
-        } == {
+        assert {(item.source_key, item.source_revision) for item in changed.items} == {
             (fixture.live_source, 2),
             (first_fixture, 2),
         }
@@ -496,9 +570,7 @@ async def test_bulk_source_enabled_update_is_atomic_audited_and_revision_guarded
                 .mappings()
                 .all()
             )
-        assert {(row["enabled"], row["source_revision"]) for row in after_conflict} == {
-            (False, 2)
-        }
+        assert {(row["enabled"], row["source_revision"]) for row in after_conflict} == {(False, 2)}
         assert len(audit_rows) == 2
         assert {row["requested_by"] for row in audit_rows} == {fixture.requested_by}
         assert {
@@ -818,7 +890,10 @@ async def test_source_registry_sort_is_global_stable_and_nulls_last(db: None) ->
         expected_by_sort = {
             "source": [first_fixture, third_fixture, second_fixture, fixture.live_source],
             "health": [third_fixture, second_fixture, fixture.live_source, first_fixture],
-            "catalog": [fixture.live_source, first_fixture, third_fixture, second_fixture],
+            # Operator Catalog always excludes fixture inventory, even when the
+            # source roster includes fixtures; equal zero counts use source keys.
+            "catalog": [fixture.live_source, *sorted(fixture.fixture_sources)],
+            "catalog_total": [fixture.live_source, *sorted(fixture.fixture_sources)],
             "last_success": [fixture.live_source, first_fixture, third_fixture, second_fixture],
             "latest_run": [second_fixture, third_fixture, first_fixture, fixture.live_source],
             "output": [fixture.live_source, first_fixture, third_fixture, second_fixture],
@@ -896,7 +971,7 @@ async def test_command_replay_conflict_and_lease_fences_are_database_authoritati
 
         lease = (await repository.claim_batch(1, 300))[0]
         assert lease.command_id == command_id
-        async with system_session_scope() as session:
+        async with _executor_session_scope() as session:
             null_semantics_bypass = (
                 await session.execute(
                     text(
@@ -1168,18 +1243,22 @@ async def test_command_run_links_are_lease_fenced_current_attempt_and_safe(
                 },
             )
             linked_attempts = (
-                await connection.execute(
-                    text(
-                        """
+                (
+                    await connection.execute(
+                        text(
+                            """
                         SELECT command_attempt
                         FROM public.ingestion_admin_command_runs
                         WHERE command_id = :command_id
                         ORDER BY command_attempt
                         """
-                    ),
-                    {"command_id": command_id},
+                        ),
+                        {"command_id": command_id},
+                    )
                 )
-            ).scalars().all()
+                .scalars()
+                .all()
+            )
         assert linked_attempts == [first_lease.attempt_count, reclaimed.attempt_count]
 
         assert await repository.complete(
@@ -1352,10 +1431,7 @@ async def test_active_command_targets_are_atomically_deduplicated_across_session
                 .mappings()
                 .all()
             )
-        assert [
-            (row["action"], row["source_key"], row["active_count"])
-            for row in active_rows
-        ] == [
+        assert [(row["action"], row["source_key"], row["active_count"]) for row in active_rows] == [
             ("refresh_due", None, 1),
             ("refresh_source", fixture.live_source, 1),
         ]
@@ -1415,7 +1491,7 @@ async def test_deferred_command_is_not_claimed_until_available_and_remains_fence
         assert first_command is not None
         assert first_command.executor_release_revision == "worker-one"
 
-        async with system_session_scope() as session:
+        async with _executor_session_scope() as session:
             invalid_delays = (
                 (
                     await session.execute(
@@ -1671,10 +1747,7 @@ async def test_run_latest_and_resolution_are_derived_before_filters_and_paginati
         assert failed_before_success.items[1].is_latest_for_source is False
         assert failed_before_success.items[1].resolved_by_newer_success is False
         failed_overview = await repository.overview()
-        assert (
-            failed_overview.summary.failed_runs_24h
-            == baseline.summary.failed_runs_24h + 1
-        )
+        assert failed_overview.summary.failed_runs_24h == baseline.summary.failed_runs_24h + 1
 
         async with fixture.owner.begin() as connection:
             await connection.execute(
@@ -1723,10 +1796,7 @@ async def test_run_latest_and_resolution_are_derived_before_filters_and_paginati
         assert all(run.is_latest_for_source is False for run in failed_after_success.items)
         assert all(run.resolved_by_newer_success is True for run in failed_after_success.items)
         resolved_overview = await repository.overview()
-        assert (
-            resolved_overview.summary.failed_runs_24h
-            == baseline.summary.failed_runs_24h
-        )
+        assert resolved_overview.summary.failed_runs_24h == baseline.summary.failed_runs_24h
 
         second_failed_page = await repository.list_runs(
             status="failed",
@@ -1882,7 +1952,7 @@ async def test_historical_test_runs_are_projection_only_fixtures(db: None) -> No
 
         due = await repository.list_due_refreshes(now, limit=500)
         assert fixture.live_source in {item.source.source_key for item in due}
-        async with system_session_scope() as session:
+        async with _controller_session_scope() as session:
             exact_artifact_count = (
                 await session.execute(
                     text(
@@ -2024,9 +2094,7 @@ async def test_source_analysis_filters_and_new_command_provenance_are_bounded(  
             publisher="Reviewed Publisher",
             region="bay_area_9_county",
         )
-        assert contextual_metadata.modes == (
-            IngestionFilterValue(value="public_jsonld", count=1),
-        )
+        assert contextual_metadata.modes == (IngestionFilterValue(value="public_jsonld", count=1),)
         assert contextual_metadata.publishers == (
             IngestionFilterValue(value="Reviewed Publisher", count=1),
         )
@@ -2164,7 +2232,7 @@ async def test_source_analysis_filters_and_new_command_provenance_are_bounded(  
         assert observed_success.provenance_status == "claim_recorded"
 
 
-async def test_runtime_role_has_only_narrow_command_function_grants(db: None) -> None:
+async def test_consumer_role_has_no_ingestion_admin_function_grants(db: None) -> None:
     async with system_session_scope() as session:
         row = (
             (
@@ -2294,25 +2362,25 @@ async def test_runtime_role_has_only_narrow_command_function_grants(db: None) ->
     assert row["table_select"] is False
     assert row["table_write"] is False
     assert row["claim_execute"] is False
-    assert row["complete_execute"] is True
-    assert row["defer_execute"] is True
-    assert row["renew_execute"] is True
+    assert row["complete_execute"] is False
+    assert row["defer_execute"] is False
+    assert row["renew_execute"] is False
     assert row["fixture_helper_execute"] is False
     assert row["run_facts_execute"] is False
     assert row["legacy_enqueue_execute"] is False
-    assert row["provenance_enqueue_execute"] is True
+    assert row["provenance_enqueue_execute"] is False
     assert row["legacy_claim_execute"] is False
-    assert row["provenance_claim_execute"] is True
-    assert row["source_detail_execute"] is True
-    assert row["source_list_v3_execute"] is True
+    assert row["provenance_claim_execute"] is False
+    assert row["source_detail_execute"] is False
+    assert row["source_list_v3_execute"] is False
     assert row["source_list_v3_public_execute_revoked"] is True
-    assert row["run_list_v3_execute"] is True
+    assert row["run_list_v3_execute"] is False
     assert row["run_list_v3_public_execute_revoked"] is True
 
 
 async def test_runtime_count_capabilities_reject_unbounded_inputs(db: None) -> None:
-    with pytest.raises(DBAPIError):
-        async with system_session_scope() as session:
+    with pytest.raises(DBAPIError, match="invalid"):
+        async with _controller_session_scope() as session:
             await session.execute(
                 text(
                     """
@@ -2324,8 +2392,8 @@ async def test_runtime_count_capabilities_reject_unbounded_inputs(db: None) -> N
                 {"mode": "x" * 81},
             )
 
-    with pytest.raises(DBAPIError):
-        async with system_session_scope() as session:
+    with pytest.raises(DBAPIError, match="invalid"):
+        async with _controller_session_scope() as session:
             await session.execute(
                 text(
                     """

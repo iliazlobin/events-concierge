@@ -443,7 +443,7 @@ export function deriveEntityGraphScene(
     .filter((node) => node.node_kind === "entity" && node.node_id !== ego?.node_id)
     .sort(comparePeers);
   const topics = normalized.nodes
-    .filter((node) => node.node_kind === "topic")
+    .filter((node) => node.node_kind === "topic" && node.node_id !== ego?.node_id)
     .sort(compareTopics);
 
   const neighbors = new Map<string, string[]>();

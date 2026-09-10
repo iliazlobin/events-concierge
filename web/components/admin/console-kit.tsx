@@ -79,12 +79,14 @@ export function PageHead({
   sub,
   statValue,
   statLabel,
+  actions,
 }: {
   eyebrow: string;
   title: string;
   sub?: string;
   statValue?: string;
   statLabel?: string;
+  actions?: ReactNode;
 }): React.JSX.Element {
   return (
     <div className={styles.head}>
@@ -93,12 +95,15 @@ export function PageHead({
         <h1 className={styles.title}>{title}</h1>
         {sub ? <p className={styles.sub}>{sub}</p> : null}
       </div>
+      {actions || statValue ? <div className={styles.headControls}>
       {statValue ? (
         <div className={styles.headStat}>
           <span className="v">{statValue}</span>
           <span className="k">{statLabel}</span>
         </div>
       ) : null}
+      {actions}
+      </div> : null}
     </div>
   );
 }
@@ -220,9 +225,9 @@ export function Metrics({
         const interactive = Boolean(onSelect && item.interactive);
         const body = (
           <>
-            <span className="k">{item.label}</span>
-            <span className={`v ${VALUE_TONE[item.tone ?? "neutral"]}`}>{item.value}</span>
-            {item.note ? <span className="n">{item.note}</span> : null}
+            <span className={styles.metricLabel}>{item.label}</span>
+            <span className={`${styles.metricValue} ${VALUE_TONE[item.tone ?? "neutral"]}`}>{item.value}</span>
+            {item.note ? <span className={styles.metricNote}>{item.note}</span> : null}
           </>
         );
         // A metric is only a control when selecting it actually filters something.
