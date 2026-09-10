@@ -1,0 +1,80 @@
+{{- if and (eq (default "managed" .Values.global.deploymentProfile) "development") (eq .Values.global.releasePhase "application") }}
+# Both listeners bind loopback: access requires Kubernetes pods/portforward permission.
+# No Service exposes this operator interface to other pods.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "events-concierge.fullname" . }}-admin
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: events-concierge-admin
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: events-concierge-admin
+        app.kubernetes.io/part-of: events-concierge
+      annotations:
+        checksum/runtime-config: {{ include (print .Template.BasePath "/configmap.yaml") . | sha256sum }}
+    spec:
+      serviceAccountName: {{ .Values.serviceAccounts.api.name }}
+      enableServiceLinks: false
+      securityContext:
+        {{- include "events-concierge.podSecurityContext" . | nindent 8 }}
+      containers:
+        - name: api
+          image: {{ include "events-concierge.image" .Values.global.appImage | quote }}
+          command: [uvicorn, "events_concierge.api.app:app", --host, "127.0.0.1", --port, "8000", --no-server-header]
+          envFrom:
+            - configMapRef:
+                name: {{ include "events-concierge.fullname" . }}-runtime
+          env:
+            - {name: EC_API_BIND_ADDRESS, value: "127.0.0.1"}
+            - {name: EC_ADMIN_INGESTION_ENABLED, value: "true"}
+            - {name: EC_CATALOG_INGESTION_SCHEDULER_ENABLED, value: "false"}
+          securityContext:
+            {{- include "events-concierge.appSecurityContext" . | nindent 12 }}
+          resources:
+            requests: {cpu: 25m, memory: 192Mi}
+            limits: {cpu: "1", memory: 512Mi}
+          readinessProbe:
+            exec:
+              command: [python, -c, "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/admin/v1/ingestion/overview', timeout=5).read()"]
+            periodSeconds: 30
+            timeoutSeconds: 8
+          volumeMounts:
+            - {name: api-tmp, mountPath: /tmp}
+            - {name: runtime-secrets, mountPath: /var/run/secrets/events-concierge, readOnly: true}
+        - name: frontend
+          image: {{ include "events-concierge.image" .Values.global.frontendImage | quote }}
+          env:
+            - {name: HOSTNAME, value: "127.0.0.1"}
+            - {name: EC_API_ORIGIN, value: "http://127.0.0.1:8000"}
+            - {name: NEXT_TELEMETRY_DISABLED, value: "1"}
+          securityContext:
+            {{- include "events-concierge.appSecurityContext" . | nindent 12 }}
+          resources:
+            requests: {cpu: 25m, memory: 64Mi}
+            limits: {cpu: "1", memory: 256Mi}
+          readinessProbe:
+            exec:
+              command: [node, -e, "fetch('http://127.0.0.1:3000/admin/v1/ingestion/overview').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+            periodSeconds: 30
+            timeoutSeconds: 8
+          volumeMounts:
+            - {name: web-tmp, mountPath: /tmp}
+      volumes:
+        - name: api-tmp
+          emptyDir: {sizeLimit: 64Mi}
+        - name: web-tmp
+          emptyDir: {sizeLimit: 64Mi}
+        - name: runtime-secrets
+          csi:
+            driver: secrets-store-gke.csi.k8s.io
+            readOnly: true
+            volumeAttributes:
+              secretProviderClass: {{ include "events-concierge.runtimeSecretProviderClass" . | quote }}
+{{- end }}

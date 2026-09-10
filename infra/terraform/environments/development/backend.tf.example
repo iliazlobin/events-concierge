@@ -1,0 +1,6 @@
+terraform {
+  backend "gcs" {
+    bucket = "iz27-foundation-development-state"
+    prefix = "events-concierge/development"
+  }
+}

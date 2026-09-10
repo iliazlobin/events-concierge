@@ -52,7 +52,7 @@ class Settings(BaseSettings):
     # Direct deployments verify the PostgreSQL hostname themselves. Cloud SQL Auth Proxy
     # deployments terminate the authenticated tunnel on loopback and explicitly disable a second
     # TLS layer in the application DSN; production preflight validates the two shapes separately.
-    database_connection_mode: Literal["direct_tls", "cloud_sql_proxy"] = "direct_tls"
+    database_connection_mode: Literal["direct_tls", "cloud_sql_proxy", "development_plaintext"] = "direct_tls"
     database_pool_size: int = Field(default=5, ge=1, le=32)
     database_max_overflow: int = Field(default=0, ge=0, le=16)
     database_pool_timeout_seconds: float = Field(default=5.0, ge=0.1, le=30.0)
@@ -349,6 +349,14 @@ class Settings(BaseSettings):
         ):
             raise ValueError("UI auth start URL must be a relative path or an HTTPS URL")
         return value
+
+    @model_validator(mode="after")
+    def validate_development_database(self) -> Settings:
+        if self.database_connection_mode == "development_plaintext" and (
+            self.env != "development" or not self.mock_cloud
+        ):
+            raise ValueError("plaintext database is restricted to explicit development test integrations")
+        return self
 
     @model_validator(mode="after")
     def validate_oidc_bff_configuration(self) -> Settings:

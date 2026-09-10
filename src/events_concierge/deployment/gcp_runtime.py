@@ -108,20 +108,7 @@ def build_runtime_ports(
     if settings.mock_cloud:
         raise GcpRuntimeConfigurationError("the GCP runtime provider requires EC_MOCK_CLOUD=false")
 
-    bucket_name = _required_setting(settings, "gcs_claim_check_bucket")
-    root_prefix = _optional_setting(
-        settings,
-        "gcs_claim_check_prefix",
-        default=_DEFAULT_CLAIM_CHECK_PREFIX,
-    )
-    assert root_prefix is not None
-    project = _optional_setting(settings, "gcp_project", default=None)
-    client = storage_client or _default_storage_client(project=project)
-    object_store = GcsObjectStore(
-        client,
-        bucket=bucket_name,
-        root_prefix=root_prefix,
-    )
+    object_store = build_gcs_object_store(settings, storage_client=storage_client)
 
     google_access, google_bindings, calendar = _google_calendar_ports(settings)
     discovery_sources = _discovery_sources(settings)
@@ -138,6 +125,30 @@ def build_runtime_ports(
         action_audit=PostgresRegistrationActionAuditRepository(),
         registration_consent=PostgresRegistrationConsentEvidenceRepository(),
     )
+
+
+def build_gcs_object_store(
+    settings: Settings,
+    *,
+    storage_client: GcsStorageClient | None = None,
+) -> GcsObjectStore:
+    """Construct real, network-lazy storage independently of external product adapters."""
+    bucket_name = _required_setting(settings, "gcs_claim_check_bucket")
+    root_prefix = _optional_setting(
+        settings,
+        "gcs_claim_check_prefix",
+        default=_DEFAULT_CLAIM_CHECK_PREFIX,
+    )
+    assert root_prefix is not None
+    project = _optional_setting(settings, "gcp_project", default=None)
+    client = storage_client or _default_storage_client(project=project)
+    object_store = GcsObjectStore(
+        client,
+        bucket=bucket_name,
+        root_prefix=root_prefix,
+    )
+
+    return object_store
 
 
 def _default_storage_client(*, project: str | None) -> GcsStorageClient:

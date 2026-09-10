@@ -1,0 +1,4 @@
+apiVersion: v2
+name: events-concierge-dev-data
+version: 0.1.0
+type: application

@@ -1,0 +1,9 @@
+namespace: events-concierge-dev
+storageClass: ec-dev-retain
+zone: us-west1-a
+postgres:
+  applicationImage: pgvector/pgvector:pg16@sha256:ccc6e83d6e35e931dc7c5def2022729d5a6c370318d099181995567ff1fb4d6b
+  temporalImage: postgres:16-alpine@sha256:cf78e76683b9ca8c5733cbbdce6c9262b45b6767934dd0a95e671f9a0fc20685
+  size: 20Gi
+redis:
+  image: redis:7-alpine@sha256:ff02b58f971e7d7d156a1267e283fcbbeee91773b6aa36c49dac28ecfe28eadf
