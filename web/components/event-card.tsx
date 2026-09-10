@@ -12,6 +12,7 @@ import {
 } from "lucide-react";
 import { useId } from "react";
 
+import { discoveryLabels } from "@/lib/event-discovery";
 import { formatEventDate, formatEventTime } from "@/lib/date";
 import {
   eventFormatLabel,
@@ -200,7 +201,7 @@ export function EventCard({
     attendance,
     format,
   ].filter((value): value is string => Boolean(value));
-  const summaryFacts = [registration, attendance, format]
+  const summaryFacts = [...discoveryLabels(event), registration, attendance, format]
     .filter((value): value is string => Boolean(value));
   const instanceId = useId().replaceAll(":", "");
   const regionId = `event-details-${instanceId}`;
@@ -364,6 +365,21 @@ export function EventCard({
                 </li>
               ))}
             </ul>
+          ) : null}
+
+          {event.additional_dates?.length ? (
+            <details>
+              <summary>{event.additional_dates.length} more dates in these results</summary>
+              <ul>
+                {event.additional_dates.map((occurrence) => {
+                  const href = eventPageUrl({ ...event, registration_urls: occurrence.registration_urls, sources: [] });
+                  const label = `${new Date(occurrence.start_at).toLocaleDateString()} · ${formatEventTime(occurrence.start_at, occurrence.end_at)}`;
+                  return <li key={occurrence.canonical_event_id}>
+                    {href ? <a href={href} target="_blank" rel="noopener noreferrer">{label}</a> : label}
+                  </li>;
+                })}
+              </ul>
+            </details>
           ) : null}
 
           {organizer || hosts.length || speakers.length || partners.length || topics.length ? (

@@ -1,7 +1,7 @@
 {{- $root := . -}}
 {{- if or (eq .Values.global.releasePhase "all") (eq .Values.global.releasePhase "application") }}
 {{- range $name, $workload := .Values.workloads }}
-{{- if and $workload.enabled $workload.pdb.enabled }}
+{{- if and $workload.enabled $workload.pdb.enabled (or (not $workload.operatorProfile) $root.Values.operator.enabled) }}
 ---
 apiVersion: policy/v1
 kind: PodDisruptionBudget

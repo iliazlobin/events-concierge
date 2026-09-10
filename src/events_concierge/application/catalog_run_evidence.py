@@ -11,6 +11,12 @@ from pathlib import Path
 
 from ..domain.catalog_sources import CatalogRunExecutionEvidence, CatalogRunStageEvidence
 from ..ports.catalog_sources import CatalogRunEvidenceRecorder
+from .ingestion_telemetry import (
+    emit_ingestion_event,
+    ingestion_error_type,
+    record_ingestion_collection_progress,
+    start_ingestion_collection_progress,
+)
 
 _PROC_STATM = Path("/proc/self/statm")
 _PROC_STATM_MIN_FIELDS = 2
@@ -40,18 +46,34 @@ class CatalogRunEvidenceSession:
         self._wall_started_ns = time.perf_counter_ns()
         self._cpu_started_ns = time.process_time_ns() if include_process_metrics else None
         self._rss_before = _current_rss_bytes() if include_process_metrics else None
+        self._active_stage: CatalogRunStageTimer | None = None
 
-    def start_stage(self, stage: str) -> CatalogRunStageTimer:
-        """Start a monotonic timer for one closed stage name."""
-        return CatalogRunStageTimer(
+    async def start_stage(self, stage: str) -> CatalogRunStageTimer:
+        """Record actual stage entry before the awaited provider/database work begins."""
+        timer = CatalogRunStageTimer(
             self._recorder,
             self._source_key,
             self._run_key,
             stage,
         )
+        self._active_stage = timer
+        await emit_ingestion_event(
+            "stage_started",
+            stage=stage,
+            outcome_code="started",
+            source_key=self._source_key,
+            run_key=self._run_key,
+        )
+        # Exclude the bounded delivery wait from the stage's actual work duration.
+        timer.started_ns = time.perf_counter_ns()
+        if stage == "collect":
+            start_ingestion_collection_progress(source_key=self._source_key, run_key=self._run_key)
+        return timer
 
-    async def finish(self, outcome_code: str) -> None:
+    async def finish(self, outcome_code: str, *, error: Exception | None = None) -> None:
         """Persist a bounded aggregate if the durable run row exists."""
+        if error is not None and self._active_stage is not None:
+            await self._active_stage.finish(outcome_code, error=error)
         recorder = self._recorder
         if recorder is None:
             return
@@ -108,17 +130,77 @@ class CatalogRunStageTimer:
     run_key: str
     stage: str
     started_ns: int = 0
+    finished: bool = False
 
     def __post_init__(self) -> None:
         self.started_ns = time.perf_counter_ns()
 
-    async def finish(self, outcome_code: str) -> None:
+    async def progress(self, *, candidate_count: int) -> None:
+        """Observe completed collection work; this is independent of command lease renewal."""
+        if self.finished:
+            return
+        if self.stage == "collect":
+            await record_ingestion_collection_progress(
+                source_key=self.source_key,
+                run_key=self.run_key,
+                candidate_count=candidate_count,
+                force=True,
+            )
+            return
+        await emit_ingestion_event(
+            "progress",
+            stage=self.stage,
+            outcome_code="progressed",
+            duration_ms=_elapsed_ms(self.started_ns),
+            candidate_count=candidate_count,
+            source_key=self.source_key,
+            run_key=self.run_key,
+        )
+
+    async def finish(
+        self,
+        outcome_code: str,
+        *,
+        error: Exception | None = None,
+        candidate_count: int | None = None,
+        canonical_count: int | None = None,
+    ) -> None:
+        if self.finished:
+            return
+        self.finished = True
+        duration_ms = _elapsed_ms(self.started_ns)
+        if self.stage == "collect":
+            await record_ingestion_collection_progress(
+                source_key=self.source_key,
+                run_key=self.run_key,
+                force=True,
+            )
+        if error is not None:
+            await emit_ingestion_event(
+                "error",
+                stage=self.stage,
+                outcome_code=outcome_code,
+                duration_ms=duration_ms,
+                error_type=ingestion_error_type(error),
+                source_key=self.source_key,
+                run_key=self.run_key,
+            )
+        await emit_ingestion_event(
+            "stage_completed",
+            stage=self.stage,
+            outcome_code=outcome_code,
+            duration_ms=duration_ms,
+            candidate_count=candidate_count,
+            canonical_count=canonical_count,
+            source_key=self.source_key,
+            run_key=self.run_key,
+        )
         recorder = self.recorder
         if recorder is None:
             return
         evidence = CatalogRunStageEvidence(
             stage=self.stage,
-            duration_ms=_elapsed_ms(self.started_ns),
+            duration_ms=duration_ms,
             outcome_code=outcome_code,
         )
         try:

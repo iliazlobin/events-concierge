@@ -8,13 +8,14 @@ from datetime import UTC, datetime
 
 import httpx
 import pytest
+from tests.support.ingestion_telemetry import capture_collection_progress
 
 from events_concierge.adapters.luma_calendar.source import (
     LumaCalendarCatalogFetcher,
     LumaCalendarFetchError,
 )
 from events_concierge.adapters.luma_common import luma_public_entity_profiles
-from events_concierge.domain.catalog_sources import CatalogSource
+from events_concierge.domain.catalog_sources import CatalogCollectionWindow, CatalogSource
 from events_concierge.domain.enums import (
     CatalogSourceMode,
     PriceStatus,
@@ -219,7 +220,12 @@ async def test_luma_calendar_walks_every_cursor_and_normalizes_public_handoffs()
         transport=httpx.MockTransport(_with_details(handler)),
     )
 
-    events = await fetcher.fetch(_source())
+    async with capture_collection_progress(_source().source_key) as progress:
+        events = await fetcher.fetch(_source())
+
+    assert progress[-1].request_count == 7
+    assert progress[-1].page_count == 3
+    assert progress[-1].candidate_count == 4
 
     assert [event.source_event_id for event in events] == [
         "https://luma.com/luma-event-free",
@@ -1040,3 +1046,31 @@ async def test_luma_calendar_refuses_an_entry_with_no_stated_visibility(visibili
     with pytest.raises(LumaCalendarFetchError, match="invalid event visibility"):
         await fetcher.fetch(_source())
 
+
+
+async def test_calendar_window_skips_outside_details_but_walks_later_unsorted_pages() -> None:
+    inside = _entry("inside")
+    outside = _entry("outside", start_at="2026-07-27T01:00:00.000Z")
+    outside["event"]["end_at"] = "2026-07-27T03:00:00.000Z"
+    window = CatalogCollectionWindow(2, 2, _NOW, datetime(2026, 7, 26, 12, tzinfo=UTC), 1)
+    requested: list[httpx.URL] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requested.append(request.url)
+        if request.url.host == "api2.luma.com":
+            assert request.url.params["event_api_id"] == "evt-inside"
+            return httpx.Response(200, json=_detail_payload(inside), request=request)
+        cursor = request.url.params.get("pagination_cursor")
+        return httpx.Response(200, json=(
+            _payload([outside], has_more=True, next_cursor="next") if cursor is None
+            else _payload([inside], has_more=False)
+        ), request=request)
+
+    fetcher = LumaCalendarCatalogFetcher(
+        user_agent="test", now=lambda: datetime(2026, 8, 15, tzinfo=UTC),
+        sleep=_no_sleep, clock=lambda: 0.0, transport=httpx.MockTransport(handler),
+    )
+    candidates = await fetcher.fetch(replace(_source(), collection_window=window))
+    assert len(candidates) == 1
+    assert len(requested) == 3
+    assert requested[1].params["pagination_cursor"] == "next"

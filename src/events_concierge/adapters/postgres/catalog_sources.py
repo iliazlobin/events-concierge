@@ -15,6 +15,7 @@ from uuid import UUID, uuid4
 from sqlalchemy import Row, text
 
 from ...domain.catalog_sources import (
+    CatalogCollectionWindow,
     CatalogPagedRefreshPreparation,
     CatalogPagedRefreshProgress,
     CatalogPagedStageResult,
@@ -34,6 +35,7 @@ from ...domain.enums import (
 )
 from ...domain.events import CandidateEvent, event_entity_profiles_payload
 from ...infra.db import system_session_scope
+from ...ports.catalog_sources import CatalogCollectionWindowUnavailableError
 
 
 class PostgresCatalogSourceRepository:
@@ -48,6 +50,37 @@ class PostgresCatalogSourceRepository:
                 )
             ).first()
         return _source_from_row(row) if row is not None else None
+
+    async def prepare_collection_window(
+        self, source_key: str, run_key: str, *, lease_token: UUID, expected_revision: int
+    ) -> CatalogCollectionWindow | None:
+        async with system_session_scope() as session:
+            value = (
+                await session.execute(
+                    text("""
+                SELECT public.fn_prepare_catalog_collection_window_v1(
+                    :source,:run,:token,:revision
+                )
+            """),
+                    {
+                        "source": source_key,
+                        "run": run_key,
+                        "token": lease_token,
+                        "revision": expected_revision,
+                    },
+                )
+            ).scalar_one()
+        if value is None:
+            return None
+        if value.get("outcome") in {"legacy_stage_requires_new_run", "collection_window_expired"}:
+            raise CatalogCollectionWindowUnavailableError(value["outcome"])
+        return CatalogCollectionWindow(
+            source_revision=int(value["source_revision"]),
+            horizon_days=int(value["horizon_days"]),
+            start_at=datetime.fromisoformat(value["start_at"]),
+            end_at=datetime.fromisoformat(value["end_at"]),
+            attempt_count=int(value["attempt_count"]),
+        )
 
     async def list_refreshable(self, now: datetime) -> list[CatalogSource]:
         async with system_session_scope() as session:
@@ -500,6 +533,7 @@ def _source_from_row(row: Row[Any]) -> CatalogSource:
         # through a fresh ``get`` before P15b egress, so its historic projection safely defaults
         # to one instead of requiring a signature-changing capability migration (FR-10.3/NFR-8).
         source_revision=getattr(row, "source_revision", 1),
+        collection_horizon_days=getattr(row, "collection_horizon_days", 90),
     )
 
 

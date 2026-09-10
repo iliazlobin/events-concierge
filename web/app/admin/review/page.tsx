@@ -1,13 +1,14 @@
-import type { Metadata } from "next";
+import { redirect } from "next/navigation";
 
-import { ReviewConsole } from "@/components/admin/review-console";
-
-import "./review.css";
-
-export const metadata: Metadata = {
-  title: "Console Redesign Review · Events Concierge",
-};
-
-export default function AdminReviewPage(): React.JSX.Element {
-  return <ReviewConsole />;
+export default async function AdminReviewPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ window?: string | string[] }>;
+}): Promise<never> {
+  const { window } = await searchParams;
+  const params = new URLSearchParams({ tab: "pipeline" });
+  if (typeof window === "string" && ["24", "168", "336", "720", "2160"].includes(window)) {
+    params.set("window", window);
+  }
+  redirect(`/admin?${params}`);
 }

@@ -61,39 +61,161 @@ test("an empty page ends collection and the shortfall is reported", async () => 
   assert.equal(result.total, 999);
 });
 
-test("a page of only duplicates ends collection instead of looping forever", async () => {
-  let requests = 0;
-  const fetchPage = async () => {
-    requests += 1;
-    return { total: 500, items: [{ source_key: "same" }] };
-  };
-  const result = await collectRoster({ fetchPage, identity, ceiling: CEILING });
+test("duplicate-only pages advance the raw offset and do not hide later rows", async () => {
+  const calls = [];
+  const pages = [
+    ["a", "b", "a"],
+    ["a", "b", "a"],
+    ["c", "d"],
+  ];
+  const result = await collectRoster({
+    fetchPage: async (offset) => {
+      calls.push(offset);
+      return { total: 8, items: pages[calls.length - 1].map((source_key) => ({ source_key })) };
+    },
+    identity,
+    ceiling: CEILING,
+  });
 
-  assert.ok(requests <= 2, `expected collection to stop, made ${requests} requests`);
+  assert.deepEqual(calls, [0, 3, 6]);
+  assert.deepEqual(result.items.map(identity), ["a", "b", "c", "d"]);
+  assert.equal(result.total, 8);
+  assert.equal(result.truncated, true);
+});
+
+test("the ceiling is strict even when the last page crosses it", async () => {
+  const { fetchPage, calls } = pager(500);
+  const result = await collectRoster({ fetchPage, identity, ceiling: 125 });
+
+  assert.deepEqual(calls, [0, 100]);
+  assert.equal(result.items.length, 125);
+  assert.equal(result.items.at(-1).source_key, "s-124");
+  assert.equal(result.truncated, true);
+});
+
+test("an oversized first page is capped before it is published", async () => {
+  const { fetchPage, calls } = pager(500, 500);
+  const progress = [];
+  const result = await collectRoster({
+    fetchPage, identity, ceiling: 25, onProgress: (snapshot) => progress.push(snapshot),
+  });
+
+  assert.deepEqual(calls, [0]);
+  assert.equal(result.items.length, 25);
+  assert.equal(progress[0].items.length, 25);
+  assert.equal(result.truncated, true);
+});
+
+test("a request budget bounds tiny duplicate pages despite a wrong total", async () => {
+  const calls = [];
+  const result = await collectRoster({
+    fetchPage: async (offset) => {
+      calls.push(offset);
+      return { total: 100_000, items: [{ source_key: "same" }] };
+    },
+    identity,
+    ceiling: CEILING,
+    maxRequests: 3,
+  });
+
+  assert.deepEqual(calls, [0, 1, 2]);
+  assert.equal(result.requests, 3);
   assert.equal(result.items.length, 1);
   assert.equal(result.truncated, true);
 });
 
-test("the ceiling bounds collection and reports truncation", async () => {
-  const { fetchPage } = pager(CEILING + 500);
-  const result = await collectRoster({ fetchPage, identity, ceiling: CEILING });
+function deferred() {
+  let resolve;
+  const promise = new Promise((done) => { resolve = done; });
+  return { promise, resolve };
+}
 
-  assert.ok(result.items.length <= CEILING + 100);
-  assert.equal(result.truncated, true);
+test("the first page is published while the second is pending, with stable snapshots", { timeout: 1_000 }, async () => {
+  const secondStarted = deferred();
+  const secondPage = deferred();
+  const progress = [];
+  const resultPromise = collectRoster({
+    fetchPage: async (offset) => {
+      if (offset === 0) return { total: 3, items: [{ source_key: "a" }, { source_key: "b" }] };
+      secondStarted.resolve();
+      return secondPage.promise;
+    },
+    identity,
+    ceiling: CEILING,
+    onProgress: (snapshot) => progress.push(snapshot),
+  });
+  await secondStarted.promise;
+  assert.equal(progress.length, 1);
+  assert.deepEqual(progress[0].items.map(identity), ["a", "b"]);
+  assert.equal(progress[0].total, 3);
+  assert.equal(progress[0].truncated, true);
+
+  secondPage.resolve({ total: 3, items: [{ source_key: "c" }] });
+  const result = await resultPromise;
+  assert.deepEqual(result.items.map(identity), ["a", "b", "c"]);
+  assert.equal(result.truncated, false);
+  assert.deepEqual(progress[0].items.map(identity), ["a", "b"]);
+  assert.deepEqual(progress.at(-1).items.map(identity), ["a", "b", "c"]);
 });
 
-test("rows repeated across pages are not double counted", async () => {
-  let offsetSeen = 0;
-  const fetchPage = async (offset) => {
-    offsetSeen = offset;
-    return {
-      total: 4,
-      items: [{ source_key: "shared" }, { source_key: `unique-${offset}` }],
-    };
-  };
-  const result = await collectRoster({ fetchPage, identity, ceiling: CEILING });
+test("a failed later page preserves the last published partial snapshot and rejects", async () => {
+  const unavailable = new Error("Page two unavailable");
+  const progress = [];
+  await assert.rejects(collectRoster({
+    fetchPage: async (offset) => {
+      if (offset === 0) return { total: 5, items: [{ source_key: "a" }] };
+      throw unavailable;
+    },
+    identity,
+    ceiling: CEILING,
+    onProgress: (snapshot) => progress.push(snapshot),
+  }), (error) => error === unavailable);
 
-  const keys = result.items.map(identity);
-  assert.equal(new Set(keys).size, keys.length);
-  assert.ok(offsetSeen >= 0);
+  assert.equal(progress.length, 1);
+  assert.deepEqual(progress[0].items.map(identity), ["a"]);
+  assert.equal(progress[0].total, 5);
+  assert.equal(progress[0].truncated, true);
+});
+
+test("a pending noncooperative page is canceled promptly and cannot publish or continue", { timeout: 1_000 }, async () => {
+  const controller = new AbortController();
+  const secondStarted = deferred();
+  const secondPage = deferred();
+  const calls = [];
+  const progress = [];
+  const resultPromise = collectRoster({
+    fetchPage: async (offset) => {
+      calls.push(offset);
+      if (offset === 0) return { total: 3, items: [{ source_key: "a" }] };
+      secondStarted.resolve();
+      return secondPage.promise;
+    },
+    identity,
+    ceiling: CEILING,
+    signal: controller.signal,
+    onProgress: (snapshot) => progress.push(snapshot),
+  });
+  await secondStarted.promise;
+  controller.abort();
+  await assert.rejects(resultPromise, { name: "AbortError" });
+  secondPage.resolve({ total: 3, items: [{ source_key: "late" }] });
+  await new Promise((resolve) => setImmediate(resolve));
+
+  assert.deepEqual(calls, [0, 1]);
+  assert.equal(progress.length, 1);
+  assert.deepEqual(progress[0].items.map(identity), ["a"]);
+});
+
+test("an already canceled scope makes no request and publishes nothing", async () => {
+  const controller = new AbortController();
+  controller.abort();
+  const { fetchPage, calls } = pager(250);
+  const progress = [];
+  await assert.rejects(collectRoster({
+    fetchPage, identity, ceiling: CEILING, signal: controller.signal,
+    onProgress: (snapshot) => progress.push(snapshot),
+  }), { name: "AbortError" });
+
+  assert.deepEqual(calls, []);
+  assert.deepEqual(progress, []);
 });

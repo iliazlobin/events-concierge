@@ -22,6 +22,7 @@ import httpx
 from selectolax.parser import HTMLParser
 
 from ...domain.catalog_sources import CatalogSource
+from ...domain.catalog_window import collection_reference_time
 from ...domain.enums import CatalogSourceMode, PriceStatus, Source
 from ...domain.events import CandidateEvent
 from ...infra.logging import get_logger
@@ -147,7 +148,7 @@ class CivicEngageRssCatalogFetcher:
 
         response = await self._response_or_error(source, publisher)
         items = _items_from_response(response, source.source_key, publisher)
-        now = _as_utc(self._now())
+        now = _as_utc(collection_reference_time(source, self._now()))
         candidates: list[CandidateEvent] = []
         seen_occurrences: set[str] = set()
         for item in items:

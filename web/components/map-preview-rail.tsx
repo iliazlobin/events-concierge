@@ -1,6 +1,6 @@
 "use client";
 
-import { ArrowUpRight, CalendarDays, MapPin, X } from "lucide-react";
+import { ArrowUpRight, Network, CalendarDays, MapPin, X } from "lucide-react";
 import type { RefObject } from "react";
 
 import { formatEventDate, formatEventTime } from "@/lib/date";
@@ -8,12 +8,13 @@ import { eventImageUrl } from "@/lib/event-image";
 import { eventLocationLabel, eventPageUrl } from "@/lib/event-links";
 import { dayCompactLabel, dayTrackLabel } from "@/lib/map-days";
 import type { MapDayGroup, MapDayModel } from "@/lib/map-days";
-import type { EventItem } from "@/lib/types";
+import type { EventEntityReference, EventItem } from "@/lib/types";
 
 interface MapPreviewRailProps {
   events: EventItem[];
   selectedId: string | null;
   onSelect: (event: EventItem) => void;
+  onEntitySelect: (reference: EventEntityReference) => void;
   groups: MapDayGroup[];
   model: MapDayModel;
   activeDay: string | null;
@@ -27,9 +28,17 @@ interface MapPreviewCardProps {
   selected: boolean;
   muted: boolean;
   onSelect: (event: EventItem) => void;
+  onEntitySelect: (reference: EventEntityReference) => void;
 }
 
-function MapPreviewCard({ event, selected, muted, onSelect }: MapPreviewCardProps) {
+function MapPreviewCard({ event, selected, muted, onSelect, onEntitySelect }: MapPreviewCardProps) {
+  const graphEntity = event.organizer_name
+    ? { canonicalEventId: event.canonical_event_id, name: event.organizer_name, role: "organizer" as const }
+    : event.host_names?.[0]
+      ? { canonicalEventId: event.canonical_event_id, name: event.host_names[0], role: "host" as const }
+      : event.speaker_names?.[0]
+        ? { canonicalEventId: event.canonical_event_id, name: event.speaker_names[0], role: "speaker" as const }
+        : null;
   const date = formatEventDate(event.start_at);
   const imageUrl = eventImageUrl(event);
   const pageUrl = eventPageUrl(event);
@@ -82,6 +91,12 @@ function MapPreviewCard({ event, selected, muted, onSelect }: MapPreviewCardProp
         </span>
       </button>
 
+      <div className="map-preview__actions">
+        {graphEntity ? <button type="button" className="map-preview__link"
+          aria-label={`View ${event.title} in ${graphEntity.name}'s graph`}
+          onClick={() => onEntitySelect(graphEntity)}>
+          <Network aria-hidden="true" /> View in graph
+        </button> : null}
       {pageUrl ? (
         <a
           className="map-preview__link"
@@ -94,6 +109,7 @@ function MapPreviewCard({ event, selected, muted, onSelect }: MapPreviewCardProp
           <ArrowUpRight aria-hidden="true" />
         </a>
       ) : null}
+      </div>
     </article>
   );
 }
@@ -102,6 +118,7 @@ export function MapPreviewRail({
   events,
   selectedId,
   onSelect,
+  onEntitySelect,
   groups,
   model,
   activeDay,
@@ -202,6 +219,7 @@ export function MapPreviewRail({
                         selected={selectedId === event.canonical_event_id}
                         muted={muted && selectedId !== event.canonical_event_id}
                         onSelect={onSelect}
+                        onEntitySelect={onEntitySelect}
                       />
                     ))}
                   </div>
@@ -229,6 +247,7 @@ export function MapPreviewRail({
               selected={selectedId === event.canonical_event_id}
               muted={false}
               onSelect={onSelect}
+                        onEntitySelect={onEntitySelect}
             />
           ))}
         </div>

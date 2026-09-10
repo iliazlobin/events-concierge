@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
 from datetime import UTC, datetime
 
 import httpx
@@ -11,7 +12,7 @@ from events_concierge.adapters.legistar.source import (
     SanJoseLegistarCatalogFetcher,
     SanJoseLegistarFetchError,
 )
-from events_concierge.domain.catalog_sources import CatalogSource
+from events_concierge.domain.catalog_sources import CatalogCollectionWindow, CatalogSource
 from events_concierge.domain.enums import CatalogSourceMode, PriceStatus
 from events_concierge.ports.sources import SourceAccessDeniedError, SourceRateLimitedError
 
@@ -317,3 +318,33 @@ async def test_san_jose_legistar_refuses_an_unreviewed_endpoint_before_a_request
     with pytest.raises(ValueError, match="reviewed public Events"):
         await fetcher.fetch(source)
     assert requested == []
+
+
+async def test_legistar_uses_frozen_window_over_worker_clock_and_legacy_cursor_date() -> None:
+    window = CatalogCollectionWindow(
+        1, 2, datetime(2026, 7, 18, 12, tzinfo=UTC), datetime(2026, 7, 20, 12, tzinfo=UTC), 3,
+    )
+    source = replace(_source(), collection_horizon_days=30, collection_window=window)
+    requested: list[httpx.URL] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requested.append(request.url)
+        return httpx.Response(200, json=[
+            _event(2200, event_date="2026-07-19T00:00:00"),
+            _event(2201, event_date="2026-07-20T00:00:00", event_time="1:00 AM"),
+            _event(2202, event_date="2026-07-20T00:00:00"),
+        ], request=request)
+
+    fetcher = SanJoseLegistarCatalogFetcher(
+        user_agent="test", now=lambda: datetime(2026, 7, 22, tzinfo=UTC),
+        transport=httpx.MockTransport(handler),
+    )
+    page = await fetcher.fetch_page(
+        source, window_start_day=datetime(2030, 1, 1, tzinfo=UTC).date(), page_number=0,
+    )
+    assert "2026-07-18T00:00:00" in requested[0].params["$filter"]
+    assert "2026-07-21T00:00:00" in requested[0].params["$filter"]
+    assert page.raw_count == 3
+    assert page.source_event_ids == ("2200", "2201", "2202")
+    assert len(page.candidates) == 2
+    assert ":2200:" in page.candidates[0].source_event_id

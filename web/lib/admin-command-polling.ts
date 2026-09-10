@@ -1,5 +1,6 @@
 import type {
   AdminCommandDetail,
+  AdminCommandList,
   CommandStatus,
 } from "@/lib/admin-types";
 
@@ -33,4 +34,35 @@ export function shouldPollAdminCommandDetail(
 
 export function isAdminCommandPollAbort(error: unknown): boolean {
   return error instanceof DOMException && error.name === "AbortError";
+}
+
+/** Follow work observed active, including child runs that outlive their dispatch receipt. */
+export async function readAdminCommandProgress({
+  loadList, loadDetail, watched, signal, selectedCommandId,
+}: {
+  loadList: () => Promise<AdminCommandList>;
+  loadDetail: (commandId: string) => Promise<AdminCommandDetail>;
+  watched: Set<string>;
+  signal: AbortSignal;
+  selectedCommandId?: string;
+}): Promise<{ page: AdminCommandList; childrenSettled: boolean; continuePolling: boolean }> {
+  const page = await loadList();
+  if (signal.aborted) return { page, childrenSettled: false, continuePolling: false };
+  for (const command of page.items) {
+    if (commandIsActive(command.status)) watched.add(command.command_id);
+  }
+  let childrenSettled = false;
+  // Round-robin four detail reads at most per cycle; never download all recent receipts.
+  for (const commandId of [...watched].filter((id) => id !== selectedCommandId).slice(0, 4)) {
+    const detail = await loadDetail(commandId);
+    if (signal.aborted) break;
+    watched.delete(commandId);
+    if (shouldPollAdminCommandDetail(detail, detail.command.status)) watched.add(commandId);
+    else childrenSettled = true;
+  }
+  return {
+    page,
+    childrenSettled,
+    continuePolling: watched.size > 0 || page.items.some((command) => commandIsActive(command.status)),
+  };
 }

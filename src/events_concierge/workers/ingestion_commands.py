@@ -1,8 +1,9 @@
-"""Local durable command worker for the ingestion administration surface.
+"""Durable command worker for the ingestion administration surface.
 
-The browser/API edge only appends commands. This process leases bounded batches and delegates each
-command through the existing guarded catalog-refresh router. It is intentionally inert unless the
-local-only admin setting is enabled.
+The browser/API edge only appends commands. This process claims one command at a time and delegates
+one eligible source through the guarded catalog-refresh router before yielding its continuation.
+It runs with a separate executor database role and is inert unless the local admin or explicit
+production executor setting is enabled.
 """
 
 from __future__ import annotations
@@ -12,10 +13,12 @@ from collections.abc import Awaitable, Callable
 from time import monotonic
 from typing import Protocol
 
-from ..application.ingestion_admin import IngestionAdminService
-from ..composition import build_container
+from ..adapters.postgres.command_investigation import CommandInvestigationStore
+from ..application.ingestion_command_execution import ResumableIngestionCommandProcessor
+from ..catalog_runtime import build_catalog_container, verify_catalog_executor_database
 from ..config import get_settings
 from ..domain.ingestion_admin import IngestionProcessReport
+from ..infra.db import dispose_engine
 from ..infra.logging import configure_logging, get_logger
 from .catalog_refresh_routing import build_catalog_refresh_router
 
@@ -29,40 +32,42 @@ class _IngestionCommandProcessor(Protocol):
 
 
 async def run_ingestion_commands() -> None:
-    """Build and continuously drain the local ingestion command queue when enabled."""
+    """Drain durable ingestion commands under the isolated executor role when enabled."""
     settings = get_settings()
     configure_logging(settings.log_level, local=settings.env == "local")
-    if not settings.admin_ingestion_enabled:
+    if not settings.admin_ingestion_enabled and not settings.ingestion_executor_enabled:
         _log.info("ingestion command worker disabled")
         return
-    if not settings.mock_cloud:
-        # Settings already rejects this combination. Retain a runtime guard so an injected or
-        # partially mocked settings object cannot accidentally activate the local operator plane.
-        _log.warning("ingestion command worker refused outside local mock mode")
-        return
-
-    container = build_container(settings)
-    router = await build_catalog_refresh_router(settings, container)
-    service = IngestionAdminService(
-        container.ingestion_admin_repo,
-        router,
-        lease_seconds=settings.catalog_ingestion_command_lease_seconds,
-        cadence_batch_size=settings.catalog_refresh_dispatch_batch_size,
-        release_revision=settings.release_revision,
-        image_digest=settings.image_digest,
-    )
-    _log.info(
-        "ingestion command worker started",
-        batch_size=settings.catalog_ingestion_command_batch_size,
-        cadence_batch_size=settings.catalog_refresh_dispatch_batch_size,
-        lease_seconds=settings.catalog_ingestion_command_lease_seconds,
-        poll_seconds=settings.catalog_ingestion_command_poll_seconds,
-    )
-    await _run_ingestion_command_loop(
-        service,
-        batch_size=settings.catalog_ingestion_command_batch_size,
-        minimum_cycle_seconds=settings.catalog_ingestion_command_poll_seconds,
-    )
+    if not settings.mock_cloud and not settings.ingestion_executor_enabled:
+        raise ValueError("non-mock command execution requires explicit executor enablement")
+    container = build_catalog_container(settings)
+    try:
+        await verify_catalog_executor_database()
+        router = await build_catalog_refresh_router(settings, container)
+        service = ResumableIngestionCommandProcessor(
+            container.ingestion_admin_repo,
+            router,
+            CommandInvestigationStore(),
+            lease_seconds=settings.catalog_ingestion_command_lease_seconds,
+            cadence_batch_size=settings.catalog_refresh_dispatch_batch_size,
+            release_revision=settings.release_revision,
+            image_digest=settings.image_digest,
+        )
+        _log.info(
+            "ingestion command worker started",
+            batch_size=settings.catalog_ingestion_command_batch_size,
+            cadence_batch_size=settings.catalog_refresh_dispatch_batch_size,
+            lease_seconds=settings.catalog_ingestion_command_lease_seconds,
+            poll_seconds=settings.catalog_ingestion_command_poll_seconds,
+            execution_model="one_source_per_claim",
+        )
+        await _run_ingestion_command_loop(
+            service,
+            batch_size=settings.catalog_ingestion_command_batch_size,
+            minimum_cycle_seconds=settings.catalog_ingestion_command_poll_seconds,
+        )
+    finally:
+        await dispose_engine()
 
 
 async def _run_ingestion_command_loop(
@@ -98,7 +103,7 @@ async def _run_ingestion_command_loop(
 
 
 def _report_fields(report: IngestionProcessReport) -> dict[str, int]:
-    """Return only bounded aggregate counts; command/source/run identities never enter logs."""
+    """Keep cycle summaries aggregate; the processor emits correlated execution events."""
     return {
         "claimed": report.claimed,
         "completed": report.completed,

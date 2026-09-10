@@ -8,6 +8,7 @@ import { EntityGraphText } from "@/components/entity-graph-text";
 import { EntityInspector } from "@/components/entity-inspector";
 import { getCatalogEntityGraph } from "@/lib/entity-graph-api";
 import type { CatalogEntityGraph } from "@/lib/entity-graph";
+import { aggregateGraphSessions } from "@/lib/entity-graph-sessions";
 import { deriveEntityGraphScene, sceneToTextModel } from "@/lib/entity-graph";
 import { readableGraphError } from "@/lib/entity-graph-errors";
 import { readEntityGraph, writeEntityGraph } from "@/lib/entity-graph-cache";
@@ -189,14 +190,16 @@ export function EntityGraphView({
   useEffect(() => () => abortRef.current?.abort(), []);
 
   /**
-   * Derived once, laid out once, put into words once — all from the same payload, so the canvas,
-   * the inspector and the text equivalent cannot disagree about what this frame contains.  Only
-   * the layout depends on the viewport, so a resize never re-derives the model.
+   * Keep original occurrence evidence for the inspector/text view. Only the canvas folds
+   * matching sessions into one visual node; selecting a date resolves its original node ID.
+   * Resizing changes layout without changing membership.
    */
   const model = useMemo(() => (graph ? deriveEntityGraphScene(graph) : null), [graph]);
+  const sessions = useMemo(() => graph ? aggregateGraphSessions(graph) : null, [graph]);
+  const canvasModel = useMemo(() => sessions ? deriveEntityGraphScene(sessions.graph) : null, [sessions]);
   const scene = useMemo(
-    () => (model ? layoutEgoRings(model, viewport) : null),
-    [model, viewport],
+    () => (canvasModel ? layoutEgoRings(canvasModel, viewport) : null),
+    [canvasModel, viewport],
   );
   const textModel = useMemo(() => (model ? sceneToTextModel(model) : null), [model]);
 
@@ -343,14 +346,15 @@ export function EntityGraphView({
             ) : (
               <EntityGraphCanvas
                 scene={scene}
-                selectedNodeId={selectedNodeId}
-                hoveredNodeId={hoveredNodeId}
+                selectedNodeId={selectedNodeId ? sessions?.representative.get(selectedNodeId) ?? selectedNodeId : null}
+                hoveredNodeId={hoveredNodeId ? sessions?.representative.get(hoveredNodeId) ?? hoveredNodeId : null}
                 onSelect={setSelectedNodeId}
                 onFocus={focusNodeId}
               />
             )}
           </div>
           <EntityInspector
+            eventSessions={sessions?.groups.get(sessions.representative.get(selectedNodeId ?? "") ?? "")}
             tenantId={tenantId}
             model={model}
             textModel={textModel}
@@ -360,6 +364,10 @@ export function EntityGraphView({
             onHoverNode={setHoveredNodeId}
           />
         </div>
+      ) : null}
+
+      {sessions && [...sessions.groups.values()].some((group) => group.length > 1) ? (
+        <p className="entity-graph-inspector__provenance">Matching sessions share a graph node. Select one to browse its dates in the detail panel. Counts refer to individual events in the loaded graph.</p>
       ) : null}
 
       {scene && narrow && showText ? (

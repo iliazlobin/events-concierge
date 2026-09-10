@@ -9,13 +9,15 @@ from __future__ import annotations
 import json
 import math
 import re
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
+from contextlib import AbstractAsyncContextManager
 from datetime import datetime
 from urllib.parse import urlsplit
 from uuid import UUID
 
 from sqlalchemy import text
 from sqlalchemy.engine import RowMapping
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from ...domain.catalog_sources import CatalogRefreshDue, CatalogSource
 from ...domain.enums import CatalogSourceMode
@@ -23,6 +25,8 @@ from ...domain.ingestion_admin import (
     CatalogConcentrationEntry,
     CatalogFreshnessBucket,
     IngestionBuildIdentity,
+    IngestionCatalogEventPage,
+    IngestionCatalogRecordPage,
     IngestionCommand,
     IngestionCommandAction,
     IngestionCommandDetail,
@@ -43,6 +47,7 @@ from ...domain.ingestion_admin import (
     IngestionOverviewSummary,
     IngestionPolicyStatus,
     IngestionReviewStatus,
+    IngestionRunCollectionWindow,
     IngestionRunCommandLink,
     IngestionRunPage,
     IngestionRunResourceEvidence,
@@ -57,12 +62,15 @@ from ...domain.ingestion_admin import (
     IngestionSourceEnabledBulkUpdate,
     IngestionSourceHealth,
     IngestionSourcePage,
+    IngestionSourceRegistrationBucket,
+    IngestionSourceRegistrationHistory,
     IngestionSourceRevisionTarget,
     IngestionSourceStatus,
     IngestionStageSummaryEntry,
     IngestionThroughputBucket,
     SafeCommandResult,
 )
+from ...domain.ingestion_run_query import run_query_options, validate_run_key
 from ...infra.db import system_session_scope
 from ...ports.ingestion_admin import (
     IngestionCommandConflictError,
@@ -73,12 +81,15 @@ from ...ports.ingestion_admin import (
     IngestionSourceConfigurationUnavailableError,
     IngestionSourceNotFoundError,
 )
+from .ingestion_catalog_records import browse_catalog_records
+from .ingestion_run_catalog import browse_run_catalog
+from .ingestion_run_queries import OperatorRunQueries, decode_run_fields
 
 _SOURCE_KEY = re.compile(r"[a-z0-9][a-z0-9-]{1,79}")
 _RUN_STATUSES = frozenset({"running", "paused", "succeeded", "failed"})
 _SOURCE_STATES = frozenset({"all", "active", "due", "blocked", "failed"})
 _SOURCE_SORT_FIELDS = frozenset(
-    {"source", "health", "catalog", "last_success", "latest_run", "output"}
+    {"source", "health", "catalog", "catalog_total", "last_success", "latest_run", "output"}
 )
 _SORT_DIRECTIONS = frozenset({"asc", "desc"})
 _MAX_QUERY_LENGTH = 200
@@ -133,11 +144,16 @@ class PostgresIngestionAdminRepository:
     def __init__(
         self,
         execution_descriptors: IngestionExecutionDescriptorRegistry | None = None,
+        *,
+        session_scope: Callable[
+            [], AbstractAsyncContextManager[AsyncSession]
+        ] = system_session_scope,
     ) -> None:
         self._execution_descriptors = execution_descriptors
+        self._session_scope = session_scope
 
     async def overview(self) -> IngestionOverview:
-        async with system_session_scope() as session:
+        async with self._session_scope() as session:
             row = (
                 (
                     await session.execute(
@@ -157,7 +173,7 @@ class PostgresIngestionAdminRepository:
     ) -> IngestionFleetSummary:
         """Return one window-scoped fleet rollup computed entirely in the database."""
         _validate_window_hours(window_hours)
-        async with system_session_scope() as session:
+        async with self._session_scope() as session:
             row = (
                 (
                     await session.execute(
@@ -183,7 +199,7 @@ class PostgresIngestionAdminRepository:
     ) -> list[IngestionStageSummaryEntry]:
         """Return all five declared stages, each graded by the evidence that exists for it."""
         _validate_window_hours(window_hours)
-        async with system_session_scope() as session:
+        async with self._session_scope() as session:
             rows = (
                 (
                     await session.execute(
@@ -203,13 +219,11 @@ class PostgresIngestionAdminRepository:
 
     async def catalog_freshness(self) -> list[CatalogFreshnessBucket]:
         """Return served upcoming events bucketed by their source's last successful fetch."""
-        async with system_session_scope() as session:
+        async with self._session_scope() as session:
             rows = (
                 (
                     await session.execute(
-                        text(
-                            "SELECT * FROM public.fn_get_catalog_freshness_summary_v1(NULL)"
-                        )
+                        text("SELECT * FROM public.fn_get_catalog_freshness_summary_v1(NULL)")
                     )
                 )
                 .mappings()
@@ -217,13 +231,49 @@ class PostgresIngestionAdminRepository:
             )
         return [_catalog_freshness_from_row(row) for row in rows]
 
+    async def source_registration_history(
+        self,
+        *,
+        window_days: int,
+        include_fixtures: bool,
+    ) -> IngestionSourceRegistrationHistory:
+        async with self._session_scope() as session:
+            data = (
+                await session.execute(
+                    text(
+                        "SELECT public.fn_get_operator_source_registration_history_v1(:days,:fixtures)"
+                    ),
+                    {"days": window_days, "fixtures": include_fixtures},
+                )
+            ).scalar_one()
+        return IngestionSourceRegistrationHistory(
+            generated_at=datetime.fromisoformat(data["generated_at"]),
+            window_start=datetime.fromisoformat(data["window_start"]),
+            window_days=int(data["window_days"]),
+            bucket_hours=int(data["bucket_hours"]),
+            baseline_sources=int(data["baseline_sources"]),
+            total_sources=int(data["total_sources"]),
+            added_sources=int(data["added_sources"]),
+            items=tuple(
+                IngestionSourceRegistrationBucket(
+                    bucket_start=datetime.fromisoformat(row["bucket_start"]),
+                    bucket_end=datetime.fromisoformat(row["bucket_end"]),
+                    registered_sources=int(row["registered_sources"]),
+                    added_sources=int(row["added_sources"]),
+                )
+                for row in data["items"]
+            ),
+            include_fixtures=bool(data["include_fixtures"]),
+            history_scope=data["history_scope"],
+        )
+
     async def source_health(
         self,
         *,
         include_fixtures: bool,
     ) -> list[IngestionSourceHealth]:
         """Return the whole graded registry, unpaginated: a roster is a set, not a page."""
-        async with system_session_scope() as session:
+        async with self._session_scope() as session:
             rows = (
                 (
                     await session.execute(
@@ -243,7 +293,7 @@ class PostgresIngestionAdminRepository:
 
     async def fleet_shape(self) -> list[IngestionFleetShapeEntry]:
         """Return sources and served events per adapter mode."""
-        async with system_session_scope() as session:
+        async with self._session_scope() as session:
             rows = (
                 (
                     await session.execute(
@@ -263,7 +313,7 @@ class PostgresIngestionAdminRepository:
     ) -> list[IngestionThroughputBucket]:
         """Return gap-filled pipeline volume buckets."""
         _validate_history_window(window_hours, bucket_hours)
-        async with system_session_scope() as session:
+        async with self._session_scope() as session:
             rows = (
                 (
                     await session.execute(
@@ -289,13 +339,11 @@ class PostgresIngestionAdminRepository:
         """Return per-source share of served upcoming events, ranked."""
         if limit < 1 or limit > _MAX_CONCENTRATION_ROWS:
             raise ValueError("catalog concentration limit is invalid")
-        async with system_session_scope() as session:
+        async with self._session_scope() as session:
             rows = (
                 (
                     await session.execute(
-                        text(
-                            "SELECT * FROM public.fn_get_catalog_concentration_v1(:limit)"
-                        ),
+                        text("SELECT * FROM public.fn_get_catalog_concentration_v1(:limit)"),
                         {"limit": limit},
                     )
                 )
@@ -345,14 +393,14 @@ class PostgresIngestionAdminRepository:
             "limit": limit,
             "offset": offset,
         }
-        async with system_session_scope() as session:
+        async with self._session_scope() as session:
             rows = (
                 (
                     await session.execute(
                         text(
                             """
                         SELECT *
-                        FROM public.fn_list_ingestion_admin_sources_v6(
+                        FROM public.fn_list_ingestion_admin_sources_v7(
                             :query, :state, :mode, :publisher, :region,
                             :source_key, :include_fixtures, :sort_by, :sort_direction,
                             :limit, :offset
@@ -402,6 +450,13 @@ class PostgresIngestionAdminRepository:
         window_hours: int | None = None,
         include_fixtures: bool = False,
         limit: int = 50,
+        query: str | None = None,
+        sort_by: str = "started",
+        sort_direction: str = "desc",
+        started_after: datetime | None = None,
+        started_before: datetime | None = None,
+        stage: str | None = None,
+        stage_outcome: str | None = None,
         offset: int = 0,
     ) -> IngestionRunPage:
         _validate_page(limit, offset)
@@ -413,61 +468,40 @@ class PostgresIngestionAdminRepository:
         _validate_optional_facet(region, "region")
         if window_hours is not None:
             _validate_window_hours(window_hours)
-        parameters = {
-            "status": status,
-            "source_key": source_key,
-            "mode": mode,
-            "publisher": publisher,
-            "region": region,
-            "window_hours": window_hours,
-            "include_fixtures": include_fixtures,
-            "limit": limit,
-            "offset": offset,
-        }
-        async with system_session_scope() as session:
-            rows = (
-                (
-                    await session.execute(
-                        text(
-                            """
-                        SELECT *
-                        FROM public.fn_list_ingestion_admin_runs_v4(
-                            :status, :source_key, :mode, :publisher, :region,
-                            :window_hours, :include_fixtures, :limit, :offset
-                        )
-                        """
-                        ),
-                        parameters,
-                    )
-                )
-                .mappings()
-                .all()
-            )
-            total = (
-                int(rows[0]["total_count"])
-                if rows
-                else int(
-                    (
-                        await session.execute(
-                            text(
-                                """
-                                SELECT public.fn_count_ingestion_admin_runs_v2(
-                                    :status, :source_key, :mode, :publisher, :region,
-                                    :window_hours, :include_fixtures
-                                )
-                                """
-                            ),
-                            parameters,
-                        )
-                    ).scalar_one()
-                )
-            )
-        return IngestionRunPage(
-            items=tuple(_run_status_from_row(row, self._execution_descriptors) for row in rows),
-            total=total,
-            limit=limit,
-            offset=offset,
+        options = run_query_options(
+            query=query,
+            sort_by=sort_by,
+            sort_direction=sort_direction,
+            started_after=started_after,
+            started_before=started_before,
+            stage=stage,
+            stage_outcome=stage_outcome,
         )
+        return await OperatorRunQueries(
+            self._session_scope, self._execution_descriptors, _run_status_from_row
+        ).query(
+            {
+                "status": status,
+                "source_key": source_key,
+                "mode": mode,
+                "publisher": publisher,
+                "region": region,
+                "window_hours": window_hours,
+                "include_fixtures": include_fixtures,
+                "limit": limit,
+                "offset": offset,
+                **options,
+            }
+        )
+
+    async def lookup_run(
+        self, source_key: str, run_key: str, *, include_fixtures: bool = False
+    ) -> IngestionRunStatus | None:
+        _validate_optional_source_key(source_key)
+        validate_run_key(run_key)
+        return await OperatorRunQueries(
+            self._session_scope, self._execution_descriptors, _run_status_from_row
+        ).lookup(source_key, run_key, include_fixtures)
 
     async def get_filter_metadata(
         self,
@@ -494,7 +528,7 @@ class PostgresIngestionAdminRepository:
             "region": region,
             "include_fixtures": include_fixtures,
         }
-        async with system_session_scope() as session:
+        async with self._session_scope() as session:
             rows = (
                 (
                     await session.execute(
@@ -534,6 +568,52 @@ class PostgresIngestionAdminRepository:
             regions=tuple(facets["region"]),
         )
 
+    async def browse_catalog_records(
+        self,
+        *,
+        source_key: str | None,
+        run_key: str | None,
+        query: str | None,
+        date_scope: str,
+        price_status: str,
+        after_start_at: datetime | None,
+        after_canonical_event_id: UUID | None,
+        limit: int,
+    ) -> IngestionCatalogRecordPage:
+        return await browse_catalog_records(
+            self._session_scope,
+            source_key=source_key,
+            run_key=run_key,
+            query=query,
+            date_scope=date_scope,
+            price_status=price_status,
+            after_start_at=after_start_at,
+            after_canonical_event_id=after_canonical_event_id,
+            limit=limit,
+        )
+
+    async def browse_run_events(
+        self,
+        source_key: str,
+        run_key: str,
+        *,
+        query: str | None,
+        after_start_at: datetime | None,
+        after_canonical_event_id: UUID | None,
+        limit: int,
+    ) -> IngestionCatalogEventPage:
+        _validate_optional_source_key(source_key)
+        validate_run_key(run_key)
+        return await browse_run_catalog(
+            self._session_scope,
+            source_key,
+            run_key,
+            query=query,
+            after_start_at=after_start_at,
+            after_canonical_event_id=after_canonical_event_id,
+            limit=limit,
+        )
+
     async def get_source_detail(
         self,
         source_key: str,
@@ -550,16 +630,21 @@ class PostgresIngestionAdminRepository:
             "bucket_hours": bucket_hours,
             "include_fixtures": include_fixtures,
         }
-        async with system_session_scope() as session:
+        async with self._session_scope() as session:
             source_row = (
                 (
                     await session.execute(
                         text(
                             """
-                            SELECT *
-                            FROM public.fn_get_ingestion_admin_source_detail_v2(
+                            SELECT detail.*, counts.total_event_count,
+                                   counts.upcoming_event_count
+                            FROM public.fn_get_ingestion_admin_source_detail_v3(
                                 :source_key, :include_fixtures
-                            )
+                            ) detail
+                            JOIN public.fn_list_ingestion_admin_sources_v7(
+                                NULL, 'all', NULL, NULL, NULL, :source_key,
+                                :include_fixtures, 'source', 'asc', 1, 0
+                            ) counts USING (source_key)
                             """
                         ),
                         parameters,
@@ -605,24 +690,22 @@ class PostgresIngestionAdminRepository:
                 .mappings()
                 .all()
             )
-            recent_rows = (
-                (
-                    await session.execute(
-                        text(
-                            """
-                            SELECT *
-                            FROM public.fn_list_ingestion_admin_runs_v4(
-                                NULL, :source_key, NULL, NULL, NULL,
-                                :window_hours, :include_fixtures, 20, 0
-                            )
-                            """
-                        ),
-                        parameters,
-                    )
+            recent_result = (
+                await session.execute(
+                    text("SELECT public.fn_query_ingestion_admin_runs_v1(CAST(:query AS jsonb))"),
+                    {
+                        "query": json.dumps(
+                            {
+                                "source_key": source_key,
+                                "window_hours": window_hours,
+                                "include_fixtures": include_fixtures,
+                                "limit": 20,
+                            }
+                        )
+                    },
                 )
-                .mappings()
-                .all()
-            )
+            ).scalar_one()
+            recent_rows = [decode_run_fields(row) for row in recent_result["items"]]
         return _source_detail_from_rows(
             source_row,
             summary_row,
@@ -648,20 +731,23 @@ class PostgresIngestionAdminRepository:
         min_interval_ms: int,
         page_limit: int,
         requested_by: str,
+        collection_horizon_days: int | None = None,
     ) -> IngestionSourceConfigurationUpdate:
-        async with system_session_scope() as session:
+        version = "v2" if collection_horizon_days is None else "v3"
+        horizon_argument = "" if collection_horizon_days is None else ", :collection_horizon_days"
+        async with self._session_scope() as session:
             row = (
                 (
                     await session.execute(
                         text(
-                            """
+                            f"""
                             SELECT *
-                            FROM public.fn_update_ingestion_admin_source_configuration_v2(
+                            FROM public.fn_update_ingestion_admin_source_configuration_{version}(
                                 :source_key, :expected_revision, :seed_url,
                                 CAST(:approved_origins AS text[]), :mode, :enabled,
                                 :handoff_only, :review_expires_at,
                                 :refresh_interval_minutes, :min_interval_ms,
-                                :page_limit, :requested_by
+                                :page_limit, :requested_by{horizon_argument}
                             )
                             """
                         ),
@@ -678,6 +764,7 @@ class PostgresIngestionAdminRepository:
                             "min_interval_ms": min_interval_ms,
                             "page_limit": page_limit,
                             "requested_by": requested_by,
+                            "collection_horizon_days": collection_horizon_days,
                         },
                     )
                 )
@@ -719,7 +806,7 @@ class PostgresIngestionAdminRepository:
             ],
             separators=(",", ":"),
         )
-        async with system_session_scope() as session:
+        async with self._session_scope() as session:
             rows = (
                 (
                     await session.execute(
@@ -779,7 +866,7 @@ class PostgresIngestionAdminRepository:
 
     async def list_commands(self, limit: int = 50) -> tuple[IngestionCommand, ...]:
         _validate_limit(limit)
-        async with system_session_scope() as session:
+        async with self._session_scope() as session:
             rows = (
                 (
                     await session.execute(
@@ -793,7 +880,7 @@ class PostgresIngestionAdminRepository:
         return tuple(_command_from_row(row) for row in rows)
 
     async def get_command(self, command_id: UUID) -> IngestionCommand | None:
-        async with system_session_scope() as session:
+        async with self._session_scope() as session:
             row = (
                 (
                     await session.execute(
@@ -808,7 +895,7 @@ class PostgresIngestionAdminRepository:
 
     async def get_command_detail(self, command_id: UUID) -> IngestionCommandDetail | None:
         """Return a command and its latest attempt's exact cadence/source-run associations."""
-        async with system_session_scope() as session:
+        async with self._session_scope() as session:
             command_row = (
                 (
                     await session.execute(
@@ -862,7 +949,7 @@ class PostgresIngestionAdminRepository:
             raise ValueError("ingestion command run plan is too large")
         if len({target.position for target in targets}) != len(targets):
             raise ValueError("ingestion command run plan positions must be unique")
-        async with system_session_scope() as session:
+        async with self._session_scope() as session:
             for target in targets:
                 linked = bool(
                     (
@@ -902,14 +989,14 @@ class PostgresIngestionAdminRepository:
         that cannot succeed stops displacing healthy sources from the single fleet pass (0155).
         """
         _validate_due_limit(limit)
-        async with system_session_scope() as session:
+        async with self._session_scope() as session:
             rows = (
                 (
                     await session.execute(
                         text(
                             """
                         SELECT *
-                        FROM public.fn_list_ingestion_admin_due_sources_v3(:now, :limit)
+                        FROM public.fn_list_ingestion_admin_due_sources_v4(:now, :limit)
                         """
                         ),
                         {"now": now, "limit": limit},
@@ -936,7 +1023,7 @@ class PostgresIngestionAdminRepository:
         release_revision: str = "development",
         image_digest: str | None = None,
     ) -> IngestionCommand:
-        async with system_session_scope() as session:
+        async with self._session_scope() as session:
             outcome = str(
                 (
                     await session.execute(
@@ -984,7 +1071,7 @@ class PostgresIngestionAdminRepository:
         _validate_limit(limit)
         if not _MIN_LEASE_SECONDS <= lease_seconds <= _MAX_LEASE_SECONDS:
             raise ValueError("ingestion command lease must be between 300 and 21600 seconds")
-        async with system_session_scope() as session:
+        async with self._session_scope() as session:
             rows = (
                 (
                     await session.execute(
@@ -1026,7 +1113,7 @@ class PostgresIngestionAdminRepository:
     ) -> bool:
         if not _MIN_LEASE_SECONDS <= lease_seconds <= _MAX_LEASE_SECONDS:
             raise ValueError("ingestion command lease must be between 300 and 21600 seconds")
-        async with system_session_scope() as session:
+        async with self._session_scope() as session:
             renewed = (
                 await session.execute(
                     text(
@@ -1051,7 +1138,7 @@ class PostgresIngestionAdminRepository:
         result: SafeCommandResult,
     ) -> bool:
         payload = _safe_result_payload(result)
-        async with system_session_scope() as session:
+        async with self._session_scope() as session:
             completed = (
                 await session.execute(
                     text(
@@ -1080,7 +1167,7 @@ class PostgresIngestionAdminRepository:
             or not _MIN_RETRY_SECONDS <= retry_after_seconds <= _MAX_RETRY_SECONDS
         ):
             raise ValueError("ingestion command retry delay must be between 1 and 21600 seconds")
-        async with system_session_scope() as session:
+        async with self._session_scope() as session:
             deferred = (
                 await session.execute(
                     text(
@@ -1102,7 +1189,7 @@ class PostgresIngestionAdminRepository:
     async def fail(self, lease: IngestionCommandLease, error_code: str) -> bool:
         if error_code not in _COMMAND_ERROR_CODES:
             raise ValueError("ingestion command error code is invalid")
-        async with system_session_scope() as session:
+        async with self._session_scope() as session:
             failed = (
                 await session.execute(
                     text(
@@ -1286,6 +1373,8 @@ def _source_status_from_row(row: RowMapping) -> IngestionSourceStatus:
         last_succeeded_at=row["last_succeeded_at"],
         next_due_at=row["next_due_at"],
         event_count=int(row["event_count"]),
+        total_event_count=int(row["total_event_count"]),
+        upcoming_event_count=int(row["upcoming_event_count"]),
         latest_run=latest_run,
         retired_at=row["retired_at"],
         retired_reason=_optional_str(row["retired_reason"]),
@@ -1305,6 +1394,8 @@ def _run_status_from_row(
     mode = _optional_str(row.get("mode"))
     page_limit = _optional_int(row.get("page_limit"))
     source_configuration = _run_source_configuration(row, mode, page_limit)
+    execution_configuration = _captured_run_configuration(row.get("execution_configuration"))
+    collection_window = _captured_collection_window(row.get("collection_window"))
     command = _run_command_link(row)
     resources = _run_resource_evidence(row)
     stage_trace = _run_stage_trace(row.get("stage_metrics"), resources is not None)
@@ -1339,7 +1430,11 @@ def _run_status_from_row(
         error=_optional_str(row["error"]),
         attempt_count=_required_int(row["attempt_count"]),
         duration_ms=duration_ms,
-        source_revision=_optional_int(row.get("source_revision")),
+        source_revision=(
+            execution_configuration.source_revision
+            if execution_configuration
+            else _optional_int(row.get("source_revision"))
+        ),
         release_revision=_optional_str(row.get("release_revision")),
         image_digest=_optional_str(row.get("image_digest")),
         provenance_status=str(row.get("provenance_status", "legacy_unavailable")),
@@ -1347,6 +1442,8 @@ def _run_status_from_row(
         is_latest_for_source=bool(row.get("is_latest_for_source", False)),
         resolved_by_newer_success=bool(row.get("resolved_by_newer_success", False)),
         source_configuration=source_configuration,
+        execution_configuration=execution_configuration,
+        collection_window=collection_window,
         command=command,
         execution=execution,
         resources=resources,
@@ -1372,6 +1469,41 @@ def _run_source_configuration(
         refresh_interval_minutes=refresh_interval,
         min_interval_ms=min_interval,
         page_limit=page_limit,
+        collection_horizon_days=_optional_int(row.get("collection_horizon_days")),
+    )
+
+
+def _captured_run_configuration(value: object) -> IngestionRunSourceConfiguration | None:
+    if value is None:
+        return None
+    if not isinstance(value, Mapping):
+        raise RuntimeError("captured run configuration is invalid")
+    return IngestionRunSourceConfiguration(
+        mode=str(value["mode"]),
+        reviewed_at=_optional_stage_datetime(value.get("reviewed_at")),
+        review_expires_at=_optional_stage_datetime(value.get("review_expires_at")),
+        refresh_interval_minutes=_required_int(value["refresh_interval_minutes"]),
+        min_interval_ms=_required_int(value["min_interval_ms"]),
+        page_limit=_required_int(value["page_limit"]),
+        collection_horizon_days=_required_int(value["collection_horizon_days"]),
+        source_revision=_required_int(value["source_revision"]),
+    )
+
+
+def _captured_collection_window(value: object) -> IngestionRunCollectionWindow | None:
+    if value is None:
+        return None
+    if not isinstance(value, Mapping):
+        raise RuntimeError("captured collection window is invalid")
+    start = _optional_stage_datetime(value.get("start_at"))
+    end = _optional_stage_datetime(value.get("end_at"))
+    if start is None or end is None or start >= end:
+        raise RuntimeError("captured collection window bounds are invalid")
+    return IngestionRunCollectionWindow(
+        window_source_revision=_required_int(value["window_source_revision"]),
+        horizon_days=_required_int(value["horizon_days"]),
+        start_at=start,
+        end_at=end,
     )
 
 
@@ -1748,7 +1880,7 @@ def _source_detail_from_rows(
     source_row: RowMapping,
     summary_row: RowMapping,
     history_rows: Sequence[RowMapping],
-    recent_rows: Sequence[RowMapping],
+    recent_rows: Sequence[RowMapping | Mapping[str, object]],
     *,
     window_hours: int,
     bucket_hours: int,
@@ -1781,6 +1913,7 @@ def _source_detail_from_rows(
             min_interval_ms=int(source_row["min_interval_ms"]),
             page_limit=int(source_row["page_limit"]),
             source_revision=int(source_row["source_revision"]),
+            collection_horizon_days=int(source_row.get("collection_horizon_days", 90)),
             review_status=IngestionReviewStatus(str(source_row["review_status"])),
             effective_status=IngestionEffectiveStatus(str(source_row["effective_status"])),
             policy_blocked=bool(source_row["policy_blocked"]),
@@ -1788,6 +1921,8 @@ def _source_detail_from_rows(
             last_succeeded_at=source_row["last_succeeded_at"],
             next_due_at=source_row["next_due_at"],
             event_count=int(source_row["event_count"]),
+            total_event_count=int(source_row["total_event_count"]),
+            upcoming_event_count=int(source_row["upcoming_event_count"]),
             latest_run=latest_run,
             retired_at=source_row["retired_at"],
             retired_reason=_optional_str(source_row["retired_reason"]),
@@ -1849,6 +1984,8 @@ def _detail_latest_run_mapping(row: RowMapping) -> Mapping[str, object]:
         "image_digest": row["latest_run_image_digest"],
         "provenance_status": row["latest_run_provenance_status"],
         "trigger": row["latest_run_trigger"],
+        "collection_window": row.get("latest_run_collection_window"),
+        "execution_configuration": row.get("latest_run_execution_configuration"),
         "is_latest_for_source": True,
         "resolved_by_newer_success": False,
     }
@@ -1871,6 +2008,7 @@ def _catalog_source_from_row(row: RowMapping) -> CatalogSource:
         min_interval_ms=int(row["min_interval_ms"]),
         page_limit=int(row["page_limit"]),
         source_revision=int(row["source_revision"]),
+        collection_horizon_days=int(row.get("collection_horizon_days", 90)),
     )
 
 

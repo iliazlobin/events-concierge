@@ -1,0 +1,48 @@
+{{- if .Values.operator.enabled }}
+{{- $root := . }}
+{{- range $profile := list "operator" "executor" }}
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "events-concierge.fullname" $root }}-{{ $profile }}
+data:
+  EC_ENV: {{ $root.Values.global.environment | quote }}
+  EC_RELEASE_REVISION: {{ $root.Values.global.releaseRevision | quote }}
+  EC_IMAGE_DIGEST: {{ $root.Values.global.appImage.digest | quote }}
+  EC_MOCK_CLOUD: "false"
+  EC_DATABASE_CONNECTION_MODE: cloud_sql_proxy
+  EC_DATABASE_POOL_SIZE: "4"
+  EC_DATABASE_MAX_OVERFLOW: "0"
+  EC_ADMIN_INGESTION_ENABLED: "false"
+  EC_OIDC_BFF_ENABLED: "false"
+  {{- if eq $profile "operator" }}
+  EC_OPERATOR_DATABASE_URL_FILE: /var/run/secrets/events-concierge/EC_OPERATOR_DATABASE_URL
+  EC_OPERATOR_IAP_AUDIENCE: {{ $root.Values.operator.iapAudience | quote }}
+  EC_OPERATOR_PUBLIC_ORIGIN: {{ printf "https://%s" $root.Values.operator.hostname | quote }}
+  EC_OPERATOR_SUBJECT_ROLES: {{ $root.Values.operator.subjectRoles | toJson | quote }}
+  {{- else }}
+  EC_INGESTION_EXECUTOR_ENABLED: "true"
+  EC_INGESTION_EXECUTOR_DATABASE_URL_FILE: /var/run/secrets/events-concierge/EC_INGESTION_EXECUTOR_DATABASE_URL
+  EC_GCS_CLAIM_CHECK_PREFIX: {{ $root.Values.operator.executorClaimCheckPrefix | quote }}
+  {{- range $key, $value := $root.Values.applicationConfig }}
+  {{- if and (ne $key "EC_GCS_CLAIM_CHECK_PREFIX") (or (hasPrefix "EC_TEMPORAL_" $key) (hasPrefix "EC_GCS_" $key) (eq $key "EC_GCP_PROJECT") (eq $key "EC_REDIS_URL_FILE") (eq $key "EC_PACER_BACKEND")) }}
+  {{ $key }}: {{ $value | quote }}
+  {{- end }}
+  {{- end }}
+  {{- end }}
+---
+apiVersion: secrets-store.csi.x-k8s.io/v1
+kind: SecretProviderClass
+metadata:
+  name: {{ include "events-concierge.fullname" $root }}-{{ $profile }}
+spec:
+  provider: gke
+  parameters:
+    secrets: |
+      {{- range index $root.Values.operator (printf "%sSecrets" $profile) }}
+      - resourceName: "projects/{{ $root.Values.secretManager.projectId }}/secrets/{{ .secretName }}/versions/{{ .version }}"
+        path: {{ .fileName | quote }}
+      {{- end }}
+{{- end }}
+{{- end }}

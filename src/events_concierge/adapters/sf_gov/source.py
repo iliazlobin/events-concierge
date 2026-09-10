@@ -20,6 +20,7 @@ import httpx
 from selectolax.parser import HTMLParser
 
 from ...domain.catalog_sources import CatalogSource
+from ...domain.catalog_window import collection_reference_time
 from ...domain.enums import CatalogSourceMode, PriceStatus, Source
 from ...domain.events import CandidateEvent
 from ...infra.logging import get_logger
@@ -60,7 +61,7 @@ class SfGovCatalogFetcher:
             raise ValueError("SF.gov catalog sources must remain handoff-only")
         if not _is_supported_seed(source.seed_url):
             raise ValueError("SF.gov source must use the reviewed upcoming related-events endpoint")
-        now = self._now()
+        now = collection_reference_time(source, self._now())
         candidates = await self._fetch_pages(source)
         return [candidate for candidate in _deduplicate(candidates) if candidate.start_at >= now]
 

@@ -6,3 +6,7 @@ notification_email      = "replace-with-staging-oncall@example.com"
 
 # The default private control-plane endpoint requires a deploy runner connected to this VPC.
 enable_private_endpoint = true
+
+# Opt in only when preparing the isolated hosted operator profile. This creates empty secret
+# containers and restricted identities, not login passwords, secret versions, IAP, or a live UI.
+operator_enabled = false

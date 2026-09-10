@@ -3,6 +3,23 @@ variable "project_id" {
   description = "Existing GCP project dedicated to staging."
 }
 
+variable "operator_enabled" {
+  type        = bool
+  description = "Provision isolated hosted operator and ingestion executor identities and empty secret containers. Enable Helm separately after credentials and IAP are provisioned."
+  default     = false
+}
+
+variable "catalog_claim_check_prefix" {
+  type        = string
+  description = "Dedicated object prefix granted to catalog executors; must match Helm operator.executorClaimCheckPrefix."
+  default     = "events-concierge/catalog/claim-check/v1"
+
+  validation {
+    condition     = can(regex("^events-concierge/catalog/[a-zA-Z0-9/_-]+$", var.catalog_claim_check_prefix)) && !endswith(var.catalog_claim_check_prefix, "/")
+    error_message = "Catalog claim checks must use a dedicated events-concierge/catalog/ prefix without a trailing slash."
+  }
+}
+
 variable "name_prefix" {
   type        = string
   description = "Short lowercase prefix used for every staging resource."

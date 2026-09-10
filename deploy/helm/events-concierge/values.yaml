@@ -111,7 +111,44 @@ secretManager:
       secretName: ec-stg-app-role-password
       version: "1"
 
+operator:
+  # Enable as one reviewed release: IAP edge, isolated API, executor, and queued cadence.
+  enabled: false
+  hostname: ""
+  tlsSecretName: ""
+  iapAudience: ""
+  iapClientId: ""
+  iapClientSecretName: ""
+  subjectRoles: {}
+  executorClaimCheckPrefix: events-concierge/catalog/claim-check/v1
+  operatorSecrets:
+    - fileName: EC_OPERATOR_DATABASE_URL
+      secretName: ec-stg-operator-database-url
+      version: "1"
+  executorSecrets:
+    - fileName: EC_INGESTION_EXECUTOR_DATABASE_URL
+      secretName: ec-stg-ingestion-executor-database-url
+      version: "1"
+    - fileName: EC_REDIS_URL
+      secretName: ec-stg-redis-url
+      version: "1"
+    - fileName: REDIS_CA_CERTIFICATE
+      secretName: ec-stg-redis-ca-certificate
+      version: "1"
+    - fileName: EC_TEMPORAL_API_KEY
+      secretName: ec-stg-temporal-api-key
+      version: "1"
+
 serviceAccounts:
+  operator-frontend:
+    name: events-concierge-operator-frontend
+    gcpServiceAccount: ""
+  operator-api:
+    name: events-concierge-operator-api
+    gcpServiceAccount: ""
+  ingestion-executor:
+    name: events-concierge-ingestion-executor
+    gcpServiceAccount: ""
   frontend:
     name: events-concierge-frontend
     gcpServiceAccount: ""
@@ -150,6 +187,51 @@ serviceAccounts:
     gcpServiceAccount: ""
 
 workloads:
+  operator-frontend:
+    enabled: true
+    operatorProfile: frontend
+    replicas: 2
+    serviceAccount: operator-frontend
+    needsIdentity: false
+    database: false
+    runtimeSecrets: false
+    probeType: frontend
+    port: 3000
+    pdb: {enabled: true, minAvailable: 1}
+    resources:
+      requests: {cpu: 100m, memory: 128Mi}
+      limits: {cpu: 500m, memory: 512Mi}
+  operator-api:
+    enabled: true
+    operatorProfile: operator
+    replicas: 2
+    serviceAccount: operator-api
+    needsIdentity: true
+    database: true
+    runtimeSecrets: true
+    probeType: api
+    port: 8000
+    command: [uvicorn, "events_concierge.api.operator:create_operator_app", --factory, --host, 0.0.0.0, --port, "8000", --no-server-header, --no-access-log]
+    env:
+      EC_OPERATOR_API_ENABLED: "true"
+    pdb: {enabled: true, minAvailable: 1}
+    resources:
+      requests: {cpu: 100m, memory: 192Mi}
+      limits: {cpu: 500m, memory: 512Mi}
+  ingestion-executor:
+    enabled: true
+    operatorProfile: executor
+    replicas: 1
+    serviceAccount: ingestion-executor
+    needsIdentity: true
+    database: true
+    runtimeSecrets: true
+    probeType: worker
+    command: [python, -m, events_concierge.workers.ingestion_commands]
+    pdb: {enabled: false}
+    resources:
+      requests: {cpu: 100m, memory: 256Mi}
+      limits: {cpu: "1", memory: 768Mi}
   frontend:
     enabled: true
     replicas: 2
@@ -270,6 +352,14 @@ workloads:
       requests: {cpu: 100m, memory: 192Mi}
       limits: {cpu: 500m, memory: 512Mi}
 services:
+  operator-frontend:
+    operatorOnly: true
+    port: 80
+    targetPort: 3000
+  operator-api:
+    operatorOnly: true
+    port: 8000
+    targetPort: 8000
   frontend:
     port: 80
     targetPort: 3000

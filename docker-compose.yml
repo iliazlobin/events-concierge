@@ -20,6 +20,8 @@ x-app-environment: &app-environment
   EC_TEMPORAL_TARGET: ${EC_CONTAINER_TEMPORAL_TARGET:-temporal:7233}
   EC_TEMPORAL_NAMESPACE: ${EC_TEMPORAL_NAMESPACE:-default}
   EC_TEMPORAL_TASK_QUEUE: ${EC_TEMPORAL_TASK_QUEUE:-events-concierge}
+  EC_TEMPORAL_TRANSACTIONAL_TASK_QUEUE: ${EC_TEMPORAL_TRANSACTIONAL_TASK_QUEUE:-events-concierge}
+  EC_TEMPORAL_CATALOG_TASK_QUEUE: ${EC_TEMPORAL_CATALOG_TASK_QUEUE:-events-concierge-catalog}
   EC_TEMPORAL_RPC_TIMEOUT_SECONDS: ${EC_TEMPORAL_RPC_TIMEOUT_SECONDS:-5}
   EC_TEMPORAL_WORKER_MAX_CONCURRENT_WORKFLOW_TASKS: ${EC_TEMPORAL_WORKER_MAX_CONCURRENT_WORKFLOW_TASKS:-8}
   EC_TEMPORAL_WORKER_MAX_CONCURRENT_ACTIVITIES: ${EC_TEMPORAL_WORKER_MAX_CONCURRENT_ACTIVITIES:-8}
@@ -31,7 +33,7 @@ x-app-environment: &app-environment
   EC_PACER_BACKEND: ${EC_CONTAINER_PACER_BACKEND:-redis}
   EC_MOCK_CLOUD: ${EC_MOCK_CLOUD:-true}
   # The Compose listener is loopback-bound by default; this enables the explicitly local-only
-  # ingestion control room and its durable command relay.
+  # ingestion control room and its durable command worker.
   EC_ADMIN_INGESTION_ENABLED: ${EC_ADMIN_INGESTION_ENABLED:-true}
   # Local app-profile convenience only: probe reviewed due sources every five minutes and append
   # one idempotent fleet command. The separate command worker remains the execution boundary.
@@ -175,13 +177,15 @@ services:
   migrate:
     <<: *app-service
     profiles: ["app"]
-    command: ["alembic", "upgrade", "head"]
+    command: ["python", "-m", "events_concierge.deployment.local_operator_bootstrap", "--migrate"]
     environment:
       <<: *app-environment
       EC_MIGRATION_URL: ${EC_CONTAINER_MIGRATION_URL:-postgresql+psycopg://ec:ec@postgres:5432/ec}
       # Local-only bootstrap. Production supplies an independently managed value to its migration
       # Job and never bakes an application-role password into source or an image.
       EC_APP_ROLE_PASSWORD: ${EC_LOCAL_APP_ROLE_PASSWORD:-ec_app}
+      EC_LOCAL_OPERATOR_PASSWORD: ${EC_LOCAL_OPERATOR_PASSWORD:-ec_local_operator}
+      EC_LOCAL_INGESTION_PASSWORD: ${EC_LOCAL_INGESTION_PASSWORD:-ec_local_ingestion}
     depends_on:
       postgres:
         condition: service_healthy
@@ -191,6 +195,9 @@ services:
 
   api:
     <<: *app-service
+    environment:
+      <<: *app-environment
+      EC_OPERATOR_DATABASE_URL: ${EC_CONTAINER_OPERATOR_DATABASE_URL:-postgresql+psycopg://ec_local_operator:ec_local_operator@postgres:5432/ec}
     profiles: ["app"]
     command:
       - uvicorn
@@ -256,6 +263,19 @@ services:
 
   workflow-worker:
     <<: *worker-service
+    environment:
+      <<: *app-environment
+      EC_TEMPORAL_WORKER_ROLE: transactional
+    command: ["python", "-m", "events_concierge.workflows.worker"]
+
+  catalog-workflow-worker:
+    <<: *worker-service
+    environment:
+      <<: *app-environment
+      EC_TEMPORAL_TASK_QUEUE: ${EC_TEMPORAL_CATALOG_TASK_QUEUE:-events-concierge-catalog}
+      EC_TEMPORAL_WORKER_ROLE: catalog
+      EC_INGESTION_EXECUTOR_ENABLED: "true"
+      EC_INGESTION_EXECUTOR_DATABASE_URL: ${EC_CONTAINER_INGESTION_EXECUTOR_DATABASE_URL:-postgresql+psycopg://ec_local_ingestion:ec_local_ingestion@postgres:5432/ec}
     command: ["python", "-m", "events_concierge.workflows.worker"]
 
   request-starter:
@@ -284,12 +304,19 @@ services:
 
   ingestion-commands:
     <<: *worker-service
+    environment:
+      <<: *app-environment
+      EC_INGESTION_EXECUTOR_ENABLED: ${EC_INGESTION_EXECUTOR_ENABLED:-false}
+      EC_INGESTION_EXECUTOR_DATABASE_URL: ${EC_CONTAINER_INGESTION_EXECUTOR_DATABASE_URL:-postgresql+psycopg://ec_local_ingestion:ec_local_ingestion@postgres:5432/ec}
     command: ["python", "-m", "events_concierge.workers.ingestion_commands"]
     # Disabled local admin exits cleanly; only unexpected worker failures should restart it.
     restart: on-failure
 
   ingestion-cadence:
     <<: *worker-service
+    environment:
+      <<: *app-environment
+      EC_OPERATOR_DATABASE_URL: ${EC_CONTAINER_OPERATOR_DATABASE_URL:-postgresql+psycopg://ec_local_operator:ec_local_operator@postgres:5432/ec}
     command: ["python", "-m", "events_concierge.workers.ingestion_cadence"]
     # This is a local/mock convenience scheduler, not a production scheduling authority.
     restart: on-failure

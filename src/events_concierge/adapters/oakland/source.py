@@ -22,6 +22,7 @@ import httpx
 from selectolax.parser import HTMLParser, Node
 
 from ...domain.catalog_sources import CatalogSource
+from ...domain.catalog_window import collection_reference_time
 from ...domain.enums import CatalogSourceMode, PriceStatus, Source
 from ...domain.events import CandidateEvent, GeoPoint
 
@@ -126,7 +127,7 @@ class OaklandCatalogFetcher:
         ) as client:
             sitemap = await self._sitemap_response_or_error(client, source, publisher)
             detail_urls = _detail_urls_from_sitemap(sitemap, source, publisher)
-            now = _as_local_time(self._now())
+            now = _as_local_time(collection_reference_time(source, self._now()))
             candidates_by_source_id: dict[str, CandidateEvent] = {}
             for detail_url in detail_urls:
                 response = await self._detail_response_or_error(

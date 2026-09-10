@@ -8,15 +8,18 @@ crash/retry re-entry converge without repeating a completed catalog effect.
 from __future__ import annotations
 
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 from enum import StrEnum
 from uuid import UUID
 
 from ..domain.catalog_sources import CatalogRefreshCommit, CatalogSource
+from ..domain.catalog_window import filter_collection_window
 from ..domain.enums import CatalogRefreshClaimOutcome, CatalogSourceMode, Modality, Source
 from ..domain.policy import PolicyDecision, PolicyDecisionCode
 from ..ports.catalog_sources import (
+    CatalogCollectionWindowRepository,
+    CatalogCollectionWindowUnavailableError,
     CatalogRefreshCommitter,
     CatalogRunEvidenceRecorder,
     CatalogSourceFetcher,
@@ -88,6 +91,7 @@ class CatalogRefreshService:
         source_quarantine: SourceQuarantinePort | None = None,
         run_evidence: CatalogRunEvidenceRecorder | None = None,
         *,
+        collection_windows: CatalogCollectionWindowRepository | None = None,
         lease_seconds: int = 300,
         now: Callable[[], datetime] | None = None,
     ) -> None:
@@ -100,6 +104,7 @@ class CatalogRefreshService:
         self._policy_gate = policy_gate
         self._source_quarantine = source_quarantine
         self._run_evidence = run_evidence
+        self._collection_windows = collection_windows
         self._lease_seconds = lease_seconds
         self._now = now or (lambda: datetime.now(UTC))
 
@@ -135,8 +140,8 @@ class CatalogRefreshService:
                 require_single_http_get=require_single_http_get,
                 evidence=evidence,
             )
-        except Exception:
-            await evidence.finish("failed")
+        except Exception as exc:
+            await evidence.finish("failed", error=exc)
             raise
         await evidence.finish(result.outcome.value)
         return result
@@ -150,7 +155,7 @@ class CatalogRefreshService:
         evidence: CatalogRunEvidenceSession,
     ) -> CatalogRefreshResult:
         """Execute the guarded refresh while recording only typed stage timings."""
-        admission = evidence.start_stage("admission")
+        admission = await evidence.start_stage("admission")
         now = self._now()
         prepared = await self._preflight(
             source_key,
@@ -327,14 +332,43 @@ class CatalogRefreshService:
     ) -> CatalogRefreshResult:
         """Issue the already-authorized source fetch and atomically publish its normalized result."""
 
+        if self._collection_windows is not None:
+            try:
+                window = await self._collection_windows.prepare_collection_window(
+                    source_key, run_key, lease_token=lease_token,
+                    expected_revision=source.source_revision,
+                )
+            except CatalogCollectionWindowUnavailableError as exc:
+                released = await self._sources.fail_refresh(
+                    source_key, run_key, lease_token=lease_token,
+                    error=f"source changed: {exc.code}",
+                )
+                return CatalogRefreshResult(
+                    source_key, run_key,
+                    CatalogRefreshOutcome.SKIPPED if released else CatalogRefreshOutcome.BUSY,
+                    detail=collection_window_unavailable_detail(exc.code),
+                )
+            if window is None:
+                released = await self._sources.fail_refresh(
+                    source_key, run_key, lease_token=lease_token,
+                    error="source changed: collection window admission changed",
+                )
+                return CatalogRefreshResult(
+                    source_key, run_key,
+                    CatalogRefreshOutcome.DEFERRED if released else CatalogRefreshOutcome.BUSY,
+                    detail="collection window could not be admitted under the current source lease",
+                    retry_after_seconds=1.0 if released else None,
+                )
+            source = replace(source, collection_window=window)
+
         # The provider adapter owns transport and response parsing as one call.  Measure that real
         # adapter boundary as collection; the admin projection labels extraction/enrichment as
         # included instead of fabricating an independent duration.
-        collect = evidence.start_stage("collect")
+        collect = await evidence.start_stage("collect")
         try:
-            candidates = await fetcher.fetch(source)
+            candidates = filter_collection_window(source, await fetcher.fetch(source))
         except (SourceRateLimitedError, SourceAccessDeniedError) as source_error:
-            await collect.finish(CatalogRefreshOutcome.DEFERRED.value)
+            await collect.finish(CatalogRefreshOutcome.DEFERRED.value, error=source_error)
             return await self._source_dispatch_error(
                 source_key,
                 run_key,
@@ -343,7 +377,7 @@ class CatalogRefreshService:
                 source_error,
             )
         except SourceTransientError as source_error:
-            await collect.finish(CatalogRefreshOutcome.DEFERRED.value)
+            await collect.finish(CatalogRefreshOutcome.DEFERRED.value, error=source_error)
             await self._sources.fail_refresh(
                 source_key,
                 run_key,
@@ -358,7 +392,7 @@ class CatalogRefreshService:
                 retry_after_seconds=source_error.retry_after_seconds,
             )
         except Exception as exc:
-            await collect.finish("failed")
+            await collect.finish("failed", error=exc)
             await self._sources.fail_refresh(
                 source_key,
                 run_key,
@@ -366,12 +400,13 @@ class CatalogRefreshService:
                 error=str(exc),
             )
             raise
+        await collect.progress(candidate_count=len(candidates))
         await collect.finish(CatalogRefreshOutcome.SUCCEEDED.value)
 
         # Normalization/deduplication and publication share one lease-fenced commit capability.
         # Time the observable commit boundary as catalog publication and expose the inseparable
         # normalize/dedupe phase honestly in the structured stage projection.
-        publish = evidence.start_stage("catalog_publish")
+        publish = await evidence.start_stage("catalog_publish")
         try:
             committed = await self._committer.commit_refresh(
                 source_key,
@@ -380,7 +415,7 @@ class CatalogRefreshService:
                 candidates=candidates,
             )
         except Exception as exc:
-            await publish.finish("failed")
+            await publish.finish("failed", error=exc)
             await self._sources.fail_refresh(
                 source_key,
                 run_key,
@@ -391,7 +426,11 @@ class CatalogRefreshService:
         commit_outcome = (
             CatalogRefreshOutcome.SUCCEEDED if committed is not None else CatalogRefreshOutcome.BUSY
         )
-        await publish.finish(commit_outcome.value)
+        await publish.finish(
+            commit_outcome.value,
+            candidate_count=committed.candidate_count if committed is not None else None,
+            canonical_count=committed.canonical_count if committed is not None else None,
+        )
 
         return self._commit_result(source_key, run_key, committed)
 
@@ -798,6 +837,16 @@ def _single_http_get_contract_changed(before: CatalogSource, after: CatalogSourc
         after.page_limit,
         after.min_interval_ms,
     )
+
+
+def collection_window_unavailable_detail(code: str) -> str:
+    """Explain a closed window rejection without implying that retained history was deleted."""
+    reason = (
+        "the frozen collection window has expired"
+        if code == "collection_window_expired"
+        else "retained staged data predates collection windows"
+    )
+    return f"{code}: {reason}; start a new run"
 
 
 def catalog_refresh_lease_seconds(source: CatalogSource, *, floor_seconds: int) -> int | None:

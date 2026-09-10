@@ -1,0 +1,16 @@
+.fieldLabel { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 4px 8px; }
+.sourceLink { display: inline-flex; align-items: flex-start; gap: 5px; max-width: 100%; color: inherit; text-decoration: underline; text-decoration-color: #78946380; text-underline-offset: 3px; }
+.sourceLink span { min-width: 0; overflow-wrap: anywhere; }
+.sourceLink svg { width: 12px; height: 12px; flex: 0 0 auto; margin-top: 3px; color: #b3c49f; }
+.sourceLink:hover { color: var(--accent, #c9ff68); }
+.origins { display: grid; gap: 7px; }
+.unavailable { margin: 5px 0 0; font-size: 11px; line-height: 1.6; color: var(--quiet, #9fac91); }
+.cadence { display: grid; align-content: start; gap: 8px; min-width: 0; }
+.cadence label { display: grid; gap: 5px; min-width: 0; }
+.cadence small { font-size: 11px; line-height: 1.6; color: var(--quiet, #9fac91); }
+.presets { display: flex; flex-wrap: wrap; gap: 5px; }
+.presets button { flex: 1 0 auto; border: 1px solid #465239; border-radius: 4px; background: transparent; color: #b4c6a2; padding: 6px 8px; font: inherit; font-size: 11px; cursor: pointer; }
+.presets button[aria-pressed="true"] { border-color: #86ab51; background: #b3e77012; color: #d7f3b5; }
+.presets button:disabled { opacity: .4; cursor: default; }
+.fields { border: 0; padding: 0; margin: 0; min-width: 0; display: grid; gap: 16px; }
+.saveNote { flex: 1 1 100%; margin: 0; color: var(--quiet, #9fac91); font-size: 11px; line-height: 1.6; }

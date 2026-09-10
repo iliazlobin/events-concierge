@@ -3,6 +3,12 @@ variable "project_id" {
   type        = string
 }
 
+variable "additional_services" {
+  description = "Optional APIs required by explicitly enabled deployment profiles."
+  type        = set(string)
+  default     = []
+}
+
 variable "services" {
   description = "Google APIs required by the first production slice."
   type        = set(string)

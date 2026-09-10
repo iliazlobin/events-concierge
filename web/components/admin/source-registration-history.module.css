@@ -1,0 +1,27 @@
+.root { min-width: 0; border: 1px solid #293223; border-radius: 9px; background: #0e120d; padding: 18px 20px 12px; }
+.heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.heading h2 { color: #d5dfcb; font-size: 14px; font-weight: 550; margin: 0; }
+.root p { color: #829079; font-size: 11px; line-height: 1.5; margin: 7px 0 0; }
+.heading > div:last-child { display: flex; gap: 3px; flex-shrink: 0; }
+.root button { color: #a7b59b; background: transparent; border: 0; padding: 6px 9px; border-radius: 5px; font: inherit; font-size: 11px; cursor: pointer; }
+.root button[aria-pressed=true] { background: #222d19; color: #d7f7ac; }
+.root button:focus-visible { outline: 2px solid #c9ff68; outline-offset: 3px; }
+.body { display: grid; grid-template-columns: 155px minmax(0, 1fr); align-items: center; gap: 30px; margin-top: 16px; }
+.metrics { margin: 0; display: flex; flex-direction: column; gap: 22px; }
+.metrics dt { color: #829079; font-size: 11px; }
+.metrics dd { color: #dce7d2; font-size: 24px; line-height: 1.3; font-variant-numeric: tabular-nums; margin: 2px 0 0; }
+.trend { min-width: 0; }
+.chart { width: 100%; height: 130px; display: block; overflow: visible; }
+.grid { stroke: #293223; stroke-width: 1; }
+.line { stroke: #b8d791; fill: none; stroke-width: 2; }
+.target { fill: transparent; }
+.dot { fill: #c9ff68; opacity: 0; pointer-events: none; }
+.chart g[data-active=true] .dot, .chart g:focus-visible .dot { opacity: 1; }
+.chart g:focus-visible { outline: none; }
+.chart g:focus-visible .target { fill: #b8d79111; stroke: #b8d79166; }
+.axis, .readout { display: flex; justify-content: space-between; gap: 6px; color: #829079; font-size: 10px; margin-top: 7px; }
+.readout { flex-wrap: wrap; }
+.readout strong { color: #bccaaa; font-weight: 400; }
+.root .note { margin-top: 12px; font-size: 10px; }
+.empty { min-height: 167px; display: flex; align-items: center; justify-content: center; gap: 10px; font-size: 11px; color: #829079; }
+@media (max-width: 760px) { .body { grid-template-columns: minmax(0,1fr); gap: 18px; } .metrics { flex-direction: row; gap: 35px; } .heading { align-items: flex-start; } .root { padding: 15px 14px 12px; } }

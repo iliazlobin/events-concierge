@@ -14,3 +14,19 @@ spec:
       path: /metrics
       interval: {{ .Values.podMonitoring.interval }}
 {{- end }}
+
+{{- if and .Values.operator.enabled .Values.podMonitoring.enabled (eq .Values.global.releasePhase "application") }}
+---
+apiVersion: monitoring.googleapis.com/v1
+kind: PodMonitoring
+metadata:
+  name: {{ include "events-concierge.fullname" . }}-operator-api
+spec:
+  selector:
+    matchLabels:
+      {{- include "events-concierge.selectorLabels" (dict "root" . "component" "operator-api") | nindent 6 }}
+  endpoints:
+    - port: http
+      path: /metrics
+      interval: {{ .Values.podMonitoring.interval }}
+{{- end }}

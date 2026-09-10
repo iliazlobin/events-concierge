@@ -363,13 +363,14 @@ async def test_read_alias_and_enqueue_alias_delegate_closed_inputs() -> None:
     ]
 
 
-async def test_source_sort_is_closed_and_forwarded_to_the_repository() -> None:
+@pytest.mark.parametrize("sort_by", ["output", "catalog", "catalog_total"])
+async def test_source_sort_is_closed_and_forwarded_to_the_repository(sort_by: str) -> None:
     repository = _Repository()
     service = IngestionAdminService(repository)
 
     page = await service.list_sources(
         query="reviewed",
-        sort_by="output",
+        sort_by=sort_by,
         sort_direction="desc",
         limit=25,
         offset=50,
@@ -386,7 +387,7 @@ async def test_source_sort_is_closed_and_forwarded_to_the_repository() -> None:
             "region": None,
             "source_key": None,
             "include_fixtures": False,
-            "sort_by": "output",
+            "sort_by": sort_by,
             "sort_direction": "desc",
             "limit": 25,
             "offset": 50,

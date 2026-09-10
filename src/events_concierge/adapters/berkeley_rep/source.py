@@ -21,6 +21,7 @@ import httpx
 from selectolax.parser import HTMLParser, Node
 
 from ...domain.catalog_sources import CatalogSource
+from ...domain.catalog_window import collection_end_at, collection_reference_time
 from ...domain.enums import CatalogSourceMode, PriceStatus, Source
 from ...domain.events import CandidateEvent
 
@@ -135,9 +136,11 @@ class BerkeleyRepCatalogFetcher:
         document = await self._document_or_error(source, publisher)
         card_nodes = _card_nodes(document, source.source_key)
         _validate_raw_occurrence_bound(card_nodes, source.source_key)
-        now = _as_local_time(self._now())
+        now = _as_local_time(collection_reference_time(source, self._now()))
         horizon_start = datetime.combine(now.date(), time.min, tzinfo=_LOCAL_TIME_ZONE)
-        horizon_end = horizon_start + timedelta(days=_HORIZON_DAYS)
+        horizon_end = collection_end_at(
+            source, horizon_start + timedelta(days=source.collection_horizon_days),
+        ).astimezone(_LOCAL_TIME_ZONE)
         candidates_by_source_id: dict[str, CandidateEvent] = {}
         for card_node in card_nodes:
             card = _card_from_node(card_node, publisher)

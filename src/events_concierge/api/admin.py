@@ -1,23 +1,23 @@
-"""Local-only HTTP edge for catalog-ingestion administration.
+"""Safe operational projections and durable ingestion commands.
 
-The routes in this module are intentionally not installed unless local administration is
-explicitly enabled.  Even when installed, every request must arrive through a loopback Host while
-the application is using its mock-cloud graph.  The edge only reads safe operational projections
-or appends a durable command; it never invokes a catalog runner in the request lifetime.
+The consumer app installs these routes only in explicit local/mock mode behind loopback checks.
+The separate hosted operator app resolves signed IAP identity and capabilities. Neither edge
+invokes a catalog runner during an HTTP request.
 """
 
 from __future__ import annotations
 
 from collections.abc import Sequence
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Annotated, Any, Literal, Protocol, cast
 from urllib.parse import urlsplit
 from uuid import UUID
 
 from fastapi import Depends, FastAPI, HTTPException, Path, Query, Request, Response, status
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, model_validator
 
 from ..domain.ingestion_admin import IngestionCommandAction, IngestionSourceRevisionTarget
+from ..domain.ingestion_run_query import run_query_options, validate_run_key
 from ..ports.ingestion_admin import (
     IngestionAdminError,
     IngestionCommandConflictError,
@@ -26,6 +26,11 @@ from ..ports.ingestion_admin import (
     IngestionSourceConfigurationConflictError,
     IngestionSourceConfigurationUnavailableError,
     IngestionSourceNotFoundError,
+)
+from .operator_auth import (
+    OperatorPrincipal,
+    authorize_operator,
+    verify_operator_mutation_origin,
 )
 
 _LOCAL_HOSTS = frozenset({"localhost", "127.0.0.1", "::1"})
@@ -73,6 +78,10 @@ class _IngestionAdminService(Protocol):
 
     async def source_health(self, *, include_fixtures: bool) -> object: ...
 
+    async def source_registration_history(
+        self, *, window_days: int, include_fixtures: bool
+    ) -> object: ...
+
     async def fleet_shape(self) -> object: ...
 
     async def throughput(self, *, window_hours: int, bucket_hours: int) -> object: ...
@@ -105,8 +114,19 @@ class _IngestionAdminService(Protocol):
         window_hours: int | None,
         include_fixtures: bool,
         limit: int,
+        query: str | None = None,
+        sort_by: str = "started",
+        sort_direction: str = "desc",
+        started_after: datetime | None = None,
+        started_before: datetime | None = None,
+        stage: str | None = None,
+        stage_outcome: str | None = None,
         offset: int,
     ) -> object: ...
+
+    async def lookup_run(
+        self, source_key: str, run_key: str, *, include_fixtures: bool = False
+    ) -> object | None: ...
 
     async def list_commands(self, limit: int) -> object: ...
 
@@ -132,6 +152,19 @@ class _IngestionAdminService(Protocol):
         include_fixtures: bool,
     ) -> object | None: ...
 
+    async def list_catalog_records(
+        self,
+        *,
+        source_key: str | None,
+        run_key: str | None,
+        query: str | None,
+        date_scope: str,
+        price_status: str,
+        after_start_at: datetime | None,
+        after_canonical_event_id: UUID | None,
+        limit: int,
+    ) -> object: ...
+
     async def list_source_events(
         self,
         source_key: str,
@@ -140,6 +173,7 @@ class _IngestionAdminService(Protocol):
         after_start_at: datetime | None,
         after_canonical_event_id: UUID | None,
         limit: int,
+        run_key: str | None = None,
     ) -> object: ...
 
     async def update_source_configuration(
@@ -157,6 +191,7 @@ class _IngestionAdminService(Protocol):
         min_interval_ms: int,
         page_limit: int,
         requested_by: str,
+        collection_horizon_days: int | None = None,
     ) -> object: ...
 
     async def set_sources_enabled(
@@ -240,6 +275,51 @@ class IngestionFleetSummaryOut(_FromAttributesModel):
         return self
 
 
+class IngestionSourceRegistrationBucketOut(_FromAttributesModel):
+    bucket_start: AwareDatetime
+    bucket_end: AwareDatetime
+    registered_sources: int = Field(ge=0)
+    added_sources: int = Field(ge=0)
+
+
+class IngestionSourceRegistrationHistoryOut(_FromAttributesModel):
+    generated_at: AwareDatetime
+    window_start: AwareDatetime
+    window_days: Literal[7, 30, 90]
+    bucket_hours: Literal[24]
+    baseline_sources: int = Field(ge=0)
+    total_sources: int = Field(ge=0)
+    added_sources: int = Field(ge=0)
+    items: list[IngestionSourceRegistrationBucketOut] = Field(min_length=7, max_length=90)
+    include_fixtures: bool
+    history_scope: Literal["retained_registry"]
+
+    @model_validator(mode="after")
+    def counts_reconcile_with_interval(self) -> IngestionSourceRegistrationHistoryOut:
+        if len(self.items) != self.window_days or (
+            self.generated_at - self.window_start != timedelta(days=self.window_days)
+        ):
+            raise ValueError("source registration history interval is inconsistent")
+        count = self.baseline_sources
+        start = self.window_start
+        for bucket in self.items:
+            count += bucket.added_sources
+            if (
+                bucket.bucket_start != start
+                or bucket.bucket_end - start != timedelta(hours=24)
+                or bucket.registered_sources != count
+            ):
+                raise ValueError("source registration history buckets are inconsistent")
+            start = bucket.bucket_end
+        if (
+            start != self.generated_at
+            or count != self.total_sources
+            or self.total_sources - self.baseline_sources != self.added_sources
+        ):
+            raise ValueError("source registration history totals are inconsistent")
+        return self
+
+
 class IngestionFleetShapeEntryOut(_FromAttributesModel):
     """One adapter mode's share of sources against its share of the served catalog."""
 
@@ -318,22 +398,16 @@ class IngestionSourceHealthOut(_FromAttributesModel):
     retired_at: datetime | None
     refresh_interval_minutes: int = Field(ge=1)
     page_limit: int = Field(ge=1)
-    health: Literal[
-        "down", "never_succeeded", "late", "warn", "paused", "retired", "healthy"
-    ]
+    health: Literal["down", "never_succeeded", "late", "warn", "paused", "retired", "healthy"]
     run_state: Literal["never_run", "failed", "running", "deferred", "ok"]
-    freshness_state: Literal[
-        "never", "down", "late", "warn", "ok", "not_scheduled"
-    ]
+    freshness_state: Literal["never", "down", "late", "warn", "ok", "not_scheduled"]
     retry_state: Literal["severe", "elevated", "ok"]
     yield_state: Literal["zero_yield", "unknown", "ok"]
     last_attempt_at: datetime | None
     last_success_at: datetime | None
     last_catalog_change_at: datetime | None
     latest_run_status: str | None = Field(default=None, max_length=32)
-    latest_run_error: str | None = Field(
-        default=None, max_length=128, pattern=_SAFE_CODE_PATTERN
-    )
+    latest_run_error: str | None = Field(default=None, max_length=128, pattern=_SAFE_CODE_PATTERN)
     latest_attempt_count: int | None = Field(default=None, ge=0)
     upcoming_events: int = Field(ge=0)
     hours_since_success: float | None = Field(default=None, ge=0.0)
@@ -350,9 +424,7 @@ class IngestionStageSummaryEntryOut(_FromAttributesModel):
 
     stage: str = Field(min_length=1, max_length=64, pattern=r"^[a-z0-9_]+$")
     stage_position: int = Field(ge=1, le=32)
-    evidence_status: Literal[
-        "measured", "not_separately_instrumented", "not_observed"
-    ]
+    evidence_status: Literal["measured", "not_separately_instrumented", "not_observed"]
     folded_into: str | None = Field(default=None, max_length=128, pattern=_SAFE_CODE_PATTERN)
     runs_with_evidence: int = Field(ge=0)
     observations: int = Field(ge=0)
@@ -402,14 +474,23 @@ class IngestionRunSourceConfigurationOut(_FromAttributesModel):
     refresh_interval_minutes: int = Field(ge=1, le=10_080)
     min_interval_ms: int = Field(ge=1, le=60_000)
     page_limit: int = Field(ge=1, le=500)
+    collection_horizon_days: int | None = Field(default=None, ge=1, le=90)
+    source_revision: int | None = Field(default=None, ge=1)
 
 
 class IngestionRunCommandLinkOut(_FromAttributesModel):
     command_id: UUID
-    action: Literal["refresh_source"]
+    action: Literal["refresh_source", "refresh_due"]
     requested_at: datetime
     started_at: datetime | None
     completed_at: datetime | None
+
+
+class IngestionRunCollectionWindowOut(_FromAttributesModel):
+    window_source_revision: int = Field(ge=1)
+    horizon_days: int = Field(ge=1, le=90)
+    start_at: datetime
+    end_at: datetime
 
 
 class IngestionRunExecutionDescriptorOut(_FromAttributesModel):
@@ -617,6 +698,8 @@ class IngestionRunTimelineOut(_FromAttributesModel):
 
 class IngestionRunCoreOut(_FromAttributesModel):
     run_key: str = Field(min_length=1, max_length=256)
+    execution_configuration: IngestionRunSourceConfigurationOut | None = None
+    collection_window: IngestionRunCollectionWindowOut | None = None
     status: Literal["running", "paused", "succeeded", "failed"]
     started_at: datetime | None
     completed_at: datetime | None
@@ -680,6 +763,8 @@ class IngestionSourceOut(_FromAttributesModel):
     next_due_at: datetime | None
     event_count: int = Field(ge=0)
     latest_run: IngestionRunCoreOut | None
+    total_event_count: int | None = Field(default=None, ge=0)
+    upcoming_event_count: int | None = Field(default=None, ge=0)
 
 
 class IngestionSourcePageOut(_FromAttributesModel):
@@ -828,6 +913,7 @@ class IngestionSourceConfigurationOut(_FromAttributesModel):
     min_interval_ms: int = Field(ge=1)
     page_limit: int = Field(ge=1)
     source_revision: int = Field(ge=1)
+    collection_horizon_days: int = Field(default=90, ge=1, le=90)
     retired_at: datetime | None = None
     retired_reason: str | None = Field(default=None, min_length=1, max_length=160)
     superseded_by_source_key: str | None = Field(default=None, pattern=_SOURCE_KEY_PATTERN)
@@ -848,6 +934,8 @@ class IngestionSourceConfigurationOut(_FromAttributesModel):
     next_due_at: datetime | None
     event_count: int = Field(ge=0)
     latest_run: IngestionRunCoreOut | None
+    total_event_count: int | None = Field(default=None, ge=0)
+    upcoming_event_count: int | None = Field(default=None, ge=0)
 
 
 class IngestionHistoryWindowOut(_FromAttributesModel):
@@ -962,6 +1050,37 @@ class IngestionCatalogEventPageOut(_FromAttributesModel):
     next_start_at: datetime | None
     next_canonical_event_id: UUID | None
     query: str | None = Field(default=None, max_length=160)
+    run_key: str | None = Field(default=None, min_length=1, max_length=256)
+
+
+class IngestionCatalogRecordOut(IngestionCatalogEventOut):
+    source_key: str = Field(pattern=_SOURCE_KEY_PATTERN)
+    source_display_name: str = Field(min_length=1, max_length=500)
+
+
+class IngestionCatalogSourceCountOut(_FromAttributesModel):
+    source_key: str = Field(pattern=_SOURCE_KEY_PATTERN)
+    source_display_name: str = Field(min_length=1, max_length=500)
+    events: int = Field(ge=0)
+
+
+class IngestionCatalogRecordPageOut(_FromAttributesModel):
+    generated_at: datetime
+    items: list[IngestionCatalogRecordOut] = Field(max_length=100)
+    total: int = Field(ge=0)
+    limit: int = Field(ge=1, le=100)
+    has_more: bool
+    next_start_at: datetime | None
+    next_canonical_event_id: UUID | None
+    query: str | None = Field(default=None, max_length=160)
+    source_key: str | None = Field(default=None, pattern=_SOURCE_KEY_PATTERN)
+    run_key: str | None = Field(default=None, min_length=1, max_length=256)
+    date_scope: Literal["all", "upcoming", "past"]
+    price_status: Literal["all", "free", "paid", "unknown"]
+    upcoming_total: int = Field(ge=0)
+    source_counts: list[IngestionCatalogSourceCountOut] = Field(max_length=500)
+    source_count: int = Field(ge=0)
+    source_counts_truncated: bool
 
 
 class IngestionSourceConfigurationBody(BaseModel):
@@ -974,9 +1093,10 @@ class IngestionSourceConfigurationBody(BaseModel):
     enabled: bool
     handoff_only: Literal[True]
     review_expires_at: datetime | None
-    refresh_interval_minutes: int = Field(ge=5, le=10_080)
+    refresh_interval_minutes: int = Field(ge=5, le=1_440)
     min_interval_ms: int = Field(ge=250, le=60_000)
     page_limit: int = Field(ge=1, le=500)
+    collection_horizon_days: int | None = Field(default=None, ge=1, le=90, strict=True)
     review_acknowledged: Literal[True]
 
 
@@ -1115,6 +1235,12 @@ def _origin_authority(value: str) -> tuple[str, str, int] | None:
 async def _local_ingestion_admin(request: Request) -> _IngestionAdminService:
     """Resolve the service only inside the explicitly enabled local mock boundary."""
     settings = request.app.state.settings
+    if getattr(request.app.state, "operator_boundary", False):
+        await authorize_operator(request)
+        service = request.app.state.ingestion_admin
+        if service is None:
+            raise HTTPException(503, "operator service unavailable", headers=_NO_STORE_HEADERS)
+        return cast("_IngestionAdminService", service)
     if not bool(getattr(settings, "admin_ingestion_enabled", False)) or not bool(
         getattr(settings, "mock_cloud", False)
     ):
@@ -1152,6 +1278,9 @@ LocalIngestionAdmin = Annotated[_IngestionAdminService, Depends(_local_ingestion
 
 async def _same_origin_if_present(request: Request) -> None:
     """Reject a present Origin unless it exactly matches this loopback request origin."""
+    if getattr(request.app.state, "operator_boundary", False):
+        verify_operator_mutation_origin(request)
+        return
     origins = request.headers.getlist("origin")
     if not origins:
         return
@@ -1183,6 +1312,15 @@ async def _same_origin_if_present(request: Request) -> None:
 
 
 SameOriginAdminCommand = Annotated[None, Depends(_same_origin_if_present)]
+
+
+def _request_operator_actor(request: Request) -> str:
+    principal = getattr(request.state, "operator_principal", None)
+    if isinstance(principal, OperatorPrincipal):
+        return principal.actor
+    if getattr(request.app.state, "operator_boundary", False):
+        raise HTTPException(401, "verified operator identity required", headers=_NO_STORE_HEADERS)
+    return _LOCAL_OPERATOR
 
 
 def _safe_http_error(error: Exception) -> HTTPException:
@@ -1235,7 +1373,9 @@ def _no_store(response: Response) -> None:
 def install_ingestion_admin_routes(app: FastAPI) -> None:  # noqa: PLR0915
     """Install the local ingestion API only when the startup setting explicitly enables it."""
     settings = app.state.settings
-    if not bool(getattr(settings, "admin_ingestion_enabled", False)):
+    if not bool(getattr(settings, "admin_ingestion_enabled", False)) and not getattr(
+        app.state, "operator_boundary", False
+    ):
         return
 
     @app.get(
@@ -1338,6 +1478,34 @@ def install_ingestion_admin_routes(app: FastAPI) -> None:  # noqa: PLR0915
             raise _safe_http_error(error) from error
 
     @app.get(
+        "/admin/v1/ingestion/source-registration-history",
+        response_model=IngestionSourceRegistrationHistoryOut,
+        include_in_schema=False,
+    )
+    async def ingestion_source_registration_history(
+        response: Response,
+        admin: LocalIngestionAdmin,
+        window_days: Annotated[int, Query(ge=7, le=90)] = 90,
+        include_fixtures: bool = False,
+    ) -> IngestionSourceRegistrationHistoryOut:
+        _no_store(response)
+        if window_days not in {7, 30, 90}:
+            raise HTTPException(
+                status_code=422,
+                detail="invalid source registration history window",
+                headers=_NO_STORE_HEADERS,
+            )
+        try:
+            history = await admin.source_registration_history(
+                window_days=window_days, include_fixtures=include_fixtures
+            )
+            return IngestionSourceRegistrationHistoryOut.model_validate(history)
+        except HTTPException:
+            raise
+        except Exception as error:
+            raise _safe_http_error(error) from error
+
+    @app.get(
         "/admin/v1/ingestion/source-health",
         response_model=IngestionSourceHealthListOut,
         include_in_schema=False,
@@ -1405,17 +1573,13 @@ def install_ingestion_admin_routes(app: FastAPI) -> None:  # noqa: PLR0915
         try:
             rows = cast(
                 Sequence[object],
-                await admin.throughput(
-                    window_hours=window_hours, bucket_hours=bucket_hours
-                ),
+                await admin.throughput(window_hours=window_hours, bucket_hours=bucket_hours),
             )
             return IngestionThroughputOut(
                 generated_at=datetime.now(UTC),
                 window_hours=window_hours,
                 bucket_hours=bucket_hours,
-                buckets=tuple(
-                    IngestionThroughputBucketOut.model_validate(row) for row in rows
-                ),
+                buckets=tuple(IngestionThroughputBucketOut.model_validate(row) for row in rows),
             )
         except HTTPException:
             raise
@@ -1468,7 +1632,15 @@ def install_ingestion_admin_routes(app: FastAPI) -> None:  # noqa: PLR0915
         region: Annotated[str | None, Query(min_length=1, max_length=120)] = None,
         include_fixtures: bool = False,
         sort_by: Annotated[
-            Literal["source", "health", "catalog", "last_success", "latest_run", "output"],
+            Literal[
+                "source",
+                "health",
+                "catalog",
+                "catalog_total",
+                "last_success",
+                "latest_run",
+                "output",
+            ],
             Query(),
         ] = "source",
         sort_direction: Annotated[Literal["asc", "desc"], Query()] = "asc",
@@ -1603,6 +1775,7 @@ def install_ingestion_admin_routes(app: FastAPI) -> None:  # noqa: PLR0915
         include_in_schema=False,
     )
     async def update_ingestion_sources_enabled(
+        request: Request,
         body: IngestionSourcesEnabledBody,
         response: Response,
         admin: LocalIngestionAdmin,
@@ -1620,7 +1793,7 @@ def install_ingestion_admin_routes(app: FastAPI) -> None:  # noqa: PLR0915
                     for target in body.targets
                 ),
                 enabled=body.enabled,
-                requested_by=_LOCAL_OPERATOR,
+                requested_by=_request_operator_actor(request),
             )
             return IngestionSourcesEnabledUpdateOut.model_validate(updated)
         except ValueError as error:
@@ -1640,6 +1813,7 @@ def install_ingestion_admin_routes(app: FastAPI) -> None:  # noqa: PLR0915
         include_in_schema=False,
     )
     async def update_ingestion_source_configuration(
+        request: Request,
         source_key: Annotated[str, Path(pattern=_SOURCE_KEY_PATTERN)],
         body: IngestionSourceConfigurationBody,
         response: Response,
@@ -1651,6 +1825,11 @@ def install_ingestion_admin_routes(app: FastAPI) -> None:  # noqa: PLR0915
         try:
             updated = await admin.update_source_configuration(
                 source_key,
+                **(
+                    {"collection_horizon_days": body.collection_horizon_days}
+                    if body.collection_horizon_days is not None
+                    else {}
+                ),
                 expected_revision=body.expected_revision,
                 seed_url=body.seed_url,
                 approved_origins=tuple(body.approved_origins),
@@ -1661,13 +1840,54 @@ def install_ingestion_admin_routes(app: FastAPI) -> None:  # noqa: PLR0915
                 refresh_interval_minutes=body.refresh_interval_minutes,
                 min_interval_ms=body.min_interval_ms,
                 page_limit=body.page_limit,
-                requested_by=_LOCAL_OPERATOR,
+                requested_by=_request_operator_actor(request),
             )
             return IngestionSourceConfigurationUpdateOut.model_validate(updated)
         except ValueError as error:
             raise HTTPException(
                 status_code=422,
                 detail="invalid source configuration",
+                headers=_NO_STORE_HEADERS,
+            ) from error
+        except HTTPException:
+            raise
+        except Exception as error:
+            raise _safe_http_error(error) from error
+
+    @app.get(
+        "/admin/v1/ingestion/events",
+        response_model=IngestionCatalogRecordPageOut,
+        include_in_schema=False,
+    )
+    async def ingestion_catalog_records(
+        response: Response,
+        admin: LocalIngestionAdmin,
+        source_key: Annotated[str | None, Query(pattern=_SOURCE_KEY_PATTERN)] = None,
+        run_key: Annotated[str | None, Query(min_length=1, max_length=256)] = None,
+        query: Annotated[str | None, Query(alias="q", max_length=160)] = None,
+        date_scope: Annotated[Literal["all", "upcoming", "past"], Query()] = "all",
+        price_status: Annotated[Literal["all", "free", "paid", "unknown"], Query()] = "all",
+        after_start_at: Annotated[datetime | None, Query()] = None,
+        after_canonical_event_id: Annotated[UUID | None, Query()] = None,
+        limit: Annotated[int, Query(ge=1, le=100)] = 20,
+    ) -> IngestionCatalogRecordPageOut:
+        _no_store(response)
+        try:
+            page = await admin.list_catalog_records(
+                source_key=source_key,
+                run_key=run_key,
+                query=query,
+                date_scope=date_scope,
+                price_status=price_status,
+                after_start_at=after_start_at,
+                after_canonical_event_id=after_canonical_event_id,
+                limit=limit,
+            )
+            return IngestionCatalogRecordPageOut.model_validate(page)
+        except ValueError as error:
+            raise HTTPException(
+                status_code=422,
+                detail="invalid catalog query",
                 headers=_NO_STORE_HEADERS,
             ) from error
         except HTTPException:
@@ -1688,6 +1908,7 @@ def install_ingestion_admin_routes(app: FastAPI) -> None:  # noqa: PLR0915
         after_start_at: Annotated[datetime | None, Query()] = None,
         after_canonical_event_id: Annotated[UUID | None, Query()] = None,
         limit: Annotated[int, Query(ge=1, le=100)] = 20,
+        run_key: Annotated[str | None, Query(min_length=1, max_length=256)] = None,
     ) -> IngestionCatalogEventPageOut:
         _no_store(response)
         if (after_start_at is None) != (after_canonical_event_id is None):
@@ -1703,6 +1924,7 @@ def install_ingestion_admin_routes(app: FastAPI) -> None:  # noqa: PLR0915
                 after_start_at=after_start_at,
                 after_canonical_event_id=after_canonical_event_id,
                 limit=limit,
+                **({"run_key": run_key} if run_key is not None else {}),
             )
             return IngestionCatalogEventPageOut.model_validate(page)
         except ValueError as error:
@@ -1736,13 +1958,40 @@ def install_ingestion_admin_routes(app: FastAPI) -> None:  # noqa: PLR0915
         publisher: Annotated[str | None, Query(min_length=1, max_length=300)] = None,
         region: Annotated[str | None, Query(min_length=1, max_length=120)] = None,
         window_hours: Annotated[int | None, Query(ge=1, le=2160)] = None,
+        query: Annotated[str | None, Query(max_length=160)] = None,
+        sort_by: Literal[
+            "source", "status", "started", "duration", "attempts", "output", "stage_duration"
+        ] = "started",
+        sort_direction: Literal["asc", "desc"] = "desc",
+        started_after: Annotated[AwareDatetime | None, Query()] = None,
+        started_before: Annotated[AwareDatetime | None, Query()] = None,
+        stage: Literal[
+            "admission", "collect", "extract_enrich", "normalize_dedupe", "catalog_publish"
+        ]
+        | None = None,
+        stage_outcome: Literal["failed"] | None = None,
         include_fixtures: bool = False,
         limit: Annotated[int, Query(ge=1, le=100)] = 50,
         offset: Annotated[int, Query(ge=0, le=_MAX_OFFSET)] = 0,
     ) -> IngestionRunPageOut:
         _no_store(response)
         try:
+            options = run_query_options(
+                query=query,
+                sort_by=sort_by,
+                sort_direction=sort_direction,
+                started_after=started_after,
+                started_before=started_before,
+                stage=stage,
+                stage_outcome=stage_outcome,
+            )
+        except ValueError as error:
+            raise HTTPException(
+                422, "invalid ingestion run query", headers=_NO_STORE_HEADERS
+            ) from error
+        try:
             page = await admin.list_runs(
+                **options,
                 status=status_filter,
                 source_key=source_key,
                 mode=mode,
@@ -1754,6 +2003,33 @@ def install_ingestion_admin_routes(app: FastAPI) -> None:  # noqa: PLR0915
                 offset=offset,
             )
             return IngestionRunPageOut.model_validate(page)
+        except HTTPException:
+            raise
+        except Exception as error:
+            raise _safe_http_error(error) from error
+
+    @app.get(
+        "/admin/v1/ingestion/runs/lookup", response_model=IngestionRunOut, include_in_schema=False
+    )
+    async def ingestion_run_lookup(
+        response: Response,
+        admin: LocalIngestionAdmin,
+        source_key: Annotated[str, Query(pattern=_SOURCE_KEY_PATTERN)],
+        run_key: Annotated[str, Query(min_length=1, max_length=256)],
+        include_fixtures: bool = False,
+    ) -> IngestionRunOut:
+        _no_store(response)
+        try:
+            validate_run_key(run_key)
+        except ValueError as error:
+            raise HTTPException(
+                422, "invalid ingestion run identity", headers=_NO_STORE_HEADERS
+            ) from error
+        try:
+            run = await admin.lookup_run(source_key, run_key, include_fixtures=include_fixtures)
+            if run is None:
+                raise HTTPException(404, "ingestion run not found", headers=_NO_STORE_HEADERS)
+            return IngestionRunOut.model_validate(run)
         except HTTPException:
             raise
         except Exception as error:
@@ -1814,6 +2090,7 @@ def install_ingestion_admin_routes(app: FastAPI) -> None:  # noqa: PLR0915
         include_in_schema=False,
     )
     async def enqueue_ingestion_command(
+        request: Request,
         body: IngestionCommandBody,
         response: Response,
         admin: LocalIngestionAdmin,
@@ -1826,7 +2103,7 @@ def install_ingestion_admin_routes(app: FastAPI) -> None:  # noqa: PLR0915
                 command_id=body.command_id,
                 action=body.action,
                 source_key=body.source_key,
-                requested_by=_LOCAL_OPERATOR,
+                requested_by=_request_operator_actor(request),
             )
             return IngestionCommandOut.model_validate(command)
         except HTTPException:

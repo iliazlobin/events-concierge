@@ -1,0 +1,20 @@
+.root { border-top: 1px solid #293223; margin-top: 15px; padding-top: 13px; min-width: 0; }
+.heading { display: flex; justify-content: space-between; align-items: center; gap: 12px; }
+.heading h3 { margin: 0; color: #c7dcb5; font-size: 12px; font-weight: 500; }
+.heading > span { color: #829079; font-size: 10px; }
+.bar { display: flex; gap: 3px; height: 5px; border-radius: 3px; overflow: hidden; margin-top: 12px; }
+.bar i { min-width: 0; flex-basis: 0; background: var(--state-color, #6d7864); }
+.states { display: flex; flex-wrap: wrap; gap: 5px 20px; margin-top: 7px; }
+.states button { display: inline-flex; align-items: center; gap: 7px; border: 1px solid transparent; background: transparent; padding: 6px 4px; border-radius: 4px; color: #c7d2bd; font: inherit; font-size: 11px; cursor: pointer; }
+.states button:hover { border-color: #9cbf7455; background: #b8df8610; }
+.states strong { font-weight: 500; font-variant-numeric: tabular-nums; }
+.states i { width: 6px; height: 6px; border-radius: 50%; background: var(--state-color, #6d7864); }
+.root [data-state=healthy] { --state-color: #abc888; }
+.root [data-state=failed], .root [data-state=blocked] { --state-color: #c58c77; }
+.root [data-state=due], .root [data-state=deferred] { --state-color: #bea36e; }
+.root [data-state=running] { --state-color: #87a9bd; }
+.root button:focus-visible { outline: 2px solid #bedc9c; outline-offset: 2px; }
+.root p { margin: 7px 0 0; color: #829079; font-size: 10px; line-height: 1.6; }
+.unavailable { min-height: 48px; display: flex; align-items: center; gap: 12px; flex-wrap: wrap; font-size: 11px; color: #829079; }
+.unavailable button { background: transparent; border: 1px solid #293223; border-radius: 5px; padding: 5px 8px; color: #c7d2bd; font: inherit; cursor: pointer; }
+@media (max-width: 540px) { .states { display: grid; grid-template-columns: repeat(2, minmax(0,1fr)); gap: 4px 12px; } .states button { justify-content: flex-start; } .states strong { margin-left: auto; } }

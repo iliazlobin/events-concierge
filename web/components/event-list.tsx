@@ -2,11 +2,13 @@
 
 import { LoaderCircle } from "lucide-react";
 
+import { groupEventSessions } from "@/lib/event-discovery";
 import { EventCard } from "@/components/event-card";
 import type { EventEntityReference, EventItem } from "@/lib/types";
 
 interface EventListProps {
   events: EventItem[];
+  groupSessions?: boolean;
   expandedId: string | null;
   onExpandedChange: (eventId: string | null) => void;
   emptyTitle?: string;
@@ -24,6 +26,7 @@ interface EventListProps {
 
 export function EventList({
   events,
+  groupSessions = false,
   expandedId,
   onExpandedChange,
   emptyTitle = "Nothing here yet",
@@ -51,7 +54,8 @@ export function EventList({
   return (
     <>
       <div className="event-list">
-        {events.map((event) => (
+        {(groupSessions ? groupEventSessions(events) : events.map((event) => [event])).map((group) => {
+          const renderEvent = (event: EventItem) => (
           <EventCard
             key={event.canonical_event_id}
             event={event}
@@ -68,7 +72,15 @@ export function EventList({
                 : event.canonical_event_id,
             )}
           />
-        ))}
+          );
+          return <div key={group[0].canonical_event_id}>
+            {renderEvent(group[0])}
+            {group.length > 1 ? <details open={group.slice(1).some((event) => event.canonical_event_id === expandedId) || undefined}>
+              <summary>{group.length - 1} more dates in these results</summary>
+              {group.slice(1).map(renderEvent)}
+            </details> : null}
+          </div>;
+        })}
       </div>
       {hasMore && onLoadMore ? (
         <button

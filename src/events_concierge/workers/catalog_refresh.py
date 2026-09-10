@@ -13,7 +13,7 @@ import asyncio
 from uuid import uuid4
 
 from ..application.catalog_refresh import CatalogRefreshOutcome, CatalogRefreshResult
-from ..composition import build_container
+from ..catalog_runtime import build_catalog_container, verify_catalog_executor_database
 from ..config import get_settings
 from ..infra.logging import configure_logging, get_logger
 from .catalog_refresh_routing import build_catalog_refresh_router
@@ -25,7 +25,8 @@ async def refresh_once(source_key: str, run_key: str) -> CatalogRefreshResult:
     """Run one source/key through its only permitted catalog execution path (NFR-8)."""
     settings = get_settings()
     configure_logging(settings.log_level, local=settings.env == "local")
-    container = build_container(settings)
+    container = build_catalog_container(settings)
+    await verify_catalog_executor_database()
     router = await build_catalog_refresh_router(settings, container)
     result = await router.refresh(source_key, run_key)
     _log.info(

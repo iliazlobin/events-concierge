@@ -12,6 +12,7 @@ import pytest
 from events_concierge.application.catalog_paged_refresh import PagedCatalogRefreshService
 from events_concierge.application.catalog_refresh import CatalogRefreshOutcome
 from events_concierge.domain.catalog_sources import (
+    CatalogCollectionWindow,
     CatalogPagedRefreshPreparation,
     CatalogPagedRefreshProgress,
     CatalogPagedRefreshPromotion,
@@ -28,6 +29,7 @@ from events_concierge.domain.enums import (
 )
 from events_concierge.domain.events import CandidateEvent
 from events_concierge.domain.policy import PolicyDecision
+from events_concierge.ports.catalog_sources import CatalogCollectionWindowUnavailableError
 from events_concierge.ports.policy import PacerLease, PacerLeaseStatus, PacerRequest
 from events_concierge.ports.sources import SourceRateLimitedError
 
@@ -651,3 +653,85 @@ async def test_crash_after_terminal_stage_retries_promotion_without_repeating_th
     assert fetcher.calls == [(date(2026, 7, 18), 0)]
     assert progress.staged_pages == [0]
     assert len(promoter.calls) == 2
+
+
+async def test_paged_window_guard_keeps_raw_cursor_identity_but_only_stages_admitted_candidates() -> None:
+    now = datetime(2026, 7, 18, 12, tzinfo=UTC)
+    window = CatalogCollectionWindow(1, 1, now, now + timedelta(days=1), 1)
+    sources = _Sources(_source())
+
+    class Windows:
+        async def prepare_collection_window(self, source_key, run_key, *, lease_token, expected_revision):
+            assert sources.active[(source_key, run_key)] == lease_token
+            assert expected_revision == 1
+            return window
+
+    class Progress(_Progress):
+        received: CatalogSourcePage | None = None
+
+        async def stage_paged_page(self, *args, page, **kwargs):
+            self.received = page
+            return await super().stage_paged_page(*args, page=page, **kwargs)
+
+    class Fetcher(_Fetcher):
+        async def fetch_page(self, source, **kwargs):
+            assert source.collection_window == window
+            return await super().fetch_page(source, **kwargs)
+
+    progress = Progress(sources)
+    candidates = tuple(replace(_candidate(index), start_at=at)
+                       for index, at in enumerate((now - timedelta(seconds=1), now, window.end_at), 1))
+    fetcher = Fetcher({0: CatalogSourcePage(0, 3, candidates, ("1", "2", "3"))})
+    promoter = _Promoter(sources, progress)
+    service = PagedCatalogRefreshService(
+        sources, progress, promoter, {sources.source.mode: fetcher}, _Pacer(), _Gate(),
+        collection_windows=Windows(), now=lambda: now,
+    )
+    result = await service.refresh_page(sources.source.source_key, "manual:window")
+    assert result.outcome is CatalogRefreshOutcome.SUCCEEDED
+    assert (result.candidate_count, result.canonical_count) == (1, 1)
+    assert progress.received is not None
+    assert progress.received.raw_count == 3
+    assert progress.received.source_event_ids == ("1", "2", "3")
+    assert progress.received.candidates == (candidates[1],)
+
+
+@pytest.mark.parametrize("code", ["legacy_stage_requires_new_run", "collection_window_expired"])
+async def test_unusable_staged_window_is_parked_without_fetch_promotion_or_stage_deletion(code: str) -> None:
+    class Sources(_Sources):
+        def __init__(self, source: CatalogSource) -> None:
+            super().__init__(source)
+            self.failed: list[str] = []
+
+        async def fail_refresh(self, source_key, run_key, *, lease_token, error):
+            self.failed.append(error)
+            return self.release(source_key, run_key, lease_token)
+
+    class Windows:
+        async def prepare_collection_window(self, *args, **kwargs):
+            raise CatalogCollectionWindowUnavailableError(code)
+
+    sources = Sources(_source())
+    progress = _Progress(sources)
+    retained = CatalogPagedRefreshProgress(
+        source_key=sources.source.source_key, run_key="manual:legacy", source_revision=1,
+        window_start_day=date(2026, 7, 18), next_page=1, page_limit=5,
+        terminal_page=None, staged_raw_count=100, staged_candidate_count=12,
+    )
+    progress.progress = retained
+    fetcher, pacer = _Fetcher({}), _Pacer()
+    promoter = _Promoter(sources, progress)
+    service = PagedCatalogRefreshService(
+        sources, progress, promoter, {sources.source.mode: fetcher}, pacer, _Gate(),
+        collection_windows=Windows(), now=lambda: datetime(2026, 7, 18, 12, tzinfo=UTC),
+    )
+    result = await service.refresh_page(sources.source.source_key, "manual:legacy")
+    assert result.outcome is CatalogRefreshOutcome.SKIPPED
+    assert code in result.detail
+    assert sources.failed == [f"source changed: {code}"]
+    assert sources.active == {}
+    assert progress.progress is retained
+    assert progress.aborts == []
+    assert fetcher.calls == []
+    assert promoter.calls == []
+    assert pacer.requests == []

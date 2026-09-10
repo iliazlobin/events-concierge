@@ -1,0 +1,50 @@
+.schedule { min-width: 0; border-top: 1px solid #293223; padding-top: 20px; }
+.heading, .controls { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 12px; }
+.schedule .heading h3 { margin: 0; color: #dce7d2; font-size: 15px; font-weight: 550; }
+.schedule .heading p { margin: 5px 0 0; font-size: 11px; }
+.controls { justify-content: flex-end; gap: 18px; }
+.windows { display: flex; padding: 3px; border: 1px solid #30372a; border-radius: 6px; }
+.schedule .windows button { padding: 5px 9px; font-size: 11px; border-radius: 4px; }
+.windows button[aria-pressed=true] { background: #222d19; color: #d7f7ac; }
+.schedule .refresh { font-size: 11px; }
+.states { display: flex; flex-wrap: wrap; gap: 8px; margin: 18px 0; }
+.schedule .states button { border: 1px solid #30372a; border-radius: 6px; padding: 8px 11px; font-size: 12px; gap: 14px; }
+.states button strong { font-weight: 550; font-variant-numeric: tabular-nums; }
+.schedule .states button[aria-pressed=true] { border-color: #69834d; background: #c9ff680a; color: #d7f7ac; }
+.states button[data-attention=true] strong { color: #ffd074; }
+.timelineHeading, .axis { display: flex; justify-content: space-between; flex-wrap: wrap; gap: 6px 18px; color: #8f9c82; font-size: 10px; }
+.timeline { display: flex; align-items: flex-end; gap: 4px; margin-top: 7px; min-height: 72px; }
+.schedule .timeline button { display: flex; flex: 1 1 0; min-width: 0; height: 72px; flex-direction: column; justify-content: flex-end; gap: 6px; padding: 4px 0; border-radius: 3px; }
+.timeline button span { font-size: 10px; font-variant-numeric: tabular-nums; color: #9fb78a; }
+.timeline button i { display: block; width: 100%; background: #9eb77e; border-radius: 2px 2px 0 0; transition: background 120ms ease; }
+.timeline button:disabled { cursor: default; }
+.timeline button:disabled i { background: #283121; }
+.timeline button:not(:disabled):hover, .timeline button[aria-pressed=true] { background: #c9ff6812; }
+.timeline button:not(:disabled):hover i, .timeline button[aria-pressed=true] i { background: #c9ed9b; }
+.axis { margin-top: 5px; }
+.listHeading { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; gap: 14px; margin: 20px 0 12px; }
+.listHeading > div { display: flex; flex-wrap: wrap; align-items: baseline; gap: 8px 14px; font-size: 12px; }
+.listHeading strong { font-weight: 500; color: #c7d5ba; }
+.schedule .listHeading button { font-size: 11px; }
+.search { display: flex; align-items: center; gap: 8px; border: 1px solid #30372a; border-radius: 6px; background: #151813; padding: 7px 10px; width: 245px; max-width: 100%; }
+.search svg { width: 13px; height: 13px; color: #849775; flex-shrink: 0; }
+.search input { min-width: 0; width: 100%; border: 0; outline: 0; background: none; font: inherit; font-size: 11px; color: #d6dfce; }
+.search:focus-within { outline: 2px solid #c9ff68; outline-offset: 3px; }
+.tableScroll { border: 1px solid #30372a; border-radius: 8px; overflow-x: auto; }
+.table { width: 100%; border-collapse: collapse; text-align: left; font-size: 12px; }
+.table th { background: #151813; font-weight: 500; font-size: 10px; color: #8f9c82; padding: 10px 12px; }
+.table td { padding: 11px 12px; border-top: 1px solid #293223; vertical-align: middle; color: #c7d5ba; }
+.table th:first-child { width: 43%; }
+.schedule .table button { font-size: 12px; color: #d6dfce; }
+.table button:hover { text-decoration: underline; text-underline-offset: 3px; }
+.table small { display: block; margin-top: 5px; color: #8a947f; font-size: 10px; line-height: 1.5; }
+.table strong { font-size: 12px; font-weight: 500; }
+.table time { font-variant-numeric: tabular-nums; }
+.table .due, .table [data-outcome=failed] { color: #ffd074; }
+.table .running { color: #c8b2ed; }
+.table [data-outcome=succeeded] { color: #b3c799; }
+.footer { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 10px; margin-top: 12px; color: #8a947f; font-size: 11px; }
+.schedule .footer button { font-size: 11px; }
+.schedule .caption { margin-top: 12px; font-size: 10px; line-height: 1.6; }
+.schedule .empty { padding: 20px 12px; border: 1px solid #30372a; border-radius: 8px; font-size: 12px; }
+@media (max-width: 760px) { .table { min-width: 580px; } .table th:first-child { width: 38%; } .search { width: 100%; } .timeline { gap: 2px; } .timeline button span { font-size: 8px; } .timelineHeading { font-size: 9px; } }

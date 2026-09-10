@@ -7,6 +7,7 @@ from typing import Protocol
 from uuid import UUID
 
 from ..domain.catalog_sources import (
+    CatalogCollectionWindow,
     CatalogPagedRefreshPreparation,
     CatalogPagedRefreshPromotion,
     CatalogPagedStageResult,
@@ -28,6 +29,26 @@ class CatalogRefreshDueReader(Protocol):
 
     async def list_due_refreshes(self, now: datetime, *, limit: int) -> list[CatalogRefreshDue]:
         """Return eligible sources in stable due-time/source-key order (NFR-1/NFR-8)."""
+        ...
+
+
+class CatalogCollectionWindowUnavailableError(RuntimeError):
+    """A retained legacy page plan requires a fresh run instead of invented window evidence."""
+
+    def __init__(self, code: str = "legacy_stage_requires_new_run") -> None:
+        if code not in {"legacy_stage_requires_new_run", "collection_window_expired"}:
+            raise ValueError("unknown collection window failure")
+        self.code = code
+        super().__init__(code)
+
+
+class CatalogCollectionWindowRepository(Protocol):
+    """Freeze actual collection bounds under the current database lease before egress."""
+
+    async def prepare_collection_window(
+        self, source_key: str, run_key: str, *, lease_token: UUID, expected_revision: int
+    ) -> CatalogCollectionWindow | None:
+        """Return persisted bounds, or deny an expired lease or changed source revision."""
         ...
 
 

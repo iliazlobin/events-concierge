@@ -20,6 +20,7 @@ import httpx
 from selectolax.parser import HTMLParser
 
 from ...domain.catalog_sources import CatalogSource
+from ...domain.catalog_window import collection_end_at, collection_reference_time
 from ...domain.enums import CatalogSourceMode, PriceStatus, Source
 from ...domain.events import CandidateEvent
 from ...domain.policy import SourceQuarantineSignal
@@ -122,9 +123,10 @@ class LibCalIcsCatalogFetcher:
         if publisher is None:
             raise ValueError("LibCal source must use a reviewed public calendar endpoint")
 
-        now = _as_utc(self._now())
-        horizon_end = _horizon_end(now)
-        response = await self._response_or_error(source, publisher, now)
+        provider_now = _as_utc(self._now())
+        now = _as_utc(collection_reference_time(source, provider_now))
+        horizon_end = collection_end_at(source, _horizon_end(now, source.collection_horizon_days))
+        response = await self._response_or_error(source, publisher, provider_now)
         events = _events_from_response(response, source.source_key)
         candidates: list[CandidateEvent] = []
         seen_event_ids: set[str] = set()
@@ -444,12 +446,12 @@ def _handoff_url(event_id: str, publisher: _LibCalPublisher) -> str:
     return urlunsplit(("https", publisher.handoff_host, f"/event/{event_id}", "", ""))
 
 
-def _horizon_end(now: datetime) -> datetime:
+def _horizon_end(now: datetime, horizon_days: int = _HORIZON_DAYS) -> datetime:
     """Return the source-specific local half-open 90-day end in UTC (FR-3.1)."""
     local_start = datetime.combine(
         now.astimezone(_LOCAL_TIME_ZONE).date(), time.min, _LOCAL_TIME_ZONE
     )
-    return (local_start + timedelta(days=_HORIZON_DAYS)).astimezone(UTC)
+    return (local_start + timedelta(days=horizon_days)).astimezone(UTC)
 
 
 def _text(value: str | None) -> str | None:

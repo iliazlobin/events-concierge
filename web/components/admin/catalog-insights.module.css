@@ -1,0 +1,27 @@
+.overview { display: grid; grid-template-columns: 150px minmax(0, 1fr); gap: 26px; border-bottom: 1px solid #293223; padding-bottom: 22px; margin-bottom: 20px; min-width: 0; }
+.overview h2 { font-size: 13px; font-weight: 500; color: #c7dcb5; margin: 0 0 12px; }
+.overview p { font-size: 10px; color: #829079; line-height: 1.6; margin: 8px 0 0; overflow-wrap: anywhere; }
+.metrics { margin: 0; display: flex; flex-direction: column; justify-content: space-between; gap: 12px; }
+.metrics dt { color: #829079; font-size: 11px; }
+.metrics dd { color: #dce7d2; font-size: 24px; line-height: 1.3; font-variant-numeric: tabular-nums; margin: 2px 0 0; }
+.trend { min-width: 0; }
+.trend button:focus-visible { outline: 2px solid #c9ff68; outline-offset: 3px; }
+.trendHeading { display: flex; justify-content: space-between; gap: 10px; align-items: center; }
+.trendHeading h2 { margin: 0; }
+.trendHeading > div { display: flex; gap: 3px; }
+.trend button { color: #a7b59b; background: transparent; border: 0; padding: 5px 7px; border-radius: 5px; font: inherit; font-size: 10px; cursor: pointer; }
+.trend button[aria-pressed=true] { background: #222d19; color: #d7f7ac; }
+.chart { width: 100%; height: 123px; display: block; margin-top: 10px; overflow: visible; }
+.grid { stroke: #293223; stroke-width: 1; }
+.line { stroke: #b8d791; fill: none; stroke-width: 2; }
+.target { fill: transparent; cursor: pointer; }
+.dot { fill: #c9ff68; opacity: 0; pointer-events: none; }
+.chart g[data-active=true] .dot, .chart g:focus-visible .dot { opacity: 1; }
+.chart g:focus-visible { outline: none; }
+.chart g:focus-visible .target { fill: #b8d79111; stroke: #b8d79166; }
+.readout { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 5px; margin-top: 8px; color: #829079; font-size: 10px; }
+.readout strong { color: #bccaaa; font-weight: 400; }
+.empty { min-height: 145px; display: flex; align-items: center; gap: 10px; font-size: 11px; color: #829079; }
+@media(max-width: 760px) { .overview { grid-template-columns: minmax(0,1fr); gap: 22px; } .metrics { flex-direction: row; flex-wrap: wrap; } .trend { grid-column: auto; } .metrics dd { font-size: 22px; } }
+
+.axis { display: flex; justify-content: space-between; gap: 5px; color: #829079; font-size: 9px; margin-top: 5px; }
