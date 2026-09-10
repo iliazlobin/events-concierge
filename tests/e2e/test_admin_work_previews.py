@@ -123,13 +123,13 @@ def test_failed_history_preview_resets_page_and_keeps_scope_for_exact_record(wor
     page.goto(f"{base}/admin")
     notifications = _block(page, "Notifications")
     notifications.get_by_role("button", name="Next records", exact=True).click()
-    expect(_range(notifications)).to_contain_text("4–5 of 5")
+    expect(_range(notifications)).to_contain_text("4\u20135 of 5")
     notifications.get_by_role("button", name="Failed history", exact=True).click()
     expect(
         notifications.get_by_role("button", name=re.compile(r"^Open Retained notification"))
     ).to_have_count(1)
     expect(notifications.get_by_text("separate from pending work", exact=False)).to_be_visible()
-    expect(_range(notifications)).to_contain_text("1–1 of 1")
+    expect(_range(notifications)).to_contain_text("1\u20131 of 1")
     expect(
         notifications.get_by_role("button", name="Previous records", exact=True)
     ).to_be_disabled()
@@ -147,9 +147,9 @@ def test_failed_history_preview_resets_page_and_keeps_scope_for_exact_record(wor
     expect(
         notifications.get_by_role("button", name="Failed history", exact=True)
     ).to_have_attribute("aria-pressed", "true")
-    expect(_range(notifications)).to_contain_text("1–1 of 1")
+    expect(_range(notifications)).to_contain_text("1\u20131 of 1")
     notifications.get_by_role("button", name="Pending", exact=True).click()
-    expect(_range(notifications)).to_contain_text("1–3 of 5")
+    expect(_range(notifications)).to_contain_text("1\u20133 of 5")
 
 
 def test_preview_read_failure_hides_old_records_and_retry_recovers(work_errors_page):
@@ -188,13 +188,13 @@ def test_each_preview_pages_inline_opens_exact_record_and_restores_page(
     _many_entity_records(scenario, monkeypatch)
     page.goto(f"{base}/admin?store_query=music")
     block = _block(page, name)
-    expect(_range(block)).to_contain_text(f"1–3 of {total}")
+    expect(_range(block)).to_contain_text(f"1\u20133 of {total}")
     previous = block.get_by_role("button", name="Previous records", exact=True)
     next_button = block.get_by_role("button", name="Next records", exact=True)
     expect(previous).to_be_disabled()
     original_url = page.url
     next_button.click()
-    expect(_range(block)).to_contain_text(f"4–{min(6, total)} of {total}")
+    expect(_range(block)).to_contain_text(f"4\u2013{min(6, total)} of {total}")
     expect(previous).to_be_enabled()
     expect(block.get_by_role("button", name=re.compile(r"^Open "))).to_have_count(min(3, total - 3))
     expect(page.locator("#operations-errors")).to_have_count(0)
@@ -210,7 +210,7 @@ def test_each_preview_pages_inline_opens_exact_record_and_restores_page(
     kind = "errors" if queue == "entity_refresh" else "records"
     page.get_by_role("button", name=f"Collapse {name} {kind}", exact=True).click()
     expect(page.locator("#operations-errors")).to_have_count(0)
-    expect(_range(block)).to_contain_text(f"4–{min(6, total)} of {total}")
+    expect(_range(block)).to_contain_text(f"4\u2013{min(6, total)} of {total}")
     assert "ops_record" not in parse_qs(urlsplit(page.url).query)
     assert parse_qs(urlsplit(page.url).query)["store_query"] == ["music"]
 
@@ -219,14 +219,14 @@ def test_each_preview_pages_inline_opens_exact_record_and_restores_page(
         next_button.click()
         last_offset += 3
         expect(_range(block)).to_contain_text(
-            f"{last_offset + 1}–{min(last_offset + 3, total)} of {total}"
+            f"{last_offset + 1}\u2013{min(last_offset + 3, total)} of {total}"
         )
     expect(next_button).to_be_disabled()
     expect(previous).to_be_enabled()
     previous.click()
     expected_offset = last_offset - 3
     expect(_range(block)).to_contain_text(
-        f"{expected_offset + 1}–{min(expected_offset + 3, total)} of {total}"
+        f"{expected_offset + 1}\u2013{min(expected_offset + 3, total)} of {total}"
     )
     expect(next_button).to_be_enabled()
 
@@ -238,12 +238,12 @@ def test_panels_keep_independent_pages_and_scope_change_resets_to_first(work_err
     notifications = _block(page, "Notifications")
     requests.get_by_role("button", name="Next records", exact=True).click()
     notifications.get_by_role("button", name="Next records", exact=True).click()
-    expect(_range(requests)).to_contain_text("4–6 of 13")
-    expect(_range(notifications)).to_contain_text("4–5 of 5")
+    expect(_range(requests)).to_contain_text("4\u20136 of 13")
+    expect(_range(notifications)).to_contain_text("4\u20135 of 5")
     requests.get_by_role("button", name="With errors", exact=True).click()
-    expect(_range(requests)).to_contain_text("1–3 of 10")
+    expect(_range(requests)).to_contain_text("1\u20133 of 10")
     expect(requests.get_by_role("button", name="Previous records", exact=True)).to_be_disabled()
-    expect(_range(notifications)).to_contain_text("4–5 of 5")
+    expect(_range(notifications)).to_contain_text("4\u20135 of 5")
     assert any(
         call["queue"] == ["request_start"]
         and call["scope"] == ["errors"]
@@ -257,8 +257,8 @@ def test_panels_keep_independent_pages_and_scope_change_resets_to_first(work_err
     previous = notifications.get_by_role("button", name="Previous records", exact=True)
     previous.focus()
     previous.press("Enter")
-    expect(_range(notifications)).to_contain_text("1–3 of 5")
-    expect(_range(requests)).to_contain_text("1–3 of 10")
+    expect(_range(notifications)).to_contain_text("1\u20133 of 5")
+    expect(_range(requests)).to_contain_text("1\u20133 of 10")
 
 
 def test_preview_refresh_clamps_page_after_records_disappear(work_errors_page):
@@ -266,7 +266,7 @@ def test_preview_refresh_clamps_page_after_records_disappear(work_errors_page):
     page.goto(f"{base}/admin")
     requests = _block(page, "Request starts")
     requests.get_by_role("button", name="Next records", exact=True).click()
-    expect(_range(requests)).to_contain_text("4–6 of 13")
+    expect(_range(requests)).to_contain_text("4\u20136 of 13")
     scenario.empty_queues.add("request_start")
     requests.get_by_role("button", name="Refresh preview", exact=True).click()
     expect(_range(requests)).to_contain_text("0 of 0")
@@ -274,4 +274,4 @@ def test_preview_refresh_clamps_page_after_records_disappear(work_errors_page):
     expect(requests.get_by_role("button", name="Next records", exact=True)).to_be_disabled()
     scenario.empty_queues.remove("request_start")
     requests.get_by_role("button", name="Refresh preview", exact=True).click()
-    expect(_range(requests)).to_contain_text("1–3 of 13")
+    expect(_range(requests)).to_contain_text("1\u20133 of 13")

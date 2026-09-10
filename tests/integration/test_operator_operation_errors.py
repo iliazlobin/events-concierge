@@ -116,7 +116,7 @@ async def _entity_source(
 
 
 async def test_request_diagnostics_paginate_exact_records_without_raw_payloads() -> None:
-    async with _owner_transaction() as connection:
+    async with _owner_transaction(empty_queues=True) as connection:
         tenant = uuid4()
         await connection.execute(
             text("""
@@ -173,7 +173,7 @@ async def test_request_diagnostics_paginate_exact_records_without_raw_payloads()
 
 
 async def test_entity_errors_count_profiles_and_show_all_failed_sources() -> None:
-    async with _owner_transaction() as connection:
+    async with _owner_transaction(empty_queues=True) as connection:
         due = await _entity(connection)
         first = await _entity_source(connection, due, "github_public")
         second = await _entity_source(
@@ -215,7 +215,7 @@ async def test_entity_errors_count_profiles_and_show_all_failed_sources() -> Non
 
 
 async def test_error_projection_roles_are_narrow_and_owner_stays_restricted() -> None:
-    async with _owner_transaction() as connection:
+    async with _owner_transaction(empty_queues=True) as connection:
         for role in ("ec_app", "ec_ingestion_executor"):
             await _role(connection, role)
             await _denied(connection, "SELECT public.fn_get_operator_errors_v1('request_start')")
@@ -266,7 +266,7 @@ async def test_error_projection_installation_needs_no_superuser(
     migration = import_module("migrations.versions.0185_operator_error_diagnostics")
     suffix = uuid4().hex[:12]
     owner, definer = f"error_migration_{suffix}", f"error_definer_{suffix}"
-    async with _owner_transaction() as connection:
+    async with _owner_transaction(empty_queues=True) as connection:
         await connection.execute(text(f"DROP FUNCTION {_SIGNATURE}"))
         await connection.execute(
             text(f"CREATE ROLE {owner} NOLOGIN NOINHERIT CREATEROLE NOSUPERUSER NOBYPASSRLS")
@@ -333,7 +333,7 @@ async def test_error_projection_validates_bounds_inside_database(
     offset: int,
     limit: int | None,
 ) -> None:
-    async with _owner_transaction() as connection:
+    async with _owner_transaction(empty_queues=True) as connection:
         await _role(connection, "ec_operator_viewer")
         with pytest.raises(DBAPIError, match="invalid operator error query"):
             await connection.execute(

@@ -288,7 +288,7 @@ def test_source_timeline_late_obsolete_window_cannot_replace_current_counts(time
 def test_source_timeline_mobile_keyboard_is_read_only_and_fits_viewport(timeline_page) -> None:
     page, _, base = timeline_page
     page.set_viewport_size({"width": 390, "height": 844})
-    page.goto(f"{base}/admin?tab=sources&source_trend=7")
+    page.goto(f"{base}/admin?tab=sources&source_trend=7&registry_query=Bay")
     points = _timeline(page).get_by_role("img")
     expect(points.last).to_be_visible()
     original = page.url
