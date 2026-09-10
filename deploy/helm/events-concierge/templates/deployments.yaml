@@ -1,9 +1,11 @@
 {{- $root := . -}}
+{{- $devCatalog := and (eq (default "managed" .Values.global.deploymentProfile) "development") .Values.developmentCatalog.enabled -}}
 {{- if or (eq .Values.global.releasePhase "all") (eq .Values.global.releasePhase "application") }}
 {{- range $name, $workload := .Values.workloads }}
-{{- if and $workload.enabled (or (not $workload.operatorProfile) $root.Values.operator.enabled) }}
+{{- if and $workload.enabled (or (not $workload.operatorProfile) $root.Values.operator.enabled (and $devCatalog (eq $name "ingestion-executor"))) }}
 {{- $profile := default "runtime" $workload.operatorProfile }}
 {{- if and (eq $name "temporal-catalog") $root.Values.operator.enabled }}{{- $profile = "executor" }}{{- end }}
+{{- if and $devCatalog (has $name (list "ingestion-executor" "temporal-catalog")) }}{{- $profile = "development-executor" }}{{- end }}
 ---
 apiVersion: apps/v1
 kind: Deployment
@@ -29,8 +31,11 @@ spec:
         app.kubernetes.io/part-of: events-concierge
       annotations:
         checksum/runtime-config: {{ include (print $root.Template.BasePath "/configmap.yaml") $root | sha256sum }}
+        {{- if eq $profile "development-executor" }}
+        checksum/development-executor-config: {{ include (print $root.Template.BasePath "/development-operator-config.yaml") $root | sha256sum }}
+        {{- end }}
         {{- if $workload.runtimeSecrets }}
-        checksum/runtime-secret-versions: {{ $root.Values.operator | toJson | sha256sum }}-{{ $root.Values.secretManager.runtimeSecrets | toJson | sha256sum }}
+        checksum/runtime-secret-versions: {{ $root.Values.developmentCatalog | toJson | sha256sum }}-{{ $root.Values.operator | toJson | sha256sum }}-{{ $root.Values.secretManager.runtimeSecrets | toJson | sha256sum }}
         {{- end }}
         cluster-autoscaler.kubernetes.io/safe-to-evict: "true"
     spec:

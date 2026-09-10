@@ -18,9 +18,12 @@ spec:
         app.kubernetes.io/name: events-concierge-admin
         app.kubernetes.io/part-of: events-concierge
       annotations:
+        checksum/operator-secret-versions: {{ .Values.developmentAdmin.operatorSecrets | toJson | sha256sum }}
+        checksum/runtime-secret-versions: {{ .Values.secretManager.runtimeSecrets | toJson | sha256sum }}
         checksum/runtime-config: {{ include (print .Template.BasePath "/configmap.yaml") . | sha256sum }}
     spec:
-      serviceAccountName: {{ .Values.serviceAccounts.api.name }}
+      serviceAccountName: {{ (index .Values.serviceAccounts "development-admin").name }}
+      automountServiceAccountToken: true
       enableServiceLinks: false
       securityContext:
         {{- include "events-concierge.podSecurityContext" . | nindent 8 }}
@@ -34,6 +37,7 @@ spec:
           env:
             - {name: EC_API_BIND_ADDRESS, value: "127.0.0.1"}
             - {name: EC_ADMIN_INGESTION_ENABLED, value: "true"}
+            - {name: EC_OPERATOR_DATABASE_URL_FILE, value: /var/run/secrets/events-concierge-operator/EC_OPERATOR_DATABASE_URL}
             - {name: EC_CATALOG_INGESTION_SCHEDULER_ENABLED, value: "false"}
           securityContext:
             {{- include "events-concierge.appSecurityContext" . | nindent 12 }}
@@ -48,6 +52,7 @@ spec:
           volumeMounts:
             - {name: api-tmp, mountPath: /tmp}
             - {name: runtime-secrets, mountPath: /var/run/secrets/events-concierge, readOnly: true}
+            - {name: operator-secrets, mountPath: /var/run/secrets/events-concierge-operator, readOnly: true}
         - name: frontend
           image: {{ include "events-concierge.image" .Values.global.frontendImage | quote }}
           env:
@@ -67,6 +72,12 @@ spec:
           volumeMounts:
             - {name: web-tmp, mountPath: /tmp}
       volumes:
+        - name: operator-secrets
+          csi:
+            driver: secrets-store-gke.csi.k8s.io
+            readOnly: true
+            volumeAttributes:
+              secretProviderClass: {{ printf "%s-development-operator" (include "events-concierge.fullname" .) | quote }}
         - name: api-tmp
           emptyDir: {sizeLimit: 64Mi}
         - name: web-tmp

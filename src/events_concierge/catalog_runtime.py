@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
+from urllib.parse import urlsplit
 
 from .adapters.mock.object_store import MockFilesystemObjectStore
 from .adapters.postgres.catalog import PostgresCatalogRepository
@@ -31,7 +32,10 @@ from .config import Settings
 from .deployment.gcp_runtime import build_gcs_object_store
 from .infra.db import init_engine, system_session_scope
 from .infra.operator_database import validate_operator_database_url, verify_database_role
+from .operations.network_safety import is_non_remote_host
 from .ports.object_store import ObjectStorePort
+
+_DEVELOPMENT_RUNTIME_FACTORY = "events_concierge.deployment.development_runtime:build_runtime_ports"
 
 
 @dataclass(slots=True)
@@ -47,12 +51,18 @@ class CatalogContainer:
 def build_catalog_container(settings: Settings) -> CatalogContainer:
     """Build only reviewed catalog capabilities with a dedicated executor login."""
     url = validate_operator_database_url(settings, settings.ingestion_executor_database_url)
-    if not settings.mock_cloud and not settings.ingestion_executor_enabled:
-        raise ValueError("production catalog execution requires explicit executor enablement")
-    if not settings.mock_cloud and not settings.uses_shared_pacer_redis:
-        raise ValueError("production catalog execution requires shared Redis pacing")
+    development = settings.env == "development" and settings.mock_cloud
+    if development:
+        _validate_development_catalog(settings)
+    shared_storage = not settings.mock_cloud or development
+    if shared_storage and not settings.ingestion_executor_enabled:
+        raise ValueError("deployed catalog execution requires explicit executor enablement")
+    if shared_storage and not settings.uses_shared_pacer_redis:
+        raise ValueError("deployed catalog execution requires shared Redis pacing")
     # The target catalog profile needs GCS only, not the full product provider factory.
-    if settings.mock_cloud:
+    # Private development mocks external product integrations, but independently deployed
+    # catalog/command workers still need one shared payload store.
+    if not shared_storage:
         object_store: ObjectStorePort = MockFilesystemObjectStore(
             Path(settings.claim_check_local_root) / "catalog",
         )
@@ -111,6 +121,18 @@ def build_catalog_container(settings: Settings) -> CatalogContainer:
         ),
         object_store=object_store,
     )
+
+
+def _validate_development_catalog(settings: Settings) -> None:
+    if settings.runtime_provider_factory != _DEVELOPMENT_RUNTIME_FACTORY:
+        raise ValueError(
+            "development catalog execution requires the explicit development runtime factory"
+        )
+    # Catch local defaults before creating any database pool or GCS client. Redis connections
+    # remain lazy, and the existing pacer fails throttle-first if the service becomes unavailable.
+    redis = urlsplit(settings.redis_url)
+    if redis.scheme not in {"redis", "rediss"} or is_non_remote_host(redis.hostname):
+        raise ValueError("development catalog execution requires a shared Redis service URL")
 
 
 async def verify_catalog_executor_database() -> None:

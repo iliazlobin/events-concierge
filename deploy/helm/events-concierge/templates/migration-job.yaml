@@ -55,8 +55,19 @@ spec:
         - name: migrate
           image: {{ include "events-concierge.image" .Values.global.appImage | quote }}
           imagePullPolicy: {{ .Values.global.appImage.pullPolicy }}
+          {{- if eq (default "managed" .Values.global.deploymentProfile) "development" }}
+          command: [python, -m, events_concierge.deployment.development_operator_bootstrap, --migrate]
+          {{- else }}
           command: [alembic, upgrade, head]
+          {{- end }}
           env:
+            {{- if eq (default "managed" .Values.global.deploymentProfile) "development" }}
+            - {name: EC_ENV, value: development}
+            - {name: EC_MOCK_CLOUD, value: "true"}
+            - {name: EC_DATABASE_CONNECTION_MODE, value: development_plaintext}
+            - {name: EC_DEV_OPERATOR_PASSWORD_FILE, value: /var/run/secrets/events-concierge/EC_DEV_OPERATOR_PASSWORD}
+            - {name: EC_DEV_INGESTION_PASSWORD_FILE, value: /var/run/secrets/events-concierge/EC_DEV_INGESTION_PASSWORD}
+            {{- end }}
             - name: EC_MIGRATION_URL_FILE
               value: /var/run/secrets/events-concierge/EC_MIGRATION_URL
             - name: EC_APP_ROLE_PASSWORD_FILE

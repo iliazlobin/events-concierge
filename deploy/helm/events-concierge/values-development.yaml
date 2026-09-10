@@ -49,7 +49,33 @@ secretManager:
   - fileName: EC_APP_ROLE_PASSWORD
     secretName: ec-dev-app-role-password
     version: '1'
+  - fileName: EC_DEV_OPERATOR_PASSWORD
+    secretName: ec-dev-operator-role-password
+    version: '1'
+  - fileName: EC_DEV_INGESTION_PASSWORD
+    secretName: ec-dev-ingestion-executor-role-password
+    version: '1'
+developmentAdmin:
+  operatorSecrets:
+  - fileName: EC_OPERATOR_DATABASE_URL
+    secretName: ec-dev-operator-database-url
+    version: '1'
+developmentCatalog:
+  enabled: true
+  claimCheckPrefix: events-concierge/catalog/v1
+  executorSecrets:
+  - fileName: EC_INGESTION_EXECUTOR_DATABASE_URL
+    secretName: ec-dev-ingestion-executor-database-url
+    version: '1'
+  - fileName: EC_REDIS_URL
+    secretName: ec-dev-redis-url
+    version: '1'
 workloads:
+  ingestion-executor:
+    resources:
+      requests:
+        cpu: 25m
+        memory: 192Mi
   frontend:
     replicas: 1
     pdb:

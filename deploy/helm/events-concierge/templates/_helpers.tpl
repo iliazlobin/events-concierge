@@ -129,7 +129,62 @@ seccompProfile:
 {{- if not (index $.Values.workloads $name).enabled -}}{{- fail (printf "operator requires workloads.%s.enabled" $name) -}}{{- end -}}
 {{- end -}}
 {{- end -}}
+{{- if and .Values.developmentCatalog.enabled (not $dev) -}}
+{{- fail "developmentCatalog.enabled is restricted to the private development profile" -}}
+{{- end -}}
 {{- if $dev -}}
+{{- if or (ne (toString .Values.applicationConfig.EC_MOCK_CLOUD) "true") .Values.cloudSqlProxy.enabled (ne .Values.applicationConfig.EC_DATABASE_CONNECTION_MODE "development_plaintext") -}}
+{{- fail "development requires mock product integrations and its private database connection mode" -}}
+{{- end -}}
+{{- range $field := list "EC_OIDC_BFF_ENABLED" "EC_GOOGLE_CALENDAR_ENABLED" "EC_CATALOG_INGESTION_SCHEDULER_ENABLED" -}}
+{{- if ne (toString (index $.Values.applicationConfig $field)) "false" -}}{{- fail (printf "development requires %s=false" $field) -}}{{- end -}}
+{{- end -}}
+{{- if or .Values.catalogDispatcher.enabled .Values.jobs.catalogRefresh.enabled -}}
+{{- fail "development uses explicit operator commands; scheduled and legacy catalog jobs remain disabled" -}}
+{{- end -}}
+{{- $controller := index .Values.serviceAccounts "development-admin" -}}
+{{- if not $controller.gcpServiceAccount -}}{{- fail "development requires a dedicated development-admin GCP identity" -}}{{- end -}}
+{{- range $key, $account := .Values.serviceAccounts -}}
+{{- if and (ne $key "development-admin") (or (eq $account.name $controller.name) (eq $account.gcpServiceAccount $controller.gcpServiceAccount)) -}}
+{{- fail "development admin identity cannot be shared with another workload" -}}
+{{- end -}}
+{{- end -}}
+{{- if ne (len .Values.developmentAdmin.operatorSecrets) 1 -}}{{- fail "development admin requires exactly one controller database secret" -}}{{- end -}}
+{{- $controllerSecret := first .Values.developmentAdmin.operatorSecrets -}}
+{{- if or (ne $controllerSecret.fileName "EC_OPERATOR_DATABASE_URL") (ne $controllerSecret.secretName "ec-dev-operator-database-url") -}}
+{{- fail "development admin requires the dedicated controller database secret" -}}
+{{- end -}}
+{{- $migrationFiles := dict -}}
+{{- range .Values.secretManager.migrationSecrets -}}{{- $_ := set $migrationFiles .fileName .secretName -}}{{- end -}}
+{{- range $file, $secret := dict "EC_DEV_OPERATOR_PASSWORD" "ec-dev-operator-role-password" "EC_DEV_INGESTION_PASSWORD" "ec-dev-ingestion-executor-role-password" -}}
+{{- if ne (default "" (index $migrationFiles $file)) $secret -}}{{- fail (printf "development migration requires %s" $file) -}}{{- end -}}
+{{- end -}}
+{{- if .Values.developmentCatalog.enabled -}}
+{{- if ne .Values.developmentCatalog.claimCheckPrefix "events-concierge/catalog/v1" -}}{{- fail "development catalog requires the reviewed GCS prefix events-concierge/catalog/v1" -}}{{- end -}}
+{{- $consumerPrefix := printf "%s/" (trimSuffix "/" .Values.applicationConfig.EC_GCS_CLAIM_CHECK_PREFIX) -}}
+{{- $catalogPrefix := printf "%s/" .Values.developmentCatalog.claimCheckPrefix -}}
+{{- if or (eq $consumerPrefix "/") (hasPrefix $consumerPrefix $catalogPrefix) (hasPrefix $catalogPrefix $consumerPrefix) -}}{{- fail "development catalog and consumer storage prefixes must be disjoint" -}}{{- end -}}
+{{- $executorSecrets := dict "EC_INGESTION_EXECUTOR_DATABASE_URL" "ec-dev-ingestion-executor-database-url" "EC_REDIS_URL" "ec-dev-redis-url" -}}
+{{- if ne (len .Values.developmentCatalog.executorSecrets) 2 -}}{{- fail "development executor requires only its dedicated database and Redis secrets" -}}{{- end -}}
+{{- $seen := list -}}
+{{- range .Values.developmentCatalog.executorSecrets -}}
+{{- if or (has .fileName $seen) (ne (default "" (index $executorSecrets .fileName)) .secretName) -}}{{- fail "development executor secret is unauthorized or duplicated" -}}{{- end -}}
+{{- $seen = append $seen .fileName -}}
+{{- end -}}
+{{- range $name := list "ingestion-executor" "temporal-catalog" -}}
+{{- $workload := index $.Values.workloads $name -}}
+{{- if or (not $workload.enabled) (ne $workload.serviceAccount $name) (not $workload.needsIdentity) (not $workload.database) (not $workload.runtimeSecrets) -}}
+{{- fail (printf "development catalog requires the isolated %s workload" $name) -}}
+{{- end -}}
+{{- $account := index $.Values.serviceAccounts $name -}}
+{{- if not $account.gcpServiceAccount -}}{{- fail (printf "development catalog requires the %s GCP identity" $name) -}}{{- end -}}
+{{- range $key, $other := $.Values.serviceAccounts -}}
+{{- if and (ne $key $name) (or (eq $account.name $other.name) (eq $account.gcpServiceAccount $other.gcpServiceAccount)) -}}
+{{- fail "development catalog identities cannot be shared with another workload" -}}
+{{- end -}}
+{{- end -}}
+{{- end -}}
+{{- end -}}
 {{- if or (ne .Release.Namespace "events-concierge-dev") (ne .Values.applicationConfig.EC_ENV "development") .Values.gateway.enabled -}}
 {{- fail "development requires its isolated namespace, EC_ENV=development, no gateway or autoscaling" -}}
 {{- end -}}

@@ -50,6 +50,12 @@ class DevelopmentTests(unittest.TestCase):
                 "global.frontendImage.repository=test/web",
                 "--set",
                 "global.frontendImage.digest=sha256:" + "1" * 64,
+                "--set",
+                "serviceAccounts.development-admin.gcpServiceAccount=admin@example.iam.gserviceaccount.com",
+                "--set",
+                "serviceAccounts.ingestion-executor.gcpServiceAccount=executor@example.iam.gserviceaccount.com",
+                "--set",
+                "serviceAccounts.temporal-catalog.gcpServiceAccount=catalog@example.iam.gserviceaccount.com",
                 *extra,
             ],
             check=False,
@@ -95,6 +101,116 @@ class DevelopmentTests(unittest.TestCase):
                 for d in docs
             )
         )
+
+    @requires_helm
+    def test_controller_and_catalog_workers_have_separate_credentials(self):
+        rendered = self.render()
+        self.assertEqual(rendered.returncode, 0, rendered.stderr)
+        docs = {d["metadata"]["name"]: d for d in yaml.safe_load_all(rendered.stdout) if d}
+        admin = docs["events-concierge-admin"]["spec"]["template"]["spec"]
+        self.assertEqual(admin["serviceAccountName"], "events-concierge-development-admin")
+        admin_api = next(c for c in admin["containers"] if c["name"] == "api")
+        self.assertIn(
+            {
+                "name": "EC_OPERATOR_DATABASE_URL_FILE",
+                "value": "/var/run/secrets/events-concierge-operator/EC_OPERATOR_DATABASE_URL",
+            },
+            admin_api["env"],
+        )
+        # Consumer reads remain available to the combined local admin app; its controller
+        # capability is a separate pool and a separately mounted credential.
+        self.assertEqual(
+            {
+                v["csi"]["volumeAttributes"]["secretProviderClass"]
+                for v in admin["volumes"]
+                if "csi" in v
+            },
+            {"events-concierge-runtime", "events-concierge-development-operator"},
+        )
+        operator_secrets = yaml.safe_load(
+            docs["events-concierge-development-operator"]["spec"]["parameters"]["secrets"]
+        )
+        self.assertEqual([s["path"] for s in operator_secrets], ["EC_OPERATOR_DATABASE_URL"])
+        for name in ("ingestion-executor", "temporal-catalog"):
+            pod = docs[f"events-concierge-{name}"]["spec"]["template"]["spec"]
+            self.assertEqual(pod["serviceAccountName"], f"events-concierge-{name}")
+            container = pod["containers"][0]
+            self.assertEqual(
+                container["envFrom"],
+                [{"configMapRef": {"name": "events-concierge-development-executor"}}],
+            )
+            self.assertEqual(
+                {
+                    v["csi"]["volumeAttributes"]["secretProviderClass"]
+                    for v in pod["volumes"]
+                    if "csi" in v
+                },
+                {"events-concierge-development-executor"},
+            )
+        config = next(
+            d["data"]
+            for d in yaml.safe_load_all(rendered.stdout)
+            if d
+            and d["kind"] == "ConfigMap"
+            and d["metadata"]["name"] == "events-concierge-development-executor"
+        )
+        self.assertEqual(config["EC_INGESTION_EXECUTOR_ENABLED"], "true")
+        self.assertEqual(config["EC_GCS_CLAIM_CHECK_PREFIX"], "events-concierge/catalog/v1")
+        self.assertEqual(config["EC_MOCK_CLOUD"], "true")
+        self.assertEqual(config["EC_CATALOG_INGESTION_SCHEDULER_ENABLED"], "false")
+        self.assertNotIn("EC_DATABASE_URL_FILE", config)
+        self.assertNotIn("EC_OPERATOR_DATABASE_URL_FILE", config)
+        self.assertNotIn("EC_TEMPORAL_API_KEY_FILE", config)
+        executor_secrets = yaml.safe_load(
+            docs["events-concierge-development-executor"]["spec"]["parameters"]["secrets"]
+        )
+        self.assertEqual(
+            {s["path"] for s in executor_secrets},
+            {"EC_INGESTION_EXECUTOR_DATABASE_URL", "EC_REDIS_URL"},
+        )
+
+    @requires_helm
+    def test_development_migration_bootstraps_restricted_logins(self):
+        rendered = self.render(extra=("--set", "global.releasePhase=migration"))
+        self.assertEqual(rendered.returncode, 0, rendered.stderr)
+        docs = [d for d in yaml.safe_load_all(rendered.stdout) if d]
+        job = next(d for d in docs if d["kind"] == "Job")
+        container = job["spec"]["template"]["spec"]["containers"][0]
+        self.assertEqual(
+            container["command"],
+            [
+                "python",
+                "-m",
+                "events_concierge.deployment.development_operator_bootstrap",
+                "--migrate",
+            ],
+        )
+        env = {e["name"]: e["value"] for e in container["env"]}
+        self.assertEqual(env["EC_ENV"], "development")
+        self.assertEqual(env["EC_DATABASE_CONNECTION_MODE"], "development_plaintext")
+        self.assertTrue(env["EC_DEV_OPERATOR_PASSWORD_FILE"].endswith("/EC_DEV_OPERATOR_PASSWORD"))
+        self.assertTrue(
+            env["EC_DEV_INGESTION_PASSWORD_FILE"].endswith("/EC_DEV_INGESTION_PASSWORD")
+        )
+        self.assertFalse(any(d["kind"] == "Deployment" for d in docs))
+
+    @requires_helm
+    def test_development_rejects_credential_and_identity_reuse(self):
+        for override in (
+            "global.deploymentProfile=managed",
+            "serviceAccounts.development-admin.gcpServiceAccount=",
+            "serviceAccounts.ingestion-executor.gcpServiceAccount=admin@example.iam.gserviceaccount.com",
+            "serviceAccounts.temporal-catalog.name=events-concierge-api",
+            "workloads.temporal-catalog.serviceAccount=api",
+            "developmentCatalog.executorSecrets[0].secretName=ec-dev-database-url",
+            "developmentAdmin.operatorSecrets[0].secretName=ec-dev-ingestion-executor-database-url",
+            "applicationConfig.EC_GCS_CLAIM_CHECK_PREFIX=events-concierge/catalog",
+            "applicationConfig.EC_MOCK_CLOUD=false",
+            "applicationConfig.EC_GOOGLE_CALENDAR_ENABLED=true",
+            "catalogDispatcher.enabled=true",
+        ):
+            with self.subTest(override=override):
+                self.assertNotEqual(self.render(extra=("--set", override)).returncode, 0)
 
     @requires_helm
     def test_stores_have_retained_disks_and_recovery_probes(self):
@@ -176,7 +292,13 @@ class DevelopmentTests(unittest.TestCase):
     def test_rendered_runtime_settings_load(self):
 
         docs = list(yaml.safe_load_all(self.render().stdout))
-        config = next(d["data"] for d in docs if d and d["kind"] == "ConfigMap")
+        config = next(
+            d["data"]
+            for d in docs
+            if d
+            and d["kind"] == "ConfigMap"
+            and d["metadata"]["name"] == "events-concierge-runtime"
+        )
         self.assertNotIn("EC_TEMPORAL_API_KEY_FILE", config)
         self.assertNotIn("EC_OIDC_CLIENT_SECRET_FILE", config)
         # The two mounted store credentials are covered by secret-file unit tests.
