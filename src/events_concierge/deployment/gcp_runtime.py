@@ -105,6 +105,8 @@ def build_runtime_ports(
     imports ``google-cloud-storage``; client construction may discover Application Default
     Credentials, while bucket and object operations remain lazy until the port is used.
     """
+    if settings.mock_cloud:
+        raise GcpRuntimeConfigurationError("the GCP runtime provider requires EC_MOCK_CLOUD=false")
     prefix = settings.gcs_claim_check_prefix.strip().rstrip("/")
     if prefix == "events-concierge/catalog" or prefix.startswith("events-concierge/catalog/"):
         raise GcpRuntimeConfigurationError("consumer payload storage cannot use the reserved catalog prefix")
@@ -132,10 +134,7 @@ def build_gcs_object_store(
     *,
     storage_client: GcsStorageClient | None = None,
 ) -> GcsObjectStore:
-    """Build only native GCS storage, independently of all consumer provider dependencies."""
-    if settings.mock_cloud:
-        raise GcpRuntimeConfigurationError("the GCP runtime provider requires EC_MOCK_CLOUD=false")
-
+    """Construct real, network-lazy storage independently of external product adapters."""
     bucket_name = _required_setting(settings, "gcs_claim_check_bucket")
     root_prefix = _optional_setting(
         settings,
