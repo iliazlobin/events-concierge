@@ -1,6 +1,7 @@
 import importlib.util
 import os
 import pathlib
+import shutil
 import subprocess
 import unittest
 from unittest.mock import patch
@@ -14,6 +15,10 @@ from events_concierge.workflows.temporal_client import validate_temporal_setting
 
 ROOT = pathlib.Path(__file__).resolve().parents[2]
 HELM = os.environ.get("HELM", "helm")
+requires_helm = unittest.skipUnless(
+    shutil.which(HELM),
+    "Helm is optional locally; deployment-validation CI runs these contracts",
+)
 spec = importlib.util.spec_from_file_location(
     "dev_policy", ROOT / "scripts/development/check_plan.py"
 )
@@ -52,6 +57,7 @@ class DevelopmentTests(unittest.TestCase):
             text=True,
         )
 
+    @requires_helm
     def test_development_is_private_single_replica_and_unscheduled(self):
         p = self.render()
         self.assertEqual(p.returncode, 0, p.stderr)
@@ -67,6 +73,7 @@ class DevelopmentTests(unittest.TestCase):
                 self.assertEqual(d["spec"]["replicas"], 1)
                 self.assertFalse(d["spec"]["template"]["spec"].get("initContainers"))
 
+    @requires_helm
     def test_admin_is_loopback_only_and_scheduler_stays_disabled(self):
         docs = [d for d in yaml.safe_load_all(self.render().stdout) if d]
         admin = next(
@@ -89,10 +96,47 @@ class DevelopmentTests(unittest.TestCase):
             )
         )
 
+    @requires_helm
+    def test_stores_have_retained_disks_and_recovery_probes(self):
+        rendered = subprocess.run(
+            [
+                HELM,
+                "template",
+                "ec-dev-data",
+                str(ROOT / "deploy/helm/events-concierge-dev-data"),
+                "-n",
+                "events-concierge-dev",
+            ],
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+        docs = [d for d in yaml.safe_load_all(rendered.stdout) if d]
+        claims = {d["metadata"]["name"] for d in docs if d["kind"] == "PersistentVolumeClaim"}
+        self.assertEqual(claims, {"ec-dev-application", "ec-dev-temporal", "ec-dev-redis"})
+        storage = next(d for d in docs if d["kind"] == "StorageClass")
+        self.assertEqual(storage["provisioner"], "pd.csi.storage.gke.io")
+        self.assertEqual(storage["reclaimPolicy"], "Retain")
+        for d in docs:
+            if d["kind"] not in {"Deployment", "StatefulSet"}:
+                continue
+            pod = d["spec"]["template"]["spec"]
+            self.assertIn(pod["volumes"][0]["persistentVolumeClaim"]["claimName"], claims)
+            c = pod["containers"][0]
+            self.assertTrue(c["volumeMounts"])
+            for probe in ("startupProbe", "readinessProbe", "livenessProbe"):
+                self.assertGreaterEqual(c[probe]["timeoutSeconds"], 5)
+            if c["name"] == "redis":
+                self.assertIn("--appendonly yes --appendfsync everysec", c["args"][0])
+                self.assertEqual(c["volumeMounts"][0]["mountPath"], "/data")
+                self.assertEqual(d["spec"]["strategy"]["type"], "Recreate")
+
+    @requires_helm
     def test_profile_rejects_other_namespaces_and_public_gateway(self):
         self.assertNotEqual(self.render("production").returncode, 0)
         self.assertNotEqual(self.render(extra=("--set", "gateway.enabled=true")).returncode, 0)
 
+    @requires_helm
     def test_development_rejects_hosted_operator_gateway(self):
         result = self.render(extra=("--set", "operator.enabled=true"))
         self.assertNotEqual(result.returncode, 0)
@@ -128,6 +172,7 @@ class DevelopmentTests(unittest.TestCase):
                 database_connection_mode="development_plaintext",
             )
 
+    @requires_helm
     def test_rendered_runtime_settings_load(self):
 
         docs = list(yaml.safe_load_all(self.render().stdout))

@@ -39,6 +39,21 @@ Secret values are generated directly into Secret Manager. Version 1 is pinned an
 
 ## Application release
 
+**Schema 0193 cutover is not ready in this development profile.** Do not run the migration or
+promotion commands below against the existing cluster until the following wiring is implemented
+and verified in an isolated rehearsal:
+
+- Provision separate non-owner operator-controller and ingestion-executor logins, Secret Manager
+  references and workload access. Migration `0182` removes the old consumer login's admin authority;
+  the current development admin has no operator credential mount. Never grant these roles to `ec_app`.
+- Give the loopback admin its controller credential. Move both the ingestion command processor and
+  catalog Temporal worker to the executor credential; the current profile lacks this complete cutover.
+- Use shared GCS for catalog claim checks across both executor processes. The mock catalog runtime
+  currently chooses local filesystem storage, so setting an executor flag alone is insufficient.
+- Rehearse the migration and coordinated worker/application promotion with the candidate images.
+  Migration `0187` has no downgrade path; recovery requires the reviewed backup/restore procedure,
+  not an assumed schema downgrade or rollback to incompatible older images.
+
 Build the backend and `web/Dockerfile` with `docker buildx build --platform linux/amd64`, using the committed revision as backend `VCS_REF`. Push to `us-west1-docker.pkg.dev/project-9c8cce04-f94d-40fc-aa6/ec-dev/`. Bind immutable registry digests:
 
 ```bash
@@ -53,6 +68,14 @@ kubectl -n events-concierge-dev port-forward service/events-concierge-frontend 1
 ```
 
 Browse http://localhost:13000. Access remains localhost-only. Recurring jobs and autoscaling are disabled. Helm readiness alone is insufficient with `maxUnavailable=1`; the explicit replica check is required. One node and one replica mean downtime during replacement and upgrades; disks remain zonal. Do not use this profile as production.
+
+## Persistent storage and self-healing
+
+Pending deployment: Redis disk persistence and recovery-probe changes are prepared in this branch but have not been applied or rehearsed. The existing Redis deployment remains ephemeral until that rollout completes.
+
+Application PostgreSQL and Temporal PostgreSQL each mount a retained 20 GiB GCP `pd-balanced` disk. The prepared Redis configuration mounts a retained 10 GiB disk at `/data`, with AOF synced every second and periodic RDB snapshots. Redis can lose roughly the last second of writes in a crash; persistence does not make it highly available. Its single-replica Deployment uses `Recreate` so updates stop the old writer before starting the replacement.
+
+Startup probes allow database recovery before liveness checks begin. Failed processes restart; controllers replace missing pods and remount their PVCs. GKE node auto-repair and auto-upgrade are enabled. Disks remain in `us-west1-a`: a node replacement can reattach them, but node repair causes downtime and a zone outage needs separate recovery. Retained disks are not backups; the manual GCS database/payload backup remains the recovery path for those stores. Redis disk loss requires separate restoration/reconstruction; Redis is not included in that GCS backup routine.
 
 ## Private admin
 
