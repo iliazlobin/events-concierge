@@ -53,13 +53,15 @@ resource "google_project_iam_member" "node" {
   role     = each.value
   member   = google_service_account.node.member
 }
+# Apply this retirement preparation only after shared destination acceptance.
+# Keep prevent_destroy until the separately reviewed cluster removal.
 resource "google_container_cluster" "development" {
   project                  = local.project
   name                     = "ec-dev"
   location                 = "us-west1-a"
   remove_default_node_pool = true
   initial_node_count       = 1
-  deletion_protection      = true
+  deletion_protection      = false
   network                  = data.google_compute_network.existing.id
   subnetwork               = data.google_compute_subnetwork.existing.id
   networking_mode          = "VPC_NATIVE"
