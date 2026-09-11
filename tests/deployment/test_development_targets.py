@@ -64,6 +64,21 @@ def test_shared_commands_keep_selected_project_context_and_payload_bucket():
     assert module.TARGET_NAME == "shared"
 
 
+@pytest.mark.parametrize("script", ["wait_ready", "check_store_recovery"])
+def test_shared_acceptance_helpers_refuse_legacy_context_before_inspection_or_writes(script):
+    module = load(script)
+    with (
+        patch.object(
+            module.subprocess, "check_output", return_value=TARGETS["legacy"].context
+        ) as command,
+        patch.object(module.subprocess, "run") as mutation,
+        pytest.raises(SystemExit, match="Wrong cluster"),
+    ):
+        module.main(target="shared")
+    assert command.call_count == 1
+    mutation.assert_not_called()
+
+
 @pytest.mark.parametrize("wrong_field", [None, "service_accounts", "cluster", "namespace"])
 def test_release_values_use_selected_state_and_refuse_cross_target_outputs(tmp_path, wrong_field):
     out = {

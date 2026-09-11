@@ -1,11 +1,14 @@
 """Development-only pod replacement drill with persistent markers in all stores."""
 
+import argparse
 import json
 import os
 import subprocess
 import sys
 import time
 import uuid
+
+from events_concierge.deployment.development_targets import TARGETS
 
 K = os.environ.get("KUBECTL", "kubectl")
 N = "events-concierge-dev"
@@ -169,7 +172,10 @@ def cleanup_markers(created, redis_created, table, primary_failure):
         )
 
 
-def main():
+def main(*, target="legacy"):
+    # The CLI selects one context before either inspection or the recovery drill.
+    global CONTEXT  # noqa: PLW0603
+    CONTEXT = TARGETS[target].context
     context = subprocess.check_output(
         [K, "config", "current-context"], text=True, timeout=10
     ).strip()
@@ -239,4 +245,6 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--target", choices=TARGETS, default="legacy")
+    main(target=parser.parse_args().target)

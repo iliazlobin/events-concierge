@@ -1,9 +1,12 @@
 """Check desired replicas explicitly; Helm can accept zero ready with maxUnavailable=1."""
 
+import argparse
 import json
 import os
 import subprocess
 import time
+
+from events_concierge.deployment.development_targets import TARGETS
 
 NAMESPACE = "events-concierge-dev"
 CONTEXT = "gke_project-9c8cce04-f94d-40fc-aa6_us-west1-a_ec-dev"
@@ -43,15 +46,26 @@ def pending_deployments(items):
     return pending
 
 
-def main():
+def main(*, target="legacy"):
+    expected_context = TARGETS[target].context
     kubectl = os.environ.get("KUBECTL", "kubectl")
     context = subprocess.check_output([kubectl, "config", "current-context"], text=True).strip()
-    if context != CONTEXT:
+    if context != expected_context:
         raise SystemExit("Wrong cluster context")
     for _ in range(120):
         items = json.loads(
             subprocess.check_output(
-                [kubectl, "--context", CONTEXT, "-n", NAMESPACE, "get", "deployments", "-o", "json"]
+                [
+                    kubectl,
+                    "--context",
+                    expected_context,
+                    "-n",
+                    NAMESPACE,
+                    "get",
+                    "deployments",
+                    "-o",
+                    "json",
+                ]
             )
         )["items"]
         pending = pending_deployments(items)
@@ -66,4 +80,6 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--target", choices=TARGETS, default="legacy")
+    main(target=parser.parse_args().target)
