@@ -62,7 +62,9 @@ class Settings(BaseSettings):
     # Direct deployments verify the PostgreSQL hostname themselves. Cloud SQL Auth Proxy
     # deployments terminate the authenticated tunnel on loopback and explicitly disable a second
     # TLS layer in the application DSN; production preflight validates the two shapes separately.
-    database_connection_mode: Literal["direct_tls", "cloud_sql_proxy", "development_plaintext"] = "direct_tls"
+    database_connection_mode: Literal["direct_tls", "cloud_sql_proxy", "development_plaintext"] = (
+        "direct_tls"
+    )
     database_pool_size: int = Field(default=5, ge=1, le=32)
     database_max_overflow: int = Field(default=0, ge=0, le=16)
     database_pool_timeout_seconds: float = Field(default=5.0, ge=0.1, le=30.0)
@@ -133,8 +135,11 @@ class Settings(BaseSettings):
     claim_check_threshold_bytes: int = Field(default=256 * 1024, gt=0)
     claim_check_local_root: str = "/tmp/events-concierge-claim-check"
     # Profile media is durable, unlike claim checks, so it gets its own store and its own root.
-    # Pointing this at a mounted volume is all a deployment needs to do until blob storage lands.
+    # Local development uses a private filesystem; hosted processes share a dedicated GCS bucket.
+    media_backend: Literal["local", "gcs"] = "local"
     media_local_root: str = "/var/lib/events-concierge/media"
+    gcs_media_bucket: str | None = None
+    gcs_media_prefix: str = "events-concierge/media/v1"
     gcp_project: str | None = None
     gcs_claim_check_bucket: str | None = None
     # Explicit catalog executors override this to a distinct events-concierge/catalog/ prefix;
@@ -380,6 +385,18 @@ class Settings(BaseSettings):
         return value
 
     @model_validator(mode="after")
+    def validate_media_configuration(self) -> Settings:
+        """Keep durable avatar lifetime independent from Temporal claim-check storage."""
+        if self.media_backend == "gcs":
+            if not self.gcs_media_bucket or not self.gcs_media_bucket.strip():
+                raise ValueError("GCS media requires an explicit dedicated media bucket")
+            if self.gcs_media_bucket.strip() == (self.gcs_claim_check_bucket or "").strip():
+                raise ValueError("GCS media bucket must be separate from claim-check storage")
+            if not self.gcs_media_prefix.startswith("events-concierge/media/"):
+                raise ValueError("GCS media requires its separate events-concierge/media/ prefix")
+        return self
+
+    @model_validator(mode="after")
     def validate_operator_configuration(self) -> Settings:
         """Keep a partially provisioned operator process from accepting any request."""
         if (
@@ -422,7 +439,9 @@ class Settings(BaseSettings):
         if self.database_connection_mode == "development_plaintext" and (
             self.env != "development" or not self.mock_cloud
         ):
-            raise ValueError("plaintext database is restricted to explicit development test integrations")
+            raise ValueError(
+                "plaintext database is restricted to explicit development test integrations"
+            )
         return self
 
     @model_validator(mode="after")

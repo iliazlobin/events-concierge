@@ -95,8 +95,10 @@ class PostgresProfileAvatarRepository:
             )
         return _record(row)
 
-    async def delete(self, tenant_id: UUID) -> ProfileAvatar | None:
-        """Delete the record, returning it so the caller can purge the object it referenced."""
+    async def delete(
+        self, tenant_id: UUID, *, expected: ProfileAvatar | None = None
+    ) -> ProfileAvatar | None:
+        """Remove only the expected version when its object has already been purged."""
         async with tenant_session_scope(tenant_id) as session:
             row = (
                 (
@@ -104,9 +106,19 @@ class PostgresProfileAvatarRepository:
                         text(
                             f"""DELETE FROM public.tenant_profile_avatars
                                 WHERE tenant_id = :tenant_id
+                                  AND (:unconditional OR (
+                                      storage_key = :expected_key
+                                      AND created_at IS NOT DISTINCT FROM
+                                          CAST(:expected_created_at AS timestamptz)
+                                  ))
                                 RETURNING {_COLUMNS}"""
                         ),
-                        {"tenant_id": tenant_id},
+                        {
+                            "tenant_id": tenant_id,
+                            "unconditional": expected is None,
+                            "expected_key": expected.storage_key if expected else None,
+                            "expected_created_at": expected.created_at if expected else None,
+                        },
                     )
                 )
                 .mappings()

@@ -27,6 +27,7 @@ from ..adapters.disabled import (
     DisabledNotifier,
 )
 from ..adapters.gcs import GcsBlob, GcsBucket, GcsObjectStore, GcsStorageClient
+from ..adapters.gcs.media_store import GcsMediaStore
 from ..adapters.google_calendar.calendar import GoogleCalendarAdapter
 from ..adapters.postgres.audit import PostgresRegistrationActionAuditRepository
 from ..adapters.postgres.calendar_bindings import PostgresGoogleCalendarBindings
@@ -193,6 +194,23 @@ def _default_storage_client(*, project: str | None) -> GcsStorageClient:
     if project is not None:
         arguments["project"] = project
     return _LazyGcsStorageClient(constructor, arguments)
+
+
+def build_gcs_media_store(
+    settings: Settings,
+    *,
+    storage_client: GcsStorageClient | None = None,
+) -> GcsMediaStore:
+    """Construct durable private media without ADC or bucket I/O until the port is used."""
+    bucket = _required_setting(settings, "gcs_media_bucket")
+    if bucket == settings.gcs_claim_check_bucket:
+        raise GcpRuntimeConfigurationError("media and claim checks require separate buckets")
+    project = _optional_setting(settings, "gcp_project", default=None)
+    return GcsMediaStore(
+        storage_client or _default_storage_client(project=project),
+        bucket=bucket,
+        root_prefix=settings.gcs_media_prefix,
+    )
 
 
 def _discovery_sources(settings: Settings) -> tuple[PublicJsonLdSource, ...]:

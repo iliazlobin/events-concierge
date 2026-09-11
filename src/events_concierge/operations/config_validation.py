@@ -265,6 +265,12 @@ def validate_production_config(
             "GCS claim-check project, bucket, and prefix are explicit",
             "EC_GCP_PROJECT, EC_GCS_CLAIM_CHECK_BUCKET, and a non-empty prefix are required",
         ),
+        _check(
+            "durable_media",
+            settings.media_backend == "gcs" and bool(settings.gcs_media_bucket),
+            "profile media uses an explicit dedicated GCS bucket",
+            "hosted profile media requires EC_MEDIA_BACKEND=gcs and EC_GCS_MEDIA_BUCKET",
+        ),
     ]
 
     release_revision = settings.release_revision

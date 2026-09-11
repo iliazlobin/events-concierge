@@ -36,6 +36,12 @@ class ProfileAvatarRepository(Protocol):
         """Point the tenant at a new object, replacing any previous record."""
         ...
 
-    async def delete(self, tenant_id: UUID) -> ProfileAvatar | None:
-        """Remove the record and return what it referenced, so its object can be purged."""
+    async def delete(
+        self, tenant_id: UUID, *, expected: ProfileAvatar | None = None
+    ) -> ProfileAvatar | None:
+        """Remove the record, optionally only if it still matches the already-purged version.
+
+        ``None`` means no matching row was removed. Comparing key and creation time preserves a
+        concurrent replacement, including one that reuses the same content-addressed object key.
+        """
         ...

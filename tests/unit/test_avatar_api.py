@@ -6,6 +6,8 @@ import asyncio
 import importlib
 import io
 from collections.abc import Awaitable, Callable, Mapping
+from dataclasses import replace
+from datetime import UTC, datetime
 from types import SimpleNamespace
 from typing import Any
 from uuid import UUID, uuid4
@@ -110,6 +112,8 @@ class _MediaStore:
         self._release_put = release_put
         self.put_started = asyncio.Event()
         self.put_calls: list[tuple[UUID, str, bytes, str]] = []
+        self.delete_calls: list[tuple[UUID, str]] = []
+        self.delete_error: Exception | None = None
 
     async def put(self, tenant_id: UUID, key: str, data: bytes, content_type: str) -> None:
         assert self._authority.active, "media writes must run under tenant effect authority"
@@ -119,6 +123,13 @@ class _MediaStore:
         if self._release_put is not None:
             await self._release_put.wait()
         self._events.append("media_put_finished")
+
+    async def delete(self, tenant_id: UUID, key: str) -> None:
+        assert self._authority.active, "media deletion must run under tenant effect authority"
+        self.delete_calls.append((tenant_id, key))
+        self._events.append("media_delete")
+        if self.delete_error is not None:
+            raise self.delete_error
 
 
 class _AvatarRepository:
@@ -134,6 +145,8 @@ class _AvatarRepository:
         self._replace_error = replace_error
         self.current: ProfileAvatar | None = None
         self.replace_calls = 0
+        self.concurrent_replacement: ProfileAvatar | None = None
+        self.delete_error: DBAPIError | None = None
 
     async def get(self, tenant_id: UUID) -> ProfileAvatar | None:
         del tenant_id
@@ -151,6 +164,21 @@ class _AvatarRepository:
         self.current = avatar
         self._events.append("avatar_replaced")
         return avatar
+
+    async def delete(
+        self, tenant_id: UUID, *, expected: ProfileAvatar | None = None
+    ) -> ProfileAvatar | None:
+        del tenant_id
+        assert not self._authority.active, "index deletion must not re-enter the tenant lock"
+        self._events.append("avatar_delete")
+        if self.delete_error is not None:
+            raise self.delete_error
+        if self.concurrent_replacement is not None:
+            self.current = self.concurrent_replacement
+        if expected is not None and self.current != expected:
+            return None
+        removed, self.current = self.current, None
+        return removed
 
 
 class _DriverDatabaseError(Exception):
@@ -317,6 +345,94 @@ async def test_an_erasure_fence_racing_the_avatar_index_write_returns_locked(
     assert len(media_store.put_calls) == 1
     assert avatars.replace_calls == 1
     assert "avatar_replaced" not in events
+
+
+async def test_avatar_delete_retains_retry_target_when_private_storage_refuses_purge(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    tenant_id, events = uuid4(), []
+    authority = _TenantEffectAuthority(events)
+    media = _MediaStore(authority, events)
+    avatars = _AvatarRepository(authority, events)
+    app = _avatar_app(monkeypatch, tenant_id, authority, media, avatars)
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        assert (
+            await client.post(
+                "/v1/me/avatar", content=_png(), headers={"Content-Type": "image/png"}
+            )
+        ).status_code == 200
+        original = avatars.current
+        assert original is not None
+        events.clear()
+        media.delete_error = RuntimeError("private-bucket retained object")
+        response = await client.delete("/v1/me/avatar")
+        assert response.status_code == 503
+        assert response.json() == {"detail": "avatar removal temporarily unavailable"}
+        assert avatars.current == original and "avatar_delete" not in events
+        assert "private-bucket" not in response.text
+
+        media.delete_error = None
+        events.clear()
+        response = await client.delete("/v1/me/avatar")
+        assert response.status_code == 204
+        assert avatars.current is None
+        assert events == [
+            "authority_enter",
+            "avatar_read",
+            "media_delete",
+            "authority_exit",
+            "avatar_delete",
+        ]
+        assert media.delete_calls == [(tenant_id, original.storage_key)] * 2
+        assert (await client.delete("/v1/me/avatar")).status_code == 204
+        assert len(media.delete_calls) == 2
+
+
+@pytest.mark.parametrize("same_key", [False, True])
+async def test_avatar_delete_preserves_a_raced_replacement(
+    monkeypatch: pytest.MonkeyPatch,
+    same_key: bool,
+) -> None:
+    tenant_id, events = uuid4(), []
+    authority = _TenantEffectAuthority(events)
+    media = _MediaStore(authority, events)
+    avatars = _AvatarRepository(authority, events)
+    app = _avatar_app(monkeypatch, tenant_id, authority, media, avatars)
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        assert (
+            await client.post(
+                "/v1/me/avatar", content=_png(), headers={"Content-Type": "image/png"}
+            )
+        ).status_code == 200
+        assert avatars.current is not None
+        avatars.concurrent_replacement = replace(
+            avatars.current,
+            storage_key=avatars.current.storage_key if same_key else "b" * 64 + ".webp",
+            created_at=datetime.now(UTC),
+        )
+        response = await client.delete("/v1/me/avatar")
+        assert response.status_code == 409
+        assert avatars.current == avatars.concurrent_replacement
+
+
+async def test_avatar_delete_rejects_raced_erasure_before_touching_media(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    tenant_id, events = uuid4(), []
+    authority = _TenantEffectAuthority(events)
+    media = _MediaStore(authority, events)
+    avatars = _AvatarRepository(authority, events)
+    app = _avatar_app(monkeypatch, tenant_id, authority, media, avatars)
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        assert (
+            await client.post(
+                "/v1/me/avatar", content=_png(), headers={"Content-Type": "image/png"}
+            )
+        ).status_code == 200
+        authority.fenced = True
+        response = await client.delete("/v1/me/avatar")
+        assert response.status_code == 423
+        assert avatars.current is not None and media.delete_calls == []
 
 
 @pytest.mark.parametrize(

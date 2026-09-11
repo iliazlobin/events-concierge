@@ -1184,12 +1184,15 @@ def _feed_out(feed: Feed, constraints: RequestConstraints | None = None) -> Feed
                 price_currency=item.canonical_event.price_currency,
                 score=item.score,
                 rationale=item.rationale,
-                additional_dates=[EventOccurrenceOut(
-                    canonical_event_id=e.canonical_event_id,
-                    start_at=e.start_at.isoformat(),
-                    end_at=e.end_at.isoformat() if e.end_at else None,
-                    registration_urls=e.registration_urls(),
-                ) for e in item.additional_dates],
+                additional_dates=[
+                    EventOccurrenceOut(
+                        canonical_event_id=e.canonical_event_id,
+                        start_at=e.start_at.isoformat(),
+                        end_at=e.end_at.isoformat() if e.end_at else None,
+                        registration_urls=e.registration_urls(),
+                    )
+                    for e in item.additional_dates
+                ],
                 discovery_state=item.discovery_state,
                 source_freshness=item.source_freshness,
                 conflict=item.conflict_verdict.value,
@@ -1510,8 +1513,11 @@ def _catalog_browse_item_out(item: CatalogBrowseEvent) -> CatalogBrowseItemOut:
     now = datetime.now(UTC)
     source_checked = max((source.last_seen_at for source in item.sources), default=None)
     source_freshness = (
-        "unknown" if source_checked is None or source_checked > now
-        else "stale" if now - source_checked > timedelta(days=7) else "recent"
+        "unknown"
+        if source_checked is None or source_checked > now
+        else "stale"
+        if now - source_checked > timedelta(days=7)
+        else "recent"
     )
     return CatalogBrowseItemOut(
         discovery_state=lifecycle(event, now),
@@ -1524,7 +1530,9 @@ def _catalog_browse_item_out(item: CatalogBrowseEvent) -> CatalogBrowseItemOut:
         price_max_cents=event.price_max_cents,
         price_currency=event.price_currency,
         score=None,
-        rationale="Retained catalog observation." if lifecycle(event, now) == "past" else "Current catalog observation; chronological browse is not personalized.",
+        rationale="Retained catalog observation."
+        if lifecycle(event, now) == "past"
+        else "Current catalog observation; chronological browse is not personalized.",
         conflict="not_evaluated",
         lanes=["handoff"],
         registration_urls=_unique([source.registration_url for source in item.sources]),
@@ -2519,7 +2527,8 @@ def create_app() -> FastAPI:
         @app.get("/auth/login", include_in_schema=False)
         async def oidc_login(
             return_to: str = Query(
-                default="/" if settings.release_profile == "discovery" else "/app", max_length=2048,
+                default="/" if settings.release_profile == "discovery" else "/app",
+                max_length=2048,
             ),
         ) -> RedirectResponse:
             browser_session = configured_browser_session()
@@ -2999,10 +3008,44 @@ def create_app() -> FastAPI:
     async def delete_avatar(tenant_id: CsrfProtectedTenant) -> Response:
         """Remove the avatar and purge its object. Deleting an absent avatar succeeds."""
         container: Container = app.state.container
-        removed = await container.profile_avatars.delete(tenant_id)
+
+        async def purge_current() -> ProfileAvatar | None:
+            current = await container.profile_avatars.get(tenant_id)
+            if current is not None:
+                await container.media_store.delete(tenant_id, current.storage_key)
+            return current
+
+        try:
+            removed = await container.tenant_effect_authority.run(
+                TenantEffectRequest(
+                    tenant_id=tenant_id,
+                    kind=TenantEffectKind.PROFILE_MEDIA_WRITE,
+                    timeout_seconds=settings.tenant_effect_timeout_seconds,
+                ),
+                purge_current,
+            )
+        except TenantEffectFencedError as error:
+            raise HTTPException(status_code=423, detail="account erasure in progress") from error
+        except Exception as error:
+            # Retain the index so the same DELETE can retry the exact failed object. Provider
+            # details can contain bucket names and identities and must not reach the client.
+            raise HTTPException(
+                status_code=503, detail="avatar removal temporarily unavailable"
+            ) from error
+
         if removed is not None:
-            with suppress(Exception):
-                await container.media_store.delete(tenant_id, removed.storage_key)
+            # The trigger-protected write uses a separate session. Keep it outside external-effect
+            # authority to avoid advisory-lock re-entry, and never remove a raced replacement.
+            try:
+                deleted = await container.profile_avatars.delete(tenant_id, expected=removed)
+            except DBAPIError as error:
+                if not _is_account_erasure_write_fence(error):
+                    raise
+                raise HTTPException(
+                    status_code=423, detail="account erasure in progress"
+                ) from error
+            if deleted is None:
+                raise HTTPException(status_code=409, detail="avatar changed; retry removal")
         return Response(status_code=204)
 
     @app.get("/v1/me/api-keys", response_model=list[ApiKeyOut])

@@ -103,6 +103,7 @@ from .application.request_terminal import RequestTerminalService
 from .application.ticketmaster_budget import TicketmasterDispatchGate
 from .config import Settings, get_settings
 from .deployment.discovery_runtime import discovery_effects_disabled, validate_discovery_settings
+from .deployment.gcp_runtime import build_gcs_media_store
 from .domain.enums import CatalogSourceMode, Source
 from .domain.policy import SourcePolicy
 from .infra.db import init_engine
@@ -547,7 +548,7 @@ def build_container(
         ranking_profiles=configured_ranking_profiles,
         tenant_profiles=tenant_profiles or PostgresTenantProfileRepository(),
         profile_avatars=profile_avatars or PostgresProfileAvatarRepository(),
-        media_store=media_store or LocalFilesystemMediaStore(Path(settings.media_local_root)),
+        media_store=media_store or _build_media_store(settings),
         tenant_roles=tenant_roles or PostgresTenantRoleRepository(),
         api_keys=api_keys or PostgresApiKeyRepository(),
         saved_catalog_filters=(saved_catalog_filters or PostgresSavedCatalogFilterRepository()),
@@ -802,6 +803,13 @@ def _build_browser_admission(settings: Settings) -> BrowserAdmissionPort:
         capacity=settings.browser_pool_capacity,
         lease_seconds=settings.browser_admission_lease_seconds,
     )
+
+
+def _build_media_store(settings: Settings) -> MediaStorePort:
+    """API and erasure workers resolve the same explicitly selected durable media backend."""
+    if settings.media_backend == "gcs":
+        return build_gcs_media_store(settings)
+    return LocalFilesystemMediaStore(Path(settings.media_local_root))
 
 
 def _build_object_store(settings: Settings) -> ObjectStorePort:

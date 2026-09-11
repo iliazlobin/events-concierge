@@ -18,6 +18,7 @@ from events_concierge.adapters.disabled import (
     DisabledProductCapabilityError,
 )
 from events_concierge.adapters.gcs import GcsObjectStore
+from events_concierge.adapters.gcs.media_store import GcsMediaStore
 from events_concierge.adapters.oidc.session import OidcBffSessionAdapter
 from events_concierge.adapters.policy.pacer import RedisPacer
 from events_concierge.adapters.postgres.catalog import PostgresCatalogRepository
@@ -41,6 +42,7 @@ async def test_non_mock_discovery_builds_real_infrastructure_without_provider_io
 
     assert isinstance(container.catalog, PostgresCatalogRepository)
     assert isinstance(container.object_store, GcsObjectStore)
+    assert isinstance(container.media_store, GcsMediaStore)
     assert isinstance(container.pacer, RedisPacer)
     assert isinstance(container.browser_session, OidcBffSessionAdapter)
     assert container.auth_context is container.browser_session

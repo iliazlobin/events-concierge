@@ -6,11 +6,11 @@ lifecycle rule that deletes them.  Profile media has the opposite lifetime -- it
 its owner replaces or erases it -- so sharing the store would mean either avatars silently vanishing
 or reworking a lifecycle rule that exists for a different tenant of the same bucket.
 
-Implementations are interchangeable: a local filesystem today, blob storage later, with no change
-above this interface.  Two rules make that swap safe.  ``key`` is an opaque, server-generated,
-tenant-relative identifier -- never a filename, never anything a caller supplied -- so no
-implementation has to defend against traversal.  And ``tenant_id`` is a separate argument rather than
-part of the key, so every backend can enforce tenant partitioning in its own idiom.
+Local development uses a filesystem; hosted processes use a dedicated private GCS bucket without
+expiry, versioning, soft delete or retention. Authenticated application routes serve the bytes; no
+public or signed object URLs are issued. ``key`` is an opaque, server-generated, tenant-relative
+identifier. Every implementation validates that identifier and enforces partitioning using the
+separate ``tenant_id`` argument.
 """
 
 from __future__ import annotations
