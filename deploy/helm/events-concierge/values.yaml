@@ -51,6 +51,9 @@ applicationConfig:
   EC_DATABASE_MAX_OVERFLOW: "0"
   EC_RUNTIME_PROVIDER_FACTORY: events_concierge.deployment.gcp_runtime:build_runtime_ports
   EC_GCP_PROJECT: replace-me
+  EC_MEDIA_BACKEND: gcs
+  EC_GCS_MEDIA_BUCKET: replace-me-media
+  EC_GCS_MEDIA_PREFIX: events-concierge/media/v1
   EC_GCS_CLAIM_CHECK_BUCKET: replace-me-claim-check
   EC_GCS_CLAIM_CHECK_PREFIX: events-concierge/claim-check/v1
   EC_ADMIN_INGESTION_ENABLED: "false"

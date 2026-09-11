@@ -14,6 +14,8 @@ global:
 applicationConfig:
   EC_PUBLIC_BASE_URL: https://staging.concierge.example
   EC_GCP_PROJECT: events-staging
+  # Separate private nonversioned bucket with soft delete disabled; provision and verify first.
+  EC_GCS_MEDIA_BUCKET: events-staging-media
   EC_GCS_CLAIM_CHECK_BUCKET: events-staging-claim-check
   EC_TEMPORAL_TARGET: events-staging.example.tmprl.cloud:7233
   EC_TEMPORAL_TLS_DOMAIN: events-staging.example.tmprl.cloud

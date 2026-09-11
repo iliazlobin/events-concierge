@@ -5,6 +5,8 @@ global:
   runtimeProviderReady: false
   releasePhase: migration
 applicationConfig:
+  EC_MEDIA_BACKEND: local
+  EC_GCS_MEDIA_BUCKET: ""
   EC_ENV: development
   EC_MOCK_CLOUD: 'true'
   EC_RUNTIME_PROVIDER_FACTORY: events_concierge.deployment.development_runtime:build_runtime_ports
