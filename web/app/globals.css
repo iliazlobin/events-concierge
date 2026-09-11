@@ -7747,3 +7747,16 @@ textarea:focus-visible {
 }
 .chat-turn__retry:hover:not(:disabled) { border-color: var(--accent); color: var(--accent); }
 .chat-turn__retry:disabled { cursor: default; opacity: 0.4; }
+
+.map-preview__actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  border-top: 1px solid var(--line);
+}
+.map-preview__actions .map-preview__link {
+  border: 0;
+  background: transparent;
+  cursor: pointer;
+}
+.map-preview__actions > a:last-child { margin-left: auto; }

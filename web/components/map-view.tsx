@@ -546,6 +546,7 @@ export function MapView({
         </div>
 
         <MapPreviewRail
+          onEntitySelect={onEntitySelect}
           events={visibleEvents}
           selectedId={selectedId}
           onSelect={selectEvent}

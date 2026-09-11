@@ -56,11 +56,13 @@ logs: ## Tail service logs
 	$(COMPOSE) --profile app logs -f
 
 app-logs: ## Tail frontend, API, and durable worker logs
-	$(COMPOSE) --profile app logs -f frontend api workflow-worker request-starter account-erasure notifier change-delivery handoff-expiry lifecycle-invariants ingestion-commands ingestion-cadence
+	$(COMPOSE) --profile app logs -f frontend api workflow-worker catalog-workflow-worker request-starter account-erasure notifier change-delivery handoff-expiry lifecycle-invariants ingestion-commands ingestion-cadence
 
 migrate: ## Apply database migrations against the running postgres
 	EC_APP_ROLE_PASSWORD="$${EC_LOCAL_APP_ROLE_PASSWORD:-ec_app}" \
-		EC_MIGRATION_URL=postgresql+psycopg://ec:ec@localhost:5433/ec $(UV) run alembic upgrade head
+		EC_ENV=local EC_MOCK_CLOUD=true \
+		EC_MIGRATION_URL=postgresql+psycopg://ec:ec@localhost:5433/ec \
+		$(UV) run python -m events_concierge.deployment.local_operator_bootstrap --migrate
 
 lint: ## Ruff lint
 	$(UV) run ruff check src tests
@@ -204,25 +206,42 @@ lifecycle-invariants: up migrate ## Read-only nightly lifecycle/watch/handoff di
 	EC_TEMPORAL_TARGET=localhost:7234 \
 	$(UV) run python -m events_concierge.workers.lifecycle_invariants
 
-ingestion-commands: up migrate ## Relay durable local ingestion-admin commands
+ingestion-commands: up migrate ## Execute durable ingestion-admin commands
 	EC_DATABASE_URL=postgresql+psycopg://ec_app:ec_app@localhost:5433/ec \
 	EC_REDIS_URL=redis://localhost:6380/0 \
 	EC_TEMPORAL_TARGET=localhost:7234 \
 	EC_PACER_BACKEND=redis \
 	EC_ADMIN_INGESTION_ENABLED=true \
+	EC_INGESTION_EXECUTOR_ENABLED=true \
+	EC_TEMPORAL_CATALOG_TASK_QUEUE="$${EC_TEMPORAL_CATALOG_TASK_QUEUE:-events-concierge-catalog}" \
+	EC_INGESTION_EXECUTOR_DATABASE_URL="$${EC_INGESTION_EXECUTOR_DATABASE_URL:-postgresql+psycopg://ec_local_ingestion:ec_local_ingestion@localhost:5433/ec}" \
 	$(UV) run python -m events_concierge.workers.ingestion_commands
 
 ingestion-cadence: up migrate ## Schedule due local sources into the durable ingestion queue
 	EC_DATABASE_URL=postgresql+psycopg://ec_app:ec_app@localhost:5433/ec \
 	EC_ADMIN_INGESTION_ENABLED=true \
 	EC_CATALOG_INGESTION_SCHEDULER_ENABLED=true \
+	EC_OPERATOR_DATABASE_URL="$${EC_OPERATOR_DATABASE_URL:-postgresql+psycopg://ec_local_operator:ec_local_operator@localhost:5433/ec}" \
 	$(UV) run python -m events_concierge.workers.ingestion_cadence
 
-workflow-worker: up migrate ## Serve Temporal workflows, including P15a single-GET catalog refreshes
+workflow-worker: up migrate ## Serve transactional Temporal workflows
 	EC_DATABASE_URL=postgresql+psycopg://ec_app:ec_app@localhost:5433/ec \
 	EC_REDIS_URL=redis://localhost:6380/0 \
 	EC_TEMPORAL_TARGET=localhost:7234 \
 	EC_PACER_BACKEND=redis \
+	EC_TEMPORAL_WORKER_ROLE=transactional \
+	$(UV) run python -m events_concierge.workflows.worker
+
+.PHONY: catalog-workflow-worker
+catalog-workflow-worker: up migrate ## Serve catalog workflows with the isolated executor profile
+	EC_REDIS_URL=redis://localhost:6380/0 \
+	EC_TEMPORAL_TARGET=localhost:7234 \
+	EC_PACER_BACKEND=redis \
+	EC_TEMPORAL_TASK_QUEUE="$${EC_TEMPORAL_CATALOG_TASK_QUEUE:-events-concierge-catalog}" \
+	EC_TEMPORAL_CATALOG_TASK_QUEUE="$${EC_TEMPORAL_CATALOG_TASK_QUEUE:-events-concierge-catalog}" \
+	EC_TEMPORAL_WORKER_ROLE=catalog \
+	EC_INGESTION_EXECUTOR_ENABLED=true \
+	EC_INGESTION_EXECUTOR_DATABASE_URL="$${EC_INGESTION_EXECUTOR_DATABASE_URL:-postgresql+psycopg://ec_local_ingestion:ec_local_ingestion@localhost:5433/ec}" \
 	$(UV) run python -m events_concierge.workflows.worker
 
 catalog-refresh: up migrate ## Queue/refresh one approved registry source; pass SOURCE_KEY=...
@@ -231,6 +250,9 @@ catalog-refresh: up migrate ## Queue/refresh one approved registry source; pass 
 	EC_REDIS_URL=redis://localhost:6380/0 \
 	EC_TEMPORAL_TARGET=localhost:7234 \
 	EC_PACER_BACKEND=redis \
+	EC_TEMPORAL_CATALOG_TASK_QUEUE="$${EC_TEMPORAL_CATALOG_TASK_QUEUE:-events-concierge-catalog}" \
+	EC_INGESTION_EXECUTOR_ENABLED=true \
+	EC_INGESTION_EXECUTOR_DATABASE_URL="$${EC_INGESTION_EXECUTOR_DATABASE_URL:-postgresql+psycopg://ec_local_ingestion:ec_local_ingestion@localhost:5433/ec}" \
 	$(UV) run python -m events_concierge.workers.catalog_refresh "$(SOURCE_KEY)" --run-key "$(RUN_KEY)"
 
 catalog-cadence: up migrate ## Dispatch one bounded pass of due reviewed catalog sources
@@ -238,4 +260,7 @@ catalog-cadence: up migrate ## Dispatch one bounded pass of due reviewed catalog
 	EC_REDIS_URL=redis://localhost:6380/0 \
 	EC_TEMPORAL_TARGET=localhost:7234 \
 	EC_PACER_BACKEND=redis \
+	EC_TEMPORAL_CATALOG_TASK_QUEUE="$${EC_TEMPORAL_CATALOG_TASK_QUEUE:-events-concierge-catalog}" \
+	EC_INGESTION_EXECUTOR_ENABLED=true \
+	EC_INGESTION_EXECUTOR_DATABASE_URL="$${EC_INGESTION_EXECUTOR_DATABASE_URL:-postgresql+psycopg://ec_local_ingestion:ec_local_ingestion@localhost:5433/ec}" \
 	$(UV) run python -m events_concierge.workers.catalog_refresh_dispatcher

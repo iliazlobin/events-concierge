@@ -5,12 +5,16 @@ on:
     paths:
       - "infra/**"
       - "deploy/**"
+      - "tests/unit/test_operator_deployment.py"
+      - "web/app/admin/v1/**"
       - ".github/workflows/deployment-validation.yml"
   push:
     branches: [main]
     paths:
       - "infra/**"
       - "deploy/**"
+      - "tests/unit/test_operator_deployment.py"
+      - "web/app/admin/v1/**"
       - ".github/workflows/deployment-validation.yml"
   workflow_dispatch:
 
@@ -48,6 +52,16 @@ jobs:
       - name: Validate modules and staging composition
         working-directory: infra/terraform/environments/staging
         run: tofu validate -no-color
+
+      - name: Test optional operator authority using mocked plans
+        working-directory: infra/terraform/environments/staging
+        run: tofu test -no-color
+
+      - name: Test catalog object IAM using mocked plans
+        working-directory: infra/terraform/modules/storage-kms
+        run: |
+          tofu init -backend=false -input=false
+          tofu test -no-color
 
   helm:
     name: Helm lint and render
@@ -158,12 +172,24 @@ jobs:
           grep -q 'restartPolicy: Always' /tmp/events-concierge-operations.yaml
           grep -q 'rotate-app-role-password' /tmp/events-concierge-role-rotation.yaml
           grep -q 'restartPolicy: Always' /tmp/events-concierge-role-rotation.yaml
-          ! grep -R -E 'ingestion-(commands|cadence)' deploy/helm/events-concierge
+          # The default profile keeps the legacy dispatcher. Hosted command execution and
+          # queue-accepting cadence are opt-in and covered by rendered contracts below.
+          ! grep -E 'events_concierge.workers.ingestion_(commands|cadence)' /tmp/events-concierge-application.yaml
           ! grep -R -E '^[[:space:]]*kind:[[:space:]]+Secret[[:space:]]*$' /tmp/events-concierge-*.yaml
           if grep -h -E '^[[:space:]]*image:' /tmp/events-concierge-*.yaml | grep -v '@sha256:'; then
             echo 'Every rendered image must be pinned by sha256 digest.' >&2
             exit 1
           fi
+
+      - name: Validate operator profiles, identity, credentials, and queued cadence
+        env:
+          EC_DEPLOYMENT_RENDER_DIR: /tmp/events-concierge-operator
+        run: |
+          python3 -m venv "${RUNNER_TEMP}/deployment-test-tools"
+          "${RUNNER_TEMP}/deployment-test-tools/bin/python" -m pip install \
+            --disable-pip-version-check "pytest==8.3.5" "pytest-asyncio==0.26.0" "PyYAML==6.0.3"
+          "${RUNNER_TEMP}/deployment-test-tools/bin/python" -m pytest \
+            tests/unit/test_operator_deployment.py
 
       - name: Validate built-in Kubernetes resource schemas
         run: >-
@@ -172,3 +198,5 @@ jobs:
           /tmp/events-concierge-application.yaml
           /tmp/events-concierge-operations.yaml
           /tmp/events-concierge-role-rotation.yaml
+          /tmp/events-concierge-operator/operator-disabled.yaml
+          /tmp/events-concierge-operator/operator-enabled.yaml

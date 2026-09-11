@@ -212,6 +212,7 @@ export function ChatView({
               ) : null}
               {turn.items ? (
                 <EventList
+          groupSessions
                   events={turn.items}
                   compact
                   expandedId={expandedId}

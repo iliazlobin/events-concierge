@@ -21,6 +21,7 @@ import httpx
 from selectolax.parser import HTMLParser, Node
 
 from ...domain.catalog_sources import CatalogSource
+from ...domain.catalog_window import collection_reference_time
 from ...domain.enums import CatalogSourceMode, PriceStatus, Source
 from ...domain.events import CandidateEvent
 
@@ -103,7 +104,7 @@ class UsfcaCatalogFetcher:
 
         response = await self._response_or_error(source, publisher)
         rows = _rows_from_response(response, source.source_key)
-        now = _as_utc(self._now())
+        now = _as_utc(collection_reference_time(source, self._now()))
         candidates_by_source_id: dict[str, CandidateEvent] = {}
         for row in rows:
             candidate = _candidate_from_row(row, source, publisher, now)

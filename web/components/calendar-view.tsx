@@ -55,6 +55,7 @@ interface CalendarViewProps {
   onSourceSelect: (sourceKey: string) => void;
   onFacetSelect: (value: string) => void;
   onEntitySelect: (reference: EventEntityReference) => void;
+  onEventTopicSelect?: (topic: string) => void;
   onTopicSelect: (topic: string) => void;
   onTopicsClear: () => void;
 }
@@ -471,6 +472,7 @@ export function CalendarView({
   onFacetSelect,
   onEntitySelect,
   onTopicSelect,
+  onEventTopicSelect,
   onTopicsClear,
 }: CalendarViewProps) {
   const firstSummaryDay = summary?.days[0]?.start_day;
@@ -947,7 +949,7 @@ export function CalendarView({
             onSourceSelect={onSourceSelect}
             onFacetSelect={onFacetSelect}
             onEntitySelect={onEntitySelect}
-            onTopicSelect={onTopicSelect}
+            onTopicSelect={onEventTopicSelect ?? onTopicSelect}
             emptyTitle={!selectedDate
               ? "Select a day"
               : dayLoading

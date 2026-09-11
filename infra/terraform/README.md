@@ -49,7 +49,28 @@ rejected.
 
 The first slice intentionally grants the runtime Python identities the same bucket, KMS, and
 runtime-secret access because the current composition builds a complete dependency graph in each
-process. Split those bindings when process-specific runtime bundles are available.
+process. The optional hosted operator profile uses the separate catalog composition: set
+`operator_enabled = true` to provision its two identities and empty database-secret containers.
+The controller can read only its own database secret. The executor can read its own database,
+Redis/CA, and Temporal secrets and use objects only below `catalog_claim_check_prefix`; neither
+identity receives consumer credentials, migration credentials, or envelope-key access. The
+controller has no bucket access. GCS's service agent continues to handle bucket CMEK encryption.
+The existing consumer identities retain their broad legacy bucket grants, which also cover
+catalog objects; these changes constrain the new executor and do not establish mutual isolation
+from the consumer runtime.
+
+After authorized provisioning, `tofu output -json operator_helm_values` supplies the non-secret
+`serviceAccounts.operator-api`, `serviceAccounts.ingestion-executor`, and
+`operator.executorClaimCheckPrefix` chart overrides. Use the existing `secret_ids` output for
+the new `operator-database-url` and `ingestion-executor-database-url` secret containers and pin
+the audited versions in the chart. Database logins must inherit only `ec_operator_controller`
+or `ec_ingestion_executor`, respectively; provisioning secret payloads, login passwords, IAP,
+TLS, and enabling `operator.enabled` remain separate release steps. The catalog prefix must
+remain disjoint from the consumer claim-check prefix. Existing catalog workflows must be drained
+or proven compatible before changing their storage prefix.
+
+`tofu test` in the staging directory checks both profiles using mocked providers and plan-only
+runs. The storage module has a separate mocked plan test for its catalog prefix IAM boundary.
 
 The two included alert policies are baseline infrastructure signals, not launch-complete
 observability. Before production traffic, add API availability/error/latency, failed Kubernetes

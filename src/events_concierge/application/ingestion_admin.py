@@ -23,6 +23,7 @@ from ..domain.ingestion_admin import (
     IngestionCatalogEvent,
     IngestionCatalogEventPage,
     IngestionCatalogQualityIssue,
+    IngestionCatalogRecordPage,
     IngestionCommand,
     IngestionCommandAction,
     IngestionCommandDetail,
@@ -34,16 +35,19 @@ from ..domain.ingestion_admin import (
     IngestionOverview,
     IngestionProcessReport,
     IngestionRunPage,
+    IngestionRunStatus,
     IngestionSourceConfigurationUpdate,
     IngestionSourceDetail,
     IngestionSourceEnabledBulkUpdate,
     IngestionSourceHealth,
     IngestionSourcePage,
+    IngestionSourceRegistrationHistory,
     IngestionSourceRevisionTarget,
     IngestionStageSummaryEntry,
     IngestionThroughputBucket,
     SafeCommandResult,
 )
+from ..domain.ingestion_run_query import run_query_options, validate_run_key
 from ..ports.ingestion_admin import (
     IngestionAdminRepository,
     IngestionCommandRejectedError,
@@ -61,7 +65,7 @@ from .catalog_refresh_dispatcher import (
 _SOURCE_KEY = re.compile(r"[a-z0-9][a-z0-9-]{1,79}")
 _SOURCE_STATES = frozenset({"all", "active", "due", "blocked", "failed"})
 _SOURCE_SORT_FIELDS = frozenset(
-    {"source", "health", "catalog", "last_success", "latest_run", "output"}
+    {"source", "health", "catalog", "catalog_total", "last_success", "latest_run", "output"}
 )
 _SORT_DIRECTIONS = frozenset({"asc", "desc"})
 _RUN_STATUSES = frozenset({"running", "paused", "succeeded", "failed"})
@@ -203,6 +207,20 @@ class IngestionAdminService:
         """Return served upcoming events graded by their source's last successful fetch."""
         return await self._repository.catalog_freshness()
 
+    async def source_registration_history(
+        self,
+        *,
+        window_days: int = 90,
+        include_fixtures: bool = False,
+    ) -> IngestionSourceRegistrationHistory:
+        if type(window_days) is not int or window_days not in {7, 30, 90}:
+            raise ValueError("invalid source registration history window")
+        if type(include_fixtures) is not bool:
+            raise ValueError("invalid source registration fixture scope")
+        return await self._repository.source_registration_history(
+            window_days=window_days, include_fixtures=include_fixtures
+        )
+
     async def source_health(
         self,
         *,
@@ -291,6 +309,13 @@ class IngestionAdminService:
         window_hours: int | None = None,
         include_fixtures: bool = False,
         limit: int = 50,
+        query: str | None = None,
+        sort_by: str = "started",
+        sort_direction: str = "desc",
+        started_after: datetime | None = None,
+        started_before: datetime | None = None,
+        stage: str | None = None,
+        stage_outcome: str | None = None,
         offset: int = 0,
     ) -> IngestionRunPage:
         if status is not None and status not in _RUN_STATUSES:
@@ -302,7 +327,17 @@ class IngestionAdminService:
         if window_hours is not None:
             _validate_window_hours(window_hours)
         _validate_page(limit, offset)
+        options = run_query_options(
+            query=query,
+            sort_by=sort_by,
+            sort_direction=sort_direction,
+            started_after=started_after,
+            started_before=started_before,
+            stage=stage,
+            stage_outcome=stage_outcome,
+        )
         return await self._repository.list_runs(
+            **options,
             status=status,
             source_key=source_key,
             mode=mode,
@@ -312,6 +347,15 @@ class IngestionAdminService:
             include_fixtures=include_fixtures,
             limit=limit,
             offset=offset,
+        )
+
+    async def lookup_run(
+        self, source_key: str, run_key: str, *, include_fixtures: bool = False
+    ) -> IngestionRunStatus | None:
+        _validate_source_key(source_key, optional=False)
+        validate_run_key(run_key)
+        return await self._repository.lookup_run(
+            source_key, run_key, include_fixtures=include_fixtures
         )
 
     async def get_filter_metadata(
@@ -360,6 +404,47 @@ class IngestionAdminService:
             return None
         return replace(detail, current_build=self._build_identity)
 
+    async def list_catalog_records(
+        self,
+        *,
+        source_key: str | None = None,
+        run_key: str | None = None,
+        query: str | None = None,
+        date_scope: str = "all",
+        price_status: str = "all",
+        after_start_at: datetime | None = None,
+        after_canonical_event_id: UUID | None = None,
+        limit: int = 20,
+    ) -> IngestionCatalogRecordPage:
+        """Read retained records; consumer discovery rules do not define this inventory."""
+        _validate_source_key(source_key, optional=True)
+        _validate_limit(limit)
+        normalized_query = _catalog_query(query)
+        if run_key is not None:
+            if source_key is None:
+                raise ValueError("catalog run requires a source")
+            validate_run_key(run_key)
+        if date_scope not in {"all", "upcoming", "past"}:
+            raise ValueError("invalid catalog date scope")
+        if price_status not in {"all", "free", "paid", "unknown"}:
+            raise ValueError("invalid catalog price status")
+        if (after_start_at is None) != (after_canonical_event_id is None):
+            raise ValueError("catalog cursor must provide both fields")
+        if after_start_at is not None:
+            if after_start_at.utcoffset() is None:
+                raise ValueError("catalog cursor timestamp must be timezone-aware")
+            after_start_at = after_start_at.astimezone(UTC)
+        return await self._repository.browse_catalog_records(
+            source_key=source_key,
+            run_key=run_key,
+            query=normalized_query,
+            date_scope=date_scope,
+            price_status=price_status,
+            after_start_at=after_start_at,
+            after_canonical_event_id=after_canonical_event_id,
+            limit=limit,
+        )
+
     async def list_source_events(
         self,
         source_key: str,
@@ -368,6 +453,7 @@ class IngestionAdminService:
         after_start_at: datetime | None = None,
         after_canonical_event_id: UUID | None = None,
         limit: int = 20,
+        run_key: str | None = None,
     ) -> IngestionCatalogEventPage:
         """Return parsed current output and provenance without raw provider material."""
         _validate_source_key(source_key, optional=False)
@@ -382,6 +468,16 @@ class IngestionAdminService:
             after = CatalogBrowseCursor(
                 after_start_at.astimezone(UTC),
                 after_canonical_event_id,
+            )
+        if run_key is not None:
+            validate_run_key(run_key)
+            return await self._repository.browse_run_events(
+                source_key,
+                run_key,
+                query=normalized_query,
+                after_start_at=after.start_at if after else None,
+                after_canonical_event_id=after.canonical_event_id if after else None,
+                limit=limit,
             )
         if self._catalog is None:
             raise RuntimeError("source event catalog is unavailable")
@@ -424,6 +520,7 @@ class IngestionAdminService:
         min_interval_ms: int,
         page_limit: int,
         requested_by: str = "local-admin",
+        collection_horizon_days: int | None = None,
     ) -> IngestionSourceConfigurationUpdate:
         """Validate and persist one explicit owner-reviewed source revision."""
         _validate_source_key(source_key, optional=False)
@@ -476,11 +573,19 @@ class IngestionAdminService:
                 page_limit=page_limit,
                 handoff_only=handoff_only,
                 source_revision=expected_revision,
+                collection_horizon_days=90
+                if collection_horizon_days is None
+                else collection_horizon_days,
             )
         except ValueError as error:
             raise ValueError("source configuration contract is invalid") from error
         return await self._repository.update_source_configuration(
             source_key,
+            **(
+                {"collection_horizon_days": collection_horizon_days}
+                if collection_horizon_days is not None
+                else {}
+            ),
             expected_revision=expected_revision,
             seed_url=seed_url,
             approved_origins=approved_origins,

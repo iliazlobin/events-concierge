@@ -5,7 +5,7 @@ the conflict gate did not hard-block; each carries the ordered lane plan the sag
 from __future__ import annotations
 
 from collections.abc import Callable
-from datetime import timedelta
+from datetime import UTC, datetime, timedelta
 
 from ..domain.conflict import BusyBlock, evaluate_conflict
 from ..domain.enums import ConflictVerdict, GroupCondition, Lane, Modality, Source
@@ -16,9 +16,11 @@ from ..domain.routing import LaneInput, build_lane_plan
 from ..ports.calendar import CalendarPort
 from ..ports.ranking import RankerPort
 from ..ports.repositories import CatalogRepository
+from .discovery_results import arrange, eligible, freshness, lifecycle
 
 DEFAULT_DURATION = timedelta(hours=2)
 MAX_FEED_OFFSET = 10_000
+CANDIDATE_POOL_SIZE = 400
 
 # The modality a source is REGISTERED through (discovery-only sources fall through to handoff).
 _REGISTER_MODALITY = {Source.MEETUP: Modality.API, Source.LUMA: Modality.BROWSER}
@@ -49,13 +51,17 @@ class FeedService:
     ) -> Feed:
         offset = self._cursor_offset(cursor)
         pool = await self._catalog.retrieve(
-            request.constraints, request.intent_embedding, limit * 4 + offset
+            request.constraints, request.intent_embedding, CANDIDATE_POOL_SIZE
         )
+        now = datetime.now(UTC)
+        pool = [event for event in pool if eligible(event, request.constraints, now)]
         ranked = await self._ranker.rerank(request, pool)
+        arranged = arrange(ranked, request.constraints, now=now)
 
-        busy = await self._free_busy_window(request, [e for e, _ in ranked])
+        upcoming = [e for e, _ in ranked if lifecycle(e, now) == "upcoming"]
+        busy = await self._free_busy_window(request, upcoming) if upcoming else []
         items: list[RankedCandidate] = []
-        for event, score in ranked:
+        for event, score, additional_dates in arranged:
             end = event.end_at or (event.start_at + DEFAULT_DURATION)
             verdict = evaluate_conflict(event.start_at, end, busy)
             items.append(
@@ -64,7 +70,10 @@ class FeedService:
                     score=score,
                     rationale=self._rationale(event, score, verdict),
                     conflict_verdict=verdict,
-                    lane_plan=self.lane_plan(event),
+                    lane_plan=self.lane_plan(event) if lifecycle(event, now) == "upcoming" else (),
+                    additional_dates=additional_dates,
+                    discovery_state=lifecycle(event, now),
+                    source_freshness=freshness(event, now),
                 )
             )
 
@@ -75,7 +84,28 @@ class FeedService:
             if next_offset <= MAX_FEED_OFFSET and next_offset < len(items)
             else None
         )
-        return Feed(request_id=request.request_id, items=tuple(page), next_cursor=next_cursor)
+        return Feed(
+            request_id=request.request_id,
+            items=tuple(page),
+            next_cursor=next_cursor,
+            signals={
+                "candidate_events": float(len(pool)),
+                "candidate_limit": float(CANDIDATE_POOL_SIZE),
+                "distinct_topics_at_20": float(
+                    len({topic for item in items[:20] for topic in item.canonical_event.topics})
+                ),
+                "distinct_choices_at_20": float(len(items[:20])),
+                "distinct_organizers_at_20": float(
+                    len(
+                        {
+                            item.canonical_event.organizer_name.casefold()
+                            for item in items[:20]
+                            if item.canonical_event.organizer_name
+                        }
+                    )
+                ),
+            },
+        )
 
     @staticmethod
     def _cursor_offset(cursor: str | None) -> int:

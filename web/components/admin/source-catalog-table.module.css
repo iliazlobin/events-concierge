@@ -1,0 +1,58 @@
+.section {
+  --panel: var(--kit-surface, #0e100d);
+  --panel-raised: var(--kit-surface-raised, #151813);
+  --line: var(--kit-line, rgba(220, 230, 210, 0.13));
+  --line-strong: var(--kit-line-strong, rgba(255, 255, 255, 0.17));
+  min-width: 0;
+  margin-top: 0;
+}
+
+.section :global(.admin-catalog-toolbar) { align-items: flex-end; flex-wrap: wrap; gap: 14px; margin-bottom: 12px; }
+.section :global(.admin-catalog-search) { flex: 1 1 290px; width: auto; min-width: 0; height: 40px; min-height: 40px; background: var(--panel-raised); }
+.section :global(.admin-catalog-search) input { font-family: inherit; font-size: 12px; }
+
+/* Keep the event ledger on the same surfaces and type scale as Sources. */
+.section :global(.admin-catalog-table-shell) { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; }
+.section :global(.admin-table--catalog) { background: var(--panel); font-family: inherit; font-size: 12px; }
+.section :global(.admin-table--catalog) th { background: var(--panel-raised); font-family: inherit; font-size: 10px; letter-spacing: 0; text-transform: none; }
+.section :global(.admin-table--catalog) td { padding: 13px 12px; border-color: var(--line); }
+.section :global(.admin-table--catalog) tbody tr { background: var(--panel); }
+.section :global(.admin-table--catalog) tbody tr:hover { background: #13160e; }
+.section :global(.admin-table--catalog) tr:global(.is-expanded) > td { background: #171d11; }
+.section :global(.admin-event-title) { font-family: inherit; font-size: 12px; font-weight: 550; }
+.section :global(.admin-table--catalog) td > strong,
+.section :global(.admin-catalog-text-link) > strong { font-size: 12px; font-weight: 550; }
+.section :global(.admin-table--catalog) td > small { color: #8a947f; font-size: 10px; line-height: 1.5; margin-top: 5px; }
+.section :global(.admin-table--catalog) td > small:global(.is-missing) { color: #ffd074; }
+.section :global(.admin-table--catalog) td > code { font-size: 9px; color: #74836a; }
+.section :global(.admin-provenance-link) { color: #a9bb96; font-size: 10px; font-weight: 400; }
+.section :global(.admin-field-coverage) { font-family: inherit; font-size: 11px; font-weight: 550; }
+.section :global(.admin-catalog-pager) { font-family: inherit; font-size: 10px; padding-top: 12px; }
+.section :global(.admin-catalog-pager) button { background: var(--panel-raised); font-size: 11px; height: 30px; }
+.section :global(.admin-catalog-loading) { font-family: inherit; font-size: 12px; }
+.section :global(.admin-coverage-heading) > span { background: var(--panel-raised); font-size: 11px; }
+
+.section :global(.admin-catalog-detail-row) > td { background: #11160f; }
+.section :global(.admin-catalog-event-detail) { border-left-color: #bada7b; padding: 20px; }
+.section :global(.admin-catalog-event-detail__heading) code { font-size: 10px; overflow-wrap: anywhere; }
+.identifiers { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 6px 20px; padding-top: 12px; color: #8a947f; font-size: 10px; }
+.detailActions { display: flex; align-items: center; flex-wrap: wrap; gap: 6px 18px; }
+.section .textLink { display: inline-flex; align-items: center; gap: 6px; min-height: 28px; height: auto; padding: 3px 0; border: 0; border-radius: 0; background: transparent; color: #b3c799; font-family: inherit; font-size: 11px; font-weight: 400; line-height: 1.5; cursor: pointer; text-decoration: none; text-underline-offset: 3px; }
+.section .textLink:hover { color: #c9e89e; text-decoration: underline; }
+.section .textLink svg { width: 12px; height: 12px; flex-shrink: 0; }
+.section :global(.admin-catalog-event-detail__main) > p { font-size: 12px; }
+.section :global(.admin-catalog-metadata-groups) { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.section :global(.admin-catalog-metadata-groups) h4 { font-family: inherit; font-size: 11px; letter-spacing: 0; text-transform: none; }
+.section :global(.admin-catalog-metadata-groups) dt > span,
+.section :global(.admin-catalog-metadata-groups) dt > small { font-family: inherit; font-size: 10px; text-transform: none; }
+.section :global(.admin-catalog-metadata-groups) dd { font-size: 12px; white-space: normal; overflow-wrap: anywhere; }
+.section :global(.admin-catalog-coverage) > div strong { font-size: 12px; }
+.section :global(.admin-catalog-coverage) > div span,
+.section :global(.admin-catalog-coverage) li { font-family: inherit; font-size: 11px; }
+.section :global(.admin-catalog-event-detail__main) details { font-size: 11px; margin-top: 20px; }
+.section :global(.admin-catalog-event-detail__main) summary { color: #c7dcb5; cursor: pointer; }
+.section button:focus-visible, .section a:focus-visible { outline: 2px solid #c9ff68; outline-offset: 3px; }
+
+@media (max-width: 760px) {
+  .section :global(.admin-catalog-search) { flex-basis: 100%; width: 100%; align-self: stretch; }
+}

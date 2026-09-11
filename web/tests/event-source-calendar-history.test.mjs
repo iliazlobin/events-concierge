@@ -76,7 +76,7 @@ test("the calendar continues only the selected day, never the whole range", () =
   // read every event to display a number. Only the open day is continued.
   assert.match(conciergeApp, /<CalendarView[\s\S]*?dayHasMore=\{Boolean\(dayCursor\)\}/);
   assert.match(conciergeApp, /<CalendarView[\s\S]*?onDayLoadMore=\{handleDayLoadMore\}/);
-  assert.doesNotMatch(conciergeApp, /<CalendarView[\s\S]*?onLoadMore=/);
+  assert.doesNotMatch(conciergeApp.match(/<CalendarView[\s\S]*?\/>/)?.[0] ?? "", /onLoadMore=/);
   assert.match(calendarView, /onClick=\{onDayLoadMore\}/);
   assert.doesNotMatch(calendarView, /onLoadMore/);
   assert.match(

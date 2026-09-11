@@ -5,6 +5,7 @@ from __future__ import annotations
 from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
+from unittest.mock import AsyncMock
 from uuid import UUID
 
 import pytest
@@ -283,7 +284,7 @@ async def test_worker_guards_return_before_building_runtime_dependencies(
     log = _RecordingLog()
     built: list[object] = []
     monkeypatch.setattr(worker_module, "_log", log)
-    monkeypatch.setattr(worker_module, "build_container", built.append)
+    monkeypatch.setattr(worker_module, "OperatorDatabase", built.append)
 
     monkeypatch.setattr(worker_module, "get_settings", Settings)
     await worker_module.run_ingestion_cadence()
@@ -303,10 +304,10 @@ async def test_worker_guards_return_before_building_runtime_dependencies(
             mock_cloud=False,
         ),
     )
-    await worker_module.run_ingestion_cadence()
+    with pytest.raises(ValueError, match="deployment-owned"):
+        await worker_module.run_ingestion_cadence()
 
     assert built == []
-    assert log.warnings == [("ingestion cadence scheduler refused outside local mock mode", {})]
 
 
 async def test_worker_wires_scheduler_and_five_minute_loop(
@@ -320,7 +321,7 @@ async def test_worker_wires_scheduler_and_five_minute_loop(
         image_digest="sha256:" + "b" * 64,
     )
     repository = object()
-    container = SimpleNamespace(ingestion_admin_repo=repository)
+    database = SimpleNamespace(session_scope=object(), aclose=AsyncMock())
     constructor_calls: list[dict[str, object]] = []
     loop_calls: list[dict[str, object]] = []
 
@@ -355,7 +356,10 @@ async def test_worker_wires_scheduler_and_five_minute_loop(
         )
 
     monkeypatch.setattr(worker_module, "get_settings", lambda: settings)
-    monkeypatch.setattr(worker_module, "build_container", lambda value: container)
+    monkeypatch.setattr(worker_module, "OperatorDatabase", lambda value: database)
+    monkeypatch.setattr(
+        worker_module, "PostgresIngestionAdminRepository", lambda *a, **k: repository
+    )
     monkeypatch.setattr(worker_module, "IngestionCadenceScheduler", _ConstructedScheduler)
     monkeypatch.setattr(worker_module, "_run_ingestion_cadence_loop", stop_loop)
 

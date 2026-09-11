@@ -114,6 +114,20 @@ resource "google_storage_bucket_iam_member" "runtime" {
   member = each.value
 }
 
+resource "google_storage_bucket_iam_member" "catalog_executor" {
+  for_each = var.catalog_executor_members
+
+  bucket = google_storage_bucket.claim_check.name
+  role   = "roles/storage.objectUser"
+  member = each.value
+
+  condition {
+    title       = "catalog-claim-check-only"
+    description = "Catalog payload access excludes all consumer tenant claim-check objects."
+    expression  = "resource.name.startsWith('projects/_/buckets/${var.bucket_name}/objects/${var.catalog_claim_check_prefix}/')"
+  }
+}
+
 resource "google_secret_manager_secret" "container" {
   for_each = var.secret_names
 

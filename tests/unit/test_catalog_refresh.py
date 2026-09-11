@@ -22,6 +22,7 @@ from events_concierge.application.catalog_refresh import (
 )
 from events_concierge.composition import Container
 from events_concierge.domain.catalog_sources import (
+    CatalogCollectionWindow,
     CatalogRefreshClaim,
     CatalogRefreshCommit,
     CatalogSource,
@@ -41,6 +42,7 @@ from events_concierge.domain.policy import (
     SourceQuarantineSignal,
 )
 from events_concierge.domain.request import EventRequest, RequestConstraints
+from events_concierge.ports.catalog_sources import CatalogCollectionWindowUnavailableError
 from events_concierge.ports.policy import PacerLease, PacerLeaseStatus, PacerOperation, PacerRequest
 from events_concierge.ports.sources import (
     SourceAccessDeniedError,
@@ -231,6 +233,18 @@ class _Fetcher:
         if self._error is not None:
             raise self._error
         return list(self._candidates)
+
+
+class _FrozenWindowRepository:
+    def __init__(self, window: CatalogCollectionWindow | None) -> None:
+        self.window = window
+        self.calls: list[tuple[str, str, UUID, int]] = []
+
+    async def prepare_collection_window(
+        self, source_key: str, run_key: str, *, lease_token: UUID, expected_revision: int,
+    ) -> CatalogCollectionWindow | None:
+        self.calls.append((source_key, run_key, lease_token, expected_revision))
+        return self.window
 
 
 class _RecordingPacer:
@@ -1376,3 +1390,95 @@ def test_the_lease_reservation_is_the_real_upper_bound_on_a_reviewed_page_cap(
 
     assert catalog_refresh_lease_seconds(source, floor_seconds=300) == expected
 
+
+async def test_collection_window_is_injected_and_filters_before_atomic_publication() -> None:
+    now = datetime(2026, 7, 16, 12, tzinfo=UTC)
+    window = CatalogCollectionWindow(1, 1, now, now + timedelta(days=1), 1)
+    repository = _MemorySourceRepository(_source(now))
+    catalog, observations = _Catalog(), _Observations()
+    candidates = [replace(_candidate(now), source_event_id=str(index), start_at=at)
+                  for index, at in enumerate((now - timedelta(seconds=1), now, window.end_at))]
+    fetcher = _Fetcher(candidates)
+    windows = _FrozenWindowRepository(window)
+    service = CatalogRefreshService(
+        repository, _Committer(repository, catalog, observations),
+        {CatalogSourceMode.PUBLIC_JSONLD: fetcher}, _RecordingPacer(), _MutableDiscoveryPolicyGate(),
+        collection_windows=windows, now=lambda: now,
+    )
+    result = await service.refresh("approved-calendar", "manual:window")
+    assert result.outcome is CatalogRefreshOutcome.SUCCEEDED
+    assert (result.candidate_count, result.canonical_count) == (1, 1)
+    assert fetcher.calls[0].collection_window == window
+    assert [candidate.source_event_id for candidate in catalog.batches[0]] == ["1"]
+    assert windows.calls[0][3] == 1
+
+
+async def test_unadmitted_collection_window_never_fetches_or_publishes() -> None:
+    now = datetime(2026, 7, 16, 12, tzinfo=UTC)
+    repository = _MemorySourceRepository(_source(now))
+    catalog, observations = _Catalog(), _Observations()
+    fetcher = _Fetcher([_candidate(now)])
+    service = CatalogRefreshService(
+        repository, _Committer(repository, catalog, observations),
+        {CatalogSourceMode.PUBLIC_JSONLD: fetcher}, _RecordingPacer(), _MutableDiscoveryPolicyGate(),
+        collection_windows=_FrozenWindowRepository(None), now=lambda: now,
+    )
+    result = await service.refresh("approved-calendar", "manual:denied-window")
+    assert result.outcome is CatalogRefreshOutcome.DEFERRED
+    assert repository.claimed == {}
+    assert result.retry_after_seconds == 1.0
+    assert fetcher.calls == []
+    assert catalog.batches == []
+    assert observations.records == []
+
+
+async def test_retry_keeps_database_window_when_worker_clock_and_registry_horizon_change() -> None:
+    first_now = datetime(2026, 7, 16, 12, tzinfo=UTC)
+    current_now = first_now
+    window = CatalogCollectionWindow(1, 1, first_now, first_now + timedelta(days=1), 1)
+    repository = _MemorySourceRepository(_source(first_now))
+    catalog, observations = _Catalog(), _Observations()
+    fetcher = _Fetcher([replace(_candidate(first_now), start_at=first_now + timedelta(hours=1))],
+                       error=SourceTransientError("temporary source error", retry_after_seconds=1))
+    windows = _FrozenWindowRepository(window)
+    service = CatalogRefreshService(
+        repository, _Committer(repository, catalog, observations),
+        {CatalogSourceMode.PUBLIC_JSONLD: fetcher}, _RecordingPacer(), _MutableDiscoveryPolicyGate(),
+        collection_windows=windows, now=lambda: current_now,
+    )
+    assert (await service.refresh("approved-calendar", "manual:retry-window")).outcome is CatalogRefreshOutcome.DEFERRED
+    current_now += timedelta(days=1)
+    repository.source = replace(repository.source, collection_horizon_days=30, source_revision=2)
+    windows.window = replace(window, attempt_count=2)
+    fetcher._error = None
+    result = await service.refresh("approved-calendar", "manual:retry-window")
+    assert result.candidate_count == 1
+    assert [source.collection_window.start_at for source in fetcher.calls] == [first_now, first_now]
+    assert fetcher.calls[-1].collection_window.end_at == window.end_at
+    assert windows.calls[-1][3] == 2
+
+
+async def test_expired_frozen_window_requires_new_run_without_fetch_or_lease_wait() -> None:
+    now = datetime(2026, 7, 16, 12, tzinfo=UTC)
+    repository = _MemorySourceRepository(_source(now))
+    catalog, observations = _Catalog(), _Observations()
+    fetcher = _Fetcher([_candidate(now)])
+
+    class Windows(_FrozenWindowRepository):
+        async def prepare_collection_window(self, *args, **kwargs):
+            raise CatalogCollectionWindowUnavailableError("collection_window_expired")
+
+    service = CatalogRefreshService(
+        repository, _Committer(repository, catalog, observations),
+        {CatalogSourceMode.PUBLIC_JSONLD: fetcher}, _RecordingPacer(), _MutableDiscoveryPolicyGate(),
+        collection_windows=Windows(None), now=lambda: now,
+    )
+    result = await service.refresh("approved-calendar", "manual:expired")
+    assert result.outcome is CatalogRefreshOutcome.SKIPPED
+    assert "collection_window_expired" in result.detail
+    assert "start a new run" in result.detail
+    assert repository.failed == ["source changed: collection_window_expired"]
+    assert repository.claimed == {}
+    assert fetcher.calls == []
+    assert catalog.batches == []
+    assert observations.records == []

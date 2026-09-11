@@ -22,6 +22,11 @@ import httpx
 from selectolax.parser import HTMLParser
 
 from ...domain.catalog_sources import CatalogSource
+from ...domain.catalog_window import (
+    collection_end_at,
+    collection_end_day,
+    collection_reference_time,
+)
 from ...domain.enums import CatalogSourceMode, PriceStatus, Source
 from ...domain.events import CandidateEvent
 from ...infra.logging import get_logger
@@ -89,9 +94,11 @@ class CommunicoCatalogFetcher:
         if publisher is None:
             raise ValueError("Communico source must use a reviewed public events endpoint")
 
-        now = _as_local_time(self._now())
+        now = _as_local_time(collection_reference_time(source, self._now()))
         horizon_start = datetime.combine(now.date(), datetime.min.time(), _LOCAL_TIME_ZONE)
-        horizon_end = horizon_start + timedelta(days=_HORIZON_DAYS)
+        horizon_end = collection_end_at(
+            source, horizon_start + timedelta(days=source.collection_horizon_days),
+        ).astimezone(_LOCAL_TIME_ZONE)
         response = await self._response_or_error(source, publisher, horizon_start)
         events = _events_from_response(response, source.source_key)
         candidates: list[CandidateEvent] = []
@@ -107,7 +114,11 @@ class CommunicoCatalogFetcher:
         self, source: CatalogSource, publisher: _CommunicoPublisher, horizon_start: datetime
     ) -> httpx.Response:
         """Request only the exact public list endpoint; redirects are source failures (FR-10.3)."""
-        url = _request_url(source.seed_url, horizon_start)
+        request_days = (
+            (collection_end_day(source, horizon_start.date(), _LOCAL_TIME_ZONE) - horizon_start.date()).days
+            if source.collection_window is not None else source.collection_horizon_days + 1
+        )
+        url = _request_url(source.seed_url, horizon_start, request_days)
         if not _is_approved_endpoint_url(source, publisher, url):
             raise CommunicoFetchError("Communico request left the approved endpoint")
         headers = {"User-Agent": self._user_agent}
@@ -186,10 +197,10 @@ def _is_approved_endpoint_url(
     )
 
 
-def _request_url(seed_url: str, horizon_start: datetime) -> str:
+def _request_url(seed_url: str, horizon_start: datetime, request_days: int = _REQUEST_DAYS) -> str:
     """Construct the fixed local request without accepting a source-returned URL (FR-10.3)."""
     request = json.dumps(
-        {"private": False, "date": horizon_start.date().isoformat(), "days": _REQUEST_DAYS},
+        {"private": False, "date": horizon_start.date().isoformat(), "days": request_days},
         separators=(",", ":"),
     )
     parsed = urlsplit(seed_url)

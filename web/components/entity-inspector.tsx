@@ -174,10 +174,11 @@ function observedLabel(value: string | null): string {
 
 export interface EntityInspectorProps {
   tenantId: string | null;
-  /** The derived scene, shared with the canvas so the two cannot describe different frames. */
+  /** The original occurrence scene, retained beneath the canvas session grouping. */
   model: EntityGraphSceneModel;
   textModel: EntityGraphTextModel;
   /** The node under inspection; `null` reads the ego. */
+  eventSessions?: CatalogEntityGraphNode[];
   selectedNodeId: string | null;
   onSelectNode: (nodeId: string | null) => void;
   onFocusEntity: (entityId: string) => void;
@@ -189,6 +190,7 @@ export function EntityInspector({
   model,
   textModel,
   selectedNodeId,
+  eventSessions,
   onSelectNode,
   onFocusEntity,
   onHoverNode,
@@ -404,6 +406,24 @@ export function EntityInspector({
             <span className="sr-only">Back to {egoLabel}</span>
           </button>
         </header>
+
+        {eventSessions && eventSessions.length > 1 ? (
+          <section aria-label="Event dates">
+            <h3>{eventSessions.length} dates in this graph</h3>
+            <p className="entity-graph-inspector__provenance">Matching sessions. Select a date to see its own details and source evidence.</p>
+            <ul className="entity-graph-inspector__mentions">
+              {eventSessions.map((session) => (
+                <li key={session.node_id}>
+                  <button type="button" aria-pressed={session.node_id === subject.node_id}
+                    onClick={() => onSelectNode(session.node_id)}>
+                    <strong>{session.start_at ? new Intl.DateTimeFormat(undefined, {year:"numeric",month:"short",day:"numeric",weekday:"short"}).format(new Date(session.start_at)) : "Date unknown"}</strong>
+                    <small>{session.start_at ? formatEventTime(session.start_at,session.end_at) : ""}{session.is_past ? " · Past event" : ""}{session.node_id === subject.node_id ? " · Selected" : ""}</small>
+                  </button>
+                </li>
+              ))}
+            </ul>
+          </section>
+        ) : null}
 
         {subject.topics.length ? (
           <ul className="entity-activity-lines">

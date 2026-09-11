@@ -45,6 +45,23 @@ output "workload_service_account_emails" {
   description = "Map these values to the chart's serviceAccounts annotations."
 }
 
+output "operator_helm_values" {
+  description = "Non-secret Helm overrides for the provisioned operator identities and catalog prefix. IAP, secret versions, and operator.enabled remain separate reviewed inputs."
+  value = var.operator_enabled ? {
+    serviceAccounts = {
+      "operator-api" = {
+        gcpServiceAccount = module.workload_identity.workload_service_account_emails["operator_api"]
+      }
+      "ingestion-executor" = {
+        gcpServiceAccount = module.workload_identity.workload_service_account_emails["ingestion_executor"]
+      }
+    }
+    operator = {
+      executorClaimCheckPrefix = var.catalog_claim_check_prefix
+    }
+  } : null
+}
+
 output "redis_server_ca_certificates" {
   value       = module.managed_state.redis_server_ca_certificates
   description = "Public Redis CA material to populate the runtime redis-ca-certificate container."

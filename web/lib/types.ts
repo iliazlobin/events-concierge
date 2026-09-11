@@ -256,6 +256,14 @@ export interface EventExtractionEvidence {
 }
 
 export interface EventItem {
+  discovery_state?: "upcoming" | "ongoing" | "past" | "cancelled" | "uncertain";
+  source_freshness?: "recent" | "stale" | "unknown";
+  additional_dates?: {
+    canonical_event_id: string;
+    start_at: string;
+    end_at: string | null;
+    registration_urls: string[];
+  }[];
   canonical_event_id: string;
   title: string;
   image_url?: string | null;

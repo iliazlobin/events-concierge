@@ -28,7 +28,9 @@ from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
 import httpx
 
+from ...application.ingestion_telemetry import record_ingestion_collection_progress
 from ...domain.catalog_sources import CatalogSource
+from ...domain.catalog_window import collection_reference_time, in_collection_window
 from ...domain.enums import CatalogSourceMode
 from ...domain.events import CandidateEvent
 from ..luma_common import (
@@ -103,7 +105,7 @@ class LumaCalendarCatalogFetcher:
     async def fetch(self, source: CatalogSource) -> list[CandidateEvent]:
         """Return the complete current future cursor or raise without publishing anything."""
         profile = _profile_for_source(source)
-        now = _aware_utc(self._now())
+        now = _aware_utc(collection_reference_time(source, self._now()))
         cursor: str | None = None
         seen_cursors: set[str] = set()
         seen_source_ids: set[str] = set()
@@ -145,9 +147,13 @@ class LumaCalendarCatalogFetcher:
                             f"Luma calendar {source.source_key} repeated an event identity"
                         )
                     seen_source_ids.add(candidate.source_event_id)
-                    if candidate.start_at >= now:
+                    if candidate.start_at >= now and in_collection_window(source, candidate):
                         listed.append((entry, candidate))
 
+                await record_ingestion_collection_progress(
+                    source_key=source.source_key, request_completed=True,
+                    page_completed=True, candidate_count=len(listed),
+                )
                 if not page.has_more:
                     walked = True
                     break
@@ -192,6 +198,9 @@ class LumaCalendarCatalogFetcher:
                 entry,
                 candidate,
                 detail_number,
+            )
+            await record_ingestion_collection_progress(
+                source_key=source.source_key, request_completed=True,
             )
             (
                 price_status,

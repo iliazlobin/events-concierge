@@ -23,6 +23,11 @@ import httpx
 from selectolax.parser import HTMLParser
 
 from ...domain.catalog_sources import CatalogSource, CatalogSourcePage
+from ...domain.catalog_window import (
+    collection_end_day,
+    collection_reference_time,
+    in_collection_window,
+)
 from ...domain.enums import CatalogSourceMode, PriceStatus, Source
 from ...domain.events import CandidateEvent
 from ...domain.policy import SourceQuarantineSignal
@@ -118,7 +123,7 @@ class LegistarCatalogFetcher:
         if publisher is None:
             raise ValueError("Legistar source must use a reviewed public Events endpoint")
 
-        now = _as_local_time(self._now())
+        now = _as_local_time(collection_reference_time(source, self._now()))
         candidates: list[CandidateEvent] = []
         seen_event_ids: set[str] = set()
         for page_number in range(source.page_limit):
@@ -162,7 +167,7 @@ class LegistarCatalogFetcher:
             raise ValueError("Legistar source must use a reviewed public Events endpoint")
         if page_number < 0 or page_number >= source.page_limit:
             raise ValueError("Legistar page number is outside the reviewed source page cap")
-        now = _as_local_time(self._now())
+        now = _as_local_time(collection_reference_time(source, self._now()))
         return await self._fetch_page(
             source,
             publisher,
@@ -183,10 +188,15 @@ class LegistarCatalogFetcher:
         apply_local_pacing: bool,
     ) -> CatalogSourcePage:
         """Read/normalize exactly one fixed offset page for legacy or P15b callers (NFR-8)."""
-        start_day = window_start_day or now.date()
+        start_day = now.date() if source.collection_window is not None else window_start_day or now.date()
+        end_day = (
+            collection_end_day(source, now.date(), _LOCAL_TIME_ZONE)
+            if source.collection_window is not None
+            else start_day + timedelta(days=source.collection_horizon_days)
+        )
         page = page_number + 1
         offset = page_number * _PAGE_SIZE
-        url = _request_url(source.seed_url, start_day, offset)
+        url = _request_url(source.seed_url, start_day, offset, end_day)
         headers = {"User-Agent": self._user_agent}
         async with httpx.AsyncClient(
             headers=headers,
@@ -216,6 +226,7 @@ class LegistarCatalogFetcher:
             candidate
             for record in records
             if (candidate := _candidate_from_event(record, source, publisher, now)) is not None
+            and in_collection_window(source, candidate)
         )
         return CatalogSourcePage(
             page_number=page_number,
@@ -348,13 +359,13 @@ def _is_approved_endpoint_url(
     )
 
 
-def _request_url(seed_url: str, start_day: date, offset: int) -> str:
+def _request_url(seed_url: str, start_day: date, offset: int, end_day: date | None = None) -> str:
     """Construct the fixed, locally bounded page query without accepting user filter text (FR-10.3)."""
     if offset < 0 or offset % _PAGE_SIZE != 0:
         raise ValueError("Legistar offset must be a non-negative page boundary")
     parsed = urlsplit(seed_url)
     parameters = (
-        ("$filter", _filter_clause(start_day)),
+        ("$filter", _filter_clause(start_day, end_day)),
         ("$orderby", "EventDate asc,EventId asc"),
         ("$top", str(_PAGE_SIZE)),
         ("$skip", str(offset)),
@@ -362,9 +373,9 @@ def _request_url(seed_url: str, start_day: date, offset: int) -> str:
     return urlunsplit((parsed.scheme, parsed.netloc, parsed.path, urlencode(parameters), ""))
 
 
-def _filter_clause(start_day: date) -> str:
+def _filter_clause(start_day: date, end_day: date | None = None) -> str:
     """Return the owner-reviewed local 90-day date predicate (FR-3.1)."""
-    end_exclusive = start_day + timedelta(days=_HORIZON_DAYS)
+    end_exclusive = end_day or start_day + timedelta(days=_HORIZON_DAYS)
     return (
         f"EventDate ge datetime'{start_day.isoformat()}T00:00:00' and "
         f"EventDate lt datetime'{end_exclusive.isoformat()}T00:00:00'"

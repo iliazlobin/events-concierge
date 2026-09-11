@@ -105,6 +105,34 @@ def build_runtime_ports(
     imports ``google-cloud-storage``; client construction may discover Application Default
     Credentials, while bucket and object operations remain lazy until the port is used.
     """
+    prefix = settings.gcs_claim_check_prefix.strip().rstrip("/")
+    if prefix == "events-concierge/catalog" or prefix.startswith("events-concierge/catalog/"):
+        raise GcpRuntimeConfigurationError("consumer payload storage cannot use the reserved catalog prefix")
+    object_store = build_gcs_object_store(settings, storage_client=storage_client)
+
+    google_access, google_bindings, calendar = _google_calendar_ports(settings)
+    discovery_sources = _discovery_sources(settings)
+    return RuntimePorts(
+        object_store=object_store,
+        calendar=calendar,
+        google_calendar_access=google_access,
+        google_calendar_bindings=google_bindings,
+        discovery_sources=discovery_sources,
+        # These empty maps are an explicit production decision: mutation lanes remain disabled
+        # until their provider evidence, credentials, withdrawal behavior, and review gates exist.
+        register_sources={},
+        withdrawal_sources={},
+        action_audit=PostgresRegistrationActionAuditRepository(),
+        registration_consent=PostgresRegistrationConsentEvidenceRepository(),
+    )
+
+
+def build_gcs_object_store(
+    settings: Settings,
+    *,
+    storage_client: GcsStorageClient | None = None,
+) -> GcsObjectStore:
+    """Build only native GCS storage, independently of all consumer provider dependencies."""
     if settings.mock_cloud:
         raise GcpRuntimeConfigurationError("the GCP runtime provider requires EC_MOCK_CLOUD=false")
 
@@ -123,21 +151,7 @@ def build_runtime_ports(
         root_prefix=root_prefix,
     )
 
-    google_access, google_bindings, calendar = _google_calendar_ports(settings)
-    discovery_sources = _discovery_sources(settings)
-    return RuntimePorts(
-        object_store=object_store,
-        calendar=calendar,
-        google_calendar_access=google_access,
-        google_calendar_bindings=google_bindings,
-        discovery_sources=discovery_sources,
-        # These empty maps are an explicit production decision: mutation lanes remain disabled
-        # until their provider evidence, credentials, withdrawal behavior, and review gates exist.
-        register_sources={},
-        withdrawal_sources={},
-        action_audit=PostgresRegistrationActionAuditRepository(),
-        registration_consent=PostgresRegistrationConsentEvidenceRepository(),
-    )
+    return object_store
 
 
 def _default_storage_client(*, project: str | None) -> GcsStorageClient:

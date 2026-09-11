@@ -1,5 +1,7 @@
 "use client";
 
+import { useState } from "react";
+import { variedEventChoices } from "@/lib/event-discovery";
 import { ArrowDownUp } from "lucide-react";
 
 import { EventList } from "@/components/event-list";
@@ -7,6 +9,7 @@ import type { CatalogSort, EventEntityReference, EventItem } from "@/lib/types";
 
 interface EventsViewProps {
   events: EventItem[];
+  broadDiscovery?: boolean;
   sort: CatalogSort;
   sourceName?: string;
   historicalWindow?: boolean;
@@ -26,6 +29,7 @@ interface EventsViewProps {
 
 export function EventsView({
   events,
+  broadDiscovery = false,
   sort,
   sourceName,
   historicalWindow = false,
@@ -42,6 +46,9 @@ export function EventsView({
   onEntitySelect,
   onTopicSelect,
 }: EventsViewProps) {
+  const [varyChoices, setVaryChoices] = useState(false);
+  const varied = varyChoices && broadDiscovery && !historicalWindow && !sourceName;
+  const displayedEvents = variedEventChoices(events, varied);
   const heading = sourceName
     ? `${sourceName} events`
     : historicalWindow
@@ -61,7 +68,7 @@ export function EventsView({
           <select
             aria-label="Sort events"
             value={sort}
-            onChange={(event) => onSortChange(event.target.value as CatalogSort)}
+            onChange={(event) => { setVaryChoices(false); onSortChange(event.target.value as CatalogSort); }}
           >
             <option value="soonest">Soonest first</option>
             <option value="latest">Latest first</option>
@@ -69,6 +76,13 @@ export function EventsView({
         </label>
       </header>
 
+      {broadDiscovery && !historicalWindow && !sourceName ? (
+        <label>
+          <input type="checkbox" checked={varyChoices} onChange={(e) => setVaryChoices(e.target.checked)} />
+          Vary organizers and activities in loaded results
+        </label>
+      ) : null}
+      {varied ? <p>Varied choices from {events.length} loaded events. Load more to broaden the selection.</p> : null}
       {error ? <p className="workspace-error" role="alert">{error}</p> : null}
       {loading && !events.length ? (
         <div className="event-skeletons" aria-label="Loading events">
@@ -78,7 +92,8 @@ export function EventsView({
         </div>
       ) : (
         <EventList
-          events={events}
+          groupSessions
+          events={displayedEvents}
           expandedId={expandedId}
           onExpandedChange={onExpandedChange}
           hasMore={Boolean(nextCursor)}

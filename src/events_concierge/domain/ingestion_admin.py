@@ -187,6 +187,32 @@ class CatalogConcentrationEntry:
 
 
 @dataclass(frozen=True, slots=True)
+class IngestionSourceRegistrationBucket:
+    """One daily registration interval and its cumulative retained source count."""
+
+    bucket_start: datetime
+    bucket_end: datetime
+    registered_sources: int
+    added_sources: int
+
+
+@dataclass(frozen=True, slots=True)
+class IngestionSourceRegistrationHistory:
+    """Registration dates for retained sources, including paused and retired rows."""
+
+    generated_at: datetime
+    window_start: datetime
+    window_days: int
+    bucket_hours: int
+    baseline_sources: int
+    total_sources: int
+    added_sources: int
+    items: tuple[IngestionSourceRegistrationBucket, ...]
+    include_fixtures: bool
+    history_scope: str = "retained_registry"
+
+
+@dataclass(frozen=True, slots=True)
 class IngestionSourceHealth:
     """One registry row graded by four independently inspectable components.
 
@@ -313,6 +339,8 @@ class IngestionRunStatus:
     is_latest_for_source: bool = False
     resolved_by_newer_success: bool = False
     source_configuration: IngestionRunSourceConfiguration | None = None
+    execution_configuration: IngestionRunSourceConfiguration | None = None
+    collection_window: IngestionRunCollectionWindow | None = None
     command: IngestionRunCommandLink | None = None
     execution: IngestionRunExecutionDescriptor | None = None
     resources: IngestionRunResourceEvidence | None = None
@@ -330,6 +358,18 @@ class IngestionRunSourceConfiguration:
     refresh_interval_minutes: int
     min_interval_ms: int
     page_limit: int
+    collection_horizon_days: int | None = None
+    source_revision: int | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class IngestionRunCollectionWindow:
+    """Frozen bounds of the actual run, not today's registry or a reconstructed legacy window."""
+
+    window_source_revision: int
+    horizon_days: int
+    start_at: datetime
+    end_at: datetime
 
 
 @dataclass(frozen=True, slots=True)
@@ -422,6 +462,9 @@ class IngestionSourceStatus:
     retired_at: datetime | None = None
     retired_reason: str | None = None
     superseded_by_source_key: str | None = None
+    # Retained operator Catalog inventory; distinct from legacy discovery event_count.
+    total_event_count: int | None = None
+    upcoming_event_count: int | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -490,6 +533,9 @@ class IngestionSourceConfiguration:
     retired_at: datetime | None = None
     retired_reason: str | None = None
     superseded_by_source_key: str | None = None
+    collection_horizon_days: int = 90
+    total_event_count: int | None = None
+    upcoming_event_count: int | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -612,7 +658,7 @@ class IngestionCatalogEvent:
 
 @dataclass(frozen=True, slots=True)
 class IngestionCatalogEventPage:
-    """Keyset page of a source's latest successful current-catalog projection."""
+    """Keyset page of current source output or an exact run's retained attribution."""
 
     items: tuple[IngestionCatalogEvent, ...]
     source_total: int
@@ -621,6 +667,46 @@ class IngestionCatalogEventPage:
     next_start_at: datetime | None
     next_canonical_event_id: UUID | None
     query: str | None
+    run_key: str | None = None
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class IngestionCatalogRecord(IngestionCatalogEvent):
+    """One retained canonical record with its selected matching source observation."""
+
+    source_key: str
+    source_display_name: str
+
+
+@dataclass(frozen=True, slots=True)
+class IngestionCatalogSourceCount:
+    """Distinct matching canonical records for one source; counts can overlap."""
+
+    source_key: str
+    source_display_name: str
+    events: int
+
+
+@dataclass(frozen=True, slots=True)
+class IngestionCatalogRecordPage:
+    """Exact filtered inventory count and a bounded, deduplicated keyset page."""
+
+    generated_at: datetime
+    items: tuple[IngestionCatalogRecord, ...]
+    total: int
+    limit: int
+    has_more: bool
+    next_start_at: datetime | None
+    next_canonical_event_id: UUID | None
+    query: str | None
+    source_key: str | None
+    run_key: str | None
+    date_scope: str
+    price_status: str
+    upcoming_total: int
+    source_counts: tuple[IngestionCatalogSourceCount, ...]
+    source_count: int
+    source_counts_truncated: bool
 
 
 @dataclass(frozen=True, slots=True)

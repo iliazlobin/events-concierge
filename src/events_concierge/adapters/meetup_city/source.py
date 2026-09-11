@@ -31,7 +31,9 @@ from urllib.parse import urljoin, urlsplit
 import httpx
 from selectolax.parser import HTMLParser
 
+from ...application.ingestion_telemetry import record_ingestion_collection_progress
 from ...domain.catalog_sources import CatalogSource
+from ...domain.catalog_window import collection_reference_time, filter_collection_window
 from ...domain.enums import CatalogSourceMode, PriceStatus, RegistrationStatus, Source
 from ...domain.events import MAX_PUBLIC_PRICE_CENTS, CandidateEvent, GeoPoint
 
@@ -215,10 +217,14 @@ class MeetupCityCatalogFetcher:
             transport=self._transport,
         ) as client:
             html = await self._fetch_city_html(client, source, profile)
-            candidates = _candidates_from_html(
+            candidates = filter_collection_window(source, _candidates_from_html(
                 html,
                 source_key=source.source_key,
-                now=_aware_utc(self._now()),
+                now=_aware_utc(collection_reference_time(source, self._now())),
+            ))
+            await record_ingestion_collection_progress(
+                source_key=source.source_key, request_completed=True,
+                page_completed=True, candidate_count=len(candidates),
             )
             enriched: list[CandidateEvent] = []
             for detail_number, candidate in enumerate(candidates, start=1):
@@ -235,6 +241,9 @@ class MeetupCityCatalogFetcher:
                     enriched.append(_with_detail_status(candidate, exc.code))
                     continue
                 enriched.append(_enrich_from_detail(candidate, detail_html))
+                await record_ingestion_collection_progress(
+                    source_key=source.source_key, request_completed=True,
+                )
             return enriched
 
     async def _fetch_city_html(

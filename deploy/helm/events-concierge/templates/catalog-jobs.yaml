@@ -22,10 +22,10 @@ spec:
             {{- include "events-concierge.selectorLabels" (dict "root" . "component" "catalog-dispatcher") | nindent 12 }}
             app.kubernetes.io/part-of: events-concierge
           annotations:
-            checksum/runtime-secret-versions: {{ .Values.secretManager.runtimeSecrets | toJson | sha256sum }}
+            checksum/runtime-secret-versions: {{ .Values.operator | toJson | sha256sum }}-{{ .Values.secretManager.runtimeSecrets | toJson | sha256sum }}
         spec:
           restartPolicy: Never
-          serviceAccountName: {{ (index .Values.serviceAccounts "catalog-jobs").name }}
+          serviceAccountName: {{ (index .Values.serviceAccounts (ternary "operator-api" "catalog-jobs" .Values.operator.enabled)).name }}
           automountServiceAccountToken: true
           enableServiceLinks: false
           securityContext:
@@ -60,10 +60,17 @@ spec:
             - name: dispatcher
               image: {{ include "events-concierge.image" .Values.global.appImage | quote }}
               imagePullPolicy: {{ .Values.global.appImage.pullPolicy }}
+              {{- if .Values.operator.enabled }}
+              command: [python, -m, events_concierge.workers.ingestion_cadence, --once]
+              env:
+                - name: EC_CATALOG_INGESTION_SCHEDULER_ENABLED
+                  value: "true"
+              {{- else }}
               command: [python, -m, events_concierge.workers.catalog_refresh_dispatcher]
+              {{- end }}
               envFrom:
                 - configMapRef:
-                    name: {{ include "events-concierge.fullname" . }}-runtime
+                    name: {{ include "events-concierge.fullname" . }}-{{ ternary "operator" "runtime" .Values.operator.enabled }}
               securityContext:
                 {{- include "events-concierge.appSecurityContext" . | nindent 16 }}
               resources:
@@ -86,7 +93,7 @@ spec:
                 driver: secrets-store-gke.csi.k8s.io
                 readOnly: true
                 volumeAttributes:
-                  secretProviderClass: {{ include "events-concierge.runtimeSecretProviderClass" . | quote }}
+                  secretProviderClass: {{ printf "%s-%s" (include "events-concierge.fullname" .) (ternary "operator" "runtime" .Values.operator.enabled) | quote }}
             {{- end }}
 {{- end }}
 {{- if and .Values.jobs.catalogRefresh.enabled (or (eq .Values.global.releasePhase "all") (eq .Values.global.releasePhase "operations")) }}

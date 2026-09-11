@@ -1,5 +1,5 @@
 locals {
-  service_accounts = {
+  service_accounts = merge({
     frontend = {
       gcp_account_id             = "${var.name_prefix}-frontend"
       kubernetes_service_account = "events-concierge-frontend"
@@ -60,7 +60,18 @@ locals {
       kubernetes_service_account = "events-concierge-migration"
       project_roles              = ["roles/cloudsql.client"]
     }
-  }
+    }, var.operator_enabled ? {
+    operator_api = {
+      gcp_account_id             = "${var.name_prefix}-operator"
+      kubernetes_service_account = "events-concierge-operator-api"
+      project_roles              = ["roles/cloudsql.client"]
+    }
+    ingestion_executor = {
+      gcp_account_id             = "${var.name_prefix}-executor"
+      kubernetes_service_account = "events-concierge-ingestion-executor"
+      project_roles              = ["roles/cloudsql.client"]
+    }
+  } : {})
 
   runtime_keys = toset([
     "api",
@@ -89,23 +100,50 @@ locals {
     "migration-url",
   ])
 
-  all_secret_names = setunion(local.runtime_secret_names, local.migration_secret_names)
+  operator_secret_names = var.operator_enabled ? toset([
+    "operator-database-url",
+    "ingestion-executor-database-url",
+  ]) : toset([])
+  executor_shared_secret_names = toset(["redis-url", "redis-ca-certificate", "temporal-api-key"])
+  all_secret_names = setunion(
+    local.runtime_secret_names, local.migration_secret_names, local.operator_secret_names,
+  )
+  # IAM resource instance keys must be known during a fresh plan, before the accounts exist.
+  # These addresses are deterministic from the same inputs passed to workload_identity.
+  workload_iam_members = {
+    for key, account in local.service_accounts :
+    key => "serviceAccount:${account.gcp_account_id}@${var.project_id}.iam.gserviceaccount.com"
+  }
   runtime_members = toset([
-    for key in local.runtime_keys : module.workload_identity.workload_service_account_members[key]
+    for key in local.runtime_keys : local.workload_iam_members[key]
   ])
   migration_members = toset([
-    module.workload_identity.workload_service_account_members["migration"],
+    local.workload_iam_members["migration"],
   ])
+  operator_members = var.operator_enabled ? toset([
+    local.workload_iam_members["operator_api"],
+  ]) : toset([])
+  executor_members = var.operator_enabled ? toset([
+    local.workload_iam_members["ingestion_executor"],
+  ]) : toset([])
   secret_accessors = merge(
-    { for name in local.runtime_secret_names : name => local.runtime_members },
+    { for name in local.runtime_secret_names : name => setunion(
+      local.runtime_members,
+      contains(local.executor_shared_secret_names, name) ? local.executor_members : toset([]),
+    ) },
     { for name in local.migration_secret_names : name => local.migration_members },
+    var.operator_enabled ? {
+      "operator-database-url"           = local.operator_members
+      "ingestion-executor-database-url" = local.executor_members
+    } : {},
   )
 }
 
 module "project_services" {
   source = "../../modules/project-services"
 
-  project_id = var.project_id
+  project_id          = var.project_id
+  additional_services = var.operator_enabled ? ["iap.googleapis.com"] : []
 }
 
 module "network" {
@@ -169,16 +207,18 @@ module "managed_state" {
 module "storage_kms" {
   source = "../../modules/storage-kms"
 
-  project_id          = var.project_id
-  name_prefix         = var.name_prefix
-  region              = var.region
-  bucket_name         = var.claim_check_bucket_name
-  runtime_members     = local.runtime_members
-  secret_names        = local.all_secret_names
-  secret_accessors    = local.secret_accessors
-  deletion_protection = var.deletion_protection
+  project_id                 = var.project_id
+  name_prefix                = var.name_prefix
+  region                     = var.region
+  bucket_name                = var.claim_check_bucket_name
+  runtime_members            = local.runtime_members
+  catalog_executor_members   = local.executor_members
+  catalog_claim_check_prefix = var.catalog_claim_check_prefix
+  secret_names               = local.all_secret_names
+  secret_accessors           = local.secret_accessors
+  deletion_protection        = var.deletion_protection
 
-  depends_on = [module.project_services]
+  depends_on = [module.project_services, module.workload_identity]
 }
 
 module "artifact_registry" {
@@ -187,9 +227,9 @@ module "artifact_registry" {
   project_id     = var.project_id
   name_prefix    = var.name_prefix
   region         = var.region
-  reader_members = ["serviceAccount:${module.workload_identity.node_service_account_email}"]
+  reader_members = ["serviceAccount:${var.name_prefix}-gke-node@${var.project_id}.iam.gserviceaccount.com"]
 
-  depends_on = [module.project_services]
+  depends_on = [module.project_services, module.workload_identity]
 }
 
 module "observability" {

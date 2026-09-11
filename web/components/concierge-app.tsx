@@ -1,5 +1,6 @@
 "use client";
 
+import { TopicGraphView } from "@/components/topic-graph-view";
 import {
   Building2,
   CalendarDays,
@@ -1082,18 +1083,21 @@ export function ConciergeApp() {
     window.requestAnimationFrame(() => window.scrollTo({ top: 0, left: 0, behavior: "smooth" }));
   }, [calendarMode, filters, pushConsumerSnapshot]);
   const handleTopicSelect = useCallback((topic: string) => {
+    pushConsumerSnapshot(createConsumerHistorySnapshot("entities", {
+      ...filters,
+      query: "",
+      topics: [topic],
+    }, null, calendarMode));
+    window.requestAnimationFrame(() => window.scrollTo({ top: 0, left: 0, behavior: "smooth" }));
+  }, [calendarMode, filters, pushConsumerSnapshot]);
+  const handleTopicFilterSelect = useCallback((topic: string) => {
     const nextTopics = filters.topics.includes(topic)
       ? filters.topics.filter((value) => value !== topic)
       : [...filters.topics, topic];
     pushConsumerSnapshot(createConsumerHistorySnapshot(view === "calendar" ? "calendar" : "events", {
-      ...filters,
-      query: "",
-      topics: nextTopics,
+      ...filters, query: "", topics: nextTopics,
     }, null, calendarMode));
-    window.requestAnimationFrame(() => {
-      window.scrollTo({ top: 0, left: 0, behavior: "smooth" });
-    });
-  }, [applyFilters, calendarMode, filters, pushConsumerSnapshot, view]);
+  }, [calendarMode, filters, pushConsumerSnapshot, view]);
   const handleTopicsClear = useCallback(() => {
     if (!filters.topics.length) return;
     pushConsumerSnapshot(createConsumerHistorySnapshot(view === "calendar" ? "calendar" : "events", {
@@ -1306,6 +1310,7 @@ export function ConciergeApp() {
         ) : null}
         {view === "events" ? (
           <EventsView
+            broadDiscovery={!filters.query.trim() && !filters.topics.length && !filters.sourceKeys.length}
             events={events}
             sort={filters.sort}
             sourceName={currentProvider?.display_name}
@@ -1376,11 +1381,16 @@ export function ConciergeApp() {
             onSourceSelect={handleSourceSelect}
             onFacetSelect={handleFacetSelect}
             onEntitySelect={handleEntitySelect}
-            onTopicSelect={handleTopicSelect}
+            onTopicSelect={handleTopicFilterSelect}
+            onEventTopicSelect={handleTopicSelect}
             onTopicsClear={handleTopicsClear}
           />
         ) : null}
-        {view === "entities" ? (
+        {view === "entities" && !selectedEntityId && filters.topics.length === 1 ? (
+          <TopicGraphView key={filters.topics[0]} topic={filters.topics[0]} events={events}
+            hasMore={Boolean(nextCursor)} loading={catalogLoading || loadingMore} error={catalogError}
+            onLoadMore={handleLoadMore} onEntitySelect={handleEntitySelect} onTopicSelect={handleTopicSelect}/>
+        ) : view === "entities" ? (
           <EntitiesView
             tenantId={tenantId}
             selectedEntityId={selectedEntityId}

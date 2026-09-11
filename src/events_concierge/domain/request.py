@@ -63,11 +63,18 @@ class RankedCandidate:
     rationale: str
     conflict_verdict: ConflictVerdict
     lane_plan: tuple[Lane, ...]
+    additional_dates: tuple[CanonicalEvent, ...] = ()
+    discovery_state: str = "upcoming"
+    source_freshness: str = "unknown"
 
     @property
     def registerable(self) -> bool:
         """A candidate the system may attempt (conflict gate did not hard-block it)."""
-        return self.conflict_verdict is not ConflictVerdict.BLOCKED
+        return (
+            self.conflict_verdict is not ConflictVerdict.BLOCKED
+            and self.discovery_state == "upcoming"
+            and self.canonical_event.event_status.value != "cancelled"
+        )
 
 
 @dataclass(frozen=True, slots=True)

@@ -1,5 +1,5 @@
 resource "google_project_service" "required" {
-  for_each = var.services
+  for_each = setunion(var.services, var.additional_services)
 
   project                    = var.project_id
   service                    = each.value

@@ -8,12 +8,13 @@ from urllib.parse import urlencode
 
 import httpx
 import pytest
+from tests.support.ingestion_telemetry import capture_collection_progress
 
 from events_concierge.adapters.bibliocommons.source import (
     BiblioCommonsCatalogFetcher,
     BiblioCommonsFetchError,
 )
-from events_concierge.domain.catalog_sources import CatalogSource
+from events_concierge.domain.catalog_sources import CatalogCollectionWindow, CatalogSource
 from events_concierge.domain.enums import CatalogSourceMode, PriceStatus
 
 _BC_NAMESPACE = "http://bibliocommons.com/rss/1.0/modules/event/"
@@ -231,7 +232,12 @@ async def test_smcl_pages_at_a_five_second_cadence_with_repeated_location_parame
         transport=httpx.MockTransport(handler),
     )
 
-    candidates = await fetcher.fetch(_source())
+    async with capture_collection_progress(_source().source_key) as progress:
+        candidates = await fetcher.fetch(_source())
+
+    assert progress[-1].request_count == 2
+    assert progress[-1].page_count == 2
+    assert progress[-1].candidate_count == 26
 
     expected = [
         *(("locations", location_id) for location_id in _LOCATION_IDS),
@@ -348,3 +354,29 @@ async def test_smcl_fails_closed_when_all_one_hundred_fifty_reviewed_pages_are_f
         await fetcher.fetch(_source())
     assert len(requested) == 150
     assert requested[-1].params.get("page") == "150"
+
+
+async def test_smcl_pushes_frozen_short_window_through_dst_and_filters_its_end() -> None:
+    window = CatalogCollectionWindow(
+        1, 2, datetime(2026, 10, 31, 12, tzinfo=UTC), datetime(2026, 11, 2, 12, tzinfo=UTC), 2,
+    )
+    source = replace(_source(), collection_horizon_days=2, collection_window=window)
+    requested: list[httpx.URL] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requested.append(request.url)
+        return httpx.Response(200, text=_feed(
+            _item("inside", start="2026-10-31T13:00:00Z", end="2026-10-31T14:00:00Z")
+            + _item("last-day", start="2026-11-02T10:00:00Z", end="2026-11-02T11:00:00Z")
+            + _item("boundary", start="2026-11-02T12:00:00Z", end="2026-11-02T13:00:00Z")
+        ), headers={"Content-Type": "application/rss+xml"}, request=request)
+
+    fetcher = BiblioCommonsCatalogFetcher(
+        user_agent="test", now=lambda: datetime(2026, 11, 5, tzinfo=UTC),
+        transport=httpx.MockTransport(handler),
+    )
+    candidates = await fetcher.fetch(source)
+    assert requested[0].params["startDate"] == "2026-10-31"
+    assert requested[0].params["endDate"] == "2026-11-03"
+    assert len(candidates) == 2
+    assert {candidate.registration_url.rsplit("/", 1)[1] for candidate in candidates} == {"inside", "last-day"}

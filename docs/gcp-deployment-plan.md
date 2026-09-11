@@ -66,7 +66,9 @@ by these offline checks.
 ## Non-goals for the first production slice
 
 - Self-hosting Temporal, PostgreSQL, or Redis in Kubernetes.
-- Deploying the local-only ingestion admin command worker or cadence daemon.
+- Deploying the local recurring ingestion cadence daemon. The explicit hosted operator profile
+  uses a separate command executor and one-shot deployment cadence; see the
+  [chart guide](../deploy/helm/events-concierge/README.md#hosted-operator-profile).
 - Claiming the browser automation lane is production-ready.
 - Building the documented DBOS fallback.
 - Operating a second event broker; PostgreSQL outboxes and Temporal remain the durable transports.

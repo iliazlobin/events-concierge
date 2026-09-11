@@ -72,3 +72,40 @@ roll off the latest crawl: an explicit mixed window retains only the past identi
 identity remains excluded and the latest successful future event remains visible. It also covers a
 wide selected-source archive, rejection of the same unscoped range, zero-count admitted provider
 facets, keyset behavior, fixture exclusion, least-privilege grants, and additive capability names.
+
+## Recommendation lifecycle and distinct choices (2026-09-08)
+
+Personalized retrieval now uses event-interval overlap: an omitted window excludes ended and
+cancelled events while allowing ongoing events with a known end. An explicit window admits
+retained history. Registry-owned records use the same admitted observation function as browse;
+request-discovered records without registry observations still use the canonical retrieval path.
+Rolloff removes current recommendation eligibility, not the canonical record or its status.
+Historical and ongoing feed items carry no registration lane; cancellation records remain retained.
+No physical archival, deletion or storage migration is introduced.
+
+Consumer cards label past/ongoing events and source observation freshness. A seven-day threshold
+labels an old observation; this is a UI heuristic, not independent confirmation, a source-cadence
+SLA, or a claim that recent events are verified. Missing observation dates remain unknown.
+Malformed end-before-start intervals are excluded from personalized recommendations.
+
+Session grouping is presentation-only and requires matching title, named organizer, venue, city,
+source identity/hosts, description and price state. Each session retains its ID and its own date and
+registration URL. These are conservative matching sessions, not an inferred authoritative recurrence
+rule. List/chat views disclose “more dates in these results”; calendar/map views retain individual
+occurrences. Groups cover the fetched candidate window, not every future session at the publisher.
+
+Personalized broad requests diversify within a five-position relevance neighborhood after scoring;
+explicit category or hard-filter requests bypass diversity penalties. Small bounded quality
+tie-breaks consider observed freshness, known price/location/end time/topics, proximity when a
+request supplies coordinates, and timing. They never fill missing metadata or establish verification. Library/family requests are parsed
+as focused categories. The feed uses a fixed 400-candidate budget across offset pages so expanding
+an offset does not itself change grouping. This is not a database snapshot: changes in source data
+or personalization between requests can still move results. First-20 distinct-choice and named
+organizer counts are exposed in feed signals; they are diagnostic counts, not relevance judgments.
+
+Chronological catalog sort remains authoritative by default. Broad catalog list views additionally
+provide an opt-in “Vary organizers and activities in loaded results” control. This diversifies only
+the loaded, already-filtered pool, explicitly reports that scope, and bypasses focused query/topic/
+source and historical views. Choosing a date sort returns to date order. It is a local presentation
+preference rather than a new server sort or stored filter; existing URLs and keyset cursors retain
+their contracts. No source/category quota or blanket library penalty is applied.

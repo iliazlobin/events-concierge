@@ -31,45 +31,75 @@ export interface CollectRosterOptions<T> {
   identity: (item: T) => string;
   /** Hard ceiling so a wrong `total` cannot spin forever. */
   ceiling: number;
+  /** Bound network work independently of deduplicated row count. */
+  maxRequests?: number;
+  signal?: AbortSignal;
+  /** Each callback receives its own array, including the first available page. */
+  onProgress?: (progress: RosterResult<T>) => void;
+}
+
+function checkAborted(signal?: AbortSignal): void {
+  if (signal?.aborted) throw signal.reason ?? new DOMException("The roster read was aborted", "AbortError");
+}
+
+/** Stop waiting even if a custom page reader does not cooperate with cancellation. */
+function readPage<T>(options: CollectRosterOptions<T>, offset: number): Promise<RosterPage<T>> {
+  const { signal } = options;
+  checkAborted(signal);
+  if (!signal) return options.fetchPage(offset);
+  return new Promise((resolve, reject) => {
+    const aborted = () => reject(signal.reason ?? new DOMException("The roster read was aborted", "AbortError"));
+    signal.addEventListener("abort", aborted, { once: true });
+    Promise.resolve().then(() => {
+      checkAborted(signal);
+      return options.fetchPage(offset);
+    }).then(resolve, reject).finally(() => signal.removeEventListener("abort", aborted));
+  });
 }
 
 export async function collectRoster<T>(
   options: CollectRosterOptions<T>,
 ): Promise<RosterResult<T>> {
-  const { fetchPage, identity, ceiling } = options;
+  const { identity, ceiling, maxRequests = 100, signal, onProgress } = options;
+  if (!Number.isInteger(ceiling) || ceiling < 1 || !Number.isInteger(maxRequests) || maxRequests < 1) {
+    throw new RangeError("Roster row and request limits must be positive integers");
+  }
 
-  const first = await fetchPage(0);
+  const first = await readPage(options, 0);
+  checkAborted(signal);
   const items: T[] = [];
   const seen = new Set<string>();
   let requests = 1;
 
-  const absorb = (page: RosterPage<T>): number => {
-    let added = 0;
+  const absorb = (page: RosterPage<T>): void => {
     for (const item of page.items) {
+      if (items.length >= ceiling) break;
       const key = identity(item);
       if (seen.has(key)) continue;
       seen.add(key);
       items.push(item);
-      added += 1;
     }
-    return added;
   };
 
-  absorb(first);
   const total = first.total;
+  const snapshot = (): RosterResult<T> => ({ items: [...items], total, truncated: items.length < total, requests });
+  absorb(first);
+  onProgress?.(snapshot());
+  let offset = first.items.length;
 
-  while (items.length < total && items.length < ceiling) {
-    const next = await fetchPage(items.length);
+  while (offset > 0 && offset < total && items.length < total && items.length < ceiling && requests < maxRequests) {
+    checkAborted(signal);
+    const next = await readPage(options, offset);
+    checkAborted(signal);
     requests += 1;
     // A page that returns nothing ends collection; the shortfall is then reported, not hidden.
     if (!next.items.length) break;
-    if (absorb(next) === 0) break;
+    // Offset belongs to the server's row stream; deduplication must not rewind it.
+    offset += next.items.length;
+    absorb(next);
+    onProgress?.(snapshot());
   }
 
-  return {
-    items,
-    total,
-    truncated: items.length < total,
-    requests,
-  };
+  checkAborted(signal);
+  return snapshot();
 }

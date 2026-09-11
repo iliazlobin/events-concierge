@@ -431,110 +431,9 @@ def build_container(
         configured_pacer, settings.ticketmaster_quota_scope
     )
 
-    catalog_fetchers: dict[CatalogSourceMode, CatalogSourceFetcher] = {}
-    catalog_paged_fetchers: dict[CatalogSourceMode, CatalogPagedSourceFetcher] = {}
-    configured_public_crawler: SourcePort | None = None
-    if Source.PUBLIC_JSONLD.value in settings.enabled_sources:
-        from .adapters.bibliocommons.source import BiblioCommonsCatalogFetcher
-        from .adapters.civic_engage.source import CivicEngageRssCatalogFetcher
-        from .adapters.communico.source import CommunicoCatalogFetcher
-        from .adapters.crawl.source import PublicJsonLdSource
-        from .adapters.datasf.source import DataSfOur415CatalogFetcher
-        from .adapters.legistar.source import LegistarCatalogFetcher
-        from .adapters.libcal.source import LibCalIcsCatalogFetcher
-        from .adapters.livewhale.source import LiveWhaleCatalogFetcher
-        from .adapters.localist.source import LocalistCatalogFetcher
-        from .adapters.luma_calendar.source import LumaCalendarCatalogFetcher
-        from .adapters.luma_discover.source import LumaDiscoverCatalogFetcher
-        from .adapters.meetup_city.source import MeetupCityCatalogFetcher
-        from .adapters.midpen.source import MidpenCatalogFetcher
-        from .adapters.oakland.source import OaklandCatalogFetcher
-        from .adapters.sf_gov.source import SfGovCatalogFetcher
-        from .adapters.tribe.source import TribeEventsCatalogFetcher
-
-        configured_public_crawler = PublicJsonLdSource(
-            user_agent=settings.crawl_user_agent,
-            min_interval_ms=settings.crawl_min_interval_ms,
-            seed_urls=settings.crawl_seeds,
-        )
-        catalog_fetchers[CatalogSourceMode.PUBLIC_JSONLD] = configured_public_crawler
-        catalog_fetchers[CatalogSourceMode.LIVEWHALE_JSON] = LiveWhaleCatalogFetcher(
-            user_agent=settings.crawl_user_agent,
-        )
-        catalog_fetchers[CatalogSourceMode.SF_GOV_JSON] = SfGovCatalogFetcher(
-            user_agent=settings.crawl_user_agent,
-        )
-        catalog_fetchers[CatalogSourceMode.DATASF_OUR415] = DataSfOur415CatalogFetcher(
-            user_agent=settings.crawl_user_agent,
-        )
-        catalog_fetchers[CatalogSourceMode.BIBLIOCOMMONS_RSS] = BiblioCommonsCatalogFetcher(
-            user_agent=settings.crawl_user_agent,
-        )
-        catalog_fetchers.update(
-            {
-                CatalogSourceMode.COMMUNICO_JSON: CommunicoCatalogFetcher(
-                    user_agent=settings.crawl_user_agent,
-                ),
-                CatalogSourceMode.LOCALIST_JSON: LocalistCatalogFetcher(
-                    user_agent=settings.crawl_user_agent,
-                ),
-                CatalogSourceMode.LIBCAL_ICS: LibCalIcsCatalogFetcher(
-                    user_agent=settings.crawl_user_agent,
-                ),
-                CatalogSourceMode.CIVIC_ENGAGE_RSS: CivicEngageRssCatalogFetcher(
-                    user_agent=settings.crawl_user_agent,
-                ),
-                CatalogSourceMode.MIDPEN_HTML: MidpenCatalogFetcher(
-                    user_agent=settings.crawl_user_agent,
-                ),
-                CatalogSourceMode.USFCA_HTML: UsfcaCatalogFetcher(
-                    user_agent=settings.crawl_user_agent,
-                ),
-                CatalogSourceMode.CAL_PERFORMANCES_JSON: CalPerformancesCatalogFetcher(
-                    user_agent=settings.crawl_user_agent,
-                ),
-                CatalogSourceMode.BERKELEY_REP_HTML: BerkeleyRepCatalogFetcher(
-                    user_agent=settings.crawl_user_agent,
-                ),
-                CatalogSourceMode.YBCA_HTML: YbcaCatalogFetcher(
-                    user_agent=settings.crawl_user_agent,
-                ),
-                CatalogSourceMode.OAKLAND_HTML: OaklandCatalogFetcher(
-                    user_agent=settings.crawl_user_agent,
-                ),
-                CatalogSourceMode.LUMA_CALENDAR_JSON: LumaCalendarCatalogFetcher(
-                    user_agent=settings.crawl_user_agent,
-                ),
-                CatalogSourceMode.LUMA_DISCOVER_JSON: LumaDiscoverCatalogFetcher(
-                    user_agent=settings.crawl_user_agent,
-                ),
-                CatalogSourceMode.MEETUP_CITY_JSONLD: MeetupCityCatalogFetcher(
-                    user_agent=settings.crawl_user_agent,
-                ),
-            }
-        )
-        legistar_fetcher = LegistarCatalogFetcher(
-            user_agent=settings.crawl_user_agent,
-        )
-        catalog_fetchers.update(
-            {
-                CatalogSourceMode.SAN_JOSE_LEGISTAR: legistar_fetcher,
-                CatalogSourceMode.SUNNYVALE_LEGISTAR: legistar_fetcher,
-                CatalogSourceMode.ALAMEDA_LEGISTAR: legistar_fetcher,
-                CatalogSourceMode.OAKLAND_LEGISTAR: legistar_fetcher,
-                CatalogSourceMode.TRIBE_EVENTS_JSON: TribeEventsCatalogFetcher(
-                    user_agent=settings.crawl_user_agent,
-                ),
-            }
-        )
-        catalog_paged_fetchers.update(
-            {
-                CatalogSourceMode.SAN_JOSE_LEGISTAR: legistar_fetcher,
-                CatalogSourceMode.SUNNYVALE_LEGISTAR: legistar_fetcher,
-                CatalogSourceMode.ALAMEDA_LEGISTAR: legistar_fetcher,
-                CatalogSourceMode.OAKLAND_LEGISTAR: legistar_fetcher,
-            }
-        )
+    configured_public_crawler, catalog_fetchers, catalog_paged_fetchers = build_catalog_fetchers(
+        settings
+    )
     if discovery_sources is None:
         discovery_sources = (
             [configured_public_crawler] if configured_public_crawler is not None else []
@@ -555,6 +454,7 @@ def build_container(
         configured_discovery_policy_gate,
         configured_source_quarantine,
         catalog_source_repo,
+        collection_windows=catalog_source_repo,
         lease_seconds=settings.catalog_refresh_lease_seconds,
     )
     catalog_paged_refresh = PagedCatalogRefreshService(
@@ -566,6 +466,7 @@ def build_container(
         configured_discovery_policy_gate,
         configured_source_quarantine,
         catalog_source_repo,
+        collection_windows=catalog_source_repo,
         lease_seconds=settings.catalog_refresh_lease_seconds,
     )
     feed = FeedService(
@@ -625,9 +526,7 @@ def build_container(
         media_store=media_store or LocalFilesystemMediaStore(Path(settings.media_local_root)),
         tenant_roles=tenant_roles or PostgresTenantRoleRepository(),
         api_keys=api_keys or PostgresApiKeyRepository(),
-        saved_catalog_filters=(
-            saved_catalog_filters or PostgresSavedCatalogFilterRepository()
-        ),
+        saved_catalog_filters=(saved_catalog_filters or PostgresSavedCatalogFilterRepository()),
         ranking_feedback_repo=configured_ranking_feedback_repo,
         ranking_feedback=ranking_feedback,
         ranker=configured_ranker,
@@ -1102,3 +1001,118 @@ def _bind_register_source_policy_guards(
     for source in sources.values():
         if isinstance(source, LumaSource):
             source.bind_policy(policy)
+
+
+def build_catalog_fetchers(
+    settings: Settings,
+) -> tuple[
+    SourcePort | None,
+    dict[CatalogSourceMode, CatalogSourceFetcher],
+    dict[CatalogSourceMode, CatalogPagedSourceFetcher],
+]:
+    """Share the reviewed adapter registry between product and catalog-only composition."""
+    catalog_fetchers: dict[CatalogSourceMode, CatalogSourceFetcher] = {}
+    catalog_paged_fetchers: dict[CatalogSourceMode, CatalogPagedSourceFetcher] = {}
+    configured_public_crawler: SourcePort | None = None
+    if Source.PUBLIC_JSONLD.value in settings.enabled_sources:
+        from .adapters.bibliocommons.source import BiblioCommonsCatalogFetcher
+        from .adapters.civic_engage.source import CivicEngageRssCatalogFetcher
+        from .adapters.communico.source import CommunicoCatalogFetcher
+        from .adapters.crawl.source import PublicJsonLdSource
+        from .adapters.datasf.source import DataSfOur415CatalogFetcher
+        from .adapters.legistar.source import LegistarCatalogFetcher
+        from .adapters.libcal.source import LibCalIcsCatalogFetcher
+        from .adapters.livewhale.source import LiveWhaleCatalogFetcher
+        from .adapters.localist.source import LocalistCatalogFetcher
+        from .adapters.luma_calendar.source import LumaCalendarCatalogFetcher
+        from .adapters.luma_discover.source import LumaDiscoverCatalogFetcher
+        from .adapters.meetup_city.source import MeetupCityCatalogFetcher
+        from .adapters.midpen.source import MidpenCatalogFetcher
+        from .adapters.oakland.source import OaklandCatalogFetcher
+        from .adapters.sf_gov.source import SfGovCatalogFetcher
+        from .adapters.tribe.source import TribeEventsCatalogFetcher
+
+        configured_public_crawler = PublicJsonLdSource(
+            user_agent=settings.crawl_user_agent,
+            min_interval_ms=settings.crawl_min_interval_ms,
+            seed_urls=settings.crawl_seeds,
+        )
+        catalog_fetchers[CatalogSourceMode.PUBLIC_JSONLD] = configured_public_crawler
+        catalog_fetchers[CatalogSourceMode.LIVEWHALE_JSON] = LiveWhaleCatalogFetcher(
+            user_agent=settings.crawl_user_agent,
+        )
+        catalog_fetchers[CatalogSourceMode.SF_GOV_JSON] = SfGovCatalogFetcher(
+            user_agent=settings.crawl_user_agent,
+        )
+        catalog_fetchers[CatalogSourceMode.DATASF_OUR415] = DataSfOur415CatalogFetcher(
+            user_agent=settings.crawl_user_agent,
+        )
+        catalog_fetchers[CatalogSourceMode.BIBLIOCOMMONS_RSS] = BiblioCommonsCatalogFetcher(
+            user_agent=settings.crawl_user_agent,
+        )
+        catalog_fetchers.update(
+            {
+                CatalogSourceMode.COMMUNICO_JSON: CommunicoCatalogFetcher(
+                    user_agent=settings.crawl_user_agent,
+                ),
+                CatalogSourceMode.LOCALIST_JSON: LocalistCatalogFetcher(
+                    user_agent=settings.crawl_user_agent,
+                ),
+                CatalogSourceMode.LIBCAL_ICS: LibCalIcsCatalogFetcher(
+                    user_agent=settings.crawl_user_agent,
+                ),
+                CatalogSourceMode.CIVIC_ENGAGE_RSS: CivicEngageRssCatalogFetcher(
+                    user_agent=settings.crawl_user_agent,
+                ),
+                CatalogSourceMode.MIDPEN_HTML: MidpenCatalogFetcher(
+                    user_agent=settings.crawl_user_agent,
+                ),
+                CatalogSourceMode.USFCA_HTML: UsfcaCatalogFetcher(
+                    user_agent=settings.crawl_user_agent,
+                ),
+                CatalogSourceMode.CAL_PERFORMANCES_JSON: CalPerformancesCatalogFetcher(
+                    user_agent=settings.crawl_user_agent,
+                ),
+                CatalogSourceMode.BERKELEY_REP_HTML: BerkeleyRepCatalogFetcher(
+                    user_agent=settings.crawl_user_agent,
+                ),
+                CatalogSourceMode.YBCA_HTML: YbcaCatalogFetcher(
+                    user_agent=settings.crawl_user_agent,
+                ),
+                CatalogSourceMode.OAKLAND_HTML: OaklandCatalogFetcher(
+                    user_agent=settings.crawl_user_agent,
+                ),
+                CatalogSourceMode.LUMA_CALENDAR_JSON: LumaCalendarCatalogFetcher(
+                    user_agent=settings.crawl_user_agent,
+                ),
+                CatalogSourceMode.LUMA_DISCOVER_JSON: LumaDiscoverCatalogFetcher(
+                    user_agent=settings.crawl_user_agent,
+                ),
+                CatalogSourceMode.MEETUP_CITY_JSONLD: MeetupCityCatalogFetcher(
+                    user_agent=settings.crawl_user_agent,
+                ),
+            }
+        )
+        legistar_fetcher = LegistarCatalogFetcher(
+            user_agent=settings.crawl_user_agent,
+        )
+        catalog_fetchers.update(
+            {
+                CatalogSourceMode.SAN_JOSE_LEGISTAR: legistar_fetcher,
+                CatalogSourceMode.SUNNYVALE_LEGISTAR: legistar_fetcher,
+                CatalogSourceMode.ALAMEDA_LEGISTAR: legistar_fetcher,
+                CatalogSourceMode.OAKLAND_LEGISTAR: legistar_fetcher,
+                CatalogSourceMode.TRIBE_EVENTS_JSON: TribeEventsCatalogFetcher(
+                    user_agent=settings.crawl_user_agent,
+                ),
+            }
+        )
+        catalog_paged_fetchers.update(
+            {
+                CatalogSourceMode.SAN_JOSE_LEGISTAR: legistar_fetcher,
+                CatalogSourceMode.SUNNYVALE_LEGISTAR: legistar_fetcher,
+                CatalogSourceMode.ALAMEDA_LEGISTAR: legistar_fetcher,
+                CatalogSourceMode.OAKLAND_LEGISTAR: legistar_fetcher,
+            }
+        )
+    return configured_public_crawler, catalog_fetchers, catalog_paged_fetchers
