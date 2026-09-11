@@ -27,11 +27,20 @@ EXPECTED = {
 }
 
 
-def pending_deployments(items):
+DEFERRED = {
+    "events-concierge-" + name
+    for name in ("temporal-transactional", "request-starter", "notifier", "change-delivery")
+}
+
+
+def pending_deployments(items, *, target="legacy"):
     """Require every expected process, including the command executor, to finish rollout."""
     by_name = {x["metadata"]["name"]: x for x in items}
     pending = []
-    for name in sorted(EXPECTED):
+    expected = EXPECTED - DEFERRED if target == "shared" else EXPECTED
+    if target == "shared":
+        pending.extend(sorted(name for name in DEFERRED if name in by_name))
+    for name in sorted(expected):
         d = by_name.get(name, {})
         status = d.get("status", {})
         if (
@@ -68,11 +77,10 @@ def main(*, target="legacy"):
                 ]
             )
         )["items"]
-        pending = pending_deployments(items)
+        pending = pending_deployments(items, target=target)
         if not pending:
-            print(
-                "All ten application, admin and executor deployments have one updated, available, ready replica"
-            )
+            count = len(EXPECTED - DEFERRED if target == "shared" else EXPECTED)
+            print(f"All {count} expected deployments have one updated, available, ready replica")
             return
         print("Waiting:", ", ".join(pending), flush=True)
         time.sleep(5)

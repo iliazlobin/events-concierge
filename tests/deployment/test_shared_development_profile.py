@@ -278,6 +278,22 @@ def test_shared_helm_app_and_stores_consume_external_platform_without_public_rou
         "ClusterRoleBinding",
     }
     assert not ({d["kind"] for d in docs} & forbidden)
+    deployed = {
+        d["metadata"]["name"]
+        for d in yaml.safe_load_all(app.stdout)
+        if d and d["kind"] == "Deployment"
+    }
+    assert deployed == {
+        "events-concierge-" + name
+        for name in (
+            "api",
+            "frontend",
+            "admin",
+            "temporal-catalog",
+            "ingestion-executor",
+            "account-erasure",
+        )
+    }
     claims = [d for d in docs if d["kind"] == "PersistentVolumeClaim"]
     assert len(claims) == 3
     assert all(d["spec"]["storageClassName"] == "shared-retain" for d in claims)

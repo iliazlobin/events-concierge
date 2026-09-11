@@ -19,7 +19,9 @@ These are targets, not current achievements.
 
 The approved first release is catalog discovery, search/filters, Events/Map/Calendar, details and
 provider registration links. Configure `EC_RELEASE_PROFILE=discovery`; keep the full profile for
-development of deferred chat, automated RSVP, handoffs, notifications, Calendar sync and purchases.
+development of deferred chat, automated RSVP, handoffs, notifications, Calendar sync, purchases
+and programmatic API keys. Existing key records remain preserved; key authentication is not yet
+implemented, so discovery must not advertise key creation as usable programmatic access.
 The server removes deferred consumer routes before serving or generating OpenAPI. This product
 boundary is independent of `EC_MOCK_CLOUD`: a private mock-backed deployment is still a development
 candidate, even when it uses real catalog data.
@@ -62,7 +64,9 @@ Redis and repository OIDC boundaries while explicitly disabling those product pr
 enabled provider overrides and configuration; full-product preflight rejects disabled ports.
 Account erasure remains fenced and pending at unavailable Calendar or credential cleanup, with no
 false purge receipt or final database deletion. Production acceptance requires actual cleanup
-evidence. Existing media storage also needs deployment-proven shared persistence. The current chart
+evidence, including tenants with no previously connected provider credentials; disabled cleanup
+ports cannot certify their absence. Shared GCS media persistence and erasure also need deployment
+verification under the dedicated bucket policy in the [private runbook](../deploy/development.md). The current chart
 still mounts shared runtime secrets and relies on common runtime composition more broadly than strict
 per-process IAM permits. Do not interpret a successful structural example check, Terraform/Helm
 validation, or container test as authorization to deploy traffic.

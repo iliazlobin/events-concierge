@@ -103,7 +103,7 @@ def test_waits_for_executor_and_pins_cluster_on_every_read(monkeypatch, capsys):
     assert sleeps == [5]
     output = capsys.readouterr().out
     assert "Waiting: " + EXECUTOR in output
-    assert "All ten" in output
+    assert "All 10 expected deployments" in output
 
 
 def test_wrong_context_fails_before_deployment_read(monkeypatch):
@@ -117,3 +117,13 @@ def test_wrong_context_fails_before_deployment_read(monkeypatch):
     with pytest.raises(SystemExit, match="Wrong cluster context"):
         readiness.main()
     assert len(calls) == 1
+
+
+def test_shared_discovery_requires_active_catalog_and_no_deferred_deployments():
+    items = [d for d in ready_deployments() if d["metadata"]["name"] not in readiness.DEFERRED]
+    assert readiness.pending_deployments(items, target="shared") == []
+    assert readiness.pending_deployments(ready_deployments(), target="shared") == sorted(
+        readiness.DEFERRED
+    )
+    missing = [d for d in items if d["metadata"]["name"] != EXECUTOR]
+    assert readiness.pending_deployments(missing, target="shared") == [EXECUTOR]

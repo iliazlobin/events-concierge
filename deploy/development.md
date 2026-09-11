@@ -37,7 +37,10 @@ release-value generation, readiness, store-recovery drills and backups. Use `.ve
 
 Layer `values-shared-development.yaml` after `values-development.yaml` for the application, and
 the data chart's shared overlay after its defaults. These select the shared project/bucket,
-discovery-only UI/API and platform-owned storage. Image digests belong to the selected committed
+discovery-only UI/API and platform-owned storage. The shared overlay omits transactional, request
+starter, notifier and change-delivery workers so restored deferred work cannot resume. Catalog and
+account-erasure workers remain active; shared readiness requires all six intended deployments and
+rejects any deferred Deployment. Image digests belong to the selected committed
 candidate in `us-west1-docker.pkg.dev/iz27-platform-dev/ec-dev/`. They must pass combined CI before
 deployment. This remains a private development candidate until real identity and the separate
 [production gates](../docs/production-operations.md#first-release-acceptance) pass.

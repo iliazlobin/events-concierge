@@ -9,3 +9,13 @@ applicationConfig:
   EC_GCS_CLAIM_CHECK_BUCKET: iz27-platform-dev-ec-payloads
 secretManager:
   projectId: iz27-platform-dev
+# Do not resume deferred transactional effects from the restored legacy database.
+workloads:
+  temporal-transactional:
+    enabled: false
+  request-starter:
+    enabled: false
+  notifier:
+    enabled: false
+  change-delivery:
+    enabled: false
