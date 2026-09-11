@@ -14,7 +14,10 @@ from events_concierge.adapters.luma_calendar.source import (
     LumaCalendarCatalogFetcher,
     LumaCalendarFetchError,
 )
-from events_concierge.adapters.luma_common import luma_public_entity_profiles
+from events_concierge.adapters.luma_common import (
+    luma_public_entity_profiles,
+    normalize_luma_entry,
+)
 from events_concierge.domain.catalog_sources import CatalogCollectionWindow, CatalogSource
 from events_concierge.domain.enums import (
     CatalogSourceMode,
@@ -832,6 +835,94 @@ async def test_luma_calendar_describes_events_through_the_shared_detail_lane() -
         "evt-described"
     ]
     assert all(request.url.host == "api2.luma.com" for request in detail_requests)
+
+
+def _many_public_hosts(count: int) -> list[dict[str, object]]:
+    """Synthetic shape of a reviewed public event with 36 host records; no personal data."""
+    hosts: list[dict[str, object]] = [
+        {"name": f"Public Host {index:03}"} for index in range(count)
+    ]
+    for index in (0, 31, count - 1):
+        hosts[index].update(
+            linkedin_handle=f"/in/public-host-{index}",
+            twitter_handle=f"public_host_{index}",
+        )
+    return hosts
+
+
+def test_luma_listing_keeps_bounded_names_and_links_from_a_larger_public_host_list() -> None:
+    entry = _entry("many-listing-hosts")
+    entry["hosts"] = _many_public_hosts(36)
+
+    event = normalize_luma_entry(
+        entry, "luma-genai-sf", contract="calendar", listed_calendar_api_id=_CALENDAR_API_ID
+    )
+
+    assert event.host_names == tuple(f"Public Host {index:03}" for index in range(32))
+    assert [profile.name for profile in event.entity_profiles] == [
+        "Public Host 000", "Public Host 031"
+    ]
+    assert [link.name for link in event.entity_social_links] == [
+        "Public Host 000", "Public Host 031"
+    ]
+
+
+@pytest.mark.parametrize("host_count", [36, 128])
+@pytest.mark.parametrize("role", ["host", "speaker"])
+async def test_luma_detail_accepts_bounded_larger_public_roles_without_retaining_guests(
+    host_count: int, role: str
+) -> None:
+    entry = _entry("many-detail-hosts")
+    detail = _detail_payload(entry)
+    hosts = _many_public_hosts(host_count)
+    if role == "host":
+        detail["hosts"] = hosts
+    else:
+        detail["sessions"] = [{"speakers": hosts}]
+    # Even rich records for these collections never become public-role identities or links.
+    for field in ("guests", "attendees", "featured_guests"):
+        detail[field] = [{"name": "Private Guest", "linkedin_handle": "/in/private-guest"}]
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        payload = detail if request.url.host == "api2.luma.com" else _payload([entry], has_more=False)
+        return httpx.Response(200, json=payload, request=request)
+
+    [event] = await LumaCalendarCatalogFetcher(
+        user_agent="test", now=lambda: _NOW, sleep=_no_sleep,
+        transport=httpx.MockTransport(handler),
+    ).fetch(_source())
+
+    names = event.host_names if role == "host" else event.speaker_names
+    assert names == tuple(f"Public Host {index:03}" for index in range(32))
+    assert [(profile.role, profile.name) for profile in event.entity_profiles] == [
+        (role, "Public Host 000"), (role, "Public Host 031")
+    ]
+    assert [(link.role, link.name) for link in event.entity_social_links] == [
+        (role, "Public Host 000"), (role, "Public Host 031")
+    ]
+
+
+@pytest.mark.parametrize("invalid_hosts", [
+    [*_many_public_hosts(36), None],
+    _many_public_hosts(129),
+])
+async def test_luma_detail_rejects_invalid_public_roles_beyond_the_displayed_names(
+    invalid_hosts: object,
+) -> None:
+    entry = _entry("invalid-host-tail")
+    detail = _detail_payload(entry)
+    detail["hosts"] = invalid_hosts
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        payload = detail if request.url.host == "api2.luma.com" else _payload([entry], has_more=False)
+        return httpx.Response(200, json=payload, request=request)
+
+    fetcher = LumaCalendarCatalogFetcher(
+        user_agent="test", now=lambda: _NOW, sleep=_no_sleep,
+        transport=httpx.MockTransport(handler),
+    )
+    with pytest.raises(LumaCalendarFetchError, match="invalid public hosts"):
+        await fetcher.fetch(_source())
 
 
 async def test_luma_calendar_refuses_a_detail_record_for_another_event() -> None:

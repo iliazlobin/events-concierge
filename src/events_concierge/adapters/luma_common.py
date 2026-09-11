@@ -42,6 +42,9 @@ _CALENDAR_API_ID = re.compile(r"cal-[A-Za-z0-9_-]{1,200}")
 _LINKEDIN_PERSON_HANDLE = re.compile(r"/in/[A-Za-z0-9][A-Za-z0-9_%.-]*/?")
 _LINKEDIN_COMPANY_HANDLE = re.compile(r"/company/[A-Za-z0-9][A-Za-z0-9_%.-]*/?")
 _MAX_PUBLIC_ROLE_NAMES = 32
+# Public events can list more hosts than the catalog displays (a reviewed event had 36).
+# Bound the input separately; names and their role-gated links retain the domain's 32-name cap.
+MAX_PUBLIC_ROLE_RECORDS = 128
 _MAX_PUBLIC_SESSIONS = 100
 _UNKNOWN_PRICE_DETAILS = (PriceStatus.UNKNOWN, None, None, None)
 # Luma publishes these beside ``linkedin_handle`` and ``website`` on the same structured host and
@@ -343,7 +346,7 @@ def _public_role_records(
         records.append((calendar, "organizer", _entity_kind_hint(calendar)))
     records.extend(
         (host, "host", _entity_kind_hint(host))
-        for host in _bounded_entity_records(hosts_value, _MAX_PUBLIC_ROLE_NAMES)
+        for host in _bounded_entity_records(hosts_value, MAX_PUBLIC_ROLE_RECORDS)
     )
     for session in _bounded_entity_records(sessions_value, _MAX_PUBLIC_SESSIONS):
         for field_name in ("speakers", "hosts"):
@@ -351,7 +354,7 @@ def _public_role_records(
                 (speaker, "speaker", _entity_kind_hint(speaker))
                 for speaker in _bounded_entity_records(
                     session.get(field_name),
-                    _MAX_PUBLIC_ROLE_NAMES,
+                    MAX_PUBLIC_ROLE_RECORDS,
                 )
             )
 
@@ -359,7 +362,7 @@ def _public_role_records(
     if organizer_name is not None:
         records.extend(
             (host, "organizer", _entity_kind_hint(host))
-            for host in _bounded_entity_records(hosts_value, _MAX_PUBLIC_ROLE_NAMES)
+            for host in _bounded_entity_records(hosts_value, MAX_PUBLIC_ROLE_RECORDS)
         )
     return records
 
@@ -376,7 +379,7 @@ def _listing_entities(
     calendar = json_object(entry.get("calendar"))
     if calendar is not None and calendar.get("api_id") != owner_calendar_api_id:
         calendar = None
-    hosts = _bounded_entity_records(entry.get("hosts"), _MAX_PUBLIC_ROLE_NAMES)
+    hosts = _bounded_entity_records(entry.get("hosts"), MAX_PUBLIC_ROLE_RECORDS)
     host_names = _dedupe_entity_names(hosts)
     organizer_name = _entity_name(calendar) if calendar is not None else None
     if organizer_name is None or organizer_name.casefold() == "personal":
@@ -424,6 +427,8 @@ def _dedupe_entity_names(records: tuple[dict[str, object], ...]) -> tuple[str, .
             continue
         seen.add(name.casefold())
         names.append(name)
+        if len(names) >= _MAX_PUBLIC_ROLE_NAMES:
+            break
     return tuple(names)
 
 

@@ -28,6 +28,7 @@ import httpx
 from ..domain.enums import PriceStatus, RegistrationStatus
 from ..domain.events import CandidateEvent, EventEntityProfile, EventEntitySocialLink
 from .luma_common import (
+    MAX_PUBLIC_ROLE_RECORDS,
     json_object,
     luma_price_details,
     luma_public_entity_profiles,
@@ -315,7 +316,7 @@ def _public_guest_count(value: object, source_key: str) -> int | None:
 def _public_role_names(value: object, field_name: str, source_key: str) -> tuple[str, ...]:
     if value is None:
         return ()
-    if not isinstance(value, list) or len(value) > _MAX_PUBLIC_ROLE_NAMES:
+    if not isinstance(value, list) or len(value) > MAX_PUBLIC_ROLE_RECORDS:
         raise LumaDetailValidationError(
             f"Luma listing {source_key} returned invalid public {field_name}"
         )
