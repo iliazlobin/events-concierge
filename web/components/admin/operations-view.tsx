@@ -16,7 +16,7 @@ import { OperatingOverview } from "./operating-overview";
 import styles from "./operations-view.module.css";
 
 const ARCHITECTURE_URL = "https://app.notion.com/p/391d865005a88164a182eabc18fe068f";
-const RUNBOOK_URL = "https://app.notion.com/p/3a5d865005a881f288dfdc9993b8fdd2";
+const RUNBOOK_URL = "https://github.com/iliazlobin/events-concierge/blob/review/admin-console-aggregates/deploy/development.md";
 const loadSources = (signal: AbortSignal) => getAdminSourceHealth(false, signal);
 
 export interface OperationsViewProps {
