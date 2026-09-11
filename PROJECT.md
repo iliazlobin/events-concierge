@@ -2,6 +2,19 @@
 
 Source of truth for the project. A fresh session should be able to resume from this file alone.
 
+## Current milestone: private discovery candidate
+
+The approved first release (September 10, 2026) is discovery/search, shared filters,
+Events/Map/Calendar views, event details and provider registration links. Chat, automated RSVP,
+managed handoffs, notifications, Calendar synchronization and purchases are deferred. The historical
+build milestones and broader mission below are not acceptance of this release.
+
+The candidate is not production-ready. `EC_RELEASE_PROFILE=discovery` selects the server and
+frontend product boundary; it does not provision identity or turn mock integrations into production
+services. [Release acceptance](docs/production-operations.md#first-release-acceptance) owns remaining
+verification. [Private deployment and recovery](deploy/development.md) owns operation of the current
+stack and the gated move to shared infrastructure.
+
 ## Mission
 
 A personal AI **events concierge**: the user makes a natural-language request ("find me something Friday

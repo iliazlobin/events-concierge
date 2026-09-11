@@ -32,6 +32,7 @@ from sqlalchemy import text
 from sqlalchemy.exc import DBAPIError
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
+from ..api.release_profile import apply_release_profile
 from ..application.discovery_results import lifecycle
 from ..application.feed import MAX_FEED_OFFSET
 from ..application.profile_media import AvatarRejectedError, normalize_avatar
@@ -724,6 +725,7 @@ class CatalogEntityDirectoryOut(BaseModel):
 
 class UiConfigOut(BaseModel):
     product_name: str = "Events Concierge"
+    release_profile: Literal["full", "discovery"] = "full"
     local_demo: bool
     auth_mode: Literal["local_demo", "deployment_session"]
     auth_start_url: str | None
@@ -2487,6 +2489,7 @@ def create_app() -> FastAPI:
     async def ui_config() -> UiConfigOut:
         browser_session = getattr(getattr(app.state, "container", None), "browser_session", None)
         return UiConfigOut(
+            release_profile=settings.release_profile,
             local_demo=settings.mock_cloud,
             auth_mode="local_demo" if settings.mock_cloud else "deployment_session",
             auth_start_url=(
@@ -2515,7 +2518,9 @@ def create_app() -> FastAPI:
 
         @app.get("/auth/login", include_in_schema=False)
         async def oidc_login(
-            return_to: str = Query(default="/app", max_length=2048),
+            return_to: str = Query(
+                default="/" if settings.release_profile == "discovery" else "/app", max_length=2048,
+            ),
         ) -> RedirectResponse:
             browser_session = configured_browser_session()
             try:
@@ -3679,6 +3684,7 @@ def create_app() -> FastAPI:
     install_operator_operations_routes(app)
     install_operator_session_routes(app)
     _install_agent_chat(app, settings)
+    apply_release_profile(app, settings.release_profile)
     return app
 
 
@@ -3688,7 +3694,7 @@ def _install_agent_chat(app: FastAPI, settings: Settings) -> None:
     Off by default and imported lazily, so a deployment without an agent key neither carries the
     dependency nor exposes the route.
     """
-    if not getattr(settings, "agent_enabled", False):
+    if settings.release_profile == "discovery" or not getattr(settings, "agent_enabled", False):
         return
     import os
 

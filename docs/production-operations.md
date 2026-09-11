@@ -15,6 +15,39 @@ The binding recovery objectives are from
 
 These are targets, not current achievements.
 
+## First release acceptance
+
+The approved first release is catalog discovery, search/filters, Events/Map/Calendar, details and
+provider registration links. Configure `EC_RELEASE_PROFILE=discovery`; keep the full profile for
+development of deferred chat, automated RSVP, handoffs, notifications, Calendar sync and purchases.
+The server removes deferred consumer routes before serving or generating OpenAPI. This product
+boundary is independent of `EC_MOCK_CLOUD`: a private mock-backed deployment is still a development
+candidate, even when it uses real catalog data.
+
+Before accepting the candidate:
+
+1. Pass locked lint/type checks, unit/deployment contracts, disposable-database integration and
+   migration tests, quality/load tests, restore rehearsal, all web behavior tests, production builds
+   and browser tests. Record failures and skipped/unavailable gates explicitly.
+2. Exercise the actual Next.js application against the candidate API through localhost-only access:
+   onboarding/authentication, shared filters, Events/Map/Calendar, history/pagination, provider links,
+   loading/empty/error states, mobile/keyboard use, account settings, tenant isolation and erasure.
+   The legacy hermetic browser suite does not establish this real-stack acceptance.
+3. Verify deferred routes reject direct calls without enqueueing or contacting providers. Disable
+   their workers and provider credentials in the release configuration; retained work from an older
+   database must not resume external effects during migration.
+4. Prove real catalog collection on the destination: import the reviewed source configuration and
+   preserve last-good data, compare non-fixture per-source counts over the same collection window,
+   run refreshes and observe subsequent scheduled runs. Require no unexplained loss relative to the
+   local baseline. An imported count, an empty queue or healthy worker is not crawl evidence.
+5. Verify private endpoints, real identity/CSRF and account isolation, monitoring, a complete data
+   restore and compatible immutable images. Move access only after acceptance; retire old compute
+   through its owning Terraform state after protecting the recovery copies.
+
+Shared foundation/network/GKE belong to [gcp-foundation](https://github.com/iliazlobin/gcp-foundation).
+The application owns its namespace, workload identities/permissions, releases, data, migrations and
+backups. Exact current commands and relocation limits are in the [private runbook](../deploy/development.md).
+
 ## Implementation status (2026-08-09)
 
 Repository-owned deployment scaffolding now includes offline-validated Terraform/OpenTofu and Helm,

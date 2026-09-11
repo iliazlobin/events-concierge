@@ -1,6 +1,8 @@
 # Events Concierge GCP Deployment Plan
 
-The current private development setup is documented in [GCP & Operations](https://app.notion.com/p/3a5d865005a881f288dfdc9993b8fdd2) and the [development runbook](../deploy/development.md). The managed-service plan below is historical production planning, not the selected development deployment.
+The current private development setup and pending shared-platform move are documented in the
+[development runbook](../deploy/development.md). The managed-service plan below is historical
+production planning, not the selected development deployment.
 
 Status: implementation in progress; not production-ready  
 Last updated: 2026-08-09  

@@ -1,6 +1,13 @@
 # Private GKE development
 
-Target infrastructure: [Cloud Design](https://app.notion.com/p/3a5d865005a881f288dfdc9993b8fdd2). Release status and access: [Deployment](https://app.notion.com/p/3d3d865005a881339dc1f760bf5277e9). Tasks and acceptance: [Project Management](https://app.notion.com/p/bf0d138f979c442c888eafd175c4ec28).
+This runbook operates the existing `ec-dev` development deployment. The replacement shared
+foundation, networking and GKE are owned by [gcp-foundation](https://github.com/iliazlobin/gcp-foundation);
+do not create a second cluster from this application root for that destination.
+Product scope and release gates: [first-release acceptance](../docs/production-operations.md#first-release-acceptance).
+
+The move is pending. Validate the shared platform and application landing configuration first;
+preserve the existing stack until restored data, user workflows and crawler parity pass. The commands
+below still target the existing project and must not be silently repointed to the shared project.
 
 This profile uses real PostgreSQL, Redis, Temporal and GCS with explicit mock external product adapters. No real email, booking or Calendar actions. The older staging Terraform root remains separate.
 

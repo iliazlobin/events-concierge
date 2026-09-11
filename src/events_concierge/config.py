@@ -232,6 +232,9 @@ class Settings(BaseSettings):
 
     # Mock the cloud (KMS/SES/S3/Calendar/Anthropic/Browserbase) in the foundation.
     mock_cloud: bool = True
+    # The approved first release supports catalog discovery and provider links only.
+    # Keep the full profile available for local development of deferred workflows.
+    release_profile: Literal["full", "discovery"] = "full"
     # ``module:callable`` deployment hook. The callable receives this immutable settings snapshot
     # and returns ``RuntimePorts``; secrets, browser-session authentication, its matching
     # CsrfProtectionPort, and concrete cloud SDKs remain in deployment-owned code.
