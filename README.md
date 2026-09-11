@@ -17,10 +17,12 @@ editing, feedback, and withdrawal. Cloud services are mocked by default, and liv
 opt-in. The repository now contains validated Terraform/OpenTofu and Helm staging scaffolds plus a
 partial built-in GCP runtime provider. That provider supplies native GCS claim-check storage,
 reviewed public discovery, PostgreSQL audit/consent boundaries, and optional Google Calendar
-assembly, but it intentionally does not supply notification delivery, notification-secret
-protection, a production credential vault, or production Calendar binding/access. Consequently the
-full production preflight fails closed and application processes cannot start with
-`EC_MOCK_CLOUD=false`; this repository is not yet production-ready.
+assembly. The full product profile still lacks notification delivery, notification-secret
+protection, a production credential vault, and production Calendar binding/access. The discovery
+profile can construct a non-mock catalog runtime with real GCS/PostgreSQL/Redis and the configured
+OIDC BFF; its deferred product ports raise on every operation, including external cleanup. Erasure
+stays pending when provider cleanup cannot be verified. Runtime construction is not production
+acceptance; deployment, identity, recovery and erasure evidence remain required.
 
 Deliberate foundation choices:
 

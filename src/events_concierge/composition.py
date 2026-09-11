@@ -102,6 +102,7 @@ from .application.registration import RegistrationService
 from .application.request_terminal import RequestTerminalService
 from .application.ticketmaster_budget import TicketmasterDispatchGate
 from .config import Settings, get_settings
+from .deployment.discovery_runtime import discovery_effects_disabled, validate_discovery_settings
 from .domain.enums import CatalogSourceMode, Source
 from .domain.policy import SourcePolicy
 from .infra.db import init_engine
@@ -304,6 +305,29 @@ def build_container(
         if registration_consent is not None
         else provisioned.registration_consent
     )
+    if settings.release_profile == "discovery" and not settings.mock_cloud:
+        validate_discovery_settings(settings)
+        if not settings.oidc_bff_enabled or any(
+            boundary is not None for boundary in (auth_context, csrf_protection, browser_session)
+        ):
+            raise ValueError(
+                "non-mock discovery requires the repository OIDC BFF as sole identity authority"
+            )
+        if not discovery_effects_disabled(
+            RuntimePorts(
+                notifier=notifier,
+                notification_secret_protector=notification_secret_protector,
+                credential_vault=credential_vault,
+                calendar=calendar,
+                google_calendar_access=google_calendar_access,
+                google_calendar_bindings=google_calendar_bindings,
+                register_sources=register_sources,
+                withdrawal_sources=withdrawal_sources,
+            )
+        ):
+            raise ValueError(
+                "non-mock discovery requires explicit disabled product ports and empty mutation maps"
+            )
     init_engine(
         settings.database_url,
         pool_size=settings.database_pool_size,

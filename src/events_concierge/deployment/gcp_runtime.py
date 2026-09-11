@@ -6,10 +6,10 @@ storage, the reviewed public discovery source, Postgres audit/consent repositori
 enabled) Google Calendar using the existing tenant-access factory.  Autonomous registration and
 withdrawal remain explicitly disabled.
 
-Notification delivery, Cloud KMS notification protection, and the encrypted credential vault are
-left unprovisioned until their GCP adapters land.  Production preflight and non-mock composition
-therefore continue to fail closed instead of mistaking this Phase-1 slice for a complete launch
-graph.
+The full product profile leaves notification delivery, Cloud KMS notification protection and the
+encrypted credential vault unprovisioned. The discovery profile provides explicit disabled product
+ports instead: operations and unverified external cleanup raise rather than claim completion.
+Identity, infrastructure and release acceptance remain independent requirements.
 """
 
 from __future__ import annotations
@@ -20,6 +20,12 @@ from threading import Lock
 from typing import Protocol, cast
 
 from ..adapters.crawl.source import PublicJsonLdSource
+from ..adapters.disabled import (
+    DisabledCalendar,
+    DisabledCredentialVault,
+    DisabledNotificationSecretProtector,
+    DisabledNotifier,
+)
 from ..adapters.gcs import GcsBlob, GcsBucket, GcsObjectStore, GcsStorageClient
 from ..adapters.google_calendar.calendar import GoogleCalendarAdapter
 from ..adapters.postgres.audit import PostgresRegistrationActionAuditRepository
@@ -28,6 +34,7 @@ from ..adapters.postgres.consent import PostgresRegistrationConsentEvidenceRepos
 from ..config import Settings
 from ..ports.google_calendar import GoogleCalendarAccessPort
 from ..runtime import RuntimePorts
+from .discovery_runtime import validate_discovery_settings
 
 _DEFAULT_CLAIM_CHECK_PREFIX = "events-concierge/claim-check/v1"
 
@@ -107,10 +114,29 @@ def build_runtime_ports(
     """
     if settings.mock_cloud:
         raise GcpRuntimeConfigurationError("the GCP runtime provider requires EC_MOCK_CLOUD=false")
+    discovery = getattr(settings, "release_profile", "full") == "discovery"
+    if discovery:
+        validate_discovery_settings(settings)
     prefix = settings.gcs_claim_check_prefix.strip().rstrip("/")
     if prefix == "events-concierge/catalog" or prefix.startswith("events-concierge/catalog/"):
-        raise GcpRuntimeConfigurationError("consumer payload storage cannot use the reserved catalog prefix")
+        raise GcpRuntimeConfigurationError(
+            "consumer payload storage cannot use the reserved catalog prefix"
+        )
     object_store = build_gcs_object_store(settings, storage_client=storage_client)
+
+    if discovery:
+        return RuntimePorts(
+            object_store=object_store,
+            discovery_sources=_discovery_sources(settings),
+            register_sources={},
+            withdrawal_sources={},
+            notifier=DisabledNotifier(),
+            notification_secret_protector=DisabledNotificationSecretProtector(),
+            credential_vault=DisabledCredentialVault(),
+            calendar=DisabledCalendar(),
+            action_audit=PostgresRegistrationActionAuditRepository(),
+            registration_consent=PostgresRegistrationConsentEvidenceRepository(),
+        )
 
     google_access, google_bindings, calendar = _google_calendar_ports(settings)
     discovery_sources = _discovery_sources(settings)

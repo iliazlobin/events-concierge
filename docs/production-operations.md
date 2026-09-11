@@ -48,18 +48,22 @@ Shared foundation/network/GKE belong to [gcp-foundation](https://github.com/ilia
 The application owns its namespace, workload identities/permissions, releases, data, migrations and
 backups. Exact current commands and relocation limits are in the [private runbook](../deploy/development.md).
 
-## Implementation status (2026-08-09)
+## Runtime implementation
 
 Repository-owned deployment scaffolding now includes offline-validated Terraform/OpenTofu and Helm,
 native GCS claim-check storage, strict mounted-secret loading, Cloud SQL Auth Proxy-aware database
 validation, explicit zero-overflow pools, secure `ec_app` bootstrap/rotation, split and versioned
 Temporal workers, bounded one-shot CronJobs, and a runtime-configured Next.js proxy.
 
-The service is still not production-ready. The included GCP runtime provider intentionally omits
-notification delivery, a production notification-secret protector, the credential vault/injection
-broker, and usable production Google Calendar binding/access. Full production preflight therefore
-fails and application processes cannot start with `EC_MOCK_CLOUD=false`. The current chart also
-mounts shared runtime secrets and relies on common runtime composition more broadly than strict
+The full product profile is still not production-ready. Its GCP runtime omits notification delivery,
+a production notification-secret protector, the credential vault/injection broker, and usable
+production Google Calendar binding/access. The discovery profile can construct real GCS, PostgreSQL,
+Redis and repository OIDC boundaries while explicitly disabling those product providers. It rejects
+enabled provider overrides and configuration; full-product preflight rejects disabled ports.
+Account erasure remains fenced and pending at unavailable Calendar or credential cleanup, with no
+false purge receipt or final database deletion. Production acceptance requires actual cleanup
+evidence. Existing media storage also needs deployment-proven shared persistence. The current chart
+still mounts shared runtime secrets and relies on common runtime composition more broadly than strict
 per-process IAM permits. Do not interpret a successful structural example check, Terraform/Helm
 validation, or container test as authorization to deploy traffic.
 

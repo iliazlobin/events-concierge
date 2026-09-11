@@ -7,6 +7,9 @@ from datetime import UTC, datetime
 from pathlib import Path
 from uuid import UUID, uuid4
 
+import pytest
+
+from events_concierge.adapters.disabled import DisabledCalendar, DisabledCredentialVault
 from events_concierge.adapters.mock.calendar import MockCalendar
 from events_concierge.adapters.mock.object_store import MockFilesystemObjectStore
 from events_concierge.adapters.mock.vault import MockVault
@@ -206,7 +209,9 @@ class _RecordingObjectStore(MockFilesystemObjectStore):
         await super().delete_tenant(tenant_id)
 
 
-def _snapshot(tenant_id: UUID, request_id: UUID, event_ids: tuple[UUID, ...]) -> AccountErasureSnapshot:
+def _snapshot(
+    tenant_id: UUID, request_id: UUID, event_ids: tuple[UUID, ...]
+) -> AccountErasureSnapshot:
     workflow_ids = (
         f"req:{tenant_id}:{request_id}",
         *(f"{tenant_id}:{event_id}" for event_id in event_ids),
@@ -364,10 +369,50 @@ async def test_partial_stage_is_not_acknowledged_and_exact_retry_resumes_safely(
 
     assert completed.status is AccountErasureStatus.COMPLETED
     assert completed.failed_stage is None
-    assert [item for item in operations if item.startswith("workflow:")] == first_workflow_operations
+    assert [
+        item for item in operations if item.startswith("workflow:")
+    ] == first_workflow_operations
     assert operations.count(f"calendar:{event_id}") == 2
     assert operations.count("mark:calendar") == 1
     assert repository.finalize_calls == 1
+
+
+@pytest.mark.parametrize("binding_expected", [True, False])
+async def test_discovery_erasure_stays_pending_without_external_cleanup_evidence(
+    tmp_path: Path,
+    binding_expected: bool,
+) -> None:
+    tenant_id, request_id = uuid4(), uuid4()
+    operations: list[str] = []
+    snapshot = replace(
+        _snapshot(tenant_id, request_id, ()),
+        calendar_binding_expected=binding_expected,
+    )
+    repository = _MemoryErasureRepository(snapshot, operations)
+    service = AccountErasureService(
+        repository,
+        _RecordingExternalEffects(operations),
+        _WorkflowCanceller(operations),
+        DisabledCalendar(),
+        _RecordingSessions(operations),
+        DisabledCredentialVault(),
+        _RecordingObjectStore(tmp_path / "claims", operations),
+    )
+
+    result = await service.erase(tenant_id, request_id)
+    expected = (
+        AccountErasureStage.CALENDAR if binding_expected else AccountErasureStage.CREDENTIAL_VAULT
+    )
+    assert result.status is AccountErasureStatus.ERASING and result.failed_stage is expected
+    assert not result.credential_vault_purged and not result.object_store_purged
+    assert repository.finalize_calls == 0
+    assert "mark:credential_vault" not in operations
+    assert "object_store" not in operations
+    if binding_expected:
+        assert "mark:calendar" not in operations
+    retry = await service.erase(tenant_id, request_id)
+    assert retry.status is AccountErasureStatus.ERASING and retry.failed_stage is expected
+    assert repository.finalize_calls == 0
 
 
 async def test_completed_replay_performs_no_external_effect_twice(tmp_path: Path) -> None:
@@ -407,9 +452,7 @@ async def test_durable_worker_reschedules_fixed_failure_then_completes_without_b
 ) -> None:
     tenant_id, request_id, event_id = uuid4(), uuid4(), uuid4()
     operations: list[str] = []
-    repository = _MemoryErasureRepository(
-        _snapshot(tenant_id, request_id, (event_id,)), operations
-    )
+    repository = _MemoryErasureRepository(_snapshot(tenant_id, request_id, (event_id,)), operations)
     repository.leases.append(AccountErasureLease(tenant_id, request_id, 1, uuid4()))
     workflows = _WorkflowCanceller(
         operations,

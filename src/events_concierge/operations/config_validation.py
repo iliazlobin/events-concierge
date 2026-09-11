@@ -13,7 +13,9 @@ from dataclasses import asdict, dataclass
 from typing import Any
 from urllib.parse import parse_qsl, urlsplit
 
+from ..adapters.disabled import DisabledProductPort, is_disabled_discovery_port
 from ..config import Settings
+from ..deployment.discovery_runtime import discovery_effects_disabled, validate_discovery_settings
 from ..domain.enums import Source
 from ..ports.sources import SourceCapability
 from ..runtime import RuntimePorts, load_runtime_ports
@@ -266,6 +268,21 @@ def validate_production_config(
     ]
 
     release_revision = settings.release_revision
+    if settings.release_profile == "discovery":
+        try:
+            validate_discovery_settings(settings)
+        except ValueError:
+            discovery_settings_valid = False
+        else:
+            discovery_settings_valid = True
+        checks.append(
+            _check(
+                "discovery_profile_configuration",
+                discovery_settings_valid,
+                "deferred chat, Calendar and model providers are not configured",
+                "discovery must not configure deferred chat, Calendar or model providers",
+            )
+        )
     image_digest = settings.image_digest
     if "release_revision" in type(settings).model_fields:
         checks.append(
@@ -327,6 +344,16 @@ def _provider_checks(settings: Settings) -> list[ConfigCheck]:
 
 def _runtime_port_checks(runtime: RuntimePorts, *, settings: Settings) -> list[ConfigCheck]:
     checks: list[ConfigCheck] = []
+    discovery = settings.release_profile == "discovery"
+    if discovery:
+        checks.append(
+            _check(
+                "discovery_runtime_boundary",
+                discovery_effects_disabled(runtime),
+                "deferred product ports fail closed and provider mutation maps are empty",
+                "discovery requires concrete disabled effect ports, empty mutation maps and no Calendar access",
+            )
+        )
     if settings.oidc_bff_enabled:
         identity_ready = (
             runtime.auth_context is None
@@ -372,12 +399,17 @@ def _runtime_port_checks(runtime: RuntimePorts, *, settings: Settings) -> list[C
         )
     for name in _REQUIRED_RUNTIME_PORTS:
         value = getattr(runtime, name)
-        passed = _runtime_port_ready(name, value)
+        disabled = discovery and is_disabled_discovery_port(name, value)
+        passed = disabled or _runtime_port_ready(name, value)
         checks.append(
             _check(
                 f"runtime_port_{name}",
                 passed,
-                f"{name} is explicitly provisioned by a non-mock adapter",
+                (
+                    f"{name} is explicitly disabled; operations and external cleanup fail closed"
+                    if disabled
+                    else f"{name} is explicitly provisioned by a non-mock adapter"
+                ),
                 f"deployment provider omitted or mock-provisioned RuntimePorts.{name}",
             )
         )
@@ -594,6 +626,7 @@ def _adapter_ready(value: object, methods: Sequence[str]) -> bool:
     return (
         value is not None
         and not _contains_repository_mock(value)
+        and not isinstance(value, DisabledProductPort)
         and all(callable(getattr(value, method, None)) for method in methods)
     )
 
