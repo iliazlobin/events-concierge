@@ -80,6 +80,7 @@ from ..ports.tenant_effects import (
     TenantEffectFencedError,
     TenantEffectKind,
     TenantEffectRequest,
+    TenantEffectTimedOutError,
 )
 from ..ports.tenant_profile import TenantProfile
 from ..ports.tenant_roles import TenantRole
@@ -2976,7 +2977,7 @@ def create_app() -> FastAPI:
 
         try:
             return await container.profile_media_mutations.run(tenant_id, mutate_avatar)
-        except ProfileMediaMutationBusyError as error:
+        except (ProfileMediaMutationBusyError, TenantEffectTimedOutError) as error:
             raise HTTPException(
                 status_code=503, detail="avatar update temporarily unavailable"
             ) from error
@@ -3064,7 +3065,7 @@ def create_app() -> FastAPI:
 
         try:
             return await container.profile_media_mutations.run(tenant_id, mutate_avatar)
-        except ProfileMediaMutationBusyError as error:
+        except (ProfileMediaMutationBusyError, TenantEffectTimedOutError) as error:
             raise HTTPException(
                 status_code=503, detail="avatar removal temporarily unavailable"
             ) from error

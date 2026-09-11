@@ -23,6 +23,7 @@ from events_concierge.ports.tenant_effects import (
     TenantEffectFencedError,
     TenantEffectKind,
     TenantEffectRequest,
+    TenantEffectTimedOutError,
 )
 
 app_module = importlib.import_module("events_concierge.api.app")
@@ -66,12 +67,12 @@ class _NoErasureRepository:
 class _MediaMutationGuard:
     def __init__(self) -> None:
         self.lock = asyncio.Lock()
-        self.busy = False
+        self.error: Exception | None = None
 
     async def run[T](self, tenant_id: UUID, mutation: Callable[[], Awaitable[T]]) -> T:
         del tenant_id
-        if self.busy:
-            raise ProfileMediaMutationBusyError("private admission details")
+        if self.error is not None:
+            raise self.error
         async with self.lock:
             return await mutation()
 
@@ -450,16 +451,18 @@ async def test_avatar_delete_rejects_raced_erasure_before_touching_media(
 
 
 @pytest.mark.parametrize("method", ["post", "delete"])
+@pytest.mark.parametrize("failure", [ProfileMediaMutationBusyError, TenantEffectTimedOutError])
 async def test_busy_media_mutation_returns_bounded_private_error_without_effects(
     monkeypatch: pytest.MonkeyPatch,
     method: str,
+    failure: type[Exception],
 ) -> None:
     tenant, events = uuid4(), []
     authority = _TenantEffectAuthority(events)
     media = _MediaStore(authority, events)
     avatars = _AvatarRepository(authority, events)
     app = _avatar_app(monkeypatch, tenant, authority, media, avatars)
-    app.state.container.profile_media_mutations.busy = True
+    app.state.container.profile_media_mutations.error = failure("private admission details")
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
         response = await client.request(
             method, "/v1/me/avatar", content=_png(), headers={"Content-Type": "image/png"}
