@@ -270,7 +270,7 @@ test("deliberate consumer navigation pushes snapshots and popstate restores them
   assert.match(app, /const changeView = \(nextView: ViewName\) => \{[\s\S]*?pushConsumerSnapshot/);
   assert.match(app, /const handleFacetSelect = useCallback[\s\S]*?pushConsumerSnapshot\(nextSnapshot\)/);
   assert.match(app, /history === "push"[\s\S]*?pushConsumerSnapshot/);
-  assert.match(app, /window\.addEventListener\("popstate", handlePopState\)/);
+  assert.match(app, /window\.addEventListener\("popstate", handlePopState, true\)/);
   assert.match(
     app,
     /preserveExpandedOnNextCatalogLoad\.current = true;[\s\S]*setView\(snapshot\.view\);[\s\S]*applyFilters\(snapshot\.filters\);[\s\S]*setExpandedId\(snapshot\.expandedId\);/,

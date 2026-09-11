@@ -408,8 +408,10 @@ export function ConciergeApp() {
       setExpandedId(snapshot.expandedId);
       setSelectedEntityId(snapshot.selectedEntityId);
     };
-    window.addEventListener("popstate", handlePopState);
-    return () => window.removeEventListener("popstate", handlePopState);
+    // Canonicalize before the router reads the traversed URL; otherwise its later
+    // history restore can overwrite the release-safe URL with a deferred view.
+    window.addEventListener("popstate", handlePopState, true);
+    return () => window.removeEventListener("popstate", handlePopState, true);
   }, [applyFilters, historyReady, profile, sessionState]);
 
   useEffect(() => {
