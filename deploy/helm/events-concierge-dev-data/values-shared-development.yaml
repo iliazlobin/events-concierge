@@ -1,0 +1,4 @@
+# The platform owns the retained StorageClass; this chart owns only the app claims/stores.
+createStorageClass: false
+storageClass: shared-retain
+zone: us-west1-a

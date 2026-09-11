@@ -8,6 +8,13 @@ absent.
 
 Every container image is assembled as `repository@sha256:digest`; tags are not accepted by the
 values schema. Secret Manager values are mounted read-only with the GKE Secret Manager CSI add-on.
+
+For the private shared development landing, layer `values-shared-development.yaml` after
+`values-development.yaml`, then apply the target-checked release identity/image values. The data
+chart's matching overlay consumes the platform-owned `shared-retain` class without creating it.
+The [deployment runbook](../../development.md) owns readiness, state migration, recovery, and
+cutover steps; the overlay alone does not establish production readiness.
+
 Only non-secret identifiers belong in values files. The runtime uses `*_FILE` settings, while the
 migration Job receives only its owner URL and application-role bootstrap password files.
 Secret references must use immutable numeric versions, never `latest`; the version lists are hashed

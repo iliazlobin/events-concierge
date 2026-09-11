@@ -89,6 +89,9 @@ jobs:
       - run: terraform -chdir=infra/terraform/environments/development init -backend=false -input=false -lockfile=readonly
       - run: terraform -chdir=infra/terraform/environments/development validate
       - run: terraform -chdir=infra/terraform/environments/development test -no-color
+      - run: terraform -chdir=infra/terraform/environments/shared-development init -backend=false -input=false -lockfile=readonly
+      - run: terraform -chdir=infra/terraform/environments/shared-development validate
+      - run: terraform -chdir=infra/terraform/environments/shared-development test -no-color
       - run: helm lint deploy/helm/events-concierge-dev-data -n events-concierge-dev
       - run: uv sync --locked --extra dev
       - run: uv run pytest tests/deployment -q -o addopts=''

@@ -1,0 +1,8 @@
+# Enable only after creating this application bucket with the reviewed local bootstrap plan.
+# Migrate only shared-development state; legacy and shared-platform roots retain their own state.
+terraform {
+  backend "gcs" {
+    bucket = "iz27-platform-dev-ec-state"
+    prefix = "events-concierge/shared-development"
+  }
+}
