@@ -80,6 +80,16 @@ Media is excluded from retained payload backups. Database recovery may require u
 avatars; never claim a database/payload restore recovered media. Verify upload, replica-independent
 read, deletion and account erasure on the shared deployment.
 
+The September 11 registry comparison found the same 105 non-fixture registrations in both stores;
+no source inserts or table import are needed. After restoration and migration, use optimistic,
+audited admin configuration changes to match the local reviewed set: enable `berkeley-events`,
+`berkeley-public-library-events`, `berkeley-rep-shows`, `scu-events`, `sf-gov-related-events`,
+`sjsu-events`, `smccd-events`, `stanford-events` and `ucsf-events`; disable `luma-nyc-nyaiengineers`.
+Set the resulting 92 enabled sources to a 1,440-minute refresh interval. First recheck source keys
+and immutable settings; abort on unexpected drift. Preserve destination revisions, review/history
+metadata, URLs, collection windows and retirement records. The local database also contains 497
+fixture registrations: exclude them using `fn_ingestion_admin_source_is_fixture`, never copy them.
+
 For collection acceptance, compare `fn_report_catalog_source_coverage_v1()` on both environments,
 using the same as-of time and collection windows. It excludes fixtures. Require every reviewed source
 to have current successful execution or an explicitly investigated failure, and compare per-source
@@ -91,6 +101,9 @@ After a real queued refresh succeeds through the separate ingestion executor, op
 due sources through the controller credential; it does not fetch providers or enable scheduling in
 the consumer API. Verify the CronJob, command ledger and resulting successful refresh runs separately.
 The legacy dispatcher stays disabled. A successful schedule tick alone does not prove collection.
+`promote_workers.py` selects only catalog in discovery and verifies current candidate pollers before
+promotion. `smoke.py` selects catalog/profile/deferred-route checks in discovery, with a separate
+Temporal/GCS echo; it reports synthetic cleanup as pending until the erasure worker completes it.
 
 Before any backup, suspend the cadence CronJob and wait for all unfinished Jobs to terminate.
 The backup helper refuses running schedules or unfinished Jobs before stopping writers and checks
