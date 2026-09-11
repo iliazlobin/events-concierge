@@ -26,12 +26,15 @@ from ...ports.sources import (
     RegisterResult,
     RegistrationTarget,
     SourceCapability,
+    SourceTransientError,
 )
 from .acl import parse_jsonld
 
 _log = get_logger("crawl.source")
 
 _FETCH_TIMEOUT_S = 15.0
+_FETCH_RETRY_SECONDS = 30.0
+_SERVER_ERROR_STATUS = 500
 
 
 class PublicJsonLdSource:
@@ -119,12 +122,26 @@ class PublicJsonLdSource:
                     else:
                         response = await self._get_approved_source_response(client, catalog_source)
                         if response is None:
-                            continue
+                            raise ValueError("catalog response rejected by reviewed origin policy")
                 except httpx.HTTPError as exc:
+                    if catalog_source is not None:
+                        # A failed collection must retain the last successful projection.
+                        # Legacy best-effort discovery continues to skip unavailable seeds.
+                        if isinstance(exc, httpx.TransportError) or (
+                            isinstance(exc, httpx.HTTPStatusError)
+                            and exc.response.status_code >= _SERVER_ERROR_STATUS
+                        ):
+                            raise SourceTransientError(
+                                "catalog HTTP request temporarily unavailable",
+                                retry_after_seconds=_FETCH_RETRY_SECONDS,
+                            ) from exc
+                        raise ValueError("catalog HTTP request failed") from exc
                     _log.warning("crawl_fetch_failed", url=url, error=str(exc))
                     continue
                 assert response is not None
-                candidates.extend(parse_jsonld(response.text, url))
+                candidates.extend(
+                    parse_jsonld(response.text, url, strict=catalog_source is not None)
+                )
         return candidates
 
     async def _get_approved_source_response(

@@ -14,6 +14,7 @@ from events_concierge.domain.catalog_sources import CatalogSource
 from events_concierge.domain.enums import CatalogSourceMode, Source
 from events_concierge.domain.events import CandidateEvent
 from events_concierge.domain.request import RequestConstraints
+from events_concierge.ports.sources import SourceTransientError
 
 
 async def test_public_crawl_returns_all_future_fixture_events_by_default() -> None:
@@ -159,9 +160,8 @@ async def test_catalog_fetch_rejects_an_unapproved_redirect_before_requesting_it
         min_interval_ms=1,
     )
 
-    events = await source.fetch(catalog_source)
-
-    assert events == []
+    with pytest.raises(ValueError, match="reviewed origin policy"):
+        await source.fetch(catalog_source)
     assert requested == ["https://events.example.test/calendar"]
 
 
@@ -174,6 +174,109 @@ def test_crawl_seed_setting_requires_explicit_owner_approved_urls() -> None:
         "https://luma.com/genai-sf",
         "https://events.example.test/calendar",
     ]
+
+
+def _reviewed_source() -> CatalogSource:
+    return CatalogSource(
+        source_key="reviewed-calendar",
+        display_name="Reviewed calendar",
+        publisher="Test publisher",
+        seed_url="https://events.example.test/calendar",
+        approved_origins=("https://events.example.test",),
+        region="bay_area_9_county",
+        mode=CatalogSourceMode.PUBLIC_JSONLD,
+        enabled=True,
+        reviewed_at=datetime(2026, 7, 16, 12, 0, tzinfo=UTC),
+        review_expires_at=None,
+        refresh_interval_minutes=60,
+        min_interval_ms=1,
+    )
+
+
+@pytest.mark.parametrize("failure", ["timeout", "http_503", "http_404", "http_429"])
+async def test_catalog_fetch_failure_is_not_an_empty_success(failure: str) -> None:
+    async def handler(request: httpx.Request) -> httpx.Response:
+        if failure == "timeout":
+            raise httpx.ReadTimeout("unavailable", request=request)
+        return httpx.Response(int(failure.removeprefix("http_")), request=request)
+
+    source = PublicJsonLdSource(user_agent="test", transport=httpx.MockTransport(handler))
+    expected = SourceTransientError if failure in {"timeout", "http_503"} else ValueError
+    with pytest.raises(expected, match="catalog HTTP request"):
+        await source.fetch(_reviewed_source())
+
+
+@pytest.mark.parametrize("location", [None, "/calendar"])
+async def test_catalog_rejects_missing_or_looping_redirects(location: str | None) -> None:
+    requested: list[str] = []
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        requested.append(str(request.url))
+        return httpx.Response(
+            302, headers={"location": location} if location else {}, request=request
+        )
+
+    source = PublicJsonLdSource(user_agent="test", transport=httpx.MockTransport(handler))
+    with pytest.raises(ValueError, match="reviewed origin policy"):
+        await source.fetch(_reviewed_source())
+    assert len(requested) == (5 if location else 1)
+
+
+@pytest.mark.parametrize(
+    "html",
+    [
+        '<script type="application/ld+json">{broken</script>',
+        '<script type="application/ld+json">{"@type":"Event","name":"No date"}</script>',
+        '<script type="application/ld+json">{"@type":"Event","name":"Bad date","startDate":"oops"}</script>',
+    ],
+)
+async def test_catalog_parse_failure_is_not_an_empty_success(html: str) -> None:
+    source = PublicJsonLdSource(
+        user_agent="test",
+        transport=httpx.MockTransport(
+            lambda request: httpx.Response(200, text=html, request=request)
+        ),
+    )
+    with pytest.raises(ValueError, match="catalog JSON-LD"):
+        await source.fetch(_reviewed_source())
+
+
+@pytest.mark.parametrize(
+    "html",
+    [
+        "<html><body>No upcoming events</body></html>",
+        '<script type="application/ld+json">[]</script>',
+    ],
+)
+async def test_catalog_valid_empty_document_remains_successful(html: str) -> None:
+    source = PublicJsonLdSource(
+        user_agent="test",
+        transport=httpx.MockTransport(
+            lambda request: httpx.Response(200, text=html, request=request)
+        ),
+    )
+    assert await source.fetch(_reviewed_source()) == []
+
+
+async def test_legacy_discovery_remains_best_effort_after_failed_seed() -> None:
+    async def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/failed":
+            return httpx.Response(503, request=request)
+        return httpx.Response(
+            200,
+            text='<script type="application/ld+json">{broken</script>'
+            '<script type="application/ld+json">{"@type":"Event","name":"Available",'
+            '"startDate":"2030-01-01T12:00:00Z"}</script>',
+            request=request,
+        )
+
+    source = PublicJsonLdSource(
+        user_agent="test",
+        min_interval_ms=1,
+        seed_urls=["https://events.example.test/failed", "https://events.example.test/good"],
+        transport=httpx.MockTransport(handler),
+    )
+    assert [event.title for event in await source.discover(RequestConstraints())] == ["Available"]
 
 
 async def test_disabled_public_jsonld_source_never_fetches_a_populated_seed(

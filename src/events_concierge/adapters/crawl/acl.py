@@ -1,7 +1,8 @@
 """Anti-Corruption Layer: schema.org/Event JSON-LD -> CandidateEvent (FR-3.x, FR-8.7a).
 
-Defensive by contract: every malformed <script>/object is skipped and logged, never raised, so one
-bad block on a page can't sink the whole crawl."""
+Legacy discovery skips malformed blocks. Reviewed catalog collection is strict: malformed data
+must fail the refresh rather than replacing a last successful projection with empty/partial data.
+"""
 
 from __future__ import annotations
 
@@ -28,11 +29,12 @@ _log = get_logger("crawl.acl")
 _FREE_PRICES = frozenset({"0", "0.0", "0.00", "free"})
 
 
-def parse_jsonld(html: str, base_url: str) -> list[CandidateEvent]:
+def parse_jsonld(html: str, base_url: str, *, strict: bool = False) -> list[CandidateEvent]:
     """Extract every JSON-LD Event on the page and map it to a CandidateEvent.
 
     Tolerates a top-level list, a single object, or a `@graph` wrapper. Objects whose `@type` is not
-    (or does not contain) "Event" are ignored."""
+    (or does not contain) "Event" are ignored. Strict collection rejects malformed JSON and unusable
+    Events; a valid empty document remains an authoritative empty result."""
     out: list[CandidateEvent] = []
     tree = HTMLParser(html)
     for node in tree.css('script[type="application/ld+json"]'):
@@ -42,12 +44,16 @@ def parse_jsonld(html: str, base_url: str) -> list[CandidateEvent]:
         try:
             payload = json.loads(raw)
         except (ValueError, TypeError) as exc:
+            if strict:
+                raise ValueError("catalog JSON-LD could not be parsed") from exc
             _log.warning("jsonld_parse_failed", base_url=base_url, error=str(exc))
             continue
         for obj in _iter_objects(payload):
             candidate = _map_event(obj, base_url)
             if candidate is not None:
                 out.append(candidate)
+            elif strict and _is_event(obj):
+                raise ValueError("catalog JSON-LD Event could not be mapped")
     return _deduplicate_source_ids(_disambiguate_source_ids(out))
 
 
