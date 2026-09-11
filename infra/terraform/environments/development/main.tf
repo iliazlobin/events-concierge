@@ -1,3 +1,5 @@
+# Legacy compute retirement phase: preserve data and identities for recovery.
+# Apply only after the separate protection step and shared destination acceptance.
 terraform {
   required_version = ">= 1.9, < 2.0"
   required_providers {
@@ -13,14 +15,6 @@ variable "impersonate_service_account" {
   type    = string
   default = null
 }
-variable "machine_type" {
-  type    = string
-  default = "e2-standard-2"
-  validation {
-    condition     = contains(["e2-standard-2", "e2-standard-4"], var.machine_type)
-    error_message = "Only the reviewed 8 or 16 GiB development node is allowed."
-  }
-}
 locals {
   project           = "project-9c8cce04-f94d-40fc-aa6"
   namespace         = "events-concierge-dev"
@@ -34,15 +28,6 @@ resource "google_project_service" "api" {
   service            = each.value
   disable_on_destroy = false
 }
-data "google_compute_network" "existing" {
-  name    = "iz27-dev"
-  project = local.project
-}
-data "google_compute_subnetwork" "existing" {
-  name    = "iz27-dev-usw1"
-  project = local.project
-  region  = "us-west1"
-}
 resource "google_service_account" "node" {
   project    = local.project
   account_id = "ec-dev-gke-node"
@@ -52,82 +37,6 @@ resource "google_project_iam_member" "node" {
   project  = local.project
   role     = each.value
   member   = google_service_account.node.member
-}
-# Apply this retirement preparation only after shared destination acceptance.
-# Keep prevent_destroy until the separately reviewed cluster removal.
-resource "google_container_cluster" "development" {
-  project                  = local.project
-  name                     = "ec-dev"
-  location                 = "us-west1-a"
-  remove_default_node_pool = true
-  initial_node_count       = 1
-  deletion_protection      = false
-  network                  = data.google_compute_network.existing.id
-  subnetwork               = data.google_compute_subnetwork.existing.id
-  networking_mode          = "VPC_NATIVE"
-  datapath_provider        = "ADVANCED_DATAPATH"
-  release_channel { channel = "STABLE" }
-  workload_identity_config { workload_pool = "${local.project}.svc.id.goog" }
-  ip_allocation_policy {
-    cluster_secondary_range_name  = "gke-pods"
-    services_secondary_range_name = "gke-services"
-  }
-  private_cluster_config {
-    enable_private_nodes    = true
-    enable_private_endpoint = true
-  }
-  control_plane_endpoints_config {
-    dns_endpoint_config { allow_external_traffic = true }
-    ip_endpoints_config { enabled = false }
-  }
-  secret_manager_config { enabled = true }
-  logging_config { enable_components = ["SYSTEM_COMPONENTS", "WORKLOADS"] }
-  monitoring_config {
-    enable_components = ["SYSTEM_COMPONENTS"]
-    managed_prometheus { enabled = false }
-  }
-  addons_config {
-    http_load_balancing { disabled = true }
-  }
-  resource_labels = { environment = "development", service = "events-concierge" }
-  lifecycle {
-    prevent_destroy = true
-    precondition {
-      condition     = data.google_compute_subnetwork.existing.ip_cidr_range == "10.20.0.0/20" && data.google_compute_subnetwork.existing.private_ip_google_access
-      error_message = "Existing foundation subnet contract changed."
-    }
-  }
-  depends_on = [google_project_service.api, google_project_iam_member.node]
-}
-resource "google_container_node_pool" "development" {
-  project        = local.project
-  name           = "development"
-  cluster        = google_container_cluster.development.name
-  location       = "us-west1-a"
-  node_locations = ["us-west1-a"]
-  node_count     = 1
-  management {
-    auto_repair  = true
-    auto_upgrade = true
-  }
-  upgrade_settings {
-    max_surge       = 1
-    max_unavailable = 0
-  }
-  node_config {
-    machine_type    = var.machine_type
-    disk_type       = "pd-balanced"
-    disk_size_gb    = 30
-    image_type      = "COS_CONTAINERD"
-    service_account = google_service_account.node.email
-    oauth_scopes    = ["https://www.googleapis.com/auth/cloud-platform"]
-    workload_metadata_config { mode = "GKE_METADATA" }
-    shielded_instance_config {
-      enable_secure_boot          = true
-      enable_integrity_monitoring = true
-    }
-    metadata = { disable-legacy-endpoints = "true" }
-  }
 }
 resource "google_artifact_registry_repository" "images" {
   project       = local.project
@@ -154,7 +63,6 @@ resource "google_service_account_iam_member" "workload" {
   service_account_id = google_service_account.workload[each.key].name
   role               = "roles/iam.workloadIdentityUser"
   member             = "serviceAccount:${local.project}.svc.id.goog[${local.namespace}/events-concierge-${each.key}]"
-  depends_on         = [google_container_cluster.development]
 }
 resource "google_secret_manager_secret" "development" {
   for_each  = local.secrets
@@ -220,7 +128,7 @@ resource "google_storage_bucket_iam_member" "catalog_payloads" {
     expression = "resource.name.startsWith('projects/_/buckets/iz27-ec-dev-payloads/objects/events-concierge/catalog/v1/')"
   }
 }
-output "cluster" { value = google_container_cluster.development.name }
+output "cluster" { value = null }
 output "namespace" { value = local.namespace }
 output "service_accounts" { value = { for k, v in google_service_account.workload : k => v.email } }
 output "buckets" { value = { for k, v in google_storage_bucket.data : k => v.name } }

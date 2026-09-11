@@ -1,12 +1,5 @@
-# Provider calls are mocked. This plans the existing private development profile only.
-mock_provider "google" {
-  mock_data "google_compute_subnetwork" {
-    defaults = {
-      ip_cidr_range            = "10.20.0.0/20"
-      private_ip_google_access = true
-    }
-  }
-}
+# Provider calls are mocked. Legacy retirement retains recovery data and access.
+mock_provider "google" {}
 
 run "private_operator_and_catalog_access" {
   command = plan
@@ -57,7 +50,15 @@ run "private_operator_and_catalog_access" {
     error_message = "The development admin's object capability must remain in the consumer prefix."
   }
   assert {
-    condition     = google_container_node_pool.development.node_count == 1 && google_container_node_pool.development.node_config[0].machine_type == "e2-standard-2" && google_container_cluster.development.private_cluster_config[0].enable_private_nodes
-    error_message = "Operator wiring must retain the existing single-node private development footprint."
+    condition = output.cluster == null && length(google_service_account.workload) == 15 && alltrue([
+      for bucket in values(google_storage_bucket.data) :
+      !bucket.force_destroy && bucket.public_access_prevention == "enforced" && bucket.uniform_bucket_level_access &&
+      bucket.versioning[0].enabled && bucket.soft_delete_policy[0].retention_duration_seconds == 604800
+    ])
+    error_message = "Retirement must stop advertising a cluster while preserving private, recoverable application buckets and workload identities."
+  }
+  assert {
+    condition     = length(google_storage_bucket.data) == 2 && length(google_secret_manager_secret.development) == 11 && google_artifact_registry_repository.images.repository_id == "ec-dev" && google_service_account.node.account_id == "ec-dev-gke-node"
+    error_message = "Retirement must preserve both buckets, all secret containers, image history and the legacy node identity."
   }
 }
