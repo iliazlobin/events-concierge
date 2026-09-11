@@ -55,7 +55,7 @@ run "app_resources_and_external_platform_contract" {
     error_message = "Application data stays private and protected in new buckets."
   }
   assert {
-    condition = google_storage_bucket.media.name == "iz27-platform-dev-ec-media" && google_storage_bucket.media.public_access_prevention == "enforced" && google_storage_bucket.media.uniform_bucket_level_access && !google_storage_bucket.media.force_destroy && !google_storage_bucket.media.versioning[0].enabled && google_storage_bucket.media.soft_delete_policy[0].retention_duration_seconds == 0 && length(google_storage_bucket_iam_member.media_objects) == 3 && length(google_storage_bucket_iam_member.media_policy) == 3
+    condition     = google_storage_bucket.media.name == "iz27-platform-dev-ec-media" && google_storage_bucket.media.public_access_prevention == "enforced" && google_storage_bucket.media.uniform_bucket_level_access && !google_storage_bucket.media.force_destroy && !google_storage_bucket.media.versioning[0].enabled && google_storage_bucket.media.soft_delete_policy[0].retention_duration_seconds == 0 && length(google_storage_bucket_iam_member.media_objects) == 3 && length(google_storage_bucket_iam_member.media_policy) == 3
     error_message = "Media must be durable across replicas, private, and erasable without hidden retention."
   }
   assert {
