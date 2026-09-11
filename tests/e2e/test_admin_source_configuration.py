@@ -18,6 +18,7 @@ from urllib.parse import parse_qs, urlsplit
 import pytest
 from playwright.sync_api import Browser, Locator, Page, Route, expect
 from tests.e2e.test_admin_command_investigation import ACCEPTED, CommandApi
+from tests.e2e.test_admin_operations import _event, catalog_response
 from tests.e2e.test_admin_workspaces import STAMP, START, WorkspaceApi, source_detail
 
 pytestmark = [
@@ -786,25 +787,35 @@ def test_source_missing_roster_bookmark_keeps_exact_configuration_retry_visible(
     page.get_by_role("region", name=f"Source details for {missing}", exact=True).get_by_role(
         "button", name="Refresh source details", exact=True
     ).click()
-    expect(page.get_by_role("region", name=f"Source details for {missing}", exact=True).get_by_text(missing, exact=True)).to_be_visible()
+    fields = panel.get_by_role("group", name="Source configuration fields", exact=True)
+    fields.get_by_text("Identity, adapter, and policy", exact=True).click()
+    expect(fields.get_by_text(missing, exact=True)).to_be_visible()
     expect(panel.get_by_text(FIRST_SEED, exact=True)).to_be_visible()
     assert not scenario.writes
 
 
-@pytest.mark.parametrize("from_records", [False, True])
+@pytest.mark.parametrize("source_filtered", [False, True])
 def test_catalog_manage_source_uses_the_same_sources_editor_and_back_keeps_catalog_scope(
     source_page: tuple[Page, SourceConfigurationApi, str],
-    from_records: bool,
+    source_filtered: bool,
 ) -> None:
-    page, _, base = source_page
-    suffix = (
-        f"&store_source={SOURCE}&store_query=music" if from_records else "&store_source_query=Bay"
-    )
+    page, scenario, base = source_page
+    event = _event(1, 1) | {"source_key": SOURCE, "source_display_name": "Bay Arts 01"}
+
+    def events(route: Route) -> None:
+        assert route.request.method == "GET"
+        query = parse_qs(urlsplit(route.request.url).query)
+        scenario.respond(route, catalog_response([event], query))
+
+    page.route("**/admin/v1/ingestion/events?*", events)
+    suffix = "&store_query=Bay&store_dates=upcoming&store_price=free"
+    if source_filtered:
+        suffix += f"&store_source={SOURCE}"
     page.goto(f"{base}/admin?tab=catalog{suffix}")
     expect(inspector(page)).to_have_count(0)
     page.get_by_role(
         "button",
-        name="Manage source" if from_records else "Manage source for Bay Arts 01",
+        name=f"Manage source for {event['title']}",
         exact=True,
     ).click()
     panel = inspector(page)
@@ -816,14 +827,11 @@ def test_catalog_manage_source_uses_the_same_sources_editor_and_back_keeps_catal
     page.go_back()
     expect(page.get_by_role("heading", name="Catalog", exact=True)).to_be_visible()
     expect(inspector(page)).to_have_count(0)
-    if from_records:
-        expect(
-            page.get_by_role("textbox", name=re.compile(r"^Search parsed source events\b"))
-        ).to_have_value("music")
-    else:
-        expect(page.get_by_role("textbox", name="Find a catalog source", exact=True)).to_have_value(
-            "Bay"
-        )
+    expect(page.get_by_role("textbox", name="Search catalog events", exact=True)).to_have_value("Bay")
+    expect(page.get_by_role("combobox", name="Catalog source", exact=True)).to_have_value(SOURCE if source_filtered else "")
+    expect(page.get_by_role("combobox", name="Event dates", exact=True)).to_have_value("upcoming")
+    expect(page.get_by_role("combobox", name="Event price", exact=True)).to_have_value("free")
+    assert not scenario.writes
 
 
 def test_source_bookmark_editor_does_not_move_when_the_initial_roster_arrives(

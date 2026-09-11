@@ -678,7 +678,7 @@ def test_source_roster_streams_first_page_without_claiming_empty_registry(
     expect(registry.get_by_role("button", name=re.compile(r"^Bay Arts \d+$"))).to_have_count(100)
     expect(registry.get_by_role("button", name="Bay Arts 100", exact=True)).to_be_visible()
     expect(charts.get_by_text("100 loaded of 150 matching sources", exact=True)).to_be_visible()
-    expect(page.get_by_text("Loading remaining sources…", exact=True)).to_be_visible()
+    expect(charts).to_have_attribute("aria-busy", "true")
     expect(page.get_by_role("checkbox", name="Select Bay Arts 01", exact=True)).to_be_disabled()
 
     scenario.release_source_page(("", 100))
@@ -856,11 +856,11 @@ def test_source_failed_refresh_keeps_same_scope_evidence(
     page, scenario, base = workspace_page
     page.goto(f"{base}/admin?tab=sources")
     details = select_source(page)
-    expect(details.get_by_text("7 events", exact=True)).to_be_visible()
+    expect(details.get_by_role("button", name="Published records 7 24 collected in this window", exact=True)).to_be_visible()
     scenario.failed.add(SOURCE)
     details.get_by_role("button", name="Refresh source details", exact=True).click()
     expect(details.get_by_role("alert")).to_be_visible()
-    expect(details.get_by_text("7 events", exact=True)).to_be_visible()
+    expect(details.get_by_role("button", name="Published records 7 24 collected in this window", exact=True)).to_be_visible()
     scenario.failed.clear()
     details.get_by_role("button", name="Retry source details", exact=True).click()
     expect(details.get_by_role("alert")).to_have_count(0)
@@ -873,7 +873,7 @@ def test_source_query_failure_does_not_relabel_cached_rows(
     page.goto(f"{base}/admin?tab=sources")
     details = select_source(page)
     registry = page.locator("#source-registry-list")
-    expect(details.get_by_text("7 events", exact=True)).to_be_visible()
+    expect(details.get_by_role("button", name="Published records 7 24 collected in this window", exact=True)).to_be_visible()
     expect(registry.get_by_role("button", name="Bay Arts 02", exact=True)).to_be_visible()
     scenario.failed.add("/admin/v1/ingestion/sources")
     with page.expect_response(
@@ -901,13 +901,13 @@ def test_source_access_denial_clears_detail_without_registry_fallback(
     scenario.role = "reviewer"
     page.goto(f"{base}/admin?tab=sources")
     details = select_source(page)
-    expect(details.get_by_text("7 events", exact=True)).to_be_visible()
+    expect(details.get_by_role("button", name="Published records 7 24 collected in this window", exact=True)).to_be_visible()
     details.get_by_role("button", name="Configuration", exact=True).click()
     details.get_by_role("spinbutton", name="Page limit", exact=True).fill("15")
     scenario.status_overrides[f"/admin/v1/ingestion/sources/{SOURCE}"] = 403
     details.get_by_role("button", name="Refresh source details", exact=True).click()
     expect(details.get_by_role("alert")).to_be_visible()
-    expect(details.get_by_text("7 events", exact=True)).to_have_count(0)
+    expect(details.get_by_role("button", name="Published records 7 24 collected in this window", exact=True)).to_have_count(0)
     expect(details.get_by_role("spinbutton", name="Page limit", exact=True)).to_have_count(0)
     expect(details.get_by_role("button", name="Edit reviewed config", exact=True)).to_have_count(0)
     # The list still has cached source data; denied exact evidence cannot borrow it.

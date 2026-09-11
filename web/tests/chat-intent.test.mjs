@@ -266,16 +266,11 @@ test("chess and board games map to specific predetermined topic facets", () => {
   assert.equal(boardGames.filters.query, "");
 });
 
-test("chat keeps an explicit topic exact when the catalog has no matches", () => {
-  assert.doesNotMatch(CONCIERGE_APP, /let broadened/);
-  assert.doesNotMatch(
-    CONCIERGE_APP,
-    /getCatalogPage\(tenantId, \{[\s\S]{0,180}topics: \[\]/,
-  );
-  assert.doesNotMatch(CONCIERGE_APP, /widened only the topic/);
-  assert.match(
-    CONCIERGE_APP,
-    /pushConsumerSnapshot\(createConsumerHistorySnapshot\([\s\S]*?view,[\s\S]*?requestedFilters,[\s\S]*?null,[\s\S]*?calendarMode,[\s\S]*?\)\)/,
-  );
-  assert.match(CONCIERGE_APP, /Those exact filters remain active/);
+test("chat submission leaves explicit catalog filters unchanged", () => {
+  const start = CONCIERGE_APP.indexOf("const handleChat = async");
+  const end = CONCIERGE_APP.indexOf("const handleSignOut =", start);
+  assert.ok(start >= 0 && end > start);
+  const submission = CONCIERGE_APP.slice(start, end);
+  assert.match(submission, /streamChatTurn\(text/);
+  assert.doesNotMatch(submission, /applyFilters\(|setFilters\(|pushConsumerSnapshot\(/);
 });

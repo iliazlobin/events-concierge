@@ -1,0 +1,34 @@
+{{- if ne .Release.Namespace "events-concierge-dev" }}
+{{- fail "Development stores require events-concierge-dev namespace" }}
+{{- end }}
+apiVersion: storage.k8s.io/v1
+kind: StorageClass
+metadata:
+  name: {{ .Values.storageClass }}
+  annotations:
+    helm.sh/resource-policy: keep
+provisioner: pd.csi.storage.gke.io
+parameters:
+  type: pd-balanced
+reclaimPolicy: Retain
+volumeBindingMode: WaitForFirstConsumer
+allowVolumeExpansion: true
+allowedTopologies:
+  - matchLabelExpressions:
+      - key: topology.gke.io/zone
+        values: [{{ .Values.zone | quote }}]
+{{- range $db := list "application" "temporal" }}
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: ec-dev-{{ $db }}
+  annotations:
+    helm.sh/resource-policy: keep
+spec:
+  accessModes: [ReadWriteOnce]
+  storageClassName: {{ $.Values.storageClass }}
+  resources:
+    requests:
+      storage: {{ $.Values.postgres.size }}
+{{- end }}

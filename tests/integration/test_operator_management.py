@@ -60,7 +60,7 @@ SELECT public.fn_enqueue_ingestion_admin_command_v2(
 
 
 @asynccontextmanager
-async def _owner_transaction() -> AsyncIterator[AsyncConnection]:
+async def _owner_transaction(*, empty_queues: bool = False) -> AsyncIterator[AsyncConnection]:
     url = os.environ.get("EC_MIGRATION_URL")
     if not url:
         pytest.skip("EC_MIGRATION_URL not set; use the isolated integration runner")
@@ -69,6 +69,13 @@ async def _owner_transaction() -> AsyncIterator[AsyncConnection]:
         async with engine.connect() as connection:
             transaction = await connection.begin()
             try:
+                if empty_queues:
+                    # Aggregate queue tests need a known inventory. Earlier integration cases
+                    # commit their own work; transactional TRUNCATE hides it only for this test,
+                    # and the unconditional rollback restores all records for later cases.
+                    await connection.execute(
+                        text("TRUNCATE public.request_start_outbox, public.outbox")
+                    )
                 yield connection
             finally:
                 await transaction.rollback()

@@ -1,0 +1,90 @@
+fullnameOverride: ec-dev-temporal
+serviceAccount:
+  create: true
+  name: ec-dev-temporal
+server:
+  replicaCount: 1
+  podLabels:
+    app.kubernetes.io/part-of: events-concierge
+  deploymentStrategy:
+    type: Recreate
+  resources:
+    requests:
+      cpu: 50m
+      memory: 128Mi
+    limits:
+      cpu: 500m
+      memory: 512Mi
+  config:
+    logLevel: warn
+    namespaces:
+      create: true
+      namespace:
+      - name: events-development
+        retention: 72h
+    persistence:
+      numHistoryShards: 16
+      datastores:
+        default:
+          sql:
+            pluginName: postgres12
+            databaseName: temporal
+            connectAddr: ec-dev-temporal-postgres:5432
+            connectProtocol: tcp
+            user: temporal
+            existingSecret: ec-dev-temporal-postgres
+            secretKey: password
+            createDatabase: false
+            manageSchema: true
+            maxConns: 4
+            maxIdleConns: 2
+        visibility:
+          sql:
+            pluginName: postgres12
+            databaseName: temporal_visibility
+            connectAddr: ec-dev-temporal-postgres:5432
+            connectProtocol: tcp
+            user: temporal
+            existingSecret: ec-dev-temporal-postgres
+            secretKey: password
+            createDatabase: true
+            manageSchema: true
+            maxConns: 4
+            maxIdleConns: 2
+  frontend:
+    service:
+      type: ClusterIP
+  history:
+    resources:
+      requests:
+        cpu: 100m
+        memory: 256Mi
+      limits:
+        cpu: '1'
+        memory: 768Mi
+  image:
+    repository: temporalio/server
+    tag: 1.31.2@sha256:b5ecdb8282bededae2a10c36e8d862e27d0bc2d247fc73c5416025997ab4a1da
+admintools:
+  enabled: false
+  image:
+    repository: temporalio/admin-tools
+    tag: 1.31.2@sha256:dbc5fcd6ee8f0f4d808bf765af9a87dea9d8a283abfdcfbd2fc148496ba66107
+web:
+  enabled: false
+schema:
+  useHelmHooks: true
+  backoffLimit: 2
+  activeDeadlineSeconds: 600
+  podLabels:
+    app.kubernetes.io/part-of: events-concierge
+  resources:
+    requests:
+      cpu: 50m
+      memory: 128Mi
+    limits:
+      cpu: 500m
+      memory: 512Mi
+shims:
+  dockerize: false
+  elasticsearchTool: false

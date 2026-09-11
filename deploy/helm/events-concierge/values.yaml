@@ -139,7 +139,18 @@ operator:
       secretName: ec-stg-temporal-api-key
       version: "1"
 
+# Private development uses a separate controller credential and catalog executor profile.
+developmentAdmin:
+  operatorSecrets: []
+developmentCatalog:
+  enabled: false
+  claimCheckPrefix: events-concierge/catalog/v1
+  executorSecrets: []
+
 serviceAccounts:
+  development-admin:
+    name: events-concierge-development-admin
+    gcpServiceAccount: ""
   operator-frontend:
     name: events-concierge-operator-frontend
     gcpServiceAccount: ""

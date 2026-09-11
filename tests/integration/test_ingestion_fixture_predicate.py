@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from importlib import import_module
+from importlib.util import module_from_spec, spec_from_file_location
+from pathlib import Path
 from statistics import median
 
 import pytest
@@ -12,7 +13,16 @@ from tests.integration.test_operator_management import _denied, _owner_transacti
 
 pytestmark = pytest.mark.integration
 
-_migration = import_module("migrations.versions.0186_fast_ingestion_fixture_predicate")
+_migration_path = (
+    Path(__file__).parents[2]
+    / "migrations"
+    / "versions"
+    / "0186_fast_ingestion_fixture_predicate.py"
+)
+_migration_spec = spec_from_file_location("test_fast_ingestion_fixture_predicate", _migration_path)
+assert _migration_spec is not None and _migration_spec.loader is not None
+_migration = module_from_spec(_migration_spec)
+_migration_spec.loader.exec_module(_migration)
 _FUNCTION = "public.fn_ingestion_admin_run_is_fixture(text,text)"
 _KEYS = [
     None,

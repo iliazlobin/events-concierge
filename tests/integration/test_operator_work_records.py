@@ -65,7 +65,7 @@ async def _notification(
 async def test_pending_requests_include_clean_records_and_errors_are_only_a_pending_subset() -> (
     None
 ):
-    async with _owner_transaction() as connection:
+    async with _owner_transaction(empty_queues=True) as connection:
         tenant = await _tenant(connection)
         clean = await _request(connection, tenant, state="ready", error=None)
         retry = await _request(
@@ -101,7 +101,7 @@ async def test_pending_requests_include_clean_records_and_errors_are_only_a_pend
 async def test_notifications_separate_pending_from_failed_history_and_redact_every_private_field() -> (
     None
 ):
-    async with _owner_transaction() as connection:
+    async with _owner_transaction(empty_queues=True) as connection:
         tenant = await _tenant(connection)
         clean = await _notification(connection, tenant, state="ready")
         retry = await _notification(
@@ -175,7 +175,7 @@ async def test_notifications_separate_pending_from_failed_history_and_redact_eve
 
 
 async def test_work_record_projection_keeps_operator_roles_narrow() -> None:
-    async with _owner_transaction() as connection:
+    async with _owner_transaction(empty_queues=True) as connection:
         for role in ("ec_app", "ec_ingestion_executor"):
             await _role(connection, role)
             await _denied(connection, "SELECT public.fn_get_operator_records_v1('notifications')")
@@ -204,7 +204,7 @@ async def test_work_record_projection_keeps_operator_roles_narrow() -> None:
 
 async def test_signed_notification_references_round_trip_without_losing_bigint_precision() -> None:
     references = ["-9223372036854775808", "-9222999999738606380", "-1", "0", "9223372036854775807"]
-    async with _owner_transaction() as connection:
+    async with _owner_transaction(empty_queues=True) as connection:
         tenant = await _tenant(connection)
         for reference in references:
             assert (
@@ -255,7 +255,7 @@ async def test_work_record_database_validates_scopes_bounds_and_typed_references
     limit: int,
     record_id: str | None,
 ) -> None:
-    async with _owner_transaction() as connection:
+    async with _owner_transaction(empty_queues=True) as connection:
         await _role(connection, "ec_operator_viewer")
         with pytest.raises(DBAPIError, match="invalid operator record query"):
             await connection.execute(
@@ -278,7 +278,7 @@ async def test_work_record_migration_installs_without_superuser_and_revokes_temp
     migration = import_module("migrations.versions.0188_operator_work_records")
     suffix = uuid4().hex[:12]
     owner, definer = f"records_migration_{suffix}", f"records_definer_{suffix}"
-    async with _owner_transaction() as connection:
+    async with _owner_transaction(empty_queues=True) as connection:
         await connection.execute(text(f"DROP FUNCTION {_SIGNATURE}"))
         await connection.execute(
             text(f"CREATE ROLE {owner} NOLOGIN NOINHERIT CREATEROLE NOSUPERUSER NOBYPASSRLS")
@@ -347,7 +347,7 @@ async def test_signed_reference_forward_and_backward_replacement_preserves_recor
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     migration = import_module("migrations.versions.0189_operator_signed_work_references")
-    async with _owner_transaction() as connection:
+    async with _owner_transaction(empty_queues=True) as connection:
         tenant = await _tenant(connection)
         reference = await _notification(
             connection, tenant, state="ready", identifier=-9222999999738606380
