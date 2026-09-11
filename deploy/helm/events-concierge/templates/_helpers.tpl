@@ -132,6 +132,9 @@ seccompProfile:
 {{- if and .Values.developmentCatalog.enabled (not $dev) -}}
 {{- fail "developmentCatalog.enabled is restricted to the private development profile" -}}
 {{- end -}}
+{{- if and .Values.developmentCatalog.cadenceEnabled (not (and $dev .Values.developmentCatalog.enabled)) -}}
+{{- fail "development cadence requires the private development catalog executor profile" -}}
+{{- end -}}
 {{- if $dev -}}
 {{- if or (ne (toString .Values.applicationConfig.EC_MOCK_CLOUD) "true") .Values.cloudSqlProxy.enabled (ne .Values.applicationConfig.EC_DATABASE_CONNECTION_MODE "development_plaintext") -}}
 {{- fail "development requires mock product integrations and its private database connection mode" -}}

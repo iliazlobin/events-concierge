@@ -73,6 +73,27 @@ def _check_context():
         raise SystemExit("Wrong cluster context")
 
 
+def _check_scheduled_writers_quiet():
+    resources = json.loads(k("get", "cronjobs,jobs", "-o", "json", capture_output=True).stdout)[
+        "items"
+    ]
+    for resource in resources:
+        name = resource["metadata"]["name"]
+        if resource["kind"] == "CronJob":
+            if resource.get("spec", {}).get("suspend") is not True:
+                raise SystemExit("Suspend scheduled jobs before backup: " + name)
+        elif resource["kind"] == "Job":
+            terminal = any(
+                condition.get("type") in {"Complete", "Failed"}
+                and condition.get("status") == "True"
+                for condition in resource.get("status", {}).get("conditions", [])
+            )
+            if not terminal:
+                raise SystemExit("Wait for or resolve unfinished jobs before backup: " + name)
+        else:
+            raise SystemExit("Unexpected scheduled writer resource")
+
+
 def _backup_id(uri):
     match = re.fullmatch(re.escape(BACKUP_ROOT) + r"(\d{8}T\d{6}Z-[0-9a-f]{8})", uri)
     if not match:
@@ -375,8 +396,13 @@ def _persist_recovery(folder, dest, recovery):
     )
 
 
-def backup(*, hold_stopped=False):
+def _check_backup_target():
     _check_context()
+    _check_scheduled_writers_quiet()
+
+
+def backup(*, hold_stopped=False):
+    _check_backup_target()
     ident = (
         datetime.datetime.now(datetime.UTC).strftime("%Y%m%dT%H%M%SZ") + "-" + uuid.uuid4().hex[:8]
     )
@@ -405,6 +431,7 @@ def backup(*, hold_stopped=False):
         backup_error = None
         try:
             _quiesce(writers)
+            _check_scheduled_writers_quiet()
             for store, user, dbs in [
                 ("application", "ec_owner", ["events"]),
                 ("temporal", "temporal", ["temporal", "temporal_visibility"]),

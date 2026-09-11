@@ -1,6 +1,7 @@
 # Layer after values-development.yaml; deploy only through the private platform access path.
 # The runtime remains the private development profile pending independent production gates.
 applicationConfig:
+  EC_RELEASE_PROFILE: discovery
   EC_GCP_PROJECT: iz27-platform-dev
   EC_GCS_CLAIM_CHECK_BUCKET: iz27-platform-dev-ec-payloads
 secretManager:

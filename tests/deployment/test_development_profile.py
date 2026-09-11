@@ -103,6 +103,47 @@ class DevelopmentTests(unittest.TestCase):
         )
 
     @requires_helm
+    def test_opt_in_development_cadence_only_queues_with_controller_credentials(self):
+        result = self.render(extra=("--set", "developmentCatalog.cadenceEnabled=true"))
+        self.assertEqual(result.returncode, 0, result.stderr)
+        docs = [d for d in yaml.safe_load_all(result.stdout) if d]
+        jobs = [d for d in docs if d["kind"] == "CronJob"]
+        self.assertEqual(len(jobs), 1)
+        job = jobs[0]
+        self.assertEqual(job["spec"]["concurrencyPolicy"], "Forbid")
+        pod = job["spec"]["jobTemplate"]["spec"]["template"]["spec"]
+        self.assertEqual(pod["serviceAccountName"], "events-concierge-development-admin")
+        process = pod["containers"][0]
+        self.assertEqual(
+            process["command"],
+            ["python", "-m", "events_concierge.workers.ingestion_cadence", "--once"],
+        )
+        env = {item["name"]: item["value"] for item in process["env"]}
+        self.assertEqual(env["EC_CATALOG_INGESTION_SCHEDULER_ENABLED"], "true")
+        self.assertIn("EC_OPERATOR_DATABASE_URL_FILE", env)
+        self.assertNotIn("EC_INGESTION_EXECUTOR_DATABASE_URL_FILE", env)
+        self.assertFalse(any(d["kind"] in {"Gateway", "HTTPRoute", "Ingress"} for d in docs))
+        runtime = next(
+            d
+            for d in docs
+            if d["kind"] == "ConfigMap" and d["metadata"]["name"].endswith("-runtime")
+        )
+        self.assertEqual(runtime["data"]["EC_CATALOG_INGESTION_SCHEDULER_ENABLED"], "false")
+
+    @requires_helm
+    def test_development_cadence_refuses_missing_catalog_executor(self):
+        result = self.render(
+            extra=(
+                "--set",
+                "developmentCatalog.cadenceEnabled=true",
+                "--set",
+                "developmentCatalog.enabled=false",
+            )
+        )
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("development cadence requires", result.stderr)
+
+    @requires_helm
     def test_controller_and_catalog_workers_have_separate_credentials(self):
         rendered = self.render()
         self.assertEqual(rendered.returncode, 0, rendered.stderr)
@@ -275,21 +316,32 @@ class DevelopmentTests(unittest.TestCase):
     def test_shared_stores_reference_platform_storage_without_taking_ownership(self):
         rendered = subprocess.run(
             [
-                HELM, "template", "ec-dev-data", str(ROOT / "deploy/helm/events-concierge-dev-data"),
-                "-n", "events-concierge-dev", "--set", "createStorageClass=false",
-                "--set", "storageClass=shared-retain",
+                HELM,
+                "template",
+                "ec-dev-data",
+                str(ROOT / "deploy/helm/events-concierge-dev-data"),
+                "-n",
+                "events-concierge-dev",
+                "--set",
+                "createStorageClass=false",
+                "--set",
+                "storageClass=shared-retain",
             ],
-            check=True, capture_output=True, text=True,
+            check=True,
+            capture_output=True,
+            text=True,
         )
         documents = [item for item in yaml.safe_load_all(rendered.stdout) if item]
         self.assertFalse(any(item["kind"] == "StorageClass" for item in documents))
         claims = [item for item in documents if item["kind"] == "PersistentVolumeClaim"]
         self.assertEqual(len(claims), 3)
         self.assertTrue(all(item["spec"]["storageClassName"] == "shared-retain" for item in claims))
-        self.assertTrue(all(
-            item["metadata"]["annotations"]["helm.sh/resource-policy"] == "keep"
-            for item in claims
-        ))
+        self.assertTrue(
+            all(
+                item["metadata"]["annotations"]["helm.sh/resource-policy"] == "keep"
+                for item in claims
+            )
+        )
 
     def test_development_plaintext_cannot_escape_test_profile(self):
 

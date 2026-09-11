@@ -5,7 +5,7 @@ foundation, networking and GKE are owned by [gcp-foundation](https://github.com/
 do not create a second cluster from this application root for that destination.
 Product scope and release gates: [first-release acceptance](../docs/production-operations.md#first-release-acceptance).
 
-The move is pending. Validate the shared platform and application landing configuration first;
+The application move is pending. Validate the shared platform and application landing configuration first;
 preserve the existing stack until restored data, user workflows and crawler parity pass. The commands
 below still target the existing project and must not be silently repointed to the shared project.
 
@@ -16,7 +16,60 @@ Existing `ec-dev-retain` and its bound legacy volumes keep their current ownersh
 
 This profile uses real PostgreSQL, Redis, Temporal and GCS with explicit mock external product adapters. No real email, booking or Calendar actions. The older staging Terraform root remains separate.
 
-## Infrastructure
+## Shared application landing
+
+The platform owns the two projects, deployment identities, network, GKE/node pool, private access
+VM and `shared-retain`. Follow its [private access and storage gates](https://github.com/iliazlobin/gcp-foundation#private-access)
+before installing application resources. The app-owned [shared-development root](../infra/terraform/environments/shared-development)
+owns its registry, workload identities, secrets and payload/backup/state buckets. It never creates a
+cluster or changes shared network resources. The old root/state retain their ownership until retirement.
+
+Use the platform's verified `platform_contract` output as the new root's input. Review its exact
+saved plan with `scripts/development/check_shared_plan.py`. Bootstrap the app root into fresh local
+state, then migrate only that state to its protected `iz27-platform-dev-ec-state` bucket as described
+in its [backend example](../infra/terraform/environments/shared-development/backend.tf.example).
+Keep plan, credentials and state out of Git. Do not initialize the legacy backend for this destination.
+
+All commands use the platform's separate kubeconfig and loopback IAP tunnel. The context must be
+`gke_iz27-platform-dev_us-west1-a_platform-dev`; the namespace remains `events-concierge-dev`.
+The helpers' default target is **legacy**. Select `--target shared` explicitly for secret bootstrap,
+release-value generation, readiness, store-recovery drills and backups. Use `.venv/bin/python`.
+
+Layer `values-shared-development.yaml` after `values-development.yaml` for the application, and
+the data chart's shared overlay after its defaults. These select the shared project/bucket,
+discovery-only UI/API and platform-owned storage. Image digests belong to the selected committed
+candidate in `us-west1-docker.pkg.dev/iz27-platform-dev/ec-dev/`. They must pass combined CI before
+deployment. This remains a private development candidate until real identity and the separate
+[production gates](../docs/production-operations.md#first-release-acceptance) pass.
+
+Restore the coordinated legacy databases and payloads into the new stores before starting writers;
+preserve tenant/request data, schema compatibility and provenance. Take a fresh verified backup
+with old writers stopped for final cutover. Do not substitute local test fixtures for production data.
+Verify restoration, user workflows, private-only Services and worker execution before accepting it.
+
+For collection acceptance, compare `fn_report_catalog_source_coverage_v1()` on both environments,
+using the same as-of time and collection windows. It excludes fixtures. Require every reviewed source
+to have current successful execution or an explicitly investigated failure, and compare per-source
+live future events and freshness; summed links can count one event from multiple sources. Imported
+counts alone do not prove crawling. Keep the old stack until this parity and recovery gate passes.
+
+After a real queued refresh succeeds through the separate ingestion executor, opt in to
+`developmentCatalog.cadenceEnabled=true`. This creates a five-minute CronJob that queues reviewed
+due sources through the controller credential; it does not fetch providers or enable scheduling in
+the consumer API. Verify the CronJob, command ledger and resulting successful refresh runs separately.
+The legacy dispatcher stays disabled. A successful schedule tick alone does not prove collection.
+
+Before any backup, suspend the cadence CronJob and wait for all unfinished Jobs to terminate.
+The backup helper refuses running schedules or unfinished Jobs before stopping writers and checks
+again before dumping. Keep schedules suspended during cutover/recovery. Restore their previous
+suspension state only after writer readiness and backup/restore verification; `backup resume`
+restores saved Deployment replicas, not CronJob schedules.
+
+Retire old application releases, then their old GKE/node resources and dedicated network/NAT only
+after accepted destination parity, user flows and recovery. Review each owning root's exact removal
+plan; preserve backups, state and retained disks while their recovery or dependency purpose remains.
+
+## Legacy infrastructure
 
 Use Terraform 1.16.1, gcloud, kubectl with gke-gcloud-auth-plugin, Helm 3, Python 3.12+ with PyYAML, and Docker Buildx. Authenticate as `iliazlobin27@gmail.com`; target `project-9c8cce04-f94d-40fc-aa6` explicitly. Never copy local credentials to another machine.
 
@@ -44,7 +97,7 @@ State is in `gs://iz27-foundation-development-state/events-concierge/development
 export KUBECONFIG="$PWD/.local/kubeconfig"
 gcloud container clusters get-credentials ec-dev --zone=us-west1-a --dns-endpoint --project=project-9c8cce04-f94d-40fc-aa6 --account=iliazlobin27@gmail.com
 kubectl create namespace events-concierge-dev --dry-run=client -o yaml | kubectl apply -f -
-python3 scripts/development/bootstrap_secrets.py --project-to-kubernetes
+.venv/bin/python scripts/development/bootstrap_secrets.py --project-to-kubernetes
 helm upgrade --install ec-dev-data deploy/helm/events-concierge-dev-data -n events-concierge-dev --wait --timeout 10m
 helm upgrade --install ec-dev-temporal temporal --repo https://go.temporal.io/helm-charts --version 1.6.0 -n events-concierge-dev -f deploy/helm/temporal-development.yaml --wait --timeout 15m
 ```
@@ -89,7 +142,7 @@ Apply the reviewed Terraform plan while the old workers are stopped, then initia
 ```bash
 terraform -chdir=infra/terraform/environments/development apply ../../../../.local/development.tfplan
 python3 scripts/development/bootstrap_secrets.py
-python3 scripts/development/release_values.py --app-image "$APP_IMAGE" --web-image "$WEB_IMAGE" --revision "$BACKEND_REVISION" --output .local/release-values.yaml
+.venv/bin/python scripts/development/release_values.py --app-image "$APP_IMAGE" --web-image "$WEB_IMAGE" --revision "$BACKEND_REVISION" --output .local/release-values.yaml
 helm upgrade --install events-concierge deploy/helm/events-concierge -n events-concierge-dev -f deploy/helm/events-concierge/values-development.yaml -f .local/release-values.yaml --wait --wait-for-jobs --timeout 10m
 ```
 

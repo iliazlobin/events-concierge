@@ -47,6 +47,8 @@ def recording():
         events.append(args)
         if args[:2] == ("get", "deployments"):
             return SimpleNamespace(stdout=json.dumps({"items": deployments}).encode())
+        if args[:2] == ("get", "cronjobs,jobs"):
+            return SimpleNamespace(stdout=b'{"items": []}')
         if args[0] == "get" and args[1].startswith("deployment/"):
             name = args[1].split("/", 1)[1]
             return SimpleNamespace(
@@ -73,6 +75,48 @@ def recording():
         patch.object(backup, "gc", side_effect=cloud),
     ):
         yield events, copies
+
+
+@pytest.mark.parametrize(
+    "resource",
+    [
+        {"kind": "CronJob", "metadata": {"name": "cadence"}, "spec": {"suspend": False}},
+        {"kind": "Job", "metadata": {"name": "pending"}, "status": {}},
+        {"kind": "Job", "metadata": {"name": "retrying"}, "status": {"failed": 1}},
+    ],
+)
+def test_backup_refuses_active_or_pending_scheduled_writers_before_any_mutation(resource):
+    with (
+        patch.object(backup, "_check_context"),
+        patch.object(
+            backup, "k", return_value=SimpleNamespace(stdout=json.dumps({"items": [resource]}))
+        ) as cluster,
+        patch.object(backup, "gc") as cloud,
+        pytest.raises(SystemExit, match="before backup"),
+    ):
+        backup.backup()
+    assert cluster.call_count == 1
+    cloud.assert_not_called()
+
+
+def test_backup_accepts_suspended_cadence_and_terminal_jobs():
+    resources = [
+        {"kind": "CronJob", "metadata": {"name": "cadence"}, "spec": {"suspend": True}},
+        {
+            "kind": "Job",
+            "metadata": {"name": "done"},
+            "status": {"conditions": [{"type": "Complete", "status": "True"}]},
+        },
+        {
+            "kind": "Job",
+            "metadata": {"name": "failed"},
+            "status": {"conditions": [{"type": "Failed", "status": "True"}]},
+        },
+    ]
+    with patch.object(
+        backup, "k", return_value=SimpleNamespace(stdout=json.dumps({"items": resources}))
+    ):
+        backup._check_scheduled_writers_quiet()
 
 
 def test_hold_stopped_keeps_writers_down_without_restarting_redis(recording):

@@ -144,6 +144,8 @@ developmentAdmin:
   operatorSecrets: []
 developmentCatalog:
   enabled: false
+  # Queue reviewed due sources only after destination worker acceptance.
+  cadenceEnabled: false
   claimCheckPrefix: events-concierge/catalog/v1
   executorSecrets: []
 
