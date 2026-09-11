@@ -787,7 +787,9 @@ def test_source_missing_roster_bookmark_keeps_exact_configuration_retry_visible(
     page.get_by_role("region", name=f"Source details for {missing}", exact=True).get_by_role(
         "button", name="Refresh source details", exact=True
     ).click()
-    expect(page.get_by_role("region", name=f"Source details for {missing}", exact=True).get_by_text(missing, exact=True)).to_be_visible()
+    fields = panel.get_by_role("group", name="Source configuration fields", exact=True)
+    fields.get_by_text("Identity, adapter, and policy", exact=True).click()
+    expect(fields.get_by_text(missing, exact=True)).to_be_visible()
     expect(panel.get_by_text(FIRST_SEED, exact=True)).to_be_visible()
     assert not scenario.writes
 

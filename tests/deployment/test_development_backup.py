@@ -468,6 +468,63 @@ def test_restored_operator_identities_are_separate_from_consumer():
     assert "CREATE ROLE ec_app LOGIN NOSUPERUSER" in current
 
 
+def test_restore_waits_for_final_tcp_server_before_bootstrap():
+    dump = b"isolated temporal dump"
+    name = "temporal-temporal.dump"
+    manifest = {
+        "schema": "0193",
+        "databases": {
+            name: {
+                "store": "temporal",
+                "database": "temporal",
+                "sha256": backup.hashlib.sha256(dump).hexdigest(),
+            }
+        },
+    }
+    tcp_checks = 0
+    commands = []
+    verified = []
+
+    def cloud(*args, **kwargs):
+        if args[0] == "cp" and args[1].startswith("gs://"):
+            filename = Path(args[1]).name
+            content = {
+                "COMPLETE": b"complete",
+                "manifest.json": json.dumps(manifest).encode(),
+                name: dump,
+            }[filename]
+            (Path(args[2]) / filename).write_bytes(content)
+        elif args[0] == "rsync":
+            Path(args[-1]).mkdir()
+        elif args[0] == "cp":
+            verified.append(Path(args[1]).name)
+
+    def docker(args, **kwargs):
+        nonlocal tcp_checks
+        commands.append(args)
+        if "pg_isready" in args:
+            # During initialization, a socket probe succeeds prematurely.
+            if "-h" not in args or args[args.index("-h") + 1] != "127.0.0.1":
+                return SimpleNamespace(returncode=0)
+            tcp_checks += 1
+            return SimpleNamespace(returncode=1 if tcp_checks == 1 else 0)
+        if "psql" in args or "pg_restore" in args:
+            assert tcp_checks >= 2, "Restore began against the temporary initialization server"
+        return SimpleNamespace(returncode=0, stdout=b"")
+
+    with (
+        patch.object(backup, "gc", side_effect=cloud),
+        patch.object(backup.subprocess, "run", side_effect=docker),
+        patch.object(backup.time, "sleep") as sleep,
+    ):
+        backup.verify(RECOVERY_URI)
+    assert tcp_checks == 2
+    sleep.assert_called_once_with(1)
+    assert any("pg_restore" in args for args in commands)
+    assert any(args[:3] == ["docker", "rm", "-fv"] for args in commands)
+    assert verified == ["VERIFIED.json"]
+
+
 def test_kubectl_calls_always_pin_development_context():
     with patch.object(backup, "run") as run:
         backup.k("get", "pods")
