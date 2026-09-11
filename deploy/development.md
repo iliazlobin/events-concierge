@@ -6,7 +6,9 @@ This profile uses real PostgreSQL, Redis, Temporal and GCS with explicit mock ex
 
 ## Infrastructure
 
-Use Terraform 1.16.1, gcloud, kubectl with gke-gcloud-auth-plugin, Helm 3, Python with PyYAML, and Docker Buildx. Authenticate as `iliazlobin27@gmail.com`; target `project-9c8cce04-f94d-40fc-aa6` explicitly. Never copy local credentials to another machine.
+Use Terraform 1.16.1, gcloud, kubectl with gke-gcloud-auth-plugin, Helm 3, Python 3.12+ with PyYAML, and Docker Buildx. Authenticate as `iliazlobin27@gmail.com`; target `project-9c8cce04-f94d-40fc-aa6` explicitly. Never copy local credentials to another machine.
+
+Initialize the repository environment with `uv sync --frozen --python 3.12`. Run the backup helper with `.venv/bin/python`; the macOS system `python3` can be too old.
 
 From the repository root:
 
@@ -51,14 +53,22 @@ The development admin uses a separate `ec_dev_operator` login with controller ca
 
 ### Quiesce and back up
 
-Disable access/new submissions and wait for current work to settle. Confirm there are no open Temporal workflows, active catalog/command leases or pending request-start/notification records. Repeat the check after application workers stop to close the race. Worker-version promotion does not move existing pinned workflows to the new version; do not remove workers needed by outstanding executions.
+Disable access/new submissions and wait for current work to settle. Confirm there are no open product workflows in Temporal, active catalog/command leases or pending request-start/notification records. Internal worker-version tracking workflows are expected and are not product work. Repeat the check after application workers stop to close the race. Worker-version promotion does not move existing pinned workflows to the new version; do not remove workers needed by outstanding executions.
 
 ```bash
-python3 scripts/development/backup.py backup --hold-stopped
-python3 scripts/development/backup.py verify gs://iz27-ec-dev-backups/SET_ID
+.venv/bin/python scripts/development/backup.py backup --hold-stopped
+.venv/bin/python scripts/development/backup.py verify gs://iz27-ec-dev-backups/SET_ID
 ```
 
-Use the exact completed set printed by backup. It saves all three PostgreSQL databases, payloads, image/schema metadata and original replica counts. Application writers stop before Temporal; PostgreSQL and Redis remain running. A failed backup restores original writer replicas. A successful `--hold-stopped` backup leaves writers stopped until the cutover is accepted. Do not run the data-chart upgrade here: Redis persistence and PostgreSQL probe changes require their own storage rehearsal.
+Use the exact completed set printed by backup. Before stopping anything, the helper saves and reads back password-free `recovery.json` in that same prefix with the schema version, original writer replica counts and deployment identities. It then saves all three PostgreSQL databases, payloads and image/schema metadata. Application writers stop before Temporal; PostgreSQL and Redis remain running. A failed backup attempts to restore writer replicas with bounded retries. A successful `--hold-stopped` backup leaves writers stopped until the cutover is accepted. Do not run the data-chart upgrade here: Redis persistence and PostgreSQL probe changes require their own storage rehearsal.
+
+If backup or automatic recovery is interrupted, restore connectivity and run the printed recovery command **before any migration or rollout**:
+
+```bash
+.venv/bin/python scripts/development/backup.py resume gs://iz27-ec-dev-backups/SET_ID
+```
+
+Resume can be repeated. It restores only saved replica counts, starts Temporal first, and refuses unknown names, counts outside 0/1, replaced Deployments, changed workload templates or a changed schema. Check every original Deployment is ready before reopening access. An incomplete prefix may contain recovery metadata and partial dumps; preserve it as failure evidence, but never use it for data restoration. Older backups without `recovery.json` require their saved manifest and reviewed manual recovery. After migration begins, follow the compatible-image recovery procedure below; `resume` is not a schema rollback.
 
 ### Apply credentials and application
 
@@ -116,8 +126,8 @@ Open http://localhost:13001/admin. The dedicated pod uses the same live developm
 ## Manual recovery
 
 ```bash
-python3 scripts/development/backup.py backup
-python3 scripts/development/backup.py verify gs://iz27-ec-dev-backups/SET_ID
+.venv/bin/python scripts/development/backup.py backup
+.venv/bin/python scripts/development/backup.py verify gs://iz27-ec-dev-backups/SET_ID
 ```
 
-Backup temporarily stops application writers and Temporal while retaining PostgreSQL/Redis, exports all three databases and current payload objects, records image/schema metadata, uploads a completion marker last, then restores writer replica counts. Use `--hold-stopped` only for a coordinated cutover; read its saved manifest to resume the original replica counts. Only completed sets are candidates. Keep at least three successful sets; no automatic deletion is configured. Verification restores dumps into disposable local Docker databases and validates checksums; the live smoke test also checks workflow completion and real GCS claim checks. Use `smoke.py --repeat 12` inside the API pod for a small sustained development load test. Production disaster recovery remains separate. Never restore over the running development stores. Backups share the same project administrative boundary.
+Backup temporarily stops application writers and Temporal while retaining PostgreSQL/Redis, exports all three databases and current payload objects, records image/schema metadata, uploads a completion marker last, then attempts to restore writer replica counts. The interruption recovery command and its limits are described in [Quiesce and back up](#quiesce-and-back-up). Only completed sets are restoration candidates. Keep at least three successful sets; no automatic deletion is configured. Verification restores dumps into disposable local Docker databases and validates checksums; the live smoke test also checks workflow completion and real GCS claim checks. Use `smoke.py --repeat 12` inside the API pod for a small sustained development load test. Production disaster recovery remains separate. Never restore over the running development stores. Backups share the same project administrative boundary.
