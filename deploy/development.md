@@ -9,6 +9,11 @@ The move is pending. Validate the shared platform and application landing config
 preserve the existing stack until restored data, user workflows and crawler parity pass. The commands
 below still target the existing project and must not be silently repointed to the shared project.
 
+On a shared destination, the platform must install and verify its retained `shared-retain`
+StorageClass before application stores are installed. Set `createStorageClass=false` and
+`storageClass=shared-retain` on the data chart; application Helm must not own the platform class.
+Existing `ec-dev-retain` and its bound legacy volumes keep their current ownership.
+
 This profile uses real PostgreSQL, Redis, Temporal and GCS with explicit mock external product adapters. No real email, booking or Calendar actions. The older staging Terraform root remains separate.
 
 ## Infrastructure

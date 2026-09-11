@@ -1,5 +1,8 @@
 namespace: events-concierge-dev
 storageClass: ec-dev-retain
+# The shared platform owns its StorageClass. Set false with storageClass=shared-retain
+# when landing on that cluster; the legacy ec-dev release keeps its existing class.
+createStorageClass: true
 zone: us-west1-a
 postgres:
   applicationImage: pgvector/pgvector:pg16@sha256:ccc6e83d6e35e931dc7c5def2022729d5a6c370318d099181995567ff1fb4d6b

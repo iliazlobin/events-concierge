@@ -271,6 +271,26 @@ class DevelopmentTests(unittest.TestCase):
             }
             self.assertTrue(policy.inspect(p))
 
+    @requires_helm
+    def test_shared_stores_reference_platform_storage_without_taking_ownership(self):
+        rendered = subprocess.run(
+            [
+                HELM, "template", "ec-dev-data", str(ROOT / "deploy/helm/events-concierge-dev-data"),
+                "-n", "events-concierge-dev", "--set", "createStorageClass=false",
+                "--set", "storageClass=shared-retain",
+            ],
+            check=True, capture_output=True, text=True,
+        )
+        documents = [item for item in yaml.safe_load_all(rendered.stdout) if item]
+        self.assertFalse(any(item["kind"] == "StorageClass" for item in documents))
+        claims = [item for item in documents if item["kind"] == "PersistentVolumeClaim"]
+        self.assertEqual(len(claims), 3)
+        self.assertTrue(all(item["spec"]["storageClassName"] == "shared-retain" for item in claims))
+        self.assertTrue(all(
+            item["metadata"]["annotations"]["helm.sh/resource-policy"] == "keep"
+            for item in claims
+        ))
+
     def test_development_plaintext_cannot_escape_test_profile(self):
 
         with self.assertRaises(ValueError):

@@ -1,6 +1,7 @@
 {{- if ne .Release.Namespace "events-concierge-dev" }}
 {{- fail "Development stores require events-concierge-dev namespace" }}
 {{- end }}
+{{- if .Values.createStorageClass }}
 apiVersion: storage.k8s.io/v1
 kind: StorageClass
 metadata:
@@ -17,6 +18,7 @@ allowedTopologies:
   - matchLabelExpressions:
       - key: topology.gke.io/zone
         values: [{{ .Values.zone | quote }}]
+{{- end }}
 {{- range $db := list "application" "temporal" }}
 ---
 apiVersion: v1
