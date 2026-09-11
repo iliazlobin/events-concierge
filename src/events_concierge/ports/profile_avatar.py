@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Protocol
@@ -44,4 +45,16 @@ class ProfileAvatarRepository(Protocol):
         ``None`` means no matching row was removed. Comparing key and creation time preserves a
         concurrent replacement, including one that reuses the same content-addressed object key.
         """
+        ...
+
+
+class ProfileMediaMutationBusyError(RuntimeError):
+    """The bounded media mutation admission or distributed lock wait expired."""
+
+
+class ProfileMediaMutationGuard(Protocol):
+    """Serialize a tenant's complete media/index mutation across application processes."""
+
+    async def run[T](self, tenant_id: UUID, mutation: Callable[[], Awaitable[T]]) -> T:
+        """Retain exclusive media authority until every started mutation has settled."""
         ...

@@ -65,6 +65,7 @@ from .adapters.postgres.policy import (
     PostgresSourceQuarantineRepository,
 )
 from .adapters.postgres.profile_avatar import PostgresProfileAvatarRepository
+from .adapters.postgres.profile_media import PostgresProfileMediaMutationGuard
 from .adapters.postgres.ranking import PostgresRankingProfileRepository
 from .adapters.postgres.ranking_feedback import PostgresRankingFeedbackRepository
 from .adapters.postgres.saved_catalog_filters import PostgresSavedCatalogFilterRepository
@@ -127,7 +128,7 @@ from .ports.notifications import NotificationPort
 from .ports.object_store import ObjectStorePort
 from .ports.outbox import OutboxWakeupPort
 from .ports.policy import Pacer, PolicyEngine, SourceQuarantinePort
-from .ports.profile_avatar import ProfileAvatarRepository
+from .ports.profile_avatar import ProfileAvatarRepository, ProfileMediaMutationGuard
 from .ports.ranking import RankerPort, RankingProfileRepository
 from .ports.ranking_feedback import RankingFeedbackRepository
 from .ports.saved_catalog_filters import SavedCatalogFilterRepository
@@ -168,6 +169,7 @@ class Container:
     tenant_profiles: TenantProfileRepository
     profile_avatars: ProfileAvatarRepository
     media_store: MediaStorePort
+    profile_media_mutations: ProfileMediaMutationGuard
     tenant_roles: TenantRoleRepository
     api_keys: ApiKeyRepository
     saved_catalog_filters: SavedCatalogFilterRepository
@@ -216,6 +218,7 @@ def build_container(
     tenant_profiles: TenantProfileRepository | None = None,
     profile_avatars: ProfileAvatarRepository | None = None,
     media_store: MediaStorePort | None = None,
+    profile_media_mutations: ProfileMediaMutationGuard | None = None,
     tenant_roles: TenantRoleRepository | None = None,
     api_keys: ApiKeyRepository | None = None,
     saved_catalog_filters: SavedCatalogFilterRepository | None = None,
@@ -549,6 +552,12 @@ def build_container(
         tenant_profiles=tenant_profiles or PostgresTenantProfileRepository(),
         profile_avatars=profile_avatars or PostgresProfileAvatarRepository(),
         media_store=media_store or _build_media_store(settings),
+        profile_media_mutations=profile_media_mutations
+        or PostgresProfileMediaMutationGuard(
+            pool_capacity=settings.database_pool_size + settings.database_max_overflow,
+            lock_timeout_seconds=settings.tenant_effect_lock_timeout_seconds,
+            mutation_timeout_seconds=settings.tenant_effect_timeout_seconds,
+        ),
         tenant_roles=tenant_roles or PostgresTenantRoleRepository(),
         api_keys=api_keys or PostgresApiKeyRepository(),
         saved_catalog_filters=(saved_catalog_filters or PostgresSavedCatalogFilterRepository()),

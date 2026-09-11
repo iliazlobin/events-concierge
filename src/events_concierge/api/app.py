@@ -69,7 +69,7 @@ from ..ports.auth import (
     RecentAuthenticationRequiredError,
 )
 from ..ports.media_store import MediaNotFoundError
-from ..ports.profile_avatar import ProfileAvatar
+from ..ports.profile_avatar import ProfileAvatar, ProfileMediaMutationBusyError
 from ..ports.ranking import RankingProfileUpdate, UserRankingProfile
 from ..ports.ranking_feedback import RankingFeedbackConflictError
 from ..ports.saved_catalog_filters import (
@@ -2908,68 +2908,78 @@ def create_app() -> FastAPI:
             # The message is a fixed product string, never decoder text.
             raise HTTPException(status_code=400, detail=str(error)) from error
 
-        previous = await container.profile_avatars.get(tenant_id)
+        async def mutate_avatar() -> AvatarOut:
+            previous = await container.profile_avatars.get(tenant_id)
 
-        # Store the object before the index points at it: the reverse order can leave a row
-        # referencing bytes that were never written, which reads as a broken image forever.
-        async def put_media() -> None:
-            await container.media_store.put(
-                tenant_id,
-                normalized.storage_key,
-                normalized.data,
-                normalized.content_type,
+            # Store the object before the index points at it: the reverse order can leave a row
+            # referencing bytes that were never written, which reads as a broken image forever.
+            async def put_media() -> None:
+                await container.media_store.put(
+                    tenant_id,
+                    normalized.storage_key,
+                    normalized.data,
+                    normalized.content_type,
+                )
+
+            try:
+                await container.tenant_effect_authority.run(
+                    TenantEffectRequest(
+                        tenant_id=tenant_id,
+                        kind=TenantEffectKind.PROFILE_MEDIA_WRITE,
+                        timeout_seconds=settings.tenant_effect_timeout_seconds,
+                    ),
+                    put_media,
+                )
+            except TenantEffectFencedError as error:
+                # Authentication may have completed just before erasure installed its tombstone.
+                # Preserve the ordinary-route contract while the authority prevents the object write.
+                raise HTTPException(
+                    status_code=423, detail="account erasure in progress"
+                ) from error
+
+            # This repository opens its own transaction, whose database trigger is the write fence.
+            # Keeping it outside the external-effect authority avoids re-entering the same advisory
+            # lock from a separate session while still ordering the object write before erasure.
+            try:
+                stored = await container.profile_avatars.replace(
+                    tenant_id,
+                    ProfileAvatar(
+                        storage_key=normalized.storage_key,
+                        content_type=normalized.content_type,
+                        byte_size=normalized.byte_size,
+                        width_px=normalized.width_px,
+                        height_px=normalized.height_px,
+                        checksum_sha256=normalized.checksum_sha256,
+                    ),
+                )
+            except DBAPIError as error:
+                if not _is_account_erasure_write_fence(error):
+                    raise
+                raise HTTPException(
+                    status_code=423,
+                    detail="account erasure in progress",
+                ) from error
+            if previous is not None and previous.storage_key != stored.storage_key:
+                # Best effort: a surviving orphan costs 32 KiB, while failing the request after the
+                # index already advanced would report failure for a change that took effect.
+                with suppress(Exception):
+                    await container.media_store.delete(tenant_id, previous.storage_key)
+
+            return AvatarOut(
+                avatar_url=_avatar_url(stored) or "",
+                width=stored.width_px,
+                height=stored.height_px,
+                content_type=stored.content_type,
+                byte_size=stored.byte_size,
+                checksum=stored.checksum_sha256,
             )
 
         try:
-            await container.tenant_effect_authority.run(
-                TenantEffectRequest(
-                    tenant_id=tenant_id,
-                    kind=TenantEffectKind.PROFILE_MEDIA_WRITE,
-                    timeout_seconds=settings.tenant_effect_timeout_seconds,
-                ),
-                put_media,
-            )
-        except TenantEffectFencedError as error:
-            # Authentication may have completed just before erasure installed its tombstone.
-            # Preserve the ordinary-route contract while the authority prevents the object write.
-            raise HTTPException(status_code=423, detail="account erasure in progress") from error
-
-        # This repository opens its own transaction, whose database trigger is the write fence.
-        # Keeping it outside the external-effect authority avoids re-entering the same advisory
-        # lock from a separate session while still ordering the object write before erasure.
-        try:
-            stored = await container.profile_avatars.replace(
-                tenant_id,
-                ProfileAvatar(
-                    storage_key=normalized.storage_key,
-                    content_type=normalized.content_type,
-                    byte_size=normalized.byte_size,
-                    width_px=normalized.width_px,
-                    height_px=normalized.height_px,
-                    checksum_sha256=normalized.checksum_sha256,
-                ),
-            )
-        except DBAPIError as error:
-            if not _is_account_erasure_write_fence(error):
-                raise
+            return await container.profile_media_mutations.run(tenant_id, mutate_avatar)
+        except ProfileMediaMutationBusyError as error:
             raise HTTPException(
-                status_code=423,
-                detail="account erasure in progress",
+                status_code=503, detail="avatar update temporarily unavailable"
             ) from error
-        if previous is not None and previous.storage_key != stored.storage_key:
-            # Best effort: a surviving orphan costs 32 KiB, while failing the request after the
-            # index already advanced would report failure for a change that took effect.
-            with suppress(Exception):
-                await container.media_store.delete(tenant_id, previous.storage_key)
-
-        return AvatarOut(
-            avatar_url=_avatar_url(stored) or "",
-            width=stored.width_px,
-            height=stored.height_px,
-            content_type=stored.content_type,
-            byte_size=stored.byte_size,
-            checksum=stored.checksum_sha256,
-        )
 
     @app.get("/v1/me/avatar")
     async def read_avatar(tenant_id: AuthenticatedTenant) -> Response:
@@ -3009,44 +3019,55 @@ def create_app() -> FastAPI:
         """Remove the avatar and purge its object. Deleting an absent avatar succeeds."""
         container: Container = app.state.container
 
-        async def purge_current() -> ProfileAvatar | None:
+        async def mutate_avatar() -> Response:
             current = await container.profile_avatars.get(tenant_id)
-            if current is not None:
-                await container.media_store.delete(tenant_id, current.storage_key)
-            return current
 
-        try:
-            removed = await container.tenant_effect_authority.run(
-                TenantEffectRequest(
-                    tenant_id=tenant_id,
-                    kind=TenantEffectKind.PROFILE_MEDIA_WRITE,
-                    timeout_seconds=settings.tenant_effect_timeout_seconds,
-                ),
-                purge_current,
-            )
-        except TenantEffectFencedError as error:
-            raise HTTPException(status_code=423, detail="account erasure in progress") from error
-        except Exception as error:
-            # Retain the index so the same DELETE can retry the exact failed object. Provider
-            # details can contain bucket names and identities and must not reach the client.
-            raise HTTPException(
-                status_code=503, detail="avatar removal temporarily unavailable"
-            ) from error
+            async def purge_current() -> ProfileAvatar | None:
+                if current is not None:
+                    await container.media_store.delete(tenant_id, current.storage_key)
+                return current
 
-        if removed is not None:
-            # The trigger-protected write uses a separate session. Keep it outside external-effect
-            # authority to avoid advisory-lock re-entry, and never remove a raced replacement.
             try:
-                deleted = await container.profile_avatars.delete(tenant_id, expected=removed)
-            except DBAPIError as error:
-                if not _is_account_erasure_write_fence(error):
-                    raise
+                removed = await container.tenant_effect_authority.run(
+                    TenantEffectRequest(
+                        tenant_id=tenant_id,
+                        kind=TenantEffectKind.PROFILE_MEDIA_WRITE,
+                        timeout_seconds=settings.tenant_effect_timeout_seconds,
+                    ),
+                    purge_current,
+                )
+            except TenantEffectFencedError as error:
                 raise HTTPException(
                     status_code=423, detail="account erasure in progress"
                 ) from error
-            if deleted is None:
-                raise HTTPException(status_code=409, detail="avatar changed; retry removal")
-        return Response(status_code=204)
+            except Exception as error:
+                # Retain the index so the same DELETE can retry the exact failed object. Provider
+                # details can contain bucket names and identities and must not reach the client.
+                raise HTTPException(
+                    status_code=503, detail="avatar removal temporarily unavailable"
+                ) from error
+
+            if removed is not None:
+                # The trigger-protected write uses a separate session. Keep it outside external-effect
+                # authority to avoid advisory-lock re-entry, and never remove a raced replacement.
+                try:
+                    deleted = await container.profile_avatars.delete(tenant_id, expected=removed)
+                except DBAPIError as error:
+                    if not _is_account_erasure_write_fence(error):
+                        raise
+                    raise HTTPException(
+                        status_code=423, detail="account erasure in progress"
+                    ) from error
+                if deleted is None:
+                    raise HTTPException(status_code=409, detail="avatar changed; retry removal")
+            return Response(status_code=204)
+
+        try:
+            return await container.profile_media_mutations.run(tenant_id, mutate_avatar)
+        except ProfileMediaMutationBusyError as error:
+            raise HTTPException(
+                status_code=503, detail="avatar removal temporarily unavailable"
+            ) from error
 
     @app.get("/v1/me/api-keys", response_model=list[ApiKeyOut])
     async def list_api_keys(tenant_id: AuthenticatedTenant) -> list[ApiKeyOut]:

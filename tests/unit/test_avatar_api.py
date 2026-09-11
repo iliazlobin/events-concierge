@@ -18,7 +18,7 @@ from PIL import Image
 from sqlalchemy.exc import DBAPIError
 
 from events_concierge.config import Settings
-from events_concierge.ports.profile_avatar import ProfileAvatar
+from events_concierge.ports.profile_avatar import ProfileAvatar, ProfileMediaMutationBusyError
 from events_concierge.ports.tenant_effects import (
     TenantEffectFencedError,
     TenantEffectKind,
@@ -61,6 +61,19 @@ class _TenantRepository:
 class _NoErasureRepository:
     async def get(self, tenant_id: UUID) -> None:
         del tenant_id
+
+
+class _MediaMutationGuard:
+    def __init__(self) -> None:
+        self.lock = asyncio.Lock()
+        self.busy = False
+
+    async def run[T](self, tenant_id: UUID, mutation: Callable[[], Awaitable[T]]) -> T:
+        del tenant_id
+        if self.busy:
+            raise ProfileMediaMutationBusyError("private admission details")
+        async with self.lock:
+            return await mutation()
 
 
 class _TenantEffectAuthority:
@@ -219,6 +232,7 @@ def _avatar_app(
         tenant_effect_authority=authority,
         media_store=media_store,
         profile_avatars=avatars,
+        profile_media_mutations=_MediaMutationGuard(),
     )
     return app
 
@@ -377,8 +391,8 @@ async def test_avatar_delete_retains_retry_target_when_private_storage_refuses_p
         assert response.status_code == 204
         assert avatars.current is None
         assert events == [
-            "authority_enter",
             "avatar_read",
+            "authority_enter",
             "media_delete",
             "authority_exit",
             "avatar_delete",
@@ -433,6 +447,26 @@ async def test_avatar_delete_rejects_raced_erasure_before_touching_media(
         response = await client.delete("/v1/me/avatar")
         assert response.status_code == 423
         assert avatars.current is not None and media.delete_calls == []
+
+
+@pytest.mark.parametrize("method", ["post", "delete"])
+async def test_busy_media_mutation_returns_bounded_private_error_without_effects(
+    monkeypatch: pytest.MonkeyPatch,
+    method: str,
+) -> None:
+    tenant, events = uuid4(), []
+    authority = _TenantEffectAuthority(events)
+    media = _MediaStore(authority, events)
+    avatars = _AvatarRepository(authority, events)
+    app = _avatar_app(monkeypatch, tenant, authority, media, avatars)
+    app.state.container.profile_media_mutations.busy = True
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        response = await client.request(
+            method, "/v1/me/avatar", content=_png(), headers={"Content-Type": "image/png"}
+        )
+    assert response.status_code == 503
+    assert "private admission" not in response.text
+    assert events == [] and media.put_calls == media.delete_calls == []
 
 
 @pytest.mark.parametrize(

@@ -9,6 +9,7 @@ import pytest
 
 from events_concierge.adapters.gcs.media_store import GcsMediaStore
 from events_concierge.adapters.local_media import LocalFilesystemMediaStore
+from events_concierge.adapters.postgres.profile_media import PostgresProfileMediaMutationGuard
 from events_concierge.composition import _build_media_store
 from events_concierge.config import Settings
 from events_concierge.deployment.gcp_runtime import build_gcs_media_store
@@ -81,3 +82,19 @@ def test_malformed_media_prefix_fails_before_client_initialization(prefix: str) 
     )
     with pytest.raises(ValueError, match="safe slash-delimited"):
         build_gcs_media_store(settings)
+
+
+@pytest.mark.parametrize(
+    "values",
+    [
+        {"pool_capacity": 1},
+        {"lock_timeout_seconds": 0.00001},
+        {"lock_timeout_seconds": float("inf")},
+        {"mutation_timeout_seconds": float("nan")},
+    ],
+)
+def test_media_guard_rejects_unbounded_or_starving_configuration(values: dict) -> None:
+    settings = {"pool_capacity": 2, "lock_timeout_seconds": 0.1, "mutation_timeout_seconds": 1.0}
+    settings.update(values)
+    with pytest.raises(ValueError):
+        PostgresProfileMediaMutationGuard(**settings)

@@ -33,6 +33,7 @@ _SEMANTIC_VERSION = re.compile(
 _HOST_COOKIE_NAME = re.compile(r"^__Host-[A-Za-z0-9_-]{1,100}$")
 _HTTP_HEADER_NAME = re.compile(r"^[!#$%&'*+.^_`|~0-9A-Za-z-]{1,128}$")
 _MAX_PORT = 65_535
+_MIN_MEDIA_POOL_CAPACITY = 2
 _MAX_OIDC_URL_LENGTH = 2048
 _MAX_OIDC_CLIENT_ID_BYTES = 512
 _MAX_OIDC_CLIENT_SECRET_BYTES = 4096
@@ -200,11 +201,12 @@ def validate_production_config(
         _check(
             "database_pool_budget",
             settings.database_max_overflow == 0
+            and settings.database_pool_size >= _MIN_MEDIA_POOL_CAPACITY
             and settings.database_pool_size >= settings.temporal_worker_max_concurrent_activities,
             "database connections are bounded and cover configured activity concurrency",
             (
                 "EC_DATABASE_MAX_OVERFLOW must be zero and EC_DATABASE_POOL_SIZE must be at "
-                "least EC_TEMPORAL_WORKER_MAX_CONCURRENT_ACTIVITIES"
+                "least EC_TEMPORAL_WORKER_MAX_CONCURRENT_ACTIVITIES and 2 for media mutations"
             ),
         ),
         _check(
