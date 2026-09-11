@@ -14,7 +14,7 @@ interface MapPreviewRailProps {
   events: EventItem[];
   selectedId: string | null;
   onSelect: (event: EventItem) => void;
-  onEntitySelect: (reference: EventEntityReference) => void;
+  onEntitySelect?: (reference: EventEntityReference) => void;
   groups: MapDayGroup[];
   model: MapDayModel;
   activeDay: string | null;
@@ -28,7 +28,7 @@ interface MapPreviewCardProps {
   selected: boolean;
   muted: boolean;
   onSelect: (event: EventItem) => void;
-  onEntitySelect: (reference: EventEntityReference) => void;
+  onEntitySelect?: (reference: EventEntityReference) => void;
 }
 
 function MapPreviewCard({ event, selected, muted, onSelect, onEntitySelect }: MapPreviewCardProps) {
@@ -92,7 +92,7 @@ function MapPreviewCard({ event, selected, muted, onSelect, onEntitySelect }: Ma
       </button>
 
       <div className="map-preview__actions">
-        {graphEntity ? <button type="button" className="map-preview__link"
+        {graphEntity && onEntitySelect ? <button type="button" className="map-preview__link"
           aria-label={`View ${event.title} in ${graphEntity.name}'s graph`}
           onClick={() => onEntitySelect(graphEntity)}>
           <Network aria-hidden="true" /> View in graph

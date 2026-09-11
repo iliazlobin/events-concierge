@@ -12,6 +12,7 @@ import {
   readableError,
   withdrawRegistration,
 } from "@/lib/api";
+import { releaseProfile } from "@/lib/release-profile";
 import type { RegistrationSummary, RequestSummary, TaskSummary } from "@/lib/types";
 
 function when(value: string): string {
@@ -33,7 +34,8 @@ function when(value: string): string {
  * that registers on your behalf could not show you what it had done.
  */
 export function ActivityPanel() {
-  const { tenantId } = useSession();
+  const { tenantId, config } = useSession();
+  const fullRelease = releaseProfile(config) === "full";
   const [requests, setRequests] = useState<RequestSummary[]>([]);
   const [registrations, setRegistrations] = useState<RegistrationSummary[]>([]);
   const [tasks, setTasks] = useState<TaskSummary[]>([]);
@@ -43,6 +45,7 @@ export function ActivityPanel() {
   const [notice, setNotice] = useState<string | null>(null);
 
   useEffect(() => {
+    if (!fullRelease) return;
     let cancelled = false;
     setLoading(true);
     void Promise.all([
@@ -66,9 +69,10 @@ export function ActivityPanel() {
     return () => {
       cancelled = true;
     };
-  }, [tenantId]);
+  }, [fullRelease, tenantId]);
 
   const withdraw = async (registration: RegistrationSummary) => {
+    if (!fullRelease) return;
     setWithdrawing(registration.canonical_event_id);
     setNotice(null);
     try {
@@ -89,6 +93,14 @@ export function ActivityPanel() {
       setWithdrawing(null);
     }
   };
+
+  if (!fullRelease) {
+    return <div className="settings-panel">
+      <h1>Event discovery</h1>
+      <p>Browse events and visit their provider pages for registration.</p>
+      <a href="/?view=events">Browse events</a>
+    </div>;
+  }
 
   if (loading) {
     return (

@@ -4,6 +4,7 @@ import { ArrowLeft, LoaderCircle } from "lucide-react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 
+import { releaseProfile, releaseSettingsAllowed } from "@/lib/release-profile";
 import { useSession } from "@/components/session-provider";
 
 const TABS = [
@@ -25,7 +26,7 @@ const TABS = [
  */
 export function SettingsShell({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
-  const { status, me, error, refresh } = useSession();
+  const { status, me, config, error, refresh } = useSession();
 
   return (
     <div className="settings-shell">
@@ -43,7 +44,7 @@ export function SettingsShell({ children }: { children: React.ReactNode }) {
 
       <div className="settings-grid">
         <nav className="settings-nav" aria-label="Settings sections">
-          {TABS.map((tab) => {
+          {TABS.filter(tab => releaseSettingsAllowed(tab.href, releaseProfile(config))).map((tab) => {
             const active = pathname === tab.href;
             return (
               <Link

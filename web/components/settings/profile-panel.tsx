@@ -7,6 +7,7 @@ import { useSession } from "@/components/session-provider";
 import { deleteAvatar, readableError, updateProfile, uploadAvatar } from "@/lib/api";
 import { AvatarPrepareError, prepareAvatar } from "@/lib/avatar-image";
 import { supportedTimeZones, validateDisplayName } from "@/lib/profile-form";
+import { releaseProfile } from "@/lib/release-profile";
 
 /**
  * The edit-profile form.
@@ -16,7 +17,8 @@ import { supportedTimeZones, validateDisplayName } from "@/lib/profile-form";
  * feeds the header avatar, and a name that appears and then reverts reads worse than a brief spinner.
  */
 export function ProfilePanel() {
-  const { me, tenantId, applyMe } = useSession();
+  const { me, config, tenantId, applyMe } = useSession();
+  const fullRelease = releaseProfile(config) === "full";
   const profile = me?.profile ?? null;
 
   const baseline = useMemo(
@@ -244,12 +246,12 @@ export function ProfilePanel() {
             <span className="settings-fixed">fixed</span>
           </dd>
           <p className="settings-hint">
-            This is where the concierge sends confirmations and anything that needs you. It is bound
-            to your sign-in identity and cannot be changed here yet.
+            {fullRelease ? "This is where the concierge sends confirmations and anything that needs you. " : "The email used for this account. "}
+            It is bound to your sign-in identity and cannot be changed here yet.
           </p>
         </div>
 
-        {me?.relay_inbox ? (
+        {fullRelease && me?.relay_inbox ? (
           <div className="settings-readonly">
             <dt>Relay inbox</dt>
             <dd className="settings-mono">{me.relay_inbox}</dd>
@@ -274,7 +276,7 @@ export function ProfilePanel() {
               </option>
             ))}
           </select>
-          <p className="settings-hint">Used when the concierge reasons about &ldquo;this evening&rdquo;.</p>
+          <p className="settings-hint">{fullRelease ? "Used when the concierge reasons about “this evening”." : "Saved with your profile. Event times use this device’s time zone."}</p>
         </div>
       </section>
 

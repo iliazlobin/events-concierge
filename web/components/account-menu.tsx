@@ -13,6 +13,7 @@ import {
 } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 
+import { releaseProfile, releaseSettingsAllowed } from "@/lib/release-profile";
 import type { Me, UiConfig } from "@/lib/types";
 
 interface AccountMenuProps {
@@ -66,7 +67,8 @@ export function AccountMenu({ me, config, signingOut, onSignOut }: AccountMenuPr
   const showAdmin = Boolean(me?.is_admin);
 
   // The rendered order the roving index walks: links, the optional admin hop, then sign out.
-  const itemCount = LINKS.length + (showAdmin ? 1 : 0) + 1;
+  const links = LINKS.filter(link => releaseSettingsAllowed(link.href, releaseProfile(config)));
+  const itemCount = links.length + (showAdmin ? 1 : 0) + 1;
 
   const close = useCallback((restoreFocus: boolean) => {
     setOpen(false);
@@ -171,7 +173,7 @@ export function AccountMenu({ me, config, signingOut, onSignOut }: AccountMenuPr
           </div>
 
           <div className="account-menu__group">
-            {LINKS.map((link) => {
+            {links.map((link) => {
               const index = nextIndex();
               const Icon = link.icon;
               return (

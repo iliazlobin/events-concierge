@@ -34,7 +34,7 @@ interface MapViewProps {
   onLoadMore: () => void;
   onSourceSelect: (sourceKey: string) => void;
   onFacetSelect: (value: string) => void;
-  onEntitySelect: (reference: EventEntityReference) => void;
+  onEntitySelect?: (reference: EventEntityReference) => void;
   onTopicSelect: (topic: string) => void;
 }
 

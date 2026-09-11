@@ -53,6 +53,7 @@ export interface DateRangeFilter {
 }
 
 export interface UiConfig {
+  release_profile?: "full" | "discovery";
   product_name: string;
   local_demo: boolean;
   auth_mode: "local_demo" | "deployment_session";

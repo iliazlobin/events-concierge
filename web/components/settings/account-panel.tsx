@@ -13,6 +13,7 @@ import {
 } from "@/lib/api";
 import { clearCatalogCache } from "@/lib/catalog-cache";
 import { clearEntityGraphCache } from "@/lib/entity-graph-cache";
+import { releaseProfile } from "@/lib/release-profile";
 import type { AccountErasureReceipt } from "@/lib/types";
 
 const CONFIRMATION = "DELETE MY ACCOUNT";
@@ -150,7 +151,7 @@ export function AccountPanel() {
         ) : null}
       </section>
 
-      <section className="settings-card">
+      {releaseProfile(config) === "full" ? <section className="settings-card">
         <h2 className="settings-card__title">How far the concierge goes</h2>
         <ol className="control-ladder">
           <li>
@@ -169,7 +170,10 @@ export function AccountPanel() {
         <p className="settings-hint">
           Paid registration is refused everywhere today — the concierge has no purchase authority.
         </p>
-      </section>
+      </section> : <section className="settings-card">
+        <h2 className="settings-card__title">Event discovery</h2>
+        <p>Browse events, explore the map and calendar, and save your filters. Visit the event provider to register. Google Calendar links let you add an event yourself.</p>
+      </section>}
 
       <section className="settings-card settings-card--danger">
         <h2 className="settings-card__title">Erase this account</h2>

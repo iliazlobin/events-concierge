@@ -54,7 +54,7 @@ interface CalendarViewProps {
   activeTopics: string[];
   onSourceSelect: (sourceKey: string) => void;
   onFacetSelect: (value: string) => void;
-  onEntitySelect: (reference: EventEntityReference) => void;
+  onEntitySelect?: (reference: EventEntityReference) => void;
   onEventTopicSelect?: (topic: string) => void;
   onTopicSelect: (topic: string) => void;
   onTopicsClear: () => void;

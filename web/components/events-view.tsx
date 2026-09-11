@@ -23,7 +23,7 @@ interface EventsViewProps {
   onSourceSelect: (sourceKey: string) => void;
   onLoadMore: () => void;
   onFacetSelect: (value: string) => void;
-  onEntitySelect: (reference: EventEntityReference) => void;
+  onEntitySelect?: (reference: EventEntityReference) => void;
   onTopicSelect: (topic: string) => void;
 }
 

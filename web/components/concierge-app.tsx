@@ -61,6 +61,7 @@ import {
   readConsumerHistorySnapshot,
   type ConsumerHistorySnapshot,
 } from "@/lib/consumer-history";
+import { releaseHistorySnapshot, releaseHome, releaseProfile, releaseViewAllowed } from "@/lib/release-profile";
 import { CATALOG_CITY_VALUES } from "@/lib/presentation";
 import type {
   CalendarMode,
@@ -230,11 +231,14 @@ function calendarModeForFilters(
 export function ConciergeApp() {
   const [sessionState, setSessionState] = useState<SessionState>("booting");
   const [config, setConfig] = useState<UiConfig | null>(null);
+  const profile = releaseProfile(config);
+  const fullRelease = profile === "full";
+  const navItems = NAV_ITEMS.filter(item => releaseViewAllowed(item.value, profile));
   const [tenantId, setTenantId] = useState<string | null>(null);
   const [me, setMe] = useState<Me | null>(null);
   const [signingOut, setSigningOut] = useState(false);
   const [signOutError, setSignOutError] = useState<string | null>(null);
-  const [view, setView] = useState<ViewName>("chat");
+  const [view, setView] = useState<ViewName>("events");
   const [calendarMode, setCalendarMode] = useState<CalendarMode>("month");
   const [filters, setFilters] = useState<CatalogFilters>(DEFAULT_FILTERS);
   const [events, setEvents] = useState<EventItem[]>([]);
@@ -325,6 +329,7 @@ export function ConciergeApp() {
       .then(async (nextConfig) => {
         if (cancelled) return;
         setConfig(nextConfig);
+        setView(releaseHome(releaseProfile(nextConfig)));
         // Publish the double-submit contract before any authenticated call, so a mutation can
         // never race an unset contract and fail verification for a reason the UI cannot explain.
         setCsrfContract(nextConfig.csrf_cookie_name, nextConfig.csrf_header_name);
@@ -367,9 +372,9 @@ export function ConciergeApp() {
 
   useEffect(() => {
     if (sessionState !== "ready" || historyReady) return;
-    const snapshot = alignCalendarSnapshot(readConsumerHistorySnapshot(window.history.state)
+    const snapshot = releaseHistorySnapshot(alignCalendarSnapshot(readConsumerHistorySnapshot(window.history.state)
       ?? consumerHistorySnapshotFromUrl(window.location.href, DEFAULT_FILTERS)
-      ?? createConsumerHistorySnapshot(view, filters, expandedId, calendarMode));
+      ?? createConsumerHistorySnapshot(view, filters, expandedId, calendarMode)), profile);
     preserveExpandedOnNextCatalogLoad.current = true;
     setView(snapshot.view);
     setCalendarMode(snapshot.calendarMode);
@@ -382,7 +387,7 @@ export function ConciergeApp() {
       consumerHistoryUrl(snapshot, window.location.href),
     );
     setHistoryReady(true);
-  }, [applyFilters, calendarMode, expandedId, filters, historyReady, sessionState, view]);
+  }, [applyFilters, calendarMode, expandedId, filters, historyReady, profile, sessionState, view]);
 
   useEffect(() => {
     if (sessionState !== "ready" || !historyReady) return;
@@ -390,7 +395,12 @@ export function ConciergeApp() {
       const rawSnapshot = readConsumerHistorySnapshot(event.state)
         ?? consumerHistorySnapshotFromUrl(window.location.href, DEFAULT_FILTERS);
       if (!rawSnapshot) return;
-      const snapshot = alignCalendarSnapshot(rawSnapshot);
+      const snapshot = releaseHistorySnapshot(alignCalendarSnapshot(rawSnapshot), profile);
+      window.history.replaceState(
+        createConsumerHistoryState(snapshot, window.history.state),
+        "",
+        consumerHistoryUrl(snapshot, window.location.href),
+      );
       preserveExpandedOnNextCatalogLoad.current = true;
       setView(snapshot.view);
       setCalendarMode(snapshot.calendarMode);
@@ -400,7 +410,7 @@ export function ConciergeApp() {
     };
     window.addEventListener("popstate", handlePopState);
     return () => window.removeEventListener("popstate", handlePopState);
-  }, [applyFilters, historyReady, sessionState]);
+  }, [applyFilters, historyReady, profile, sessionState]);
 
   useEffect(() => {
     if (sessionState !== "ready" || !historyReady) return;
@@ -760,6 +770,7 @@ export function ConciergeApp() {
   }, [calendarMode, filters, sessionState, tenantId, view]);
 
   const handleOnboard = async (email: string) => {
+    if (!config?.local_demo) return;
     setOnboardingBusy(true);
     setOnboardingError(null);
     try {
@@ -814,7 +825,8 @@ export function ConciergeApp() {
     }
   }, [filters, loadingMore, nextCursor, tenantId]);
 
-  const pushConsumerSnapshot = useCallback((nextSnapshot: ConsumerHistorySnapshot) => {
+  const pushConsumerSnapshot = useCallback((requestedSnapshot: ConsumerHistorySnapshot) => {
+    const nextSnapshot = releaseHistorySnapshot(requestedSnapshot, profile);
     const currentSnapshot = createConsumerHistorySnapshot(
       view,
       filters,
@@ -842,9 +854,10 @@ export function ConciergeApp() {
     applyFilters(nextSnapshot.filters);
     setExpandedId(nextSnapshot.expandedId);
     setSelectedEntityId(nextSnapshot.selectedEntityId);
-  }, [calendarMode, expandedId, filters, selectedEntityId, view]);
+  }, [calendarMode, expandedId, filters, profile, selectedEntityId, view]);
 
   const handleChat = async (text: string) => {
+    if (!fullRelease || sessionState !== "ready") return;
     // The selection is consumed by this turn: it is stamped onto the user message so the prompt
     // can be recalled with the same context, then cleared. Leaving it live would silently narrow
     // every later question to a set the user has stopped thinking about.
@@ -1047,6 +1060,7 @@ export function ConciergeApp() {
     });
   }, [calendarMode, filters, pushConsumerSnapshot]);
   const handleEntitySelect = useCallback(async (reference: EventEntityReference) => {
+    if (!fullRelease) return;
     try {
       const resolved = await resolveCatalogEventEntity(
         tenantId,
@@ -1071,7 +1085,7 @@ export function ConciergeApp() {
           : readableError(error),
       );
     }
-  }, [calendarMode, filters, pushConsumerSnapshot, tenantId]);
+  }, [calendarMode, filters, fullRelease, pushConsumerSnapshot, tenantId]);
   const handleEntityPageSelect = useCallback((entityId: string | null) => {
     pushConsumerSnapshot(createConsumerHistorySnapshot(
       "entities",
@@ -1226,6 +1240,13 @@ export function ConciergeApp() {
     );
   }
 
+  if (sessionState === "onboarding" && !config?.local_demo) {
+    return <main className="app-loading"><div role="alert">
+      <p>{onboardingError ?? "Sign-in is temporarily unavailable."}</p>
+      <button type="button" onClick={() => window.location.reload()}>Try again</button>
+    </div></main>;
+  }
+
   if (sessionState === "onboarding") {
     return (
       <Onboarding
@@ -1239,13 +1260,13 @@ export function ConciergeApp() {
   return (
     <div className="app-shell">
       <header className="site-header">
-        <button className="brand" type="button" onClick={() => changeView("chat")}>
+        <button className="brand" type="button" onClick={() => changeView(releaseHome(profile))}>
           <span className="brand-symbol" aria-hidden="true"><i /><i /></span>
           <span>Events Concierge</span>
         </button>
 
         <nav className="site-nav" aria-label="Main navigation">
-          {NAV_ITEMS.map(({ value, label }) => (
+          {navItems.map(({ value, label }) => (
             <button
               key={value}
               type="button"
@@ -1293,7 +1314,7 @@ export function ConciergeApp() {
       ) : null}
 
       <main className="app-main">
-        {view === "chat" ? (
+        {fullRelease && view === "chat" ? (
           <ChatView
             turns={turns}
             busy={chatBusy}
@@ -1339,7 +1360,7 @@ export function ConciergeApp() {
             onSourceSelect={handleSourceSelect}
             onLoadMore={handleLoadMore}
             onFacetSelect={handleFacetSelect}
-            onEntitySelect={handleEntitySelect}
+            onEntitySelect={fullRelease ? handleEntitySelect : undefined}
             onTopicSelect={handleTopicSelect}
           />
         ) : null}
@@ -1355,7 +1376,7 @@ export function ConciergeApp() {
             onLoadMore={handleLoadMore}
             onSourceSelect={handleSourceSelect}
             onFacetSelect={handleFacetSelect}
-            onEntitySelect={handleEntitySelect}
+            onEntitySelect={fullRelease ? handleEntitySelect : undefined}
             onTopicSelect={handleTopicSelect}
           />
         ) : null}
@@ -1380,17 +1401,17 @@ export function ConciergeApp() {
             activeTopics={filters.topics}
             onSourceSelect={handleSourceSelect}
             onFacetSelect={handleFacetSelect}
-            onEntitySelect={handleEntitySelect}
+            onEntitySelect={fullRelease ? handleEntitySelect : undefined}
             onTopicSelect={handleTopicFilterSelect}
             onEventTopicSelect={handleTopicSelect}
             onTopicsClear={handleTopicsClear}
           />
         ) : null}
-        {view === "entities" && !selectedEntityId && filters.topics.length === 1 ? (
+        {fullRelease && view === "entities" && !selectedEntityId && filters.topics.length === 1 ? (
           <TopicGraphView key={filters.topics[0]} topic={filters.topics[0]} events={events}
             hasMore={Boolean(nextCursor)} loading={catalogLoading || loadingMore} error={catalogError}
             onLoadMore={handleLoadMore} onEntitySelect={handleEntitySelect} onTopicSelect={handleTopicSelect}/>
-        ) : view === "entities" ? (
+        ) : fullRelease && view === "entities" ? (
           <EntitiesView
             tenantId={tenantId}
             selectedEntityId={selectedEntityId}
@@ -1400,7 +1421,7 @@ export function ConciergeApp() {
       </main>
 
       <nav className="mobile-nav" aria-label="Main navigation">
-        {NAV_ITEMS.map(({ value, label, icon: Icon }) => (
+        {navItems.map(({ value, label, icon: Icon }) => (
           <button
             key={value}
             type="button"

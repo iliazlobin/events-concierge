@@ -253,7 +253,7 @@ test("calendar restores custom links against the complete selected view range", 
   assert.match(conciergeApp, /function alignCalendarSnapshot/);
   assert.match(conciergeApp, /calendarRangeFilters\(snapshot\.filters, focusDate, snapshot\.calendarMode\)/);
   assert.match(conciergeApp, /alignCalendarSnapshot\(readConsumerHistorySnapshot/);
-  assert.match(conciergeApp, /const snapshot = alignCalendarSnapshot\(rawSnapshot\)/);
+  assert.match(conciergeApp, /releaseHistorySnapshot\(alignCalendarSnapshot\(rawSnapshot\), profile\)/);
 });
 
 test("selecting a day marks it with an accent ring, not an inverted light fill", () => {

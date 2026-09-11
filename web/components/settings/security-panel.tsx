@@ -126,8 +126,8 @@ export function SecurityPanel() {
       <section className="settings-card">
         <h2 className="settings-card__title">Two-factor authentication</h2>
         <p className="settings-hint">
-          A second factor is what keeps a stolen password from becoming a stolen account — which
-          matters more than usual here, because this account can register and spend on your behalf.
+          A second factor helps keep a stolen password from becoming a stolen account.
+          Manage your sign-in protection with your identity provider.
         </p>
         <div className="security-rows">
           {FACTORS.map((factor) => {

@@ -5,6 +5,7 @@ import { useEffect, useMemo, useState } from "react";
 
 import { useSession } from "@/components/session-provider";
 import { readableError, updatePreferences } from "@/lib/api";
+import { releaseProfile } from "@/lib/release-profile";
 
 const SUGGESTED = [
   { value: "live music", label: "Live music" },
@@ -26,7 +27,7 @@ function normalize(raw: string): string {
 }
 
 export function TastePanel() {
-  const { me, tenantId, applyMe } = useSession();
+  const { me, config, tenantId, applyMe } = useSession();
 
   const baseline = useMemo(() => me?.interests ?? [], [me?.interests]);
   const [interests, setInterests] = useState<string[]>(baseline);
@@ -99,7 +100,9 @@ export function TastePanel() {
     <div className="settings-panel">
       <header className="settings-panel__head">
         <h1>Interests</h1>
-        <p>A starting signal, not a filter. What you engage with keeps refining the order.</p>
+        <p>{releaseProfile(config) === "full"
+          ? "A starting signal, not a filter. What you engage with keeps refining the order."
+          : "Your saved interests. Use topic filters to choose which events you see."}</p>
       </header>
 
       <section className="settings-card">
