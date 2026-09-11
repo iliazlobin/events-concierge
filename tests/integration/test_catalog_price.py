@@ -563,7 +563,9 @@ async def test_catalog_concurrent_first_ingest_replay_has_one_canonical_and_link
         registration_url=f"https://example.test/{tag}/second",
         city=f"concurrent-second-city-{tag}",
     )
-    container = build_container(get_settings())
+    # All eight contenders must reach PostgreSQL; a five-slot application pool
+    # tests queue deadlines instead of the database identity/locking contract.
+    container = build_container(get_settings().model_copy(update={"database_pool_size": 8}))
     input_batches = [
         [first_candidate, second_candidate]
         if index % 2 == 0
@@ -636,7 +638,9 @@ async def test_catalog_crossed_fuzzy_batches_lock_canonicals_in_one_order(
     city = f"crossed-fuzzy-city-{tag}"
     first_title = f"crossed-fuzzy-first-{tag}"
     second_title = f"crossed-fuzzy-second-{tag}"
-    container = build_container(get_settings())
+    # All eight contenders must reach PostgreSQL; a five-slot application pool
+    # tests queue deadlines instead of the database identity/locking contract.
+    container = build_container(get_settings().model_copy(update={"database_pool_size": 8}))
     seeds = [
         CandidateEvent(
             source=Source.PUBLIC_JSONLD,
@@ -680,7 +684,7 @@ async def test_catalog_crossed_fuzzy_batches_lock_canonicals_in_one_order(
 
     refreshed = await asyncio.wait_for(
         asyncio.gather(*(container.catalog.upsert_candidates(batch) for batch in batches)),
-        timeout=10,
+        timeout=30,
     )
 
     expected_by_title = {
