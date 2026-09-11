@@ -14,12 +14,16 @@ import tempfile
 import time
 import uuid
 
+from events_concierge.deployment.development_targets import TARGETS
+
 NS = "events-concierge-dev"
 PROJECT = "project-9c8cce04-f94d-40fc-aa6"
 ACCOUNT = "iliazlobin27@gmail.com"
 K = os.environ.get("KUBECTL", "kubectl")
 CONTEXT = "gke_" + PROJECT + "_us-west1-a_ec-dev"
 BACKUP_ROOT = "gs://iz27-ec-dev-backups/"
+PAYLOAD_ROOT = "gs://iz27-ec-dev-payloads"
+TARGET_NAME = "legacy"
 RECOVERY_FILE = "recovery.json"
 WRITERS = {
     "events-concierge-" + name
@@ -39,6 +43,16 @@ WRITERS = {
 RESUME_RETRY_DELAYS = (2, 4, 8)
 OPERATOR_ROLE_SCHEMA = 182
 SNAPSHOT_SQL = "SELECT json_build_object('tenants',(SELECT count(*) FROM tenants),'requests',(SELECT count(*) FROM event_requests),'schema',(SELECT version_num FROM alembic_version))::text"
+
+
+def select_target(name):
+    # One destination per CLI process, selected before any cloud or Kubernetes IO.
+    global PROJECT, CONTEXT, BACKUP_ROOT, PAYLOAD_ROOT, TARGET_NAME  # noqa: PLW0603
+    destination = TARGETS[name]
+    PROJECT, CONTEXT = destination.project, destination.context
+    BACKUP_ROOT = "gs://" + destination.backup_bucket + "/"
+    PAYLOAD_ROOT = "gs://" + destination.payload_bucket
+    TARGET_NAME = name
 
 
 def run(args, **kw):
@@ -356,7 +370,7 @@ def _persist_recovery(folder, dest, recovery):
         raise SystemExit("Recovery metadata read-back mismatch; workloads were not stopped")
     print("Recovery metadata saved:", dest + "/" + RECOVERY_FILE, flush=True)
     print(
-        f"If backup recovery is interrupted: .venv/bin/python scripts/development/backup.py resume {dest}",
+        f"If backup recovery is interrupted: .venv/bin/python scripts/development/backup.py resume {dest} --target {TARGET_NAME}",
         flush=True,
     )
 
@@ -422,7 +436,7 @@ def backup(*, hold_stopped=False):
             gc(
                 "rsync",
                 "--recursive",
-                "gs://iz27-ec-dev-payloads",
+                PAYLOAD_ROOT,
                 dest + "/payloads",
                 stdout=subprocess.DEVNULL,
             )
@@ -484,7 +498,7 @@ def backup(*, hold_stopped=False):
                     _resume(quiesced, recovery=recovery)
                 except Exception as recovery_error:
                     print(
-                        f"Replica recovery incomplete; retry: .venv/bin/python scripts/development/backup.py resume {dest}",
+                        f"Replica recovery incomplete; retry: .venv/bin/python scripts/development/backup.py resume {dest} --target {TARGET_NAME}",
                         flush=True,
                     )
                     if backup_error is not None:
@@ -546,7 +560,7 @@ def verify_operator_roles(sql, schema):
 
 
 def verify(uri):
-    if not uri.startswith("gs://iz27-ec-dev-backups/") or ".." in uri:
+    if not uri.startswith(BACKUP_ROOT) or ".." in uri:
         raise SystemExit("Use a development backup prefix")
     with tempfile.TemporaryDirectory(prefix="ec-dev-restore-") as tmp:
         os.chmod(tmp, 0o700)
@@ -712,12 +726,14 @@ if __name__ == "__main__":
     p = argparse.ArgumentParser()
     p.add_argument("action", choices=["backup", "verify", "resume"])
     p.add_argument("uri", nargs="?")
+    p.add_argument("--target", choices=TARGETS, default="legacy")
     p.add_argument(
         "--hold-stopped",
         action="store_true",
         help="After a successful backup, leave application writers and Temporal stopped for cutover",
     )
     a = p.parse_args()
+    select_target(a.target)
     if a.action == "backup":
         if a.uri:
             p.error("backup creates its own prefix; do not supply a URI")
