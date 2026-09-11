@@ -1,20 +1,21 @@
 # Events Concierge
 
-A multi-tenant service that turns a natural-language request ("find me something Friday evening
-after work and sign me up") into a confirmed, reconciled calendar entry: discover events across
-sources, rank them to the user's taste, register where the source permits (otherwise issue a
-one-tap handoff), write the confirmed event to the calendar, and reconcile later changes.
+Discover events across reviewed sources, browse Events, Map and Calendar, and open the provider's
+registration page. Profiles and saved filters personalize the discovery experience.
 
 The design of record lives in [`design/`](design/), [`decisions/`](decisions/), and
 [`PROJECT.md`](PROJECT.md). This README covers building, testing, and deployment packaging.
 
 ## Status
 
-This is a local consumer-web MVP on top of a working Temporal vertical slice. The same-origin web
-app supports local onboarding, focused event previews, durable concierge requests with explicitly
-selected lifecycle outcomes, automatically refreshed upcoming-plan and handoff views, preference
-editing, feedback, and withdrawal. Cloud services are mocked by default, and live integrations are
-opt-in. The repository now contains validated Terraform/OpenTofu and Helm staging scaffolds plus a
+The current milestone is a private discovery candidate: Events, Map and Calendar browsing, shared
+filters, event details, provider registration links, profiles and saved filters. Select
+`EC_RELEASE_PROFILE=discovery`; chat, automated RSVP, notifications, Calendar sync, purchases and
+programmatic API keys are deferred. The broader Temporal product remains available for development
+under the full profile. [Acceptance gates](docs/production-operations.md#first-release-acceptance)
+and the [private deployment runbook](deploy/development.md) distinguish implemented features from
+verified deployment. Cloud services are mocked by default, and live integrations are opt-in.
+The repository contains validated Terraform/OpenTofu and Helm staging scaffolds plus a
 partial built-in GCP runtime provider. That provider supplies native GCS claim-check storage,
 reviewed public discovery, PostgreSQL audit/consent boundaries, and optional Google Calendar
 assembly. The full product profile still lacks notification delivery, notification-secret
@@ -102,7 +103,8 @@ The primary consumer interface is the Next.js App Router application in [`web`](
 keeps a same-origin request boundary. Port `8000` remains the API and legacy static fallback; port
 `8234` is Temporal's operator console.
 
-The product surface is deliberately limited to Chat, Events, Map, and Calendar. Events, Map, and
+The discovery surface contains Events, Map and Calendar; the full development profile also includes
+Chat and the deferred request lifecycle. Events, Map, and
 Calendar share one stable filter rail: Today/This week/Weekend/This month presets, one reviewed
 source selector, additive city and named-area selections (currently Bay Area, Manhattan, and Los
 Angeles area), free/paid/unlisted state, an optional exact-dollar maximum, text search, and one

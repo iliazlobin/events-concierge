@@ -5,9 +5,10 @@ foundation, networking and GKE are owned by [gcp-foundation](https://github.com/
 do not create a second cluster from this application root for that destination.
 Product scope and release gates: [first-release acceptance](../docs/production-operations.md#first-release-acceptance).
 
-The application move is pending. Validate the shared platform and application landing configuration first;
-preserve the existing stack until restored data, user workflows and crawler parity pass. The commands
-below still target the existing project and must not be silently repointed to the shared project.
+The shared platform and app resources are applied; destination acceptance is in progress. The legacy
+writers are stopped with a verified final backup. Preserve its stores and infrastructure until restored
+data, user workflows, crawler parity and recovery pass. Commands in the legacy sections still target
+the existing project and must not be silently repointed to the shared project.
 
 On a shared destination, the platform must install and verify its retained `shared-retain`
 StorageClass before application stores are installed. Set `createStorageClass=false` and
@@ -72,6 +73,52 @@ The old backup excludes Redis. At final quiesce, inventory provider backoffs, ad
 sessions again; preserve or wait out outstanding backoffs before a cold start. Do not infer an empty
 store from the earlier one-key pacer snapshot. New backups inventory and hash every payload-bucket
 object. Older payload-only backups retain their narrower verification.
+
+### Shared release and access
+
+Keep the platform's IAP tunnel running and export the separate kubeconfig produced by its
+[private-access procedure](https://github.com/iliazlobin/gcp-foundation#private-access). Verify the
+shared context named above before each release. These commands assume the reviewed app Terraform
+apply and state migration are complete, and `.local/shared-release-values.yaml` was generated with
+`release_values.py --target shared` from the passing candidate's registry digests.
+
+For new stores only:
+
+```bash
+kubectl create namespace events-concierge-dev --dry-run=client -o yaml | kubectl apply -f -
+.venv/bin/python scripts/development/bootstrap_secrets.py --target shared --project-to-kubernetes
+helm upgrade --install ec-dev-data deploy/helm/events-concierge-dev-data -n events-concierge-dev -f deploy/helm/events-concierge-dev-data/values-shared-development.yaml --wait --timeout 10m
+```
+
+Restore the verified snapshot and restricted roles as described above, and require TCP readiness
+before each restore. After verifying the restored databases and payloads, run the retained-volume
+replacement drill while application and Temporal writers are still absent:
+
+```bash
+.venv/bin/python scripts/development/check_store_recovery.py --target shared
+helm upgrade --install events-concierge deploy/helm/events-concierge -n events-concierge-dev -f deploy/helm/events-concierge/values-development.yaml -f deploy/helm/events-concierge/values-shared-development.yaml -f .local/shared-release-values.yaml --wait --wait-for-jobs --timeout 10m
+helm upgrade --install ec-dev-temporal temporal --repo https://go.temporal.io/helm-charts --version 1.6.0 -n events-concierge-dev -f deploy/helm/temporal-development.yaml --set server.config.persistence.datastores.default.sql.manageSchema=false --set server.config.persistence.datastores.visibility.sql.manageSchema=false --set server.config.persistence.datastores.visibility.sql.createDatabase=false --set server.config.namespaces.create=false --wait --timeout 15m
+helm upgrade events-concierge deploy/helm/events-concierge -n events-concierge-dev -f deploy/helm/events-concierge/values-development.yaml -f deploy/helm/events-concierge/values-shared-development.yaml -f .local/shared-release-values.yaml --set global.releasePhase=application --set global.runtimeProviderReady=true --wait --timeout 10m
+.venv/bin/python scripts/development/wait_ready.py --target shared
+kubectl -n events-concierge-dev exec -i deployment/events-concierge-api -- python - < scripts/development/promote_workers.py
+kubectl -n events-concierge-dev exec -i deployment/events-concierge-api -- python - < scripts/development/smoke.py
+```
+
+The restored Temporal options disable database/schema/namespace initialization; the chart retains
+only a harmless completion hook. They apply to this restored environment, not a fresh empty Temporal
+installation. The application migration runs before its writers and must preserve the restored data.
+
+Run each port-forward in its own terminal, with the same dedicated shared kubeconfig:
+
+```bash
+kubectl -n events-concierge-dev port-forward --address=127.0.0.1 service/events-concierge-api 14000:8000
+kubectl -n events-concierge-dev port-forward --address=127.0.0.1 service/events-concierge-frontend 14001:80
+kubectl -n events-concierge-dev port-forward --address=127.0.0.1 deployment/events-concierge-admin 14002:3000
+```
+
+Use `http://127.0.0.1:14001` for consumer acceptance and `http://127.0.0.1:14002/admin` for private
+administration. These forwards grant no public access. Shared backup/verify/resume commands must
+include `--target shared`; never use a legacy recovery prefix against the new cluster.
 
 Avatars use the separate private `iz27-platform-dev-ec-media` bucket, with no versioning, soft
 delete or retention so account erasure can remove them. Only the API, private admin and erasure

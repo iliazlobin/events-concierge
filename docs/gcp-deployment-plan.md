@@ -1,6 +1,6 @@
 # Events Concierge GCP Deployment Plan
 
-The current private development setup and pending shared-platform move are documented in the
+The current private development setup and shared-platform cutover are documented in the
 [development runbook](../deploy/development.md). The managed-service plan below is historical
 production planning, not the selected development deployment.
 

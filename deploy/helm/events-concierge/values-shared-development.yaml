@@ -2,6 +2,7 @@
 # The runtime remains the private development profile pending independent production gates.
 applicationConfig:
   EC_RELEASE_PROFILE: discovery
+  EC_PUBLIC_BASE_URL: http://127.0.0.1:14001
   EC_MEDIA_BACKEND: gcs
   EC_GCS_MEDIA_BUCKET: iz27-platform-dev-ec-media
   EC_GCS_MEDIA_PREFIX: events-concierge/media/v1
