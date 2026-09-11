@@ -10,6 +10,7 @@ import {
 } from "lucide-react";
 
 import { useSession } from "@/components/session-provider";
+import { releaseProfile } from "@/lib/release-profile";
 
 /**
  * Design preview for the security surface. Nothing here is wired.
@@ -73,6 +74,14 @@ const ACTIVITY = [
 export function SecurityPanel() {
   const { config } = useSession();
   const delegated = config?.auth_mode === "deployment_session";
+
+  if (releaseProfile(config) !== "full") {
+    return <div className="settings-panel">
+      <h1>Account security</h1>
+      <p>View your sign-in details and account controls in Account and data.</p>
+      <a href="/settings/account">Account and data</a>
+    </div>;
+  }
 
   return (
     <div className="settings-panel">

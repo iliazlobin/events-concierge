@@ -188,6 +188,7 @@ def test_discovery_settings_suppress_automated_registration_and_calendar_claims(
     page.goto(f"{BASE}/settings/account")
     expect(page.get_by_role("heading", name="Event discovery", exact=True)).to_be_visible()
     expect(page.get_by_role("link", name="Activity", exact=True)).to_have_count(0)
+    expect(page.get_by_role("link", name="Security", exact=True)).to_have_count(0)
     expect(page.get_by_text("Find and handle it.", exact=False)).to_have_count(0)
     expect(page.get_by_text("Your calendar stays true.", exact=False)).to_have_count(0)
     page.goto(f"{BASE}/settings/activity")
@@ -201,6 +202,24 @@ def test_discovery_settings_suppress_automated_registration_and_calendar_claims(
     page.goto(f"{BASE}/settings/taste")
     expect(page.get_by_text("Use topic filters", exact=False)).to_be_visible()
     expect(page.get_by_text("keeps refining the order", exact=False)).to_have_count(0)
+    page.goto(f"{BASE}/settings/security")
+    expect(page.get_by_role("heading", name="Account security", exact=True)).to_be_visible()
+    expect(page.locator(".preview-banner")).to_have_count(0)
+    expect(page.get_by_role("button")).to_have_count(0)
+
+
+def test_full_profile_retains_explicitly_inert_security_preview(release_page):
+    harness, api = release_page
+    api.profile = "full"
+    page = harness.page
+    page.goto(f"{BASE}/settings/security")
+    expect(page.get_by_role("heading", name="Security", exact=True)).to_be_visible()
+    expect(page.get_by_role("note")).to_contain_text("Design preview")
+    expect(page.get_by_role("link", name="Security", exact=True)).to_be_visible()
+    buttons = page.get_by_role("button")
+    assert buttons.count() > 0
+    for button in buttons.all():
+        expect(button).to_be_disabled()
 
 
 @pytest.mark.parametrize("profile", ["discovery", "full"])

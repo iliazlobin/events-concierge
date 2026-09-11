@@ -38,5 +38,7 @@ test("discovery keeps catalog navigation and calendar state, and hides automated
   for (const view of ["chat", "entities"]) assert.equal(releaseViewAllowed(view, "discovery"), false);
   assert.equal(releaseSettingsAllowed("/settings/activity", "discovery"), false);
   assert.equal(releaseSettingsAllowed("/settings/activity", "full"), true);
+  assert.equal(releaseSettingsAllowed("/settings/security", "discovery"), false);
+  assert.equal(releaseSettingsAllowed("/settings/security", "full"), true);
   assert.equal(releaseSettingsAllowed("/settings/saved-filters", "discovery"), true);
 });
