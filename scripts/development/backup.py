@@ -579,7 +579,18 @@ def verify(uri):
 
                 for _attempt in range(60):
                     ready = subprocess.run(
-                        ["docker", "exec", container, "pg_isready", "-U", "postgres"],
+                        # The image's temporary initialization server listens only
+                        # on its Unix socket; TCP waits for the final server.
+                        [
+                            "docker",
+                            "exec",
+                            container,
+                            "pg_isready",
+                            "-h",
+                            "127.0.0.1",
+                            "-U",
+                            "postgres",
+                        ],
                         check=False,
                         capture_output=True,
                     )
