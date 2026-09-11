@@ -4,6 +4,7 @@ import { Check, LoaderCircle, Trash2, Upload } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 
 import { useSession } from "@/components/session-provider";
+import { useAvatarSource } from "@/components/use-avatar-source";
 import { deleteAvatar, readableError, updateProfile, uploadAvatar } from "@/lib/api";
 import { AvatarPrepareError, prepareAvatar } from "@/lib/avatar-image";
 import { supportedTimeZones, validateDisplayName } from "@/lib/profile-form";
@@ -39,6 +40,7 @@ export function ProfilePanel() {
   const [avatarError, setAvatarError] = useState<string | null>(null);
   const fileRef = useRef<HTMLInputElement | null>(null);
   const avatarUrl = profile?.avatar_url ?? null;
+  const avatarSource = useAvatarSource(avatarUrl, tenantId);
 
   // Re-seed when the server hands back a newer revision, so a conflict resolves into fresh truth.
   useEffect(() => {
@@ -157,8 +159,8 @@ export function ProfilePanel() {
       <section className="settings-card">
         <h2 className="settings-card__title">Photo</h2>
         <div className="profile-photo">
-          {avatarUrl ? (
-            <img className="profile-photo__image" src={avatarUrl} alt="Your profile photo" />
+          {avatarSource ? (
+            <img className="profile-photo__image" src={avatarSource} alt="Your profile photo" />
           ) : (
             <span className="profile-photo__tile" aria-hidden="true">
               {initial}

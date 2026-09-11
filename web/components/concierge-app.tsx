@@ -1292,6 +1292,7 @@ export function ConciergeApp() {
         <AccountMenu
           me={me}
           config={config}
+          tenantId={tenantId}
           signingOut={signingOut}
           onSignOut={handleSignOut}
         />

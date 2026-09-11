@@ -13,12 +13,14 @@ import {
 } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 
+import { useAvatarSource } from "@/components/use-avatar-source";
 import { releaseProfile, releaseSettingsAllowed } from "@/lib/release-profile";
 import type { Me, UiConfig } from "@/lib/types";
 
 interface AccountMenuProps {
   me: Me | null;
   config: UiConfig | null;
+  tenantId?: string | null;
   signingOut: boolean;
   onSignOut: () => void;
 }
@@ -51,7 +53,7 @@ const LINKS: MenuLink[] = [
  * Navigation entries are real anchors so a middle-click or Cmd-click opens a tab, which is how the
  * administration affordance this menu absorbs has always behaved.
  */
-export function AccountMenu({ me, config, signingOut, onSignOut }: AccountMenuProps) {
+export function AccountMenu({ me, config, tenantId = null, signingOut, onSignOut }: AccountMenuProps) {
   const [open, setOpen] = useState(false);
   const [activeIndex, setActiveIndex] = useState(0);
   const wrapperRef = useRef<HTMLDivElement | null>(null);
@@ -62,6 +64,7 @@ export function AccountMenu({ me, config, signingOut, onSignOut }: AccountMenuPr
   const email = me?.notify_email ?? null;
   const initial = (displayName ?? email ?? "").trim().charAt(0).toUpperCase();
   const avatarUrl = me?.profile?.avatar_url ?? null;
+  const avatarSource = useAvatarSource(avatarUrl, tenantId);
   // Operator affordance, shown only to accounts holding a granted role. This is
   // presentation: the administration API enforces its own access separately.
   const showAdmin = Boolean(me?.is_admin);
@@ -158,8 +161,8 @@ export function AccountMenu({ me, config, signingOut, onSignOut }: AccountMenuPr
           else openWith(0);
         }}
       >
-        {avatarUrl ? (
-          <img className="account-menu__avatar" src={avatarUrl} alt="" width={30} height={30} />
+        {avatarSource ? (
+          <img className="account-menu__avatar" src={avatarSource} alt="" width={30} height={30} />
         ) : (
           initial || <span aria-hidden="true">&nbsp;</span>
         )}

@@ -22,6 +22,7 @@ pytestmark = [
 @dataclass
 class ReleaseApi:
     profile: str | None = "discovery"
+    local_demo: bool = True
     config_status: int = 200
     hold_config: bool = False
     held: list[Route] = field(default_factory=list)
@@ -31,8 +32,8 @@ class ReleaseApi:
     def config(self, route: Route) -> None:
         payload = {
             "product_name": "Events Concierge",
-            "local_demo": True,
-            "auth_mode": "local_demo",
+            "local_demo": self.local_demo,
+            "auth_mode": "local_demo" if self.local_demo else "deployment_session",
             "auth_start_url": None,
             "reauth_url": None,
             "logout_url": None,
@@ -239,3 +240,37 @@ def test_profiles_keep_map_and_calendar_browsing(release_page, profile):
     expect(page.get_by_role("grid", name="June 2030", exact=True)).to_be_visible()
     expect(page.get_by_role("gridcell", name=re.compile(r"June 14.*1 event"))).to_be_visible()
     assert ("GET", "/v1/catalog/events/summary") in api.calls
+
+
+@pytest.mark.parametrize("local_demo", [True, False])
+def test_profile_avatar_reads_use_the_current_auth_contract(release_page, local_demo):
+    harness, api = release_page
+    api.local_demo = local_demo
+    page = harness.page
+    avatar_reads = []
+
+    def identity(route):
+        route.fulfill(content_type="application/json", body=json.dumps({
+            "notify_email": "browser@example.test", "interests": [],
+            "preference_revision": 1, "local_demo": local_demo, "is_admin": False,
+            "profile": {"display_name": "Avatar reader", "time_zone": None, "revision": 1,
+                        "avatar_url": "/v1/me/avatar?v=fixture"},
+        }))
+
+    def avatar(route):
+        tenant = route.request.headers.get("x-ec-tenant-id")
+        avatar_reads.append(tenant)
+        authorized = bool(tenant) if local_demo else tenant is None
+        route.fulfill(status=200 if authorized else 401, content_type="image/png", body=_TRANSPARENT_MAP_TILE)
+
+    page.route("**/v1/me", identity)
+    page.route("**/v1/me/avatar?*", avatar)
+    page.goto(f"{BASE}/settings")
+    expect(page.get_by_role("img", name="Your profile photo", exact=True)).to_be_visible()
+    page.wait_for_function("document.querySelector('.profile-photo__image')?.naturalWidth > 0", timeout=5000)
+    page.goto(f"{BASE}/?view=events")
+    expect(page.locator(".account-menu__avatar")).to_be_visible()
+    page.wait_for_function("document.querySelector('.account-menu__avatar')?.naturalWidth > 0", timeout=5000)
+    assert len(avatar_reads) == 2
+    assert all(avatar_reads) if local_demo else not any(avatar_reads)
+    assert len(set(avatar_reads)) == 1
