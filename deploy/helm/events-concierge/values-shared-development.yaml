@@ -2,6 +2,9 @@
 # The runtime remains the private development profile pending independent production gates.
 applicationConfig:
   EC_RELEASE_PROFILE: discovery
+  EC_MEDIA_BACKEND: gcs
+  EC_GCS_MEDIA_BUCKET: iz27-platform-dev-ec-media
+  EC_GCS_MEDIA_PREFIX: events-concierge/media/v1
   EC_GCP_PROJECT: iz27-platform-dev
   EC_GCS_CLAIM_CHECK_BUCKET: iz27-platform-dev-ec-payloads
 secretManager:

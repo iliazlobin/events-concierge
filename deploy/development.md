@@ -21,7 +21,7 @@ This profile uses real PostgreSQL, Redis, Temporal and GCS with explicit mock ex
 The platform owns the two projects, deployment identities, network, GKE/node pool, private access
 VM and `shared-retain`. Follow its [private access and storage gates](https://github.com/iliazlobin/gcp-foundation#private-access)
 before installing application resources. The app-owned [shared-development root](../infra/terraform/environments/shared-development)
-owns its registry, workload identities, secrets and payload/backup/state buckets. It never creates a
+owns its registry, workload identities, secrets and payload, media, backup and state buckets. It never creates a
 cluster or changes shared network resources. The old root/state retain their ownership until retirement.
 
 Use the platform's verified `platform_contract` output as the new root's input. Review its exact
@@ -68,7 +68,14 @@ and verify manifest counts, isolation and historical payload reads before starti
 The old backup excludes Redis. At final quiesce, inventory provider backoffs, admission fences and
 sessions again; preserve or wait out outstanding backoffs before a cold start. Do not infer an empty
 store from the earlier one-key pacer snapshot. New backups inventory and hash every payload-bucket
-object, including profile media. Older payload-only backups retain their narrower verification.
+object. Older payload-only backups retain their narrower verification.
+
+Avatars use the separate private `iz27-platform-dev-ec-media` bucket, with no versioning, soft
+delete or retention so account erasure can remove them. Only the API, private admin and erasure
+worker can access it; the adapter verifies this policy before accepting destructive completion.
+Media is excluded from retained payload backups. Database recovery may require users to reupload
+avatars; never claim a database/payload restore recovered media. Verify upload, replica-independent
+read, deletion and account erasure on the shared deployment.
 
 For collection acceptance, compare `fn_report_catalog_source_coverage_v1()` on both environments,
 using the same as-of time and collection windows. It excludes fixtures. Require every reviewed source

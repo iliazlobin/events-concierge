@@ -46,8 +46,10 @@ def _bucket(name="iz27-platform-dev-ec-payloads"):
         "force_destroy": False,
         "uniform_bucket_level_access": True,
         "public_access_prevention": "enforced",
-        "versioning": [{"enabled": True}],
-        "soft_delete_policy": [{"retention_duration_seconds": 604800}],
+        "versioning": [{"enabled": name != policy.MEDIA_BUCKET}],
+        "soft_delete_policy": [
+            {"retention_duration_seconds": 0 if name == policy.MEDIA_BUCKET else 604800}
+        ],
     }
 
 
@@ -97,6 +99,43 @@ def test_shared_app_plan_rejects_bucket_boundary_drift(field, value):
     bucket = _bucket()
     bucket[field] = value
     assert policy.inspect(_plan("google_storage_bucket", bucket))
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("versioning", [{"enabled": True}]),
+        ("soft_delete_policy", [{"retention_duration_seconds": 604800}]),
+        ("retention_policy", [{"retention_period": 60}]),
+        ("default_event_based_hold", True),
+        ("lifecycle_rule", [{"action": [{"type": "Delete"}]}]),
+    ],
+)
+def test_media_policy_rejects_hidden_retention_or_expiration(field, value):
+    bucket = _bucket(policy.MEDIA_BUCKET)
+    bucket[field] = value
+    assert policy.inspect(_plan("google_storage_bucket", bucket))
+
+
+def test_media_access_is_limited_to_profile_and_erasure_workloads():
+    for name in policy.NAMES | {"outside-app"}:
+        for role in (
+            "roles/storage.objectUser",
+            "roles/storage.legacyBucketReader",
+            "roles/storage.admin",
+        ):
+            errors = policy.inspect(
+                _plan(
+                    "google_storage_bucket_iam_member",
+                    {
+                        "bucket": policy.MEDIA_BUCKET,
+                        "member": _member(name),
+                        "role": role,
+                    },
+                )
+            )
+            allowed = name in policy.MEDIA_WORKLOADS and role != "roles/storage.admin"
+            assert bool(errors) is not allowed
 
 
 def test_shared_app_plan_restricts_node_access_to_its_repository():
@@ -251,6 +290,9 @@ def test_shared_helm_app_and_stores_consume_external_platform_without_public_rou
     config = next(
         d["data"] for d in docs if d["kind"] == "ConfigMap" and "EC_GCP_PROJECT" in d["data"]
     )
+    assert config["EC_MEDIA_BACKEND"] == "gcs"
+    assert config["EC_GCS_MEDIA_BUCKET"] == policy.MEDIA_BUCKET
+    assert config["EC_GCS_MEDIA_PREFIX"] == "events-concierge/media/v1"
     assert config["EC_GCP_PROJECT"] == PROJECT
     assert config["EC_GCS_CLAIM_CHECK_BUCKET"] == "iz27-platform-dev-ec-payloads"
     assert config["EC_CATALOG_INGESTION_SCHEDULER_ENABLED"] == "false"

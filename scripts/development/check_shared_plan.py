@@ -41,10 +41,13 @@ SECRETS = {
     **{name: {"database-url", "redis-url"} for name in CONSUMERS},
 }
 SECRET_NAMES = set().union(*SECRETS.values())
+MEDIA_BUCKET = "iz27-platform-dev-ec-media"
+MEDIA_WORKLOADS = frozenset({"api", "development-admin", "account-erasure"})
 BUCKETS = {
     "iz27-platform-dev-ec-payloads",
     "iz27-platform-dev-ec-backups",
     "iz27-platform-dev-ec-state",
+    MEDIA_BUCKET,
 }
 ALLOWED = {
     "google_service_account",
@@ -130,6 +133,7 @@ def _safe_resource(kind, value):  # noqa: PLR0911, PLR0912 - Scope review stays 
             )
         return True
     if kind == "google_storage_bucket":
+        media = value.get("name") == MEDIA_BUCKET
         return (
             value.get("project") == PROJECT
             and value.get("name") in BUCKETS
@@ -137,12 +141,27 @@ def _safe_resource(kind, value):  # noqa: PLR0911, PLR0912 - Scope review stays 
             and value.get("force_destroy") is False
             and value.get("uniform_bucket_level_access") is True
             and value.get("public_access_prevention") == "enforced"
-            and (value.get("versioning") or [{}])[0].get("enabled") is True
+            and (value.get("versioning") or [{}])[0].get("enabled") is (not media)
             and (value.get("soft_delete_policy") or [{}])[0].get("retention_duration_seconds")
-            == _SOFT_DELETE_SECONDS
+            == (0 if media else _SOFT_DELETE_SECONDS)
+            and (
+                not media
+                or (
+                    not value.get("retention_policy")
+                    and not value.get("default_event_based_hold")
+                    and not value.get("lifecycle_rule")
+                )
+            )
         )
     if kind == "google_storage_bucket_iam_member":
         name = _workload(value.get("member"))
+        if value.get("bucket") in {MEDIA_BUCKET, f"b/{MEDIA_BUCKET}"}:
+            return (
+                name in MEDIA_WORKLOADS
+                and value.get("role")
+                in {"roles/storage.objectUser", "roles/storage.legacyBucketReader"}
+                and not value.get("condition")
+            )
         if (
             value.get("bucket")
             not in {"iz27-platform-dev-ec-payloads", "b/iz27-platform-dev-ec-payloads"}

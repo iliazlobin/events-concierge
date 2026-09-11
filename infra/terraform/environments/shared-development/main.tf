@@ -116,6 +116,37 @@ resource "google_storage_bucket_iam_member" "catalog_payloads" {
   }
 }
 
+# Profile media has an independent erasure lifetime. Do not put it in retained payload backups.
+resource "google_storage_bucket" "media" {
+  project                     = local.project
+  name                        = "iz27-platform-dev-ec-media"
+  location                    = "US-WEST1"
+  uniform_bucket_level_access = true
+  public_access_prevention    = "enforced"
+  force_destroy               = false
+  versioning { enabled = false }
+  soft_delete_policy { retention_duration_seconds = 0 }
+  lifecycle { prevent_destroy = true }
+}
+locals {
+  media_workloads = toset(["api", "development-admin", "account-erasure"])
+}
+resource "google_storage_bucket_iam_member" "media_objects" {
+  for_each   = local.media_workloads
+  bucket     = google_storage_bucket.media.name
+  role       = "roles/storage.objectUser"
+  member     = "serviceAccount:${local.workload_emails[each.key]}"
+  depends_on = [google_service_account.workload]
+}
+# Bucket metadata lets the adapter reject retention/versioning that prevents honest erasure.
+resource "google_storage_bucket_iam_member" "media_policy" {
+  for_each   = local.media_workloads
+  bucket     = google_storage_bucket.media.name
+  role       = "roles/storage.legacyBucketReader"
+  member     = "serviceAccount:${local.workload_emails[each.key]}"
+  depends_on = [google_service_account.workload]
+}
+
 # Bootstrap this app-owned state bucket locally, then migrate only this new root's state.
 resource "google_storage_bucket" "state" {
   project                     = local.project

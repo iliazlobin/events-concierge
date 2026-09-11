@@ -6,6 +6,6 @@ output "location" { value = var.platform_contract.cluster.location }
 output "namespace" { value = local.namespace }
 output "storage_class" { value = var.platform_contract.storage.class }
 output "service_accounts" { value = local.workload_emails }
-output "buckets" { value = { for k, v in google_storage_bucket.data : k => v.name } }
+output "buckets" { value = merge({ for k, v in google_storage_bucket.data : k => v.name }, { media = google_storage_bucket.media.name }) }
 output "image_repository" { value = "${var.platform_contract.region}-docker.pkg.dev/${local.project}/${google_artifact_registry_repository.images.repository_id}" }
 output "state_bucket" { value = google_storage_bucket.state.name }
