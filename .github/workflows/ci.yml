@@ -211,7 +211,10 @@ jobs:
           --build-arg VCS_REF="${GITHUB_SHA}"
           --build-arg SOURCE_URL="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}"
           --tag events-concierge:ci .
-          && docker build --tag events-concierge-web:ci web
+          && docker build
+          --build-arg VCS_REF="${GITHUB_SHA}"
+          --build-arg SOURCE_URL="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}"
+          --tag events-concierge-web:ci web
 
       - name: Smoke-test installed package and non-root user
         run: |
@@ -219,6 +222,7 @@ jobs:
           test "$(docker run --rm --entrypoint id events-concierge:ci -u)" != "0"
           test "$(docker run --rm --entrypoint id events-concierge-web:ci -u)" != "0"
           test "$(docker inspect --format '{{ index .Config.Labels "org.opencontainers.image.revision" }}' events-concierge:ci)" = "${GITHUB_SHA}"
+          test "$(docker inspect --format '{{ index .Config.Labels "org.opencontainers.image.revision" }}' events-concierge-web:ci)" = "${GITHUB_SHA}"
           test "$(docker inspect --format '{{ json .Config.Healthcheck }}' events-concierge:ci)" = "null"
 
       - name: Start the exact candidate image
@@ -252,6 +256,25 @@ jobs:
       - name: Show candidate-stack logs after a failure
         if: failure()
         run: docker compose --profile app logs --no-color
+
+      - name: Export the tested candidate images
+        if: success() && github.event_name == 'workflow_dispatch'
+        run: |
+          mkdir -p "${RUNNER_TEMP}/candidate-images"
+          docker save events-concierge:ci events-concierge-web:ci | gzip -1 > "${RUNNER_TEMP}/candidate-images/images.tar.gz"
+          cd "${RUNNER_TEMP}/candidate-images"
+          sha256sum images.tar.gz > SHA256SUMS
+          printf '%s\n' "${GITHUB_SHA}" > SOURCE_REVISION
+
+      - name: Retain private candidate image package
+        if: success() && github.event_name == 'workflow_dispatch'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: candidate-images-${{ github.sha }}
+          path: ${{ runner.temp }}/candidate-images/
+          retention-days: 3
+          compression-level: 0
+          if-no-files-found: error
 
       - name: Remove candidate-stack services and volumes
         if: always()

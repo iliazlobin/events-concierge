@@ -42,6 +42,13 @@ candidate in `us-west1-docker.pkg.dev/iz27-platform-dev/ec-dev/`. They must pass
 deployment. This remains a private development candidate until real identity and the separate
 [production gates](../docs/production-operations.md#first-release-acceptance) pass.
 
+Manual application CI retains a three-day `candidate-images-COMMIT` artifact in this private
+repository after its image startup/canary checks. Download only from the successful run for the
+selected commit, verify `SOURCE_REVISION` and `SHA256SUMS`, then load the archive. Verify both image
+revision labels, tag and push those same images to the private Artifact Registry, and record their
+registry digests in release values. Accept the package only after every CI and deployment check
+for that commit passes. The archive is a temporary release artifact, not a backup or deployment.
+
 Restore the coordinated legacy databases and payloads into the new stores before starting writers;
 preserve tenant/request data, schema compatibility and provenance. Take a fresh verified backup
 with old writers stopped for final cutover. Do not substitute local test fixtures for production data.

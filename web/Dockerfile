@@ -16,6 +16,10 @@ COPY . .
 RUN npm run build
 
 FROM ${NODE_IMAGE} AS runtime
+ARG VCS_REF=unknown
+ARG SOURCE_URL=local
+LABEL org.opencontainers.image.revision="${VCS_REF}" \
+    org.opencontainers.image.source="${SOURCE_URL}"
 ENV HOSTNAME=0.0.0.0 \
     NODE_ENV=production \
     NEXT_TELEMETRY_DISABLED=1 \
