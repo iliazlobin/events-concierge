@@ -401,6 +401,37 @@ def _check_backup_target():
     _check_scheduled_writers_quiet()
 
 
+def _object_inventory(folder):
+    return {
+        path.relative_to(folder).as_posix(): {
+            "size": path.stat().st_size,
+            "sha256": hashlib.sha256(path.read_bytes()).hexdigest(),
+        }
+        for path in sorted(folder.rglob("*"))
+        if path.is_file()
+    }
+
+
+def _copy_payload_snapshot(folder, dest):
+    gc("rsync", "--recursive", PAYLOAD_ROOT, dest + "/payloads", stdout=subprocess.DEVNULL)
+    objects = folder / "payloads"
+    objects.mkdir(mode=0o700)
+    # Hash the saved snapshot, covering every durable media and claim-check object.
+    gc("rsync", "--recursive", dest + "/payloads", str(objects), stdout=subprocess.DEVNULL)
+    return _object_inventory(objects)
+
+
+def _verify_object_inventory(folder, expected):
+    actual = _object_inventory(folder)
+    if expected is None:
+        if any(not name.endswith(".payload") for name in actual):
+            raise SystemExit("Legacy backup cannot verify non-payload media objects")
+        return False
+    if not isinstance(expected, dict) or actual != expected:
+        raise SystemExit("Restored object inventory or checksum mismatch")
+    return True
+
+
 def backup(*, hold_stopped=False):
     _check_backup_target()
     ident = (
@@ -460,13 +491,7 @@ def backup(*, hold_stopped=False):
                     }
                     gc("cp", str(path), dest + "/" + name, stdout=subprocess.DEVNULL)
             # Copy the current payload snapshot while writers are stopped; source versions remain in the versioned bucket.
-            gc(
-                "rsync",
-                "--recursive",
-                PAYLOAD_ROOT,
-                dest + "/payloads",
-                stdout=subprocess.DEVNULL,
-            )
+            manifest["objects"] = _copy_payload_snapshot(folder, dest)
             manifest["images"] = {
                 d["metadata"]["name"]: [
                     c["image"] for c in d["spec"]["template"]["spec"]["containers"]
@@ -736,6 +761,9 @@ def verify(uri):
             "verified_at": datetime.datetime.now(datetime.UTC).isoformat(),
             "databases": list(manifest["databases"]),
             "payload_count": len(payloads),
+            "object_inventory_verified": _verify_object_inventory(
+                payload_dir, manifest.get("objects")
+            ),
             "application_schema": manifest["schema"],
             "tenant_isolation": "passed",
         }

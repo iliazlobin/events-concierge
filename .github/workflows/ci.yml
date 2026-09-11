@@ -260,6 +260,8 @@ jobs:
       - name: Export the tested candidate images
         if: success() && github.event_name == 'workflow_dispatch'
         run: |
+          set -euo pipefail
+          test "${{ github.event.repository.private }}" = "true"
           mkdir -p "${RUNNER_TEMP}/candidate-images"
           docker save events-concierge:ci events-concierge-web:ci | gzip -1 > "${RUNNER_TEMP}/candidate-images/images.tar.gz"
           cd "${RUNNER_TEMP}/candidate-images"

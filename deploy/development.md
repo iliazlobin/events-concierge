@@ -54,6 +54,22 @@ preserve tenant/request data, schema compatibility and provenance. Take a fresh 
 with old writers stopped for final cutover. Do not substitute local test fixtures for production data.
 Verify restoration, user workflows, private-only Services and worker execution before accepting it.
 
+For the schema-0193 backup, install only stores and require an empty application schema and empty
+Temporal databases. Before `pg_restore --exit-on-error`, create restricted `ec_app` with the **new**
+pinned app-role password; migration 0002 will not rerun after restoration. Create NOLOGIN
+`ec_operator_viewer`, `ec_operator_controller`, `ec_ingestion_executor` and NOINHERIT
+`ec_operator_aggregate_definer`, granting viewer to controller. Preserve original owners/ACLs:
+`ec_owner` and the aggregate definer for the app, `temporal` for its databases. Keep the two
+`ec_dev_*` logins absent so the existing migration bootstrap creates them from new pinned secrets.
+Do not run Temporal schema-init jobs before restoring. Copy the exact payload hierarchy; the
+content keys and Temporal history need no bucket-URI rewrite. Then run candidate migration/bootstrap
+and verify manifest counts, isolation and historical payload reads before starting writers.
+
+The old backup excludes Redis. At final quiesce, inventory provider backoffs, admission fences and
+sessions again; preserve or wait out outstanding backoffs before a cold start. Do not infer an empty
+store from the earlier one-key pacer snapshot. New backups inventory and hash every payload-bucket
+object, including profile media. Older payload-only backups retain their narrower verification.
+
 For collection acceptance, compare `fn_report_catalog_source_coverage_v1()` on both environments,
 using the same as-of time and collection windows. It excludes fixtures. Require every reviewed source
 to have current successful execution or an explicitly investigated failure, and compare per-source

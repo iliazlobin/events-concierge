@@ -119,6 +119,33 @@ def test_backup_accepts_suspended_cadence_and_terminal_jobs():
         backup._check_scheduled_writers_quiet()
 
 
+def test_object_snapshot_verifies_avatar_bytes_and_detects_missing_extra_or_modified_files(
+    tmp_path,
+):
+    media = tmp_path / "media.webp"
+    media.write_bytes(b"reviewed avatar")
+    inventory = backup._object_inventory(tmp_path)
+    assert backup._verify_object_inventory(tmp_path, inventory)
+    media.write_bytes(b"changed avatar")
+    with pytest.raises(SystemExit, match="checksum mismatch"):
+        backup._verify_object_inventory(tmp_path, inventory)
+    media.unlink()
+    with pytest.raises(SystemExit, match="checksum mismatch"):
+        backup._verify_object_inventory(tmp_path, inventory)
+    media.write_bytes(b"reviewed avatar")
+    (tmp_path / "extra.webp").write_bytes(b"extra")
+    with pytest.raises(SystemExit, match="checksum mismatch"):
+        backup._verify_object_inventory(tmp_path, inventory)
+
+
+def test_old_payload_only_backups_remain_supported_without_claiming_media_verification(tmp_path):
+    (tmp_path / "claim.payload").write_bytes(b"original")
+    assert backup._verify_object_inventory(tmp_path, None) is False
+    (tmp_path / "avatar.webp").write_bytes(b"unverified")
+    with pytest.raises(SystemExit, match="cannot verify"):
+        backup._verify_object_inventory(tmp_path, None)
+
+
 def test_hold_stopped_keeps_writers_down_without_restarting_redis(recording):
     events, copies = recording
     backup.backup(hold_stopped=True)
