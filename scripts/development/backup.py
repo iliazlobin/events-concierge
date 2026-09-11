@@ -7,7 +7,9 @@ import hashlib
 import json
 import os
 import pathlib
+import re
 import subprocess
+import sys
 import tempfile
 import time
 import uuid
@@ -17,6 +19,24 @@ PROJECT = "project-9c8cce04-f94d-40fc-aa6"
 ACCOUNT = "iliazlobin27@gmail.com"
 K = os.environ.get("KUBECTL", "kubectl")
 CONTEXT = "gke_" + PROJECT + "_us-west1-a_ec-dev"
+BACKUP_ROOT = "gs://iz27-ec-dev-backups/"
+RECOVERY_FILE = "recovery.json"
+WRITERS = {
+    "events-concierge-" + name
+    for name in (
+        "api",
+        "admin",
+        "frontend",
+        "temporal-transactional",
+        "temporal-catalog",
+        "ingestion-executor",
+        "request-starter",
+        "notifier",
+        "account-erasure",
+        "change-delivery",
+    )
+} | {"ec-dev-temporal-" + name for name in ("frontend", "history", "matching", "worker")}
+RESUME_RETRY_DELAYS = (2, 4, 8)
 OPERATOR_ROLE_SCHEMA = 182
 SNAPSHOT_SQL = "SELECT json_build_object('tenants',(SELECT count(*) FROM tenants),'requests',(SELECT count(*) FROM event_requests),'schema',(SELECT version_num FROM alembic_version))::text"
 
@@ -31,6 +51,161 @@ def k(*args, **kw):
 
 def gc(*args, **kw):
     return run(["gcloud", "storage", *args, "--account=" + ACCOUNT, "--project=" + PROJECT], **kw)
+
+
+def _check_context():
+    context = subprocess.check_output([K, "config", "current-context"], text=True).strip()
+    if context != CONTEXT:
+        raise SystemExit("Wrong cluster context")
+
+
+def _backup_id(uri):
+    match = re.fullmatch(re.escape(BACKUP_ROOT) + r"(\d{8}T\d{6}Z-[0-9a-f]{8})", uri)
+    if not match:
+        raise SystemExit("Use an exact development backup prefix without a trailing slash")
+    try:
+        datetime.datetime.strptime(match[1].split("-")[0], "%Y%m%dT%H%M%SZ")
+    except ValueError as error:
+        raise SystemExit("Invalid development backup date") from error
+    return match[1]
+
+
+def _validate_replicas(desired):
+    if not isinstance(desired, dict) or not desired or set(desired) - WRITERS:
+        raise SystemExit("Recovery contains unknown or missing writer deployment names")
+    # This development profile has at most one replica per process. Do not allow
+    # recovery metadata to silently change the agreed capacity.
+    if any(type(count) is not int or count not in (0, 1) for count in desired.values()):
+        raise SystemExit("Recovery replica counts must be integers equal to 0 or 1")
+
+
+def _read_schema():
+    return (
+        k(
+            "exec",
+            "ec-dev-application-postgres-0",
+            "--request-timeout=20s",
+            "--",
+            "psql",
+            "-U",
+            "ec_owner",
+            "-d",
+            "events",
+            "-Atc",
+            "select version_num from alembic_version",
+            capture_output=True,
+            timeout=30,
+        )
+        .stdout.decode()
+        .strip()
+    )
+
+
+def _recovery_metadata(ident, writers, schema):
+    desired = {d["metadata"]["name"]: d["spec"]["replicas"] for d in writers}
+    _validate_replicas(desired)
+    uids = {d["metadata"]["name"]: d["metadata"]["uid"] for d in writers}
+    metadata = {
+        "version": 1,
+        "id": ident,
+        "context": CONTEXT,
+        "project": PROJECT,
+        "namespace": NS,
+        "schema": schema,
+        "replicas": desired,
+        "deployment_uids": uids,
+        "template_sha256": {d["metadata"]["name"]: _template_hash(d) for d in writers},
+    }
+    _validate_recovery(metadata, BACKUP_ROOT + ident)
+    return metadata
+
+
+def _validate_recovery(metadata, uri):
+    if not isinstance(metadata, dict) or set(metadata) != {
+        "version",
+        "id",
+        "context",
+        "project",
+        "namespace",
+        "schema",
+        "replicas",
+        "deployment_uids",
+        "template_sha256",
+    }:
+        raise SystemExit("Invalid recovery metadata fields")
+    if (
+        type(metadata["version"]) is not int
+        or metadata["version"] != 1
+        or metadata["id"] != _backup_id(uri)
+        or metadata["context"] != CONTEXT
+        or metadata["project"] != PROJECT
+        or metadata["namespace"] != NS
+    ):
+        raise SystemExit("Recovery metadata does not match this development backup and cluster")
+    if not isinstance(metadata["schema"], str) or not re.fullmatch(r"[0-9]{4}", metadata["schema"]):
+        raise SystemExit("Invalid recovery schema version")
+    _validate_replicas(metadata["replicas"])
+    uids = metadata["deployment_uids"]
+    if not isinstance(uids, dict) or set(uids) != set(metadata["replicas"]):
+        raise SystemExit("Recovery deployment identities do not match replica records")
+    for uid in uids.values():
+        try:
+            valid = isinstance(uid, str) and str(uuid.UUID(uid)) == uid
+        except ValueError:
+            valid = False
+        if not valid:
+            raise SystemExit("Invalid recovery deployment identity")
+    if len(set(uids.values())) != len(uids):
+        raise SystemExit("Duplicate recovery deployment identities")
+    templates = metadata["template_sha256"]
+    if (
+        not isinstance(templates, dict)
+        or set(templates) != set(uids)
+        or any(
+            not isinstance(value, str) or not re.fullmatch(r"[0-9a-f]{64}", value)
+            for value in templates.values()
+        )
+    ):
+        raise SystemExit("Invalid recovery deployment template fingerprints")
+
+
+def _template_hash(deployment):
+    # Retain a fingerprint only; the template itself can contain secret values.
+    payload = json.dumps(deployment["spec"]["template"], sort_keys=True, separators=(",", ":"))
+    return hashlib.sha256(payload.encode()).hexdigest()
+
+
+def _validate_current_deployment(deployment, name, recovery):
+    if (
+        deployment.get("metadata", {}).get("uid") != recovery["deployment_uids"][name]
+        or _template_hash(deployment) != recovery["template_sha256"][name]
+    ):
+        raise RuntimeError(
+            "Recovery refused: deployment was replaced or its workload changed: " + name
+        )
+    version = deployment["metadata"].get("resourceVersion")
+    if not isinstance(version, str) or not re.fullmatch(r"[0-9]+", version):
+        raise RuntimeError("Recovery refused: invalid deployment resource version: " + name)
+    return version
+
+
+def resume(uri):
+    """Recover a stopped backup attempt, never restore data or older images."""
+    _backup_id(uri)
+    _check_context()
+    metadata = json.loads(gc("cat", uri + "/" + RECOVERY_FILE, capture_output=True).stdout)
+    _validate_recovery(metadata, uri)
+    # Validate all identities before the first write. Migration/rollout may have
+    # replaced a Deployment; stale recovery must not start its replacement.
+    items = json.loads(k("get", "deployments", "-o", "json", capture_output=True).stdout)["items"]
+    current = {d["metadata"]["name"]: d for d in items}
+    for name in metadata["replicas"]:
+        if name not in current:
+            raise SystemExit("Recovery refused: a saved deployment is missing: " + name)
+        _validate_current_deployment(current[name], name, metadata)
+    _resume(metadata["replicas"], recovery=metadata)
+    print("Original replica counts restored:", uri)
+    print("Check deployment readiness before reopening access.")
 
 
 def _quiesce(deployments):
@@ -65,32 +240,133 @@ def _quiesce(deployments):
             )
 
 
-def _resume(desired):
+def _transient_scale_error(error):
+    output = error.stderr or b""
+    if isinstance(output, bytes):
+        output = output.decode(errors="replace")
+    output = output.lower()
+    return any(
+        message in output
+        for message in (
+            "no such host",
+            "temporary failure in name resolution",
+            "server misbehaving",
+            "i/o timeout",
+            "tls handshake timeout",
+            "connection reset",
+            "connection refused",
+            "context deadline exceeded",
+            "timeout awaiting response headers",
+            "unexpected eof",
+            "unable to connect to the server: eof",
+            "too many requests",
+            "toomanyrequests",
+            "serviceunavailable",
+            "service unavailable",
+            "internalerror",
+            "internal server error",
+            "gateway timeout",
+            "bad gateway",
+        )
+    )
+
+
+def _check_recovery_schema(recovery):
+    for attempt in range(len(RESUME_RETRY_DELAYS) + 1):
+        try:
+            if _read_schema() != recovery["schema"]:
+                raise RuntimeError(
+                    "Recovery refused: application schema changed; use compatible-image recovery"
+                )
+            return
+        except (subprocess.CalledProcessError, subprocess.TimeoutExpired) as error:
+            transient = isinstance(error, subprocess.TimeoutExpired) or _transient_scale_error(
+                error
+            )
+            if not transient or attempt == len(RESUME_RETRY_DELAYS):
+                raise
+            delay = RESUME_RETRY_DELAYS[attempt]
+            print(f"Transient schema recovery check error; retrying in {delay}s", flush=True)
+            time.sleep(delay)
+
+
+def _resume(desired, *, recovery=None):
+    _validate_replicas(desired)
+    if recovery is not None:
+        _check_recovery_schema(recovery)
     failures = []
     # Resume Temporal before processes that connect to it. Try every deployment
     # even if one scale call fails, then report any incomplete recovery.
     for name in sorted(desired, key=lambda n: not n.startswith("ec-dev-temporal")):
-        try:
-            k(
-                "scale",
-                "deployment/" + name,
-                "--replicas=" + str(desired[name]),
-                stdout=subprocess.DEVNULL,
-            )
-        except subprocess.CalledProcessError as error:
-            failures.append(error)
+        for attempt in range(len(RESUME_RETRY_DELAYS) + 1):
+            try:
+                preconditions = []
+                if recovery is not None:
+                    deployment = json.loads(
+                        k(
+                            "get",
+                            "deployment/" + name,
+                            "-o",
+                            "json",
+                            "--request-timeout=20s",
+                            capture_output=True,
+                            timeout=30,
+                        ).stdout
+                    )
+                    version = _validate_current_deployment(deployment, name, recovery)
+                    preconditions = ["--resource-version=" + version]
+                k(
+                    "scale",
+                    "deployment/" + name,
+                    "--replicas=" + str(desired[name]),
+                    "--request-timeout=20s",
+                    *preconditions,
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.PIPE,
+                    timeout=30,
+                )
+                break
+            except (subprocess.CalledProcessError, subprocess.TimeoutExpired) as error:
+                transient = isinstance(error, subprocess.TimeoutExpired) or _transient_scale_error(
+                    error
+                )
+                if not transient or attempt == len(RESUME_RETRY_DELAYS):
+                    failures.append(error)
+                    break
+                delay = RESUME_RETRY_DELAYS[attempt]
+                print(f"Transient recovery error for {name}; retrying in {delay}s", flush=True)
+                time.sleep(delay)
+            except (RuntimeError, ValueError, KeyError) as error:
+                failures.append(error)
+                break
     if failures:
         raise ExceptionGroup("Could not restore every original replica count", failures)
 
 
+def _persist_recovery(folder, dest, recovery):
+    # Persist and verify before stopping anything. The record contains no
+    # environment values or secret contents; workload templates are hashed.
+    recovery_path = folder / RECOVERY_FILE
+    recovery_path.write_text(json.dumps(recovery, indent=2))
+    recovery_path.chmod(0o600)
+    gc("cp", str(recovery_path), dest + "/" + RECOVERY_FILE, stdout=subprocess.DEVNULL)
+    saved_recovery = json.loads(gc("cat", dest + "/" + RECOVERY_FILE, capture_output=True).stdout)
+    _validate_recovery(saved_recovery, dest)
+    if saved_recovery != recovery:
+        raise SystemExit("Recovery metadata read-back mismatch; workloads were not stopped")
+    print("Recovery metadata saved:", dest + "/" + RECOVERY_FILE, flush=True)
+    print(
+        f"If backup recovery is interrupted: .venv/bin/python scripts/development/backup.py resume {dest}",
+        flush=True,
+    )
+
+
 def backup(*, hold_stopped=False):
-    context = subprocess.check_output([K, "config", "current-context"], text=True).strip()
-    if context != CONTEXT:
-        raise SystemExit("Wrong cluster context")
+    _check_context()
     ident = (
         datetime.datetime.now(datetime.UTC).strftime("%Y%m%dT%H%M%SZ") + "-" + uuid.uuid4().hex[:8]
     )
-    dest = "gs://iz27-ec-dev-backups/" + ident
+    dest = BACKUP_ROOT + ident
     deployments = json.loads(k("get", "deployments", "-o", "json", capture_output=True).stdout)[
         "items"
     ]
@@ -99,6 +375,7 @@ def backup(*, hold_stopped=False):
     desired = {d["metadata"]["name"]: d["spec"]["replicas"] for d in deployments}
     writers = [d for d in deployments if d["metadata"]["name"] != "ec-dev-redis"]
     quiesced = {d["metadata"]["name"]: d["spec"]["replicas"] for d in writers}
+    recovery = _recovery_metadata(ident, writers, _read_schema())
     with tempfile.TemporaryDirectory(prefix="ec-dev-backup-") as tmp:
         os.chmod(tmp, 0o700)
         folder = pathlib.Path(tmp)
@@ -110,6 +387,8 @@ def backup(*, hold_stopped=False):
             "resume_required": hold_stopped,
         }
         complete = False
+        _persist_recovery(folder, dest, recovery)
+        backup_error = None
         try:
             _quiesce(writers)
             for store, user, dbs in [
@@ -196,9 +475,24 @@ def backup(*, hold_stopped=False):
             (folder / "COMPLETE").write_text(ident)
             gc("cp", str(folder / "COMPLETE"), dest + "/COMPLETE", stdout=subprocess.DEVNULL)
             complete = True
+        except BaseException as error:
+            backup_error = error
+            raise
         finally:
             if not hold_stopped or not complete:
-                _resume(quiesced)
+                try:
+                    _resume(quiesced, recovery=recovery)
+                except Exception as recovery_error:
+                    print(
+                        f"Replica recovery incomplete; retry: .venv/bin/python scripts/development/backup.py resume {dest}",
+                        flush=True,
+                    )
+                    if backup_error is not None:
+                        raise BaseExceptionGroup(
+                            "Backup and replica recovery both failed",
+                            [backup_error, recovery_error],
+                        ) from None
+                    raise
     print("Backup complete:", dest)
     if hold_stopped:
         print(
@@ -399,8 +693,13 @@ def verify(uri):
 
 
 if __name__ == "__main__":
+    # The system Python on macOS may be 3.9 even though the project requires 3.12.
+    if sys.version_info < (3, 12):  # noqa: UP036
+        raise SystemExit(
+            "Python 3.12+ is required; use .venv/bin/python scripts/development/backup.py"
+        )
     p = argparse.ArgumentParser()
-    p.add_argument("action", choices=["backup", "verify"])
+    p.add_argument("action", choices=["backup", "verify", "resume"])
     p.add_argument("uri", nargs="?")
     p.add_argument(
         "--hold-stopped",
@@ -409,10 +708,15 @@ if __name__ == "__main__":
     )
     a = p.parse_args()
     if a.action == "backup":
+        if a.uri:
+            p.error("backup creates its own prefix; do not supply a URI")
         backup(hold_stopped=a.hold_stopped)
     elif a.uri:
         if a.hold_stopped:
             p.error("--hold-stopped applies only to backup")
-        verify(a.uri)
+        if a.action == "verify":
+            verify(a.uri)
+        else:
+            resume(a.uri)
     else:
-        p.error("verify needs a backup gs:// prefix")
+        p.error(a.action + " needs a backup gs:// prefix")
