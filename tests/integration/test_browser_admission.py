@@ -1,7 +1,7 @@
 """Shared browser-admission Redis coverage (AC-45, NFR-4b, ADR-005).
 
-These tests exercise only the local Redis service.  A short bounded lease makes the five-minute
-production recovery fence observable without a slow test, and every case owns a UUID key namespace.
+These tests exercise only the local Redis service. Each case owns a UUID key namespace and
+advances only its fixture's expiry, so slow CI cannot expire a lease between assertions.
 """
 
 from __future__ import annotations
@@ -21,7 +21,7 @@ from events_concierge.ports.browser_admission import BrowserAdmissionRequest
 
 pytestmark = pytest.mark.integration
 
-_TEST_LEASE_SECONDS = 0.05
+_TEST_LEASE_SECONDS = 300.0
 
 
 @asynccontextmanager
@@ -60,13 +60,13 @@ async def test_redis_browser_pool_caps_cross_worker_grants_and_recovers_after_re
         first = RedisBrowserAdmission(
             os.environ["EC_REDIS_URL"],
             capacity=2,
-            lease_seconds=1.0,
+            lease_seconds=_TEST_LEASE_SECONDS,
             key_prefix=prefix,
         )
         second = RedisBrowserAdmission(
             os.environ["EC_REDIS_URL"],
             capacity=2,
-            lease_seconds=1.0,
+            lease_seconds=_TEST_LEASE_SECONDS,
             key_prefix=prefix,
         )
         try:
@@ -109,7 +109,12 @@ async def test_redis_browser_pool_fences_stale_release_and_recovery_after_partia
 
             # A crashed activity's bounded lease expires. Its old release must not free the new
             # holder that reuses the workflow-minted identity with a new physical fence.
-            await asyncio.sleep(_TEST_LEASE_SECONDS * 2)
+            # Expire the sole granted fixture lease in Redis, without a wall-clock
+            # race between the duplicate/renewed-owner assertions. The sorted
+            # control sentinel remains beyond all ordinary lease expirations.
+            oldest = await raw.zrange(admission.leases_key, 0, 0)
+            assert len(oldest) == 1
+            await raw.zadd(admission.leases_key, {oldest[0]: 0})
             renewed = await admission.acquire(_request("stable", "new-fence"))
             assert renewed.granted is True
             await admission.release(original)
@@ -132,7 +137,7 @@ async def test_redis_browser_pool_fences_each_missing_control_structure(missing_
         admission = RedisBrowserAdmission(
             os.environ["EC_REDIS_URL"],
             capacity=1,
-            lease_seconds=1.0,
+            lease_seconds=_TEST_LEASE_SECONDS,
             key_prefix=prefix,
         )
         try:
