@@ -43,6 +43,9 @@ async def main():
             TaskQueueType.TASK_QUEUE_TYPE_WORKFLOW,
             TaskQueueType.TASK_QUEUE_TYPE_ACTIVITY,
         ):
+            # DEFAULT returns all loaded versioned pollers; the SDK's default-build selection
+            # warning applies to ENHANCED. Keep filtering deployment_options per poller.
+            # https://github.com/temporalio/temporal/blob/v1.31.2/service/matching/task_queue_partition_manager.go#L821
             state = await client.workflow_service.describe_task_queue(
                 DescribeTaskQueueRequest(
                     namespace=s.temporal_namespace,

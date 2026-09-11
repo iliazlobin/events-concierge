@@ -13,7 +13,7 @@ import httpx
 import pytest
 from temporalio.api.deployment.v1 import WorkerDeploymentOptions
 from temporalio.api.enums.v1 import WorkerVersioningMode
-from temporalio.api.taskqueue.v1 import PollerInfo
+from temporalio.api.taskqueue.v1 import PollerInfo, TaskQueueVersioningInfo
 from temporalio.api.workflowservice.v1 import (
     DescribeTaskQueueResponse,
     DescribeWorkerDeploymentResponse,
@@ -357,3 +357,32 @@ async def test_erasure_failure_is_not_reported_as_cleanup_success(runtime, capsy
     output = capsys.readouterr().out
     assert "Synthetic development tenant: " + TENANT in output
     assert "Synthetic tenant erasure:" not in output
+
+
+@pytest.mark.parametrize("candidate_present", [True, False])
+async def test_default_query_selects_candidate_from_mixed_pollers_not_current_routing(
+    monkeypatch, candidate_present
+):
+    service, _ = promotion_service(monkeypatch)
+
+    async def mixed_response(request):
+        # SDK 1.30 / server 1.31.2 return top-level pollers with deployment_options.
+        # Model an unpromoted candidate alongside a different currently routed version.
+        assert request.api_mode == 0 and not request.HasField("versions")
+        pollers = [poller("catalog", build="old"), poller("catalog", versioned=False)]
+        if candidate_present:
+            pollers.append(poller("catalog"))
+        return DescribeTaskQueueResponse(
+            pollers=pollers,
+            versioning_info=TaskQueueVersioningInfo(current_version="events-concierge-catalog.old"),
+        )
+
+    service.describe_task_queue.side_effect = mixed_response
+    if candidate_present:
+        await promotion.main()
+        promoted = service.set_worker_deployment_current_version.await_args.args[0]
+        assert promoted.build_id == "abc1234"
+    else:
+        with pytest.raises(SystemExit, match="no recent versioned"):
+            await promotion.main()
+        service.set_worker_deployment_current_version.assert_not_awaited()
