@@ -10,6 +10,7 @@ import {
   MessageCircle,
 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useRouter } from "next/navigation";
 
 import { AccountMenu } from "@/components/account-menu";
 import { CalendarView } from "@/components/calendar-view";
@@ -229,6 +230,7 @@ function calendarModeForFilters(
 }
 
 export function ConciergeApp() {
+  const router = useRouter();
   const [sessionState, setSessionState] = useState<SessionState>("booting");
   const [config, setConfig] = useState<UiConfig | null>(null);
   const profile = releaseProfile(config);
@@ -396,11 +398,17 @@ export function ConciergeApp() {
         ?? consumerHistorySnapshotFromUrl(window.location.href, DEFAULT_FILTERS);
       if (!rawSnapshot) return;
       const snapshot = releaseHistorySnapshot(alignCalendarSnapshot(rawSnapshot), profile);
+      const safeUrl = consumerHistoryUrl(snapshot, window.location.href);
       window.history.replaceState(
         createConsumerHistoryState(snapshot, window.history.state),
         "",
-        consumerHistoryUrl(snapshot, window.location.href),
+        safeUrl,
       );
+      if (rawSnapshot.view !== snapshot.view || rawSnapshot.selectedEntityId !== snapshot.selectedEntityId) {
+        // Next also keeps a queued URL restore. Synchronize its route state so
+        // that restore cannot put a server-disabled workspace back in the URL.
+        router.replace(safeUrl, { scroll: false });
+      }
       preserveExpandedOnNextCatalogLoad.current = true;
       setView(snapshot.view);
       setCalendarMode(snapshot.calendarMode);
@@ -412,7 +420,7 @@ export function ConciergeApp() {
     // history restore can overwrite the release-safe URL with a deferred view.
     window.addEventListener("popstate", handlePopState, true);
     return () => window.removeEventListener("popstate", handlePopState, true);
-  }, [applyFilters, historyReady, profile, sessionState]);
+  }, [applyFilters, historyReady, profile, router, sessionState]);
 
   useEffect(() => {
     if (sessionState !== "ready" || !historyReady) return;
