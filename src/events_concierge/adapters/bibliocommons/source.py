@@ -289,7 +289,7 @@ _BIBLIOCOMMONS_PUBLISHERS = {
         fixed_query=tuple(
             ("locations", location_id) for location_id in _ALAMEDA_COUNTY_ALL_PHYSICAL_LOCATION_IDS
         ),
-        page_limit=40,
+        page_limit=80,
         require_physical_location=True,
         window_days=90,
         min_interval_ms=5_000,

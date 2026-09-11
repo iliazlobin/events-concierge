@@ -38,7 +38,7 @@ _FREMONT_SEED_URL = (
 def _source(
     *,
     seed_url: str = _SEED_URL,
-    page_limit: int = 40,
+    page_limit: int = 80,
     min_interval_ms: int = 5_000,
 ) -> CatalogSource:
     return CatalogSource(
@@ -318,13 +318,15 @@ async def test_alameda_rejects_query_pace_or_page_cap_tampering_before_a_request
         with pytest.raises(ValueError, match="reviewed publisher RSS"):
             await fetcher.fetch(_source(seed_url=seed_url))
     with pytest.raises(ValueError, match="reviewed publisher RSS"):
-        await fetcher.fetch(replace(_source(), page_limit=39))
+        await fetcher.fetch(replace(_source(), page_limit=79))
+    with pytest.raises(ValueError, match="reviewed publisher RSS"):
+        await fetcher.fetch(replace(_source(), page_limit=81))
     with pytest.raises(ValueError, match="reviewed publisher RSS"):
         await fetcher.fetch(_source(min_interval_ms=1_500))
     assert requested == []
 
 
-async def test_alameda_fails_closed_when_all_forty_reviewed_pages_are_full() -> None:
+async def test_alameda_fails_closed_when_all_eighty_reviewed_pages_are_full() -> None:
     """A full Alameda cap remains retryable instead of publishing a partial discovery window (NFR-8)."""
     requested: list[httpx.URL] = []
     current = 100.0
@@ -355,5 +357,5 @@ async def test_alameda_fails_closed_when_all_forty_reviewed_pages_are_full() -> 
 
     with pytest.raises(BiblioCommonsFetchError, match="exceeds"):
         await fetcher.fetch(_source())
-    assert len(requested) == 40
-    assert requested[-1].params.get("page") == "40"
+    assert len(requested) == 80
+    assert requested[-1].params.get("page") == "80"

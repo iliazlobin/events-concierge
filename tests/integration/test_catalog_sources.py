@@ -322,7 +322,7 @@ async def test_registry_contains_reviewed_livewhale_sources(db: None) -> None:
             "locations=NWK&locations=NLS&locations=SLZ&locations=UCY",
             ("https://gateway.bibliocommons.com",),
             CatalogSourceMode.BIBLIOCOMMONS_RSS,
-            40,
+            80,
         ),
         "alameda-county-library-fremont-events": (
             "https://gateway.bibliocommons.com/v2/libraries/aclibrary/rss/events?locations=FRM",
