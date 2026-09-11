@@ -66,7 +66,7 @@ class ReleaseApi:
                 "preference_revision": 1, "local_demo": True, "is_admin": False,
                 "relay_inbox": "fixture@relay.example.test",
             })
-        elif path == "/v1/me/saved-filters":
+        elif path in {"/v1/me/saved-filters", "/v1/me/api-keys"}:
             self.respond(route, [])
         elif path == "/v1/catalog/events":
             event = _feed()["items"][0] | {
@@ -274,3 +274,38 @@ def test_profile_avatar_reads_use_the_current_auth_contract(release_page, local_
     assert len(avatar_reads) == 2
     assert all(avatar_reads) if local_demo else not any(avatar_reads)
     assert len(set(avatar_reads)) == 1
+
+
+def test_discovery_defers_api_keys_in_navigation_deep_links_and_history(release_page):
+    harness, api = release_page
+    page = harness.page
+    page.goto(f"{BASE}/?view=events")
+    page.get_by_role("button", name=re.compile(r"^Account menu")).click()
+    expect(page.get_by_role("menuitem", name=re.compile(r"^API keys"))).to_have_count(0)
+    page.goto(f"{BASE}/settings/api-keys")
+    expect(page.get_by_role("heading", name="Account access", exact=True)).to_be_visible()
+    expect(page.get_by_text("API keys are not available in this release.", exact=False)).to_be_visible()
+    expect(page.get_by_role("navigation").get_by_role("link", name="API keys", exact=True)).to_have_count(0)
+    expect(page.get_by_role("textbox", name="Key name", exact=True)).to_have_count(0)
+    expect(page.get_by_role("button", name="Create key", exact=True)).to_have_count(0)
+    page.get_by_role("main").get_by_role("link", name="Account and data", exact=True).click()
+    expect(page.get_by_role("heading", name="Account and data", exact=True)).to_be_visible()
+    page.go_back()
+    expect(page.get_by_role("heading", name="Account access", exact=True)).to_be_visible()
+    page.go_forward()
+    expect(page.get_by_role("heading", name="Account and data", exact=True)).to_be_visible()
+    assert not any(path.startswith("/v1/me/api-keys") for _, path in api.calls)
+
+
+def test_full_profile_retains_api_key_records_with_accurate_capability_text(release_page):
+    harness, api = release_page
+    api.profile = "full"
+    page = harness.page
+    page.goto(f"{BASE}/?view=events")
+    page.get_by_role("button", name=re.compile(r"^Account menu")).click()
+    page.get_by_role("menuitem", name="API keys Development key records", exact=True).click()
+    expect(page.get_by_role("heading", name="API keys", exact=True)).to_be_visible()
+    expect(page.get_by_text("Authentication with these keys is not available yet.", exact=False)).to_be_visible()
+    expect(page.get_by_role("textbox", name="Key name", exact=True)).to_be_visible()
+    expect(page.get_by_text("No keys yet.", exact=True)).to_be_visible()
+    assert ("GET", "/v1/me/api-keys") in api.calls

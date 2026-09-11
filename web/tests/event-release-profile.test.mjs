@@ -40,5 +40,7 @@ test("discovery keeps catalog navigation and calendar state, and hides automated
   assert.equal(releaseSettingsAllowed("/settings/activity", "full"), true);
   assert.equal(releaseSettingsAllowed("/settings/security", "discovery"), false);
   assert.equal(releaseSettingsAllowed("/settings/security", "full"), true);
+  assert.equal(releaseSettingsAllowed("/settings/api-keys", "discovery"), false);
+  assert.equal(releaseSettingsAllowed("/settings/api-keys", "full"), true);
   assert.equal(releaseSettingsAllowed("/settings/saved-filters", "discovery"), true);
 });

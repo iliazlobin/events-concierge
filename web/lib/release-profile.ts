@@ -32,5 +32,5 @@ export function releaseHistorySnapshot(
 }
 
 export function releaseSettingsAllowed(href: string, profile: ReleaseProfile): boolean {
-  return profile === "full" || (href !== "/settings/activity" && href !== "/settings/security");
+  return profile === "full" || !["/settings/activity", "/settings/security", "/settings/api-keys"].includes(href);
 }

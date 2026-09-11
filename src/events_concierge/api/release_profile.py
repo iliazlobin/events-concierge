@@ -12,8 +12,6 @@ _DISCOVERY_ROUTES = {
     "/v1/me/profile",
     "/v1/preferences",
     "/v1/me/avatar",
-    "/v1/me/api-keys",
-    "/v1/me/api-keys/{key_id}",
     "/v1/me/erasure-requests",
     "/v1/me/saved-filters",
     "/v1/me/saved-filters/{saved_filter_id}",

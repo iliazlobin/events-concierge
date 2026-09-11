@@ -34,6 +34,9 @@ async def test_discovery_rejects_deferred_routes_before_authentication_or_io(
             ("POST", "/v1/me/tasks/test/done"),
             ("POST", "/v1/tasks/test/done"),
             ("GET", "/v1/tasks/test/done"),
+            ("GET", "/v1/me/api-keys"),
+            ("POST", "/v1/me/api-keys"),
+            ("DELETE", f"/v1/me/api-keys/{uuid4()}"),
             ("POST", f"/v1/catalog/entities/{uuid4()}/refresh"),
             ("GET", "/app"),
         ]:
@@ -45,6 +48,8 @@ async def test_discovery_rejects_deferred_routes_before_authentication_or_io(
     schema = app.openapi()["paths"]
     assert "/v1/chat" not in schema
     assert "/v1/requests" not in schema
+    assert "/v1/me/api-keys" not in schema
+    assert "/v1/me/api-keys/{key_id}" not in schema
     assert "/v1/catalog/events" in schema
     assert "/v1/catalog/events/summary" in schema
     assert "/v1/me/erasure-requests" in schema
@@ -70,3 +75,5 @@ def test_full_profile_retains_deferred_workflows_for_development(
     schema = app_module.create_app().openapi()["paths"]
     assert "/v1/requests" in schema
     assert "/v1/unrsvp" in schema
+    assert set(schema["/v1/me/api-keys"]) == {"get", "post"}
+    assert "delete" in schema["/v1/me/api-keys/{key_id}"]

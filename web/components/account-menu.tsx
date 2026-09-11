@@ -37,7 +37,7 @@ const LINKS: MenuLink[] = [
   { href: "/settings/taste", label: "Interests", hint: "What it looks for", icon: Sparkles },
   { href: "/settings/saved-filters", label: "Saved filters", hint: "Selections you kept", icon: Bookmark },
   { href: "/settings/activity", label: "Activity", hint: "Asks, registrations", icon: SlidersHorizontal },
-  { href: "/settings/api-keys", label: "API keys", hint: "Programmatic access", icon: KeyRound },
+  { href: "/settings/api-keys", label: "API keys", hint: "Development key records", icon: KeyRound },
   { href: "/settings/security", label: "Security", hint: "Password, two-factor", icon: ShieldCheck },
   { href: "/settings/account", label: "Account and data", hint: "Sign-in, deletion", icon: ShieldAlert },
 ];

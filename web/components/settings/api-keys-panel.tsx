@@ -5,6 +5,7 @@ import { useEffect, useState } from "react";
 
 import { useSession } from "@/components/session-provider";
 import { createApiKey, getApiKeys, readableError, revokeApiKey } from "@/lib/api";
+import { releaseProfile } from "@/lib/release-profile";
 import type { ApiKey } from "@/lib/types";
 
 function when(value: string | null): string {
@@ -22,7 +23,8 @@ function when(value: string | null): string {
  * for a freshly created key rather than just refetching the list.
  */
 export function ApiKeysPanel() {
-  const { tenantId } = useSession();
+  const { tenantId, config } = useSession();
+  const fullRelease = releaseProfile(config) === "full";
   const [keys, setKeys] = useState<ApiKey[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -33,6 +35,7 @@ export function ApiKeysPanel() {
   const [revoking, setRevoking] = useState<string | null>(null);
 
   useEffect(() => {
+    if (!fullRelease) return;
     let cancelled = false;
     void getApiKeys(tenantId)
       .then((rows) => {
@@ -47,7 +50,7 @@ export function ApiKeysPanel() {
     return () => {
       cancelled = true;
     };
-  }, [tenantId]);
+  }, [fullRelease, tenantId]);
 
   const create = async () => {
     const trimmed = name.trim();
@@ -95,11 +98,19 @@ export function ApiKeysPanel() {
     }
   };
 
+  if (!fullRelease) {
+    return <div className="settings-panel">
+      <h1>Account access</h1>
+      <p>API keys are not available in this release. Manage your sign-in and account controls in Account and data.</p>
+      <a href="/settings/account">Account and data</a>
+    </div>;
+  }
+
   return (
     <div className="settings-panel">
       <header className="settings-panel__head">
         <h1>API keys</h1>
-        <p>Programmatic access to your own account. Treat a key like a password.</p>
+        <p>Manage development API key records. Authentication with these keys is not available yet.</p>
       </header>
 
       {issued ? (
