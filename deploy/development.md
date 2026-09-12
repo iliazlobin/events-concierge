@@ -121,8 +121,9 @@ administration. These forwards grant no public access. Shared backup/verify/resu
 include `--target shared`; never use a legacy recovery prefix against the new cluster.
 
 If the IAP transport exits, restart it with the platform private-access helper, verify the shared
-context and node again, then restart these three forwards. A running `kubectl port-forward` process
-does not prove that its underlying IAP connection remains available.
+context and node again, then restart these three forwards. Restart affected forwards after a pod
+rollout too: even a Service forward stays attached to its initially selected pod. A running
+`kubectl port-forward` process does not prove that its IAP connection or selected pod remains available.
 
 Avatars use the separate private `iz27-platform-dev-ec-media` bucket, with no versioning, soft
 delete or retention so account erasure can remove them. Only the API, private admin and erasure
