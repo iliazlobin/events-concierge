@@ -11,6 +11,8 @@ build milestones and broader mission below are not acceptance of this release.
 
 Private discovery acceptance is verified on the shared development stack. Production remains gated
 on real identity/CSRF, transport, monitoring, permissions and provider-cleanup evidence.
+Google sign-in is the selected identity provider; its implementation and activation requirements
+are recorded in [production operations](docs/production-operations.md#built-in-oidc-bff-activation).
 [Release acceptance](docs/production-operations.md#first-release-acceptance) owns those gates;
 [private deployment and recovery](deploy/development.md) owns the current deployment and retained
 legacy recovery resources. `EC_RELEASE_PROFILE=discovery` selects product scope; it does not
