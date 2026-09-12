@@ -18,6 +18,7 @@ from temporalio.client import Client
 from ..application.lifecycle_invariants import LifecycleInvariantScanner
 from ..composition import build_container
 from ..config import Settings, get_settings
+from ..deployment.startup import preflight_application_runtime
 from ..domain.invariants import LifecycleInvariantReport
 from ..infra.logging import configure_logging, get_logger
 from ..ports.object_store import ObjectStorePort
@@ -45,7 +46,7 @@ async def run_lifecycle_invariants(*, once: bool = False) -> int:
     """Emit aggregate integrity evidence continuously or for one scheduled pass."""
     settings = get_settings()
     configure_logging(settings.log_level, local=settings.env == "local")
-    container = build_container(settings)
+    container = build_container(settings, runtime_ports=preflight_application_runtime(settings))
     client: Client | None = None
     _log.info(
         "lifecycle invariant scanner started",

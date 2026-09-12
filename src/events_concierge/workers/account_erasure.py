@@ -13,6 +13,7 @@ from ..adapters.postgres.tenant_effects import PostgresTenantExternalEffectDrain
 from ..application.account_erasure import AccountErasureService, AccountErasureWorker
 from ..composition import build_container
 from ..config import get_settings
+from ..deployment.startup import preflight_application_runtime
 from ..infra.logging import configure_logging, get_logger
 from ..workflows.account_erasure import (
     NoopTenantSessionRevocation,
@@ -27,7 +28,7 @@ async def run_account_erasure() -> None:
     """Continuously converge due erasures; durable leases recover process or network failure."""
     settings = get_settings()
     configure_logging(settings.log_level, local=settings.env == "local")
-    container = build_container(settings)
+    container = build_container(settings, runtime_ports=preflight_application_runtime(settings))
     temporal = await connect_temporal(
         settings,
         container.object_store,

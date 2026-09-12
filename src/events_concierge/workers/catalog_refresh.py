@@ -15,6 +15,7 @@ from uuid import uuid4
 from ..application.catalog_refresh import CatalogRefreshOutcome, CatalogRefreshResult
 from ..catalog_runtime import build_catalog_container, verify_catalog_executor_database
 from ..config import get_settings
+from ..deployment.startup import preflight_catalog_runtime
 from ..infra.logging import configure_logging, get_logger
 from .catalog_refresh_routing import build_catalog_refresh_router
 
@@ -25,6 +26,7 @@ async def refresh_once(source_key: str, run_key: str) -> CatalogRefreshResult:
     """Run one source/key through its only permitted catalog execution path (NFR-8)."""
     settings = get_settings()
     configure_logging(settings.log_level, local=settings.env == "local")
+    preflight_catalog_runtime(settings)
     container = build_catalog_container(settings)
     await verify_catalog_executor_database()
     router = await build_catalog_refresh_router(settings, container)

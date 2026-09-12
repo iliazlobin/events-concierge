@@ -4,11 +4,14 @@ from __future__ import annotations
 
 from dataclasses import replace
 from types import SimpleNamespace
+from unittest.mock import AsyncMock, Mock
 
 import pytest
 
 from events_concierge.adapters.mock.calendar import MockCalendar
+from events_concierge.api import app as api
 from events_concierge.config import Settings
+from events_concierge.deployment import startup
 from events_concierge.domain.enums import Source
 from events_concierge.operations import config_validation
 from events_concierge.ports.sources import SourceCapability
@@ -147,6 +150,135 @@ def test_structural_production_config_accepts_a_remote_fail_closed_shape() -> No
         "gcs_claim_check",
         "runtime_provider_loaded",
     }
+
+
+def test_private_browser_origin_requires_its_explicit_profile() -> None:
+    settings = _production_settings(public_base_url="https://localhost:14443")
+    assert not config_validation.validate_production_config(settings, load_provider=False).passed
+    settings = _production_settings(
+        public_origin_profile="private_loopback_https", public_base_url="https://localhost:14443"
+    )
+    assert config_validation.validate_production_config(settings, load_provider=False).passed
+
+
+@pytest.mark.parametrize(
+    "origin",
+    [
+        "http://localhost:14443",
+        "https://localhost",
+        "https://localhost:443",
+        "https://localhost:14444",
+        "https://127.0.0.1:14443",
+        "https://[::1]:14443",
+        "https://0.0.0.0:14443",
+        "https://app.localhost:14443",
+        "https://app.example:14443",
+        "https://localhost:14443/",
+        "https://localhost:14443/auth",
+        "https://localhost:14443?next=/",
+        "https://localhost:14443#fragment",
+        "https://user@localhost:14443",
+        "https://localhost:14443.evil.example",
+        "https://localhost:99999",
+        " https://localhost:14443",
+        "https://localhost:14443\n",
+    ],
+)
+def test_private_browser_origin_rejects_noncanonical_settings(origin: str) -> None:
+    with pytest.raises(ValueError, match="private_loopback_https requires"):
+        _production_settings(public_origin_profile="private_loopback_https", public_base_url=origin)
+
+
+@pytest.mark.parametrize(
+    ("override", "failed_check"),
+    [
+        ({"oidc_issuer": "https://localhost:14443"}, "built_in_identity_configuration"),
+        (
+            {"oidc_authorization_url": "https://localhost:14443/authorize"},
+            "built_in_identity_configuration",
+        ),
+        ({"oidc_token_url": "https://localhost:14443/token"}, "built_in_identity_configuration"),
+        ({"oidc_jwks_url": "https://localhost:14443/jwks"}, "built_in_identity_configuration"),
+        ({"redis_url": "redis://redis.internal.example/0"}, "redis_tls"),
+        ({"redis_url": "rediss://localhost:6380/0"}, "redis_tls"),
+        (
+            {"database_url": "postgresql+psycopg://ec_app:secret@db.example/events"},
+            "application_database",
+        ),
+        ({"temporal_tls_enabled": False}, "temporal_tls"),
+        ({"temporal_api_key": None}, "temporal_credentials"),
+    ],
+)
+def test_private_browser_profile_does_not_exempt_identity_or_dependency_checks(
+    override: dict[str, object],
+    failed_check: str,
+) -> None:
+    settings = _production_settings(
+        public_origin_profile="private_loopback_https",
+        public_base_url="https://localhost:14443",
+        **override,
+    )
+    report = config_validation.validate_production_config(settings, load_provider=False)
+    assert not next(check for check in report.checks if check.name == failed_check).passed
+
+
+def test_startup_inspects_and_returns_the_single_provisioned_bundle(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    runtime = _valid_runtime_ports()
+    calls: list[Settings] = []
+
+    def provide(settings: Settings) -> RuntimePorts:
+        calls.append(settings)
+        return runtime
+
+    monkeypatch.setattr(startup, "load_runtime_ports", provide)
+    settings = _production_settings()
+    assert startup.preflight_application_runtime(settings) is runtime
+    assert calls == [settings]
+
+
+async def test_api_passes_the_validated_bundle_to_composition_before_becoming_ready(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    settings = _production_settings(
+        public_origin_profile="private_loopback_https", public_base_url="https://localhost:14443"
+    )
+    runtime = _valid_runtime_ports()
+    provider = Mock(return_value=runtime)
+    container = SimpleNamespace(browser_session=None)
+    build = Mock(return_value=container)
+    connect = AsyncMock()
+    monkeypatch.setattr(startup, "load_runtime_ports", provider)
+    monkeypatch.setattr(api, "get_settings", lambda: settings)
+    monkeypatch.setattr(api, "build_container", build)
+    monkeypatch.setattr(api, "_configure_temporal", connect)
+    monkeypatch.setattr(api, "dispose_engine", AsyncMock())
+    app = api.create_app()
+
+    async with app.router.lifespan_context(app):
+        assert app.state.container is container
+        provider.assert_called_once_with(settings)
+        build.assert_called_once_with(settings, runtime_ports=runtime)
+        connect.assert_awaited_once_with(app, settings, container)
+
+
+@pytest.mark.parametrize("factory_failure", [False, True])
+def test_startup_rejects_incomplete_or_failed_provider_without_leaking_its_error(
+    monkeypatch: pytest.MonkeyPatch,
+    factory_failure: bool,
+) -> None:
+    def provide(settings: Settings) -> RuntimePorts:
+        del settings
+        if factory_failure:
+            raise RuntimeError("provider_password=do-not-log-this")
+        return RuntimePorts()
+
+    monkeypatch.setattr(startup, "load_runtime_ports", provide)
+    with pytest.raises(startup.RuntimePreflightError, match="runtime_") as error:
+        startup.preflight_application_runtime(_production_settings())
+    assert "do-not-log-this" not in str(error.value)
+    assert error.value.__suppress_context__ or not factory_failure
 
 
 def test_structural_production_config_accepts_cloud_sql_auth_proxy_mode() -> None:

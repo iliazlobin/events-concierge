@@ -15,6 +15,7 @@ from typing import Protocol
 from ..application.request_start import RequestStartRelay, RequestStartRelayStats
 from ..composition import build_container
 from ..config import Settings, get_settings
+from ..deployment.startup import preflight_application_runtime
 from ..infra.logging import configure_logging, get_logger
 from ..ports.object_store import ObjectStorePort
 from ..ports.tenant_effects import TenantEffectAuthority
@@ -34,7 +35,7 @@ async def run_request_starter() -> None:
     """Continuously drain durable starts; engine startup failures wait without dropping rows."""
     settings = get_settings()
     configure_logging(settings.log_level, local=settings.env == "local")
-    container = build_container(settings)
+    container = build_container(settings, runtime_ports=preflight_application_runtime(settings))
     starter = await _connect_starter(
         settings,
         container.object_store,

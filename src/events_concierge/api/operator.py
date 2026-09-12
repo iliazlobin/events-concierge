@@ -23,6 +23,7 @@ from ..adapters.ranking.embedding import DeterministicEmbedding
 from ..application.catalog_execution_descriptors import CatalogExecutionDescriptorRegistry
 from ..application.ingestion_admin import IngestionAdminService
 from ..config import Settings, get_settings
+from ..deployment.startup import preflight_operator_runtime
 from ..infra.operator_database import OperatorDatabase
 from .admin import _local_ingestion_admin, install_ingestion_admin_routes
 from .command_investigation import install_command_investigation_routes
@@ -129,7 +130,8 @@ def build_operator_services(app: FastAPI, settings: Settings) -> OperatorDatabas
     app.state.operator_operations = PostgresOperatorOperationsRepository(database.session_scope)
     app.state.operator_database = database
     app.state.command_investigation = CommandInvestigationStore(
-        session_scope=database.session_scope, task_queue=settings.temporal_catalog_queue,
+        session_scope=database.session_scope,
+        task_queue=settings.temporal_catalog_queue,
     )
     return database
 
@@ -140,7 +142,11 @@ def create_operator_app(settings: Settings | None = None) -> FastAPI:
     # Revalidate injected model_copy snapshots as well as ordinary settings construction.
     settings = Settings.model_validate(
         {
-            name: None if name.endswith("_file") else getattr(settings, name)
+            name: (
+                None
+                if name.endswith("_file") and name != "migration_url_file"
+                else getattr(settings, name)
+            )
             for name in Settings.model_fields
         }
     )
@@ -154,6 +160,7 @@ def create_operator_app(settings: Settings | None = None) -> FastAPI:
 
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
+        preflight_operator_runtime(settings)
         database = build_operator_services(app, settings)
         try:
             yield

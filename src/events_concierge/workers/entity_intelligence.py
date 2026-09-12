@@ -23,6 +23,7 @@ import asyncio
 
 from ..composition import build_container
 from ..config import get_settings
+from ..deployment.startup import preflight_application_runtime
 from ..infra.logging import configure_logging, get_logger
 
 _log = get_logger(__name__)
@@ -49,7 +50,7 @@ async def run_entity_intelligence() -> None:
     if not settings.entity_intelligence_enabled:
         _log.info("entity intelligence worker disabled")
         return
-    container = build_container(settings)
+    container = build_container(settings, runtime_ports=preflight_application_runtime(settings))
     _log.info(
         "entity intelligence worker started",
         batch_size=settings.entity_intelligence_batch_size,

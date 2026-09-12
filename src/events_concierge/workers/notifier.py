@@ -14,6 +14,7 @@ from ..application.notifier import NotifierWorker
 from ..application.outbox import OutboxRelay
 from ..composition import build_container
 from ..config import get_settings
+from ..deployment.startup import preflight_application_runtime
 from ..infra.logging import configure_logging, get_logger
 from ..ports.repositories import OutboxQueueSnapshot
 
@@ -24,7 +25,7 @@ async def run_notifier() -> None:
     """Relay durable rows, draining backlog immediately and polling safely after idle wake-up loss."""
     settings = get_settings()
     configure_logging(settings.log_level, local=settings.env == "local")
-    container = build_container(settings)
+    container = build_container(settings, runtime_ports=preflight_application_runtime(settings))
     relay = OutboxRelay(
         container.outbox_repo,
         container.notifier,
