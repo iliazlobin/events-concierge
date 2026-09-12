@@ -309,6 +309,9 @@ export function consumerHistoryUrl(
   }
   if (snapshot.filters.cities.length) {
     for (const city of snapshot.filters.cities) url.searchParams.append("city", city);
+  } else {
+    // Absence means the initial city default; an empty value preserves an explicit reset.
+    url.searchParams.set("city", "");
   }
   for (const scope of snapshot.filters.locationScopes) {
     url.searchParams.append("area", scope);

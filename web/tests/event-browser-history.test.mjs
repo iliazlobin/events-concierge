@@ -173,7 +173,7 @@ test("preset URLs omit stale custom bounds and ignore legacy bounds on reload", 
   assert.equal(restored?.filters.customEnd, "");
 });
 
-test("empty filters omit empty city parameters from the default URL", () => {
+test("cleared city filters survive link reload with the initial city default", () => {
   const snapshot = createConsumerHistorySnapshot("events", {
     ...FILTERS,
     query: "",
@@ -197,7 +197,16 @@ test("empty filters omit empty city parameters from the default URL", () => {
     "https://events.test",
   );
 
-  assert.equal(url.searchParams.has("city"), false);
+  const restored = consumerHistorySnapshotFromUrl(url.href, {
+    ...FILTERS,
+    datePreset: "week",
+    city: "sanfrancisco",
+    cities: ["sanfrancisco"],
+    dateRanges: [],
+  });
+  assert.equal(restored?.filters.city, "");
+  assert.deepEqual(restored?.filters.cities, []);
+  assert.equal(restored?.filters.datePreset, "all");
 });
 
 test("custom URLs retain singular start and end bounds", () => {
