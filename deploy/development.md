@@ -17,6 +17,24 @@ Existing `ec-dev-retain` and its bound legacy volumes keep their current ownersh
 
 This profile uses real PostgreSQL, Redis, Temporal and GCS with explicit mock external product adapters. No real email, booking or Calendar actions. The older staging Terraform root remains separate.
 
+## Current verification
+
+On September 11, the shared cluster passed the actual Next.js/API discovery walkthrough, private
+admin reads, keyboard/mobile navigation, loading/error recovery, profile and saved-filter changes,
+logout, two-tenant isolation and completed worker erasure. Additional live checks covered multiple
+sources/cities/scopes, additive date ranges, all price comparisons, availability/sorting and
+Week/Month/six-month Calendar navigation. Avatar bytes matched across the browser,
+two API replicas and private GCS; explicit deletion and account erasure left no tenant media.
+The backend runs `d5cac841`; frontend `f3fc7c9` fixes cleared-city URL reloads. Backend runtime code
+is unchanged between those revisions; all six application deployments now have one ready replica.
+
+All eight checks passed `f3fc7c9`: 2,238 unit tests plus 11 subtests, 409 integration tests,
+40 quality scenarios, 253 browser tests, 584 frontend tests, 10 restore checks, 37 container canary
+checks and deployment validation. [Application CI](https://github.com/iliazlobin/events-concierge/actions/runs/34662322573)
+· [Deployment checks](https://github.com/iliazlobin/events-concierge/actions/runs/34662323874).
+These private development checks do not close real identity/CSRF, transport, monitoring,
+per-process permissions or non-mock provider-cleanup gates.
+
 ## Shared application landing
 
 The platform owns the two projects, deployment identities, network, GKE/node pool, private access
@@ -153,6 +171,9 @@ After a real queued refresh succeeds through the separate ingestion executor, op
 due sources through the controller credential; it does not fetch providers or enable scheduling in
 the consumer API. Verify the CronJob, command ledger and resulting successful refresh runs separately.
 The legacy dispatcher stays disabled. A successful schedule tick alone does not prove collection.
+Scheduled `refresh_due` runs currently lack the flattened run-level release fields in the admin
+projection. Verify the linked command's executor revision/digest and actual worker deployment;
+this projection gap remains an observability follow-up, not missing command execution evidence.
 `promote_workers.py` selects only catalog in discovery and verifies current candidate pollers before
 promotion. `smoke.py` selects catalog/profile/deferred-route checks in discovery, with a separate
 Temporal/GCS echo; it reports synthetic cleanup as pending until the erasure worker completes it.
@@ -168,6 +189,15 @@ after accepted destination parity, user flows and recovery. Review each owning r
 plan; preserve backups, state and retained disks while their recovery or dependency purpose remains.
 
 ## Legacy infrastructure
+
+<details>
+<summary>Historical ec-dev deployment and recovery procedure</summary>
+
+These commands describe the old app-owned cluster. The current legacy Terraform root preserves
+recovery resources and removes its cluster/node pool; it cannot provision the historical stack.
+Use the [pre-retirement source](https://github.com/iliazlobin/events-concierge/tree/d5cac84111eeea2fdf8329dcedc5d937e2a20390)
+only for a separately reviewed recovery. Do not execute this procedure against the shared context.
+
 
 Use Terraform 1.16.1, gcloud, kubectl with gke-gcloud-auth-plugin, Helm 3, Python 3.12+ with PyYAML, and Docker Buildx. Authenticate as `iliazlobin27@gmail.com`; target `project-9c8cce04-f94d-40fc-aa6` explicitly. Never copy local credentials to another machine.
 
@@ -268,6 +298,8 @@ kubectl -n events-concierge-dev port-forward service/events-concierge-frontend 1
 
 Browse http://localhost:13000. Access remains localhost-only. Recurring jobs and autoscaling remain disabled. One node and one replica mean downtime during replacement and upgrades; disks remain zonal. This is private development, not production.
 
+</details>
+
 ## Persistent storage and self-healing
 
 The shared deployment uses retained PostgreSQL and Redis disks. Before starting its writers on
@@ -291,9 +323,27 @@ With the shared kubeconfig, open http://127.0.0.1:14002/admin. The dedicated pod
 
 ## Manual recovery
 
+Use the dedicated shared kubeconfig. Record the cadence CronJob's current suspension state, suspend
+it, and wait for unfinished Jobs and active ingestion commands to finish before backup. Check the
+private admin command/run views; a completed scheduler Job can leave its collection command running.
+
 ```bash
+kubectl -n events-concierge-dev patch cronjob events-concierge-ingestion-cadence --type=merge -p '{"spec":{"suspend":true}}'
+# After all scheduled Jobs and collection commands finish:
 .venv/bin/python scripts/development/backup.py backup --target shared
 .venv/bin/python scripts/development/backup.py verify gs://iz27-platform-dev-ec-backups/SET_ID --target shared
+.venv/bin/python scripts/development/wait_ready.py --target shared
 ```
 
-Backup temporarily stops application writers and Temporal while retaining PostgreSQL/Redis, exports all three databases and current payload objects, records image/schema metadata, uploads a completion marker last, then attempts to restore writer replica counts. The interruption recovery command and its limits are described in [Quiesce and back up](#quiesce-and-back-up). Only completed sets are restoration candidates. Keep at least three successful sets; no automatic deletion is configured. Verification restores dumps into disposable local Docker databases and validates checksums; the live smoke test also checks workflow completion and real GCS claim checks. Use `smoke.py --repeat 12` inside the API pod for a small sustained development load test. Production disaster recovery remains separate. Never restore over the running development stores. Backups share the same project administrative boundary.
+Restore the CronJob's previous suspension state only after verification and writer readiness.
+Restart affected loopback forwards after the writer pods are replaced. If backup recovery is
+interrupted, use the exact prefix printed before quiescing:
+
+```bash
+.venv/bin/python scripts/development/backup.py resume gs://iz27-platform-dev-ec-backups/SET_ID --target shared
+```
+
+Resume restores saved replicas; it neither restores data nor changes images. It refuses changed
+schema, deployment identity or pod templates. Investigate those mismatches instead of forcing resume.
+
+Backup temporarily stops application writers and Temporal while retaining PostgreSQL/Redis, exports all three databases and current payload objects, records image/schema metadata, uploads a completion marker last, then attempts to restore writer replica counts. Only completed sets are restoration candidates. Keep at least three successful sets; no automatic deletion is configured. Verification restores dumps into disposable local Docker databases and validates checksums; the live smoke test also checks workflow completion and real GCS claim checks. Use `smoke.py --repeat 12` inside the API pod for a small sustained development load test. Production disaster recovery remains separate. Never restore over the running development stores. Backups share the same project administrative boundary.

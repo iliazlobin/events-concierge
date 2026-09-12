@@ -1,22 +1,26 @@
 # Manual UI acceptance test plan
 
-This plan exercises the local consumer product as a person would use it. It covers the current
-Chat/Events/Map/Calendar catalog experience, onboarding, discovery, durable requests, plans,
-handoffs, preferences, session behavior, degraded Temporal behavior, and account erasure.
+Exercise the discovery candidate as a person would use it: onboarding, Events/Map/Calendar,
+filters, details, profiles, saved filters, session behavior and account erasure. Under
+`EC_RELEASE_PROFILE=discovery`, chat, managed requests/RSVP, notifications, Calendar sync,
+purchases and API keys are deferred. The broader request/lifecycle journey below applies only to
+the full development profile; mark it not applicable for the discovery milestone.
 
-The primary target is the repository's local mock-cloud Next.js application at
-[`http://127.0.0.1:3001`](http://127.0.0.1:3001). The older request/lifecycle journey below still
-uses the FastAPI fallback at
-[`http://127.0.0.1:8000/app`](http://127.0.0.1:8000/app). Neither surface proves production OIDC,
-real provider mutation, email delivery, Google Calendar cleanup, or cloud data deletion.
+Use the local Next.js app at [`127.0.0.1:3001`](http://127.0.0.1:3001), or the deployed shared app at
+[`127.0.0.1:14001`](http://127.0.0.1:14001) through the [private access procedure](../deploy/development.md#shared-release-and-access).
+Record the exact API revision, frontend image digest and release/auth profile before creating a
+synthetic account. The older full-profile journey uses the FastAPI fallback at
+[`127.0.0.1:8000/app`](http://127.0.0.1:8000/app). Local-demo identity and mocked provider cleanup do
+not prove production OIDC, provider mutations, email delivery or Google Calendar cleanup. Shared
+GCS media deletion requires separate real object-store evidence as described in the private runbook.
 
 ## Test shape
 
 | Pass | Approximate time | Coverage |
 | --- | ---: | --- |
-| Quick smoke | 10–15 minutes | Startup, onboarding, navigation, preview, durable request |
-| Full journey | 25–45 minutes | Pick feedback, lifecycle views, settings, responsive and keyboard behavior |
-| Resilience | 10–15 minutes | Intentional Temporal outage and queued-request recovery |
+| Quick smoke | 10–15 minutes | Startup, onboarding, discovery, details and profile |
+| Full journey | 25–45 minutes | Filters, browse views, settings, responsive and keyboard behavior |
+| Resilience | 10–15 minutes | Loading/error recovery; Temporal outage and request recovery only in the full profile |
 | Account erasure | 5–10 minutes plus worker wait | Destructive disposable-account test; always run last |
 
 A required check passes only when both the visible result and the expected durable behavior match.
@@ -28,8 +32,8 @@ lines for every failure.
 
 1. Use a private/incognito browser window and a unique disposable address such as
    `manual-ui-20260723@example.test`.
-2. Use the complete `make stack` profile. `make api` intentionally omits the workers needed for an
-   end-to-end request.
+2. For local full-profile tests, use `make stack`; `make api` omits required workers. For shared
+   discovery, verify the six intended deployments through the private runbook; do not start deferred workers.
 3. Keep account erasure until the very end. It permanently fences that local tenant.
 4. In local-demo mode, **Leave this session** only removes the browser's tenant reference; it does
    not delete server data.
@@ -59,7 +63,7 @@ Notes and screenshots:
 
 ## 0. Preflight
 
-The stack is currently running. On a later run, start it only if `make ps` shows missing services:
+For local testing, inspect `make ps` and start the stack only if services are missing:
 
 ```bash
 cd /Users/iliazlobin/Claude/events-concierge
@@ -135,40 +139,42 @@ Expected: top-level `"status":"passed"` and 34 passed checks. `"release_eligible
 intentional for a local-only canary. The `smoke-local` target first reconciles/builds the full stack,
 so it preserves volumes but may recreate containers; never run it during an active manual workflow.
 
-## Current catalog browse acceptance — primary port 3001
+## Current catalog browse acceptance
 
-Open `http://127.0.0.1:3001` in a private window. Use DevTools **Network**, filter to
+Open the verified local or shared target above in a private window. Use DevTools **Network**, filter to
 `/v1/catalog/events`, and preserve the log. These checks read the persisted current catalog; they
 must not issue a provider request or start a catalog refresh.
 
-### Shared filters and fixed layout
+### Shared filters and layout
 
 - [ ] **Events**, **Map**, and **Calendar** share the same query and filters when switching views.
-- [ ] On a desktop viewport, source, place, price, date range, and Reset stay in fixed tracks.
-  Selecting a longer city/area/source label does not move the neighboring controls.
+- [ ] Source/place/topic multi-select choices remain staged in the open popover. Dismissing it
+  commits the choices together; the filter strip does not shift while picking several options.
 - [ ] At a narrower supported viewport, the filter rail scrolls rather than compressing labels into
   ambiguous or overlapping controls.
 - [ ] **Today**, **This week**, **Weekend**, and **This month** each update the one date window and
   produce one request with both `starts_after` and `starts_before`.
-- [ ] Opening **Dates** shows one start/end range component. Selecting start and end changes only
-  the draft until **Apply** is selected; **Clear** returns to the documented default window.
+- [ ] **Add dates** stages the first endpoint and commits/closes on the second. Add a second range;
+  the request carries both `date_range` values. Removing one chip preserves the other range.
+- [ ] Selecting a rolling window replaces the date selection. Reset clears explicit date/place
+  constraints; reload preserves the cleared `city=` URL instead of restoring San Francisco.
 - [ ] Reusing Back/Forward or switching view does not pair a cursor from an old filter with a new
   filter.
 - [ ] Move Calendar to the previous month. The request preserves the selected source, sends the
   local month start as `starts_after` and the next local month start as `starts_before`, and omits
   the previous month's cursor.
 - [ ] A past month may return events when they remain in the source's latest successful projection.
-  Clearing the custom range returns to the future-only default and does not surface elapsed events.
+  Reset removes date constraints and browses retained current-projection events; elapsed records must
+  remain labeled **Past event**. Choose a rolling window when a bounded upcoming interval is wanted.
 
 ### Source and additive place semantics
 
-- [ ] The source selector's **All sources** metadata says `N sources`; each individual source row
-  says `N events`. These are different units and are not expected to add up as source counts.
-- [ ] Selecting one source sends one `source_key` and narrows all three browse views. The current
-  source control is single-select; mark multi-source selection as `NOT IMPLEMENTED`, not passed.
-- [ ] With multiple places selected, change to a source that cannot match one of them. Compatible
-  places remain selected, incompatible places are removed, and the next request does not retain a
-  stale place filter that hides the newly selected source.
+- [ ] **Add source** shows event-count metadata for each source. Choose two sources and dismiss;
+  the request repeats `source_key` and matches either selected source across all three views.
+  Existing chips remain editable/removable and reload preserves both selections.
+- [ ] Sources and places intersect while multiple values within either category are additive.
+  Changing a source preserves explicit place choices; an incompatible combination shows a truthful
+  empty state that can be recovered by editing/removing a chip or Reset.
 - [ ] The place selector groups **Areas**, **Neighborhoods**, and **Cities**, is keyboard operable,
   and keeps the menu open while adding or removing choices.
 - [ ] Select two cities. The next request repeats the `city` parameter and results may match either
@@ -189,13 +195,16 @@ must not issue a provider request or start a catalog refresh.
 
 ### Price and query semantics
 
-- [ ] Enter `25.50` in the `≤ $` field with **Any price**. The request sends
-  `price_max_cents=2550`.
+- [ ] Open **Add price**, choose **Any price → Up to**, enter `25.50`, then dismiss. The request
+  sends `price_max_cents=2550`. Partial/invalid amounts do not commit.
 - [ ] The ceiling result contains free events and paid USD events whose known maximum is at most
   `$25.50`; it contains neither a higher known maximum nor an unlisted, unknown, or non-USD price.
-- [ ] Combine **Paid** and `≤ $25.50`; only known paid USD events at or below the ceiling remain.
-- [ ] Selecting **Free** or **Unlisted** clears/disables the maximum field. The client never combines
-  `price=unknown` with `price_max_cents`.
+- [ ] Combine **Paid → Up to → 25.50**; only known paid USD events at or below the ceiling remain.
+- [ ] **At least**, **Exactly** and **Between** send the corresponding cent bounds; a reversed range cannot commit.
+- [ ] Selecting **Free** or **Price unlisted** clears amount bounds and disables amount comparisons.
+  The client never combines `price=unknown` with `price_max_cents`.
+- [ ] **Available** and **Sold out** send their registration-status filter; removing the chip restores
+  all availability. **Latest first** and **Soonest first** change server ordering before pagination.
 - [ ] A title, organizer, host, speaker, partner/organization, venue, source, publisher, or provider
   term in the main search narrows the server result before pagination.
 

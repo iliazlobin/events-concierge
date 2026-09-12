@@ -65,8 +65,10 @@ enabled provider overrides and configuration; full-product preflight rejects dis
 Account erasure remains fenced and pending at unavailable Calendar or credential cleanup, with no
 false purge receipt or final database deletion. Production acceptance requires actual cleanup
 evidence, including tenants with no previously connected provider credentials; disabled cleanup
-ports cannot certify their absence. Shared GCS media persistence and erasure also need deployment
-verification under the dedicated bucket policy in the [private runbook](../deploy/development.md). The current chart
+ports cannot certify their absence. On September 11, the private shared deployment verified avatar
+upload/read across two API replicas, explicit deletion, tenant isolation and completed worker erasure
+under the dedicated GCS bucket policy in the [private runbook](../deploy/development.md). This uses
+local-demo identity and mocked external cleanup; production provider-cleanup proof remains open. The current chart
 still mounts shared runtime secrets and relies on common runtime composition more broadly than strict
 per-process IAM permits. Do not interpret a successful structural example check, Terraform/Helm
 validation, or container test as authorization to deploy traffic.
