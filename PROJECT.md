@@ -6,14 +6,15 @@ Source of truth for the project. A fresh session should be able to resume from t
 
 The approved first release (September 10, 2026) is discovery/search, shared filters,
 Events/Map/Calendar views, event details and provider registration links. Chat, automated RSVP,
-managed handoffs, notifications, Calendar synchronization and purchases are deferred. The historical
+managed handoffs, notifications, Calendar synchronization, purchases and programmatic API keys are deferred. The historical
 build milestones and broader mission below are not acceptance of this release.
 
-The candidate is not production-ready. `EC_RELEASE_PROFILE=discovery` selects the server and
-frontend product boundary; it does not provision identity or turn mock integrations into production
-services. [Release acceptance](docs/production-operations.md#first-release-acceptance) owns remaining
-verification. [Private deployment and recovery](deploy/development.md) owns operation of the current
-stack and the gated move to shared infrastructure.
+Private discovery acceptance is verified on the shared development stack. Production remains gated
+on real identity/CSRF, transport, monitoring, permissions and provider-cleanup evidence.
+[Release acceptance](docs/production-operations.md#first-release-acceptance) owns those gates;
+[private deployment and recovery](deploy/development.md) owns the current deployment and retained
+legacy recovery resources. `EC_RELEASE_PROFILE=discovery` selects product scope; it does not
+provision identity or turn mock integrations into production services.
 
 ## Mission
 
@@ -127,8 +128,8 @@ Refined at **2026-07-02** after research wave 1 surfaced the risk profile — HA
 
 ## State (update at every phase boundary)
 
-Entries below are dated implementation snapshots. Later phases may supersede an earlier entry's
-“remaining boundary”; the newest phase is authoritative for current implementation state.
+Entries below preserve dated implementation history. The current release scope above and linked
+deployment runbook take precedence; historical completions do not establish current deployment acceptance.
 
 - **2026-07-02 — Kickoff / scaffold DONE.**
   - Local workspace scaffolded (all dirs + this file).

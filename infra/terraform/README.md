@@ -2,14 +2,15 @@
 
 [`environments/shared-development`](environments/shared-development) consumes the shared
 platform's non-secret `platform_contract` for `iz27-platform-dev` / `platform-dev`. It owns the
-application registry, workload identities and scoped resource access, secret containers, payload
-and backup buckets, and its own protected state bucket. Foundation APIs/IAM, networking, node
+application registry, workload identities and scoped resource access, secret containers, payload,
+media and backup buckets, and its own protected state bucket. Foundation APIs/IAM, networking, node
 identity, GKE, and `shared-retain` remain in the
 [shared platform repository](https://github.com/iliazlobin/gcp-foundation).
 The app Helm charts own namespace policies, releases, stores, and PVCs.
 
-The existing `development` root retains its legacy resources and state. Use the
-[deployment and recovery runbook](../../deploy/development.md) for the staged shared landing;
+The `development` root retains legacy identities, secrets, registry and recovery resources after
+compute retirement. The `shared-development` root owns active application resources and separate
+state. Use the [deployment and recovery runbook](../../deploy/development.md);
 `scripts/development/check_shared_plan.py` accepts only additions within the new app boundary.
 The shared app's first reviewed plan bootstraps `iz27-platform-dev-ec-state` locally, after which
 only that root's new state moves to the backend in `backend.tf.example`. Never migrate platform

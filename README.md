@@ -8,6 +8,10 @@ The design of record lives in [`design/`](design/), [`decisions/`](decisions/), 
 
 ## Status
 
+The private discovery deployment runs on shared `platform-dev` in `iz27-platform-dev`.
+The [private runbook](deploy/development.md) owns current acceptance, access and recovery evidence.
+Production identity and release gates remain open.
+
 The current milestone is a private discovery candidate: Events, Map and Calendar browsing, shared
 filters, event details, provider registration links, profiles and saved filters. Select
 `EC_RELEASE_PROFILE=discovery`; chat, automated RSVP, notifications, Calendar sync, purchases and
@@ -188,7 +192,7 @@ command worker. Command workers claim a 300-second lease and renew that exact co
 every `min(60 seconds, lease / 3)` while source work is active. If renewal fails, the worker cancels
 the in-flight operation and makes no terminal command mutation; another worker may safely reclaim
 the command after the lease expires. Set `EC_CATALOG_INGESTION_SCHEDULER_ENABLED=false` before
-`make stack` to retain a manual-only catalog. The current Alembic migration head is `0152`. For an
+`make stack` to retain a manual-only catalog. Check the selected release’s migration head with `uv run alembic heads`. For an
 immediate local pass or source-specific diagnostic, run one of:
 
 ```bash
@@ -320,7 +324,7 @@ non-editably, includes Alembic migrations, and runs as UID/GID `10001` by defaul
 docker build -t registry.example/events-concierge:VERSION .
 docker run --rm --env-file deployment.env \
   registry.example/events-concierge:VERSION alembic upgrade head
-docker run --rm --env-file deployment.env -p 8000:8000 \
+docker run --rm --env-file deployment.env -p 127.0.0.1:8000:8000 \
   registry.example/events-concierge:VERSION
 ```
 
@@ -340,7 +344,7 @@ python -m events_concierge.workers.request_starter
 python -m events_concierge.workers.notifier
 ```
 
-A real deployment must also:
+Full-profile production requirements also include:
 
 - set `EC_MOCK_CLOUD=false` and select a complete `EC_RUNTIME_PROVIDER_FACTORY`; extend or replace
   the included partial GCP factory before admitting traffic;
@@ -353,7 +357,7 @@ A real deployment must also:
 - supply a real notification channel such as `SesNotificationAdapter` with a regional SES v2
   client, verified sender, mandatory configuration set, delivery-event routing, and an RLS-scoped
   tenant repository; the adapter emits only a SHA-256 delivery-correlation tag, never the dedup key;
-- set `EC_PUBLIC_BASE_URL` to the public HTTPS origin used by handoff-completion links;
+- set `EC_PUBLIC_BASE_URL` to the canonical HTTPS origin used by handoff-completion links;
 - inject database, Redis, provider, and Temporal credentials from a secret manager. Runtime and
   migration settings support strict `*_FILE` loading for the committed CSI mount contract; the
   current Helm scaffold still overprovisions a shared runtime-secret/IAM bundle across Python

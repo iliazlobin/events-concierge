@@ -5,15 +5,17 @@ This runbook operates the shared `platform-dev` development deployment and prese
 do not create a second cluster from this application root for that destination.
 Product scope and release gates: [first-release acceptance](../docs/production-operations.md#first-release-acceptance).
 
-The shared platform and app resources are applied; destination acceptance is in progress. The legacy
-writers are stopped with a verified final backup. Preserve its stores and infrastructure until restored
-data, user workflows, crawler parity and recovery pass. Commands in the legacy sections still target
-the existing project and must not be silently repointed to the shared project.
+The shared discovery deployment has passed restoration, user-flow, crawler and recovery acceptance.
+Legacy application releases, the `ec-dev` cluster/node pool and its dedicated network/NAT are retired.
+Legacy foundation, state, backups, identities and two retained PostgreSQL disks remain with their
+existing owners for recovery. Access remains IAP and loopback-only; production gates remain open.
+Historical commands must not be silently repointed to the shared project.
 
 On a shared destination, the platform must install and verify its retained `shared-retain`
 StorageClass before application stores are installed. Set `createStorageClass=false` and
 `storageClass=shared-retain` on the data chart; application Helm must not own the platform class.
-Existing `ec-dev-retain` and its bound legacy volumes keep their current ownership.
+The retired cluster’s `ec-dev-retain` class and claims no longer provide a live endpoint; its
+two retained cloud disks remain with the legacy application owner.
 
 This profile uses real PostgreSQL, Redis, Temporal and GCS with explicit mock external product adapters. No real email, booking or Calendar actions. The older staging Terraform root remains separate.
 
@@ -32,6 +34,27 @@ All eight checks passed `f3fc7c9`: 2,238 unit tests plus 11 subtests, 409 integr
 40 quality scenarios, 253 browser tests, 584 frontend tests, 10 restore checks, 37 container canary
 checks and deployment validation. [Application CI](https://github.com/iliazlobin/events-concierge/actions/runs/34662322573)
 · [Deployment checks](https://github.com/iliazlobin/events-concierge/actions/runs/34662323874).
+The shared crawler acceptance captured at September 12, 01:40 UTC verified all 92 enabled sources
+freshly succeeded, with no active runs, commands or leases. Distinct future events inside the same
+recorded collection windows were **16,830 shared / 16,590 local**, with no per-source deficit.
+The moving 90-day comparison was 16,830 / 16,591; one Oakland boundary event falls outside its
+recorded shared window. Raw live totals were 16,838 / 16,929 because local history includes 29
+ongoing and 309 events beyond the moving 90-day cutoff, versus 8 and 0 shared. Counts cover the
+same 92 reviewed sources, exclude fixtures and are
+separate from full event-identity equivalence. Two actual scheduler batches completed 50 and 41
+sources after the initial Mountain View refresh. Daily source cadence remains enabled.
+
+The fresh [shared recovery set](https://console.cloud.google.com/storage/browser/_details/iz27-platform-dev-ec-backups/20260912T014120Z-08707790/VERIFIED.json?project=iz27-platform-dev&authuser=4)
+restored all three databases in isolation, checked schema 0194, grants/aggregates and tenant
+isolation, and verified all 16 payload hashes. The original 19 tenants and 18 requests remain;
+all browser test accounts were erased. [Runtime acceptance evidence](https://console.cloud.google.com/storage/browser/_details/iz27-platform-dev-ec-backups/20260912T014120Z-08707790/acceptance.json?project=iz27-platform-dev&authuser=4)
+records crawler provenance and deployed browser checks beside that verified backup.
+[Retirement readback](https://console.cloud.google.com/storage/browser/_details/iz27-platform-dev-ec-backups/20260912T014120Z-08707790/retirement.json?project=iz27-platform-dev&authuser=4)
+verified removal of the old Helm releases, cluster/node pool and five dedicated network resources,
+with clean repeat plans. The legacy app state retains 98 resources; network state retains its two
+FAST preconditions. Both old 20 GiB PostgreSQL disks remain intact and unattached. The unrelated
+default VPC, 42 subnets and four firewall rules are unchanged. Do not destroy retained foundation,
+state, backups or identities as part of routine cleanup.
 These private development checks do not close real identity/CSRF, transport, monitoring,
 per-process permissions or non-mock provider-cleanup gates.
 
@@ -41,7 +64,7 @@ The platform owns the two projects, deployment identities, network, GKE/node poo
 VM and `shared-retain`. Follow its [private access and storage gates](https://github.com/iliazlobin/gcp-foundation#private-access)
 before installing application resources. The app-owned [shared-development root](../infra/terraform/environments/shared-development)
 owns its registry, workload identities, secrets and payload, media, backup and state buckets. It never creates a
-cluster or changes shared network resources. The old root/state retain their ownership until retirement.
+cluster or changes shared network resources. The legacy root/state retain ownership of their recovery resources.
 
 Use the platform's verified `platform_contract` output as the new root's input. Review its exact
 saved plan with `scripts/development/check_shared_plan.py`. Bootstrap the app root into fresh local
@@ -126,6 +149,14 @@ The restored Temporal options disable database/schema/namespace initialization; 
 only a harmless completion hook. They apply to this restored environment, not a fresh empty Temporal
 installation. The application migration runs before its writers and must preserve the restored data.
 
+For subsequent releases, preserve the accepted cadence and replica settings after the backup and
+migration gates. Render from the three source value files; do not use `helm get values --all` as
+an input file, because resolved null-removal semantics can reintroduce omitted defaults.
+
+```bash
+helm upgrade events-concierge deploy/helm/events-concierge -n events-concierge-dev -f deploy/helm/events-concierge/values-development.yaml -f deploy/helm/events-concierge/values-shared-development.yaml -f .local/shared-release-values.yaml --set global.releasePhase=application --set global.runtimeProviderReady=true --set developmentCatalog.cadenceEnabled=true --set workloads.api.replicas=1 --wait --timeout 10m
+```
+
 Run each port-forward in its own terminal, with the same dedicated shared kubeconfig:
 
 ```bash
@@ -150,7 +181,8 @@ Media is excluded from retained payload backups. Database recovery may require u
 avatars; never claim a database/payload restore recovered media. Verify upload, replica-independent
 read, deletion and account erasure on the shared deployment.
 
-The September 11 registry comparison found the same 105 non-fixture registrations in both stores;
+The completed September 11 initial cutover is recorded below; do not replay these configuration
+changes as routine release steps. The registry comparison found the same 105 non-fixture registrations in both stores;
 no source inserts or table import are needed. After restoration and migration, use optimistic,
 audited admin configuration changes to match the local reviewed set: enable `berkeley-events`,
 `berkeley-public-library-events`, `berkeley-rep-shows`, `scu-events`, `sf-gov-related-events`,
@@ -305,7 +337,7 @@ Browse http://localhost:13000. Access remains localhost-only. Recurring jobs and
 The shared deployment uses retained PostgreSQL and Redis disks. Before starting its writers on
 September 11, replacement of each store pod preserved application/Temporal database markers and
 the Redis marker on the same PVC/PV bindings. This proves pod replacement recovery, not disk-loss
-or zone-loss recovery. The stopped legacy Redis deployment remains ephemeral.
+or zone-loss recovery. Legacy Redis was ephemeral and was not included in the coordinated backup.
 
 Application PostgreSQL and Temporal PostgreSQL each mount a retained 20 GiB GCP `pd-balanced` disk. Shared Redis mounts a retained 10 GiB disk at `/data`, with AOF synced every second and periodic RDB snapshots. Redis can lose roughly the last second of writes in a crash; persistence does not make it highly available. Its single-replica Deployment uses `Recreate` so updates stop the old writer before starting the replacement.
 
@@ -313,13 +345,13 @@ Startup probes allow database recovery before liveness checks begin. Failed proc
 
 ## Private admin
 
-The development admin runs in `events-concierge-admin`: its frontend and API both bind to pod loopback. There is no Service; access requires Kubernetes port-forward permission. The ordinary API keeps administration disabled. Shared ingestion uses the separately enabled cadence CronJob; legacy scheduling stays disabled.
+The development admin runs in `events-concierge-admin`: its frontend and API both bind to pod loopback. There is no Service; access requires Kubernetes port-forward permission. The ordinary API keeps administration disabled. Shared ingestion uses the separately enabled cadence CronJob.
 
 ```bash
 kubectl -n events-concierge-dev port-forward --address=127.0.0.1 deployment/events-concierge-admin 14002:3000
 ```
 
-With the shared kubeconfig, open http://127.0.0.1:14002/admin. The dedicated pod uses the shared live development database and current immutable images. Its readiness checks exercise the admin overview through both API and frontend. Legacy recovery access uses its separate kubeconfig and port 13001.
+With the shared kubeconfig, open http://127.0.0.1:14002/admin. The dedicated pod uses the shared live development database and current immutable images. Its readiness checks exercise the admin overview through both API and frontend. Legacy recovery requires a separately reviewed recovery environment; the archived procedure does not provide a running legacy endpoint.
 
 ## Manual recovery
 
