@@ -1,0 +1,11 @@
+{
+	admin off
+	auto_https disable_redirects
+	skip_install_trust
+}
+
+https://localhost:14443 {
+	bind 127.0.0.1
+	tls {$EC_LOCAL_TLS_CERT} {$EC_LOCAL_TLS_KEY}
+	reverse_proxy http://127.0.0.1:14001
+}

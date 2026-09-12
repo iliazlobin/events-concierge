@@ -174,6 +174,32 @@ context and node again, then restart these three forwards. Restart affected forw
 rollout too: even a Service forward stays attached to its initially selected pod. A running
 `kubectl port-forward` process does not prove that its IAP connection or selected pod remains available.
 
+For Google sign-in, use the opt-in private HTTPS origin `https://localhost:14443` and register the
+exact callback `https://localhost:14443/auth/callback`. Set
+`EC_PUBLIC_ORIGIN_PROFILE=private_loopback_https` and `EC_PUBLIC_BASE_URL=https://localhost:14443`
+only in the reviewed non-mock release configuration; the current shared development overlay still
+uses local-demo identity. [Identity activation](../docs/production-operations.md#built-in-oidc-bff-activation)
+owns Google account provisioning and the remaining production prerequisites.
+
+Keep the frontend forward above running. Supply a certificate valid for `localhost`, trusted by
+the operator's browser, and its protected private key using `EC_LOCAL_TLS_CERT` and
+`EC_LOCAL_TLS_KEY` (absolute paths outside Git), then run:
+
+```bash
+caddy validate --config deploy/private-access.Caddyfile --adapter caddyfile
+caddy run --config deploy/private-access.Caddyfile --adapter caddyfile
+```
+
+The [private proxy configuration](private-access.Caddyfile) binds only `127.0.0.1:14443`, preserves
+the browser Host, and proxies the loopback frontend forward. Its admin listener, automatic HTTP
+redirects and automatic trust installation are disabled. Obtain trust through the operator's
+approved certificate setup; never bypass a browser certificate warning. No public DNS, ingress,
+load balancer or firewall opening is needed. Local TLS does not encrypt the app's database,
+Redis or Temporal connections; those and live Google login/CSRF/logout acceptance remain separate
+release gates. Caddy 2.11.4 passed configuration and real TLS proxy checks with an isolated test
+certificate, including hostname-mismatch rejection; browser trust and deployed Google login are
+not established by that check.
+
 Avatars use the separate private `iz27-platform-dev-ec-media` bucket, with no versioning, soft
 delete or retention so account erasure can remove them. Only the API, private admin and erasure
 worker can access it; the adapter verifies this policy before accepting destructive completion.
