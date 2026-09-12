@@ -1,7 +1,7 @@
 # Private GKE development
 
-This runbook operates the existing `ec-dev` development deployment. The replacement shared
-foundation, networking and GKE are owned by [gcp-foundation](https://github.com/iliazlobin/gcp-foundation);
+This runbook operates the shared `platform-dev` development deployment and preserves the legacy
+`ec-dev` recovery procedure. Shared foundation, networking and GKE are owned by [gcp-foundation](https://github.com/iliazlobin/gcp-foundation);
 do not create a second cluster from this application root for that destination.
 Product scope and release gates: [first-release acceptance](../docs/production-operations.md#first-release-acceptance).
 
@@ -119,6 +119,10 @@ kubectl -n events-concierge-dev port-forward --address=127.0.0.1 deployment/even
 Use `http://127.0.0.1:14001` for consumer acceptance and `http://127.0.0.1:14002/admin` for private
 administration. These forwards grant no public access. Shared backup/verify/resume commands must
 include `--target shared`; never use a legacy recovery prefix against the new cluster.
+
+If the IAP transport exits, restart it with the platform private-access helper, verify the shared
+context and node again, then restart these three forwards. A running `kubectl port-forward` process
+does not prove that its underlying IAP connection remains available.
 
 Avatars use the separate private `iz27-platform-dev-ec-media` bucket, with no versioning, soft
 delete or retention so account erasure can remove them. Only the API, private admin and erasure
@@ -265,27 +269,30 @@ Browse http://localhost:13000. Access remains localhost-only. Recurring jobs and
 
 ## Persistent storage and self-healing
 
-Pending deployment: Redis disk persistence and recovery-probe changes are prepared in this branch but have not been applied or rehearsed. The existing Redis deployment remains ephemeral until that rollout completes.
+The shared deployment uses retained PostgreSQL and Redis disks. Before starting its writers on
+September 11, replacement of each store pod preserved application/Temporal database markers and
+the Redis marker on the same PVC/PV bindings. This proves pod replacement recovery, not disk-loss
+or zone-loss recovery. The stopped legacy Redis deployment remains ephemeral.
 
-Application PostgreSQL and Temporal PostgreSQL each mount a retained 20 GiB GCP `pd-balanced` disk. The prepared Redis configuration mounts a retained 10 GiB disk at `/data`, with AOF synced every second and periodic RDB snapshots. Redis can lose roughly the last second of writes in a crash; persistence does not make it highly available. Its single-replica Deployment uses `Recreate` so updates stop the old writer before starting the replacement.
+Application PostgreSQL and Temporal PostgreSQL each mount a retained 20 GiB GCP `pd-balanced` disk. Shared Redis mounts a retained 10 GiB disk at `/data`, with AOF synced every second and periodic RDB snapshots. Redis can lose roughly the last second of writes in a crash; persistence does not make it highly available. Its single-replica Deployment uses `Recreate` so updates stop the old writer before starting the replacement.
 
 Startup probes allow database recovery before liveness checks begin. Failed processes restart; controllers replace missing pods and remount their PVCs. GKE node auto-repair and auto-upgrade are enabled. Disks remain in `us-west1-a`: a node replacement can reattach them, but node repair causes downtime and a zone outage needs separate recovery. Retained disks are not backups; the manual GCS database/payload backup remains the recovery path for those stores. Redis disk loss requires separate restoration/reconstruction; Redis is not included in that GCS backup routine.
 
 ## Private admin
 
-The development admin runs in `events-concierge-admin`: its frontend and API both bind to pod loopback. There is no Service; access requires Kubernetes port-forward permission. The ordinary API keeps administration disabled. Scheduled ingestion remains disabled; operator commands are explicit actions.
+The development admin runs in `events-concierge-admin`: its frontend and API both bind to pod loopback. There is no Service; access requires Kubernetes port-forward permission. The ordinary API keeps administration disabled. Shared ingestion uses the separately enabled cadence CronJob; legacy scheduling stays disabled.
 
 ```bash
-kubectl -n events-concierge-dev port-forward deployment/events-concierge-admin 13001:3000
+kubectl -n events-concierge-dev port-forward --address=127.0.0.1 deployment/events-concierge-admin 14002:3000
 ```
 
-Open http://localhost:13001/admin. The dedicated pod uses the same live development database and current immutable images. Its readiness checks exercise the admin overview through both API and frontend.
+With the shared kubeconfig, open http://127.0.0.1:14002/admin. The dedicated pod uses the shared live development database and current immutable images. Its readiness checks exercise the admin overview through both API and frontend. Legacy recovery access uses its separate kubeconfig and port 13001.
 
 ## Manual recovery
 
 ```bash
-.venv/bin/python scripts/development/backup.py backup
-.venv/bin/python scripts/development/backup.py verify gs://iz27-ec-dev-backups/SET_ID
+.venv/bin/python scripts/development/backup.py backup --target shared
+.venv/bin/python scripts/development/backup.py verify gs://iz27-platform-dev-ec-backups/SET_ID --target shared
 ```
 
 Backup temporarily stops application writers and Temporal while retaining PostgreSQL/Redis, exports all three databases and current payload objects, records image/schema metadata, uploads a completion marker last, then attempts to restore writer replica counts. The interruption recovery command and its limits are described in [Quiesce and back up](#quiesce-and-back-up). Only completed sets are restoration candidates. Keep at least three successful sets; no automatic deletion is configured. Verification restores dumps into disposable local Docker databases and validates checksums; the live smoke test also checks workflow completion and real GCS claim checks. Use `smoke.py --repeat 12` inside the API pod for a small sustained development load test. Production disaster recovery remains separate. Never restore over the running development stores. Backups share the same project administrative boundary.
