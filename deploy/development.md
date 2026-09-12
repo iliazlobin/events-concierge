@@ -174,12 +174,14 @@ context and node again, then restart these three forwards. Restart affected forw
 rollout too: even a Service forward stays attached to its initially selected pod. A running
 `kubectl port-forward` process does not prove that its IAP connection or selected pod remains available.
 
-For Google sign-in, use the opt-in private HTTPS origin `https://localhost:14443` and register the
-exact callback `https://localhost:14443/auth/callback`. Set
-`EC_PUBLIC_ORIGIN_PROFILE=private_loopback_https` and `EC_PUBLIC_BASE_URL=https://localhost:14443`
-only in the reviewed non-mock release configuration; the current shared development overlay still
-uses local-demo identity. [Identity activation](../docs/production-operations.md#built-in-oidc-bff-activation)
-owns Google account provisioning and the remaining production prerequisites.
+The private HTTPS proxy prepares `https://localhost:14443` for the planned Google sign-in release,
+with the intended exact callback `https://localhost:14443/auth/callback`. Google provider integration
+and private-loopback runtime support are pending; the current production validator rejects loopback
+public origins, and `EC_PUBLIC_ORIGIN_PROFILE` is not an implemented setting. Do not activate a
+non-mock release from these proxy instructions. The current shared development overlay still uses
+local-demo identity. [Identity activation](../docs/production-operations.md#built-in-oidc-bff-activation)
+owns the existing OIDC contract and remaining production prerequisites; Google-specific activation
+instructions must be completed with its implementation.
 
 Keep the frontend forward above running. Supply a certificate valid for `localhost`, trusted by
 the operator's browser, and its protected private key using `EC_LOCAL_TLS_CERT` and
