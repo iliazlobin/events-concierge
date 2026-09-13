@@ -113,11 +113,11 @@ Refined at **2026-07-02** after research wave 1 surfaced the risk profile — HA
 
 - **Local workspace (authoritative for iteration):** `~/Claude/events-concierge/`. Preserve unrelated work when preparing commits.
 - **Published 2026 source:** https://github.com/iliazlobin/events-concierge — private repository, remote `origin`. The initial published source checkpoint is `11ed6adc996de069a9e4afb6fe1423c7162362be` on `codex/documentation-source-baseline`; it is documentation evidence, not a release. The public 2025 repository remains the separate `legacy-prototype` remote.
-- **Living Notion documentation:** [Events Concierge](https://app.notion.com/p/391d865005a8814181c1c508a5d70f34), under Workspace → Projects.
-  - [System Design](https://app.notion.com/p/391d865005a88164a182eabc18fe068f)
-  - [Components](https://app.notion.com/p/3cfd865005a88162aa6bd4624b6a4af4)
-  - [GCP & Operations](https://app.notion.com/p/3a5d865005a881f288dfdc9993b8fdd2)
-  - [Delivery](https://app.notion.com/p/3d3d865005a881339dc1f760bf5277e9) — existing tasks and retained history.
+- **Living Notion documentation:** [Events Concierge](https://app.notion.com/p/391d865005a8814181c1c508a5d70f34), directly under Workspace.
+  - [Development](https://app.notion.com/p/3d6d865005a88185928bc16ba4883b31)
+  - [Deployment](https://app.notion.com/p/3d3d865005a881339dc1f760bf5277e9)
+  - [Application Design](https://app.notion.com/p/391d865005a88164a182eabc18fe068f) — includes component responsibilities.
+  - [Application Infrastructure](https://app.notion.com/p/3a5d865005a881f288dfdc9993b8fdd2)
   - Do NOT touch the unrelated inline DB "System Design Interview Questions" (`62b6f08be0a74b81b3e48a203fa9e48d`).
 
 ## Conventions

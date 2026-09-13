@@ -21,6 +21,16 @@ This profile uses real PostgreSQL, Redis, Temporal and GCS with explicit mock ex
 
 ## Current verification
 
+A read-only check on September 13 confirmed all six application deployments and both PostgreSQL
+stores ready on the shared cluster, schema `0194`, no container restarts or current Kubernetes
+warnings, and all 92 enabled sources freshly successful within the previous 24 hours. The catalog
+reported 17,179 fresh events; four source warnings remained (one retry warning and three empty
+feeds). API readiness and the Next.js shell responded successfully. This was not a repeat of the
+full browser acceptance below. Identity is still local-demo, database/Redis/Temporal transport is
+the development profile, and the shared project has no alert policies. The only shared backup is
+the verified September 12 recovery set linked below; backup scheduling and independent project-loss
+protection remain open.
+
 On September 11, the shared cluster passed the actual Next.js/API discovery walkthrough, private
 admin reads, keyboard/mobile navigation, loading/error recovery, profile and saved-filter changes,
 logout, two-tenant isolation and completed worker erasure. Additional live checks covered multiple
@@ -175,13 +185,14 @@ rollout too: even a Service forward stays attached to its initially selected pod
 `kubectl port-forward` process does not prove that its IAP connection or selected pod remains available.
 
 The private HTTPS proxy prepares `https://localhost:14443` for the planned Google sign-in release,
-with the intended exact callback `https://localhost:14443/auth/callback`. Google provider integration
-and private-loopback runtime support are pending; the current production validator rejects loopback
-public origins, and `EC_PUBLIC_ORIGIN_PROFILE` is not an implemented setting. Do not activate a
-non-mock release from these proxy instructions. The current shared development overlay still uses
-local-demo identity. [Identity activation](../docs/production-operations.md#built-in-oidc-bff-activation)
-owns the existing OIDC contract and remaining production prerequisites; Google-specific activation
-instructions must be completed with its implementation.
+with the intended exact callback `https://localhost:14443/auth/callback`. The startup-validation
+candidate supports that exact browser origin with `EC_PUBLIC_ORIGIN_PROFILE=private_loopback_https`;
+it still requires real identity, encrypted dependency connections and restricted runtime credentials
+before a non-mock process starts. Google provider integration, its client secret and subject-to-account
+mapping remain pending. The current shared development overlay still uses local-demo identity.
+[Identity activation](../docs/production-operations.md#built-in-oidc-bff-activation) owns the existing
+OIDC contract and remaining production prerequisites; Google-specific activation instructions must
+be completed with its implementation. These proxy instructions alone do not authorize activation.
 
 Keep the frontend forward above running. Supply a certificate valid for `localhost`, trusted by
 the operator's browser, and its protected private key using `EC_LOCAL_TLS_CERT` and
