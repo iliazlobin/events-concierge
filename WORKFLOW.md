@@ -12,18 +12,22 @@ tracker:
     - closed
 polling:
   interval_ms: 30000
+observability:
+  dashboard_enabled: false
+server:
+  host: 127.0.0.1
 workspace:
   root: $SYMPHONY_WORKSPACE_ROOT
 hooks:
   after_create: |
-    "$SYMPHONY_PROFILE_BIN" workspace-create
+    "$SYMPHONY_PROFILE_PYTHON" "$SYMPHONY_PROFILE_BIN" workspace-create
   before_run: |
-    "$SYMPHONY_PROFILE_BIN" before-run
+    "$SYMPHONY_PROFILE_PYTHON" "$SYMPHONY_PROFILE_BIN" before-run
 agent:
   max_concurrent_agents: 1
   max_turns: 3
 codex:
-  command: '"$SYMPHONY_PROFILE_BIN" codex-server'
+  command: '"$SYMPHONY_PROFILE_PYTHON" "$SYMPHONY_PROFILE_BIN" codex-server'
   approval_policy: on-request
   thread_sandbox: workspace-write
 control:
