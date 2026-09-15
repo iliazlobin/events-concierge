@@ -6,6 +6,9 @@ registration page. Profiles and saved filters personalize the discovery experien
 The design of record lives in [`design/`](design/), [`decisions/`](decisions/), and
 [`PROJECT.md`](PROJECT.md). This README covers building, testing, and deployment packaging.
 
+See the [architecture overview](ARCHITECTURE.md) for the code map and runtime boundaries,
+and [contributor guidance](AGENTS.md) for development checks and task boundaries.
+
 ## Status
 
 The private discovery deployment runs on shared `platform-dev` in `iz27-platform-dev`.
