@@ -100,7 +100,7 @@ async def test_guarded_transition_concurrent_retry_converges_to_one_ledger_and_o
 
 
 async def test_handoff_task_commits_with_its_guarded_lifecycle_transition(db: None) -> None:
-    """A handoff task, state change, ledger row, and relay row become visible together (ADR-007)."""
+    """A handoff task, state change, ledger row, and outbox row become visible together (ADR-007)."""
     tenant_id, canonical_event_id = uuid4(), uuid4()
     workflow_id = registration_workflow_id(tenant_id, canonical_event_id)
     transition_id = f"{workflow_id}:handoff:1"

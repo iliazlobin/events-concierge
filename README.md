@@ -6,6 +6,9 @@ registration page. Profiles and saved filters personalize the discovery experien
 The design of record lives in [`design/`](design/), [`decisions/`](decisions/), and
 [`PROJECT.md`](PROJECT.md). This README covers building, testing, and deployment packaging.
 
+See the [architecture overview](ARCHITECTURE.md) for the code map and runtime boundaries,
+and [contributor guidance](AGENTS.md) for development checks and task boundaries.
+
 ## Status
 
 The private discovery deployment runs on shared `platform-dev` in `iz27-platform-dev`.
@@ -59,6 +62,40 @@ Install the locked application and development dependencies:
 ```bash
 make install
 ```
+
+## Development workflow
+
+`main` is the permanent integration branch. GitHub Issues hold task intent; pull requests
+hold changes, review and check evidence. Each task uses a short-lived `codex/<issue>-<description>`
+branch (omit the issue number when none exists) in an isolated worktree or Symphony clone.
+Start from the freshly fetched `origin/main`; preserve other worktrees and uncommitted work.
+
+1. Define the outcome, scope and acceptance checks. Read [AGENTS.md](AGENTS.md) and the
+   affected component before editing; Symphony assignments also follow [WORKFLOW.md](WORKFLOW.md).
+2. Implement and run the relevant checks below. Open a ready PR targeting `main`, unless
+   a draft is explicitly requested. Independent review and CI must cover the current head;
+   resolve conflicts and invalidate stale review evidence after changes.
+3. Squash-merge when authorized and all applicable checks pass. Then verify the changes
+   reached `main` before retiring the task branch. Keep branches needed by another worktree,
+   an open dependent PR or unpublished work. A closed PR alone is not proof of integration.
+4. Release only a tested, approved commit and immutable image digests. Deployment, database
+   migration, infrastructure and access changes require their separate authorization.
+   [Release acceptance](docs/production-operations.md#first-release-acceptance) and
+   [deployment and recovery](deploy/development.md) own those operations; CI does not deploy.
+
+Use stacked PRs only for an explicit dependency. Name the parent and final `main` target;
+after the parent merges, retarget the child to `main`, reconcile its commits (especially
+after a squash), and rerun checks/review. Do not leave finished work on a temporary parent.
+Existing admin/performance worktrees keep their current work until it is reviewed through
+scoped PRs into `main`; switching the remote default must not reset their local state.
+
+The Symphony host targets `main` with an explicit reviewed `base_sha`. It must fetch that
+commit into its configured source repository and repin both scheduler and publisher together
+when the baseline moves; it does not automatically rebase or advance the pin. Preserve task
+holds, consumed budgets and evidence during the change. Follow the
+[host profile procedure](https://github.com/iliazlobin/symphony/blob/main/profiles/events-concierge/README.md#verification-and-recovery).
+Workers cannot publish or merge. Automatic merge remains disabled until the host's branch
+protection, checks and explicit low-risk allowlist requirements can be satisfied.
 
 ## Local development
 
@@ -236,19 +273,19 @@ processes:
 
 ```bash
 make api       # FastAPI smoke only; durable workers and Next.js remain stopped
-make stack     # Next.js, API, Temporal worker, relays/scanners, and dependencies
+make stack     # Next.js, API, Temporal worker, workers/scanners, and dependencies
 make ps
 make app-logs
 ```
 
 The full stack includes the Next.js frontend, API, Temporal workflow/activity worker, request-start
-relay, notifier outbox relay, account-erasure convergence worker, change-delivery worker,
-handoff-expiry repair worker, lifecycle-invariant scanner, and local ingestion-command relay. They
+worker, notifier outbox worker, account-erasure convergence worker, change-delivery worker,
+handoff-expiry repair worker, lifecycle-invariant scanner, and local ingestion-command worker. They
 share the same claim-check volume and Redis pacing state. Local Compose retains one compatibility
 worker process by default; the production Helm profile instead runs distinct transactional and
 catalog worker roles on separate task queues, with immutable Temporal Worker Deployment build
 identities. Each configured worker role has explicit workflow-task and activity limits (eight of
-each by default), the request-start relay drains at most five recovered starts every two seconds,
+each by default), the request-start worker drains at most five recovered starts every two seconds,
 and the nightly invariant scanner spaces Temporal liveness reads at ten calls per second per
 process. Override
 `EC_TEMPORAL_WORKER_MAX_CONCURRENT_WORKFLOW_TASKS`,
@@ -405,10 +442,10 @@ Ports-and-adapters (hexagonal): dependencies point inward, and the domain has no
 src/events_concierge/
   domain/        pure entities, value objects, enums, and policy logic
   ports/         typed protocols implemented at the system boundary
-  application/   use cases and durable relay services
+  application/   use cases and durable worker services
   adapters/      PostgreSQL, crawl, ranking, policy, provider, and local mock adapters
   workflows/     Temporal parent/child workflows and activities
-  workers/       durable relays, repair loops, and invariant scans
+  workers/       durable workers, repair loops, and invariant scans
   api/           same-origin consumer web app plus FastAPI intake/read/action contracts
   runtime.py     validated deployment-owned production provider graph
   composition.py dependency injection and fail-closed runtime selection

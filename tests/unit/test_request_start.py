@@ -11,8 +11,8 @@ from events_concierge.adapters.ranking.embedding import DeterministicEmbedding
 from events_concierge.application.parsing import HeuristicRequestParser
 from events_concierge.application.request_start import (
     RequestIntakeService,
-    RequestStartRelay,
-    RequestStartRelayStats,
+    RequestStartWorker,
+    RequestStartWorkerStats,
 )
 from events_concierge.domain.request import EventRequest
 from events_concierge.ports.repositories import RequestStartRecord
@@ -284,7 +284,7 @@ async def test_intake_replays_normalized_text_to_one_request_and_start_instructi
     assert len(repository.dedup) == 1
 
 
-async def test_start_relay_replays_lost_ack_without_second_parent_workflow_effect() -> None:
+async def test_start_worker_replays_lost_ack_without_second_parent_workflow_effect() -> None:
     now = datetime(2026, 7, 17, 19, tzinfo=UTC)
     tenant_id, request_id = uuid4(), uuid4()
     record = RequestStartRecord(
@@ -295,10 +295,10 @@ async def test_start_relay_replays_lost_ack_without_second_parent_workflow_effec
     )
     repository = FakeRequestRepository([record])
     starter = LostAcknowledgementStarter()
-    relay = RequestStartRelay(repository, starter, now=lambda: now)
+    delivery = RequestStartWorker(repository, starter, now=lambda: now)
 
-    first = await relay.relay_once()
-    second = await relay.relay_once()
+    first = await delivery.run_once()
+    second = await delivery.run_once()
 
     assert first.claimed == 1 and first.retried == 1 and first.started == 0
     assert second.claimed == 1 and second.started == 1 and second.retried == 0
@@ -310,7 +310,7 @@ async def test_start_relay_replays_lost_ack_without_second_parent_workflow_effec
     ]
 
 
-async def test_start_relay_recovers_stale_post_start_ack_lease_without_second_parent_effect() -> (
+async def test_start_worker_recovers_stale_post_start_ack_lease_without_second_parent_effect() -> (
     None
 ):
     """A fresh lease replays Temporal's duplicate start after a stale ACK is rejected (ADR-003)."""
@@ -323,10 +323,10 @@ async def test_start_relay_recovers_stale_post_start_ack_lease_without_second_pa
     )
     repository = _StaleStartAckLeaseRepository(record)
     starter = _DuplicateAcceptingStarter()
-    relay = RequestStartRelay(repository, starter)
+    delivery = RequestStartWorker(repository, starter)
 
-    first = await relay.relay_once()
-    recovered = await relay.relay_once()
+    first = await delivery.run_once()
+    recovered = await delivery.run_once()
 
     assert (first.claimed, first.started, first.retried, first.lost_leases) == (1, 0, 0, 1)
     assert (recovered.claimed, recovered.started, recovered.retried, recovered.lost_leases) == (
@@ -344,7 +344,7 @@ async def test_start_relay_recovers_stale_post_start_ack_lease_without_second_pa
     assert repository.acknowledged == [record.lease_token, repository.fresh.lease_token]
 
 
-async def test_start_relay_skips_a_stale_pre_temporal_lease_until_a_fresh_claim() -> None:
+async def test_start_worker_skips_a_stale_pre_temporal_lease_until_a_fresh_claim() -> None:
     """A stale final start lease emits no Temporal effect before its fresh recovery (NFR-8)."""
     tenant_id, request_id = uuid4(), uuid4()
     record = RequestStartRecord(
@@ -355,20 +355,20 @@ async def test_start_relay_skips_a_stale_pre_temporal_lease_until_a_fresh_claim(
     )
     repository = _StalePreStartLeaseRepository(record)
     starter = _DuplicateAcceptingStarter()
-    relay = RequestStartRelay(repository, starter)
+    delivery = RequestStartWorker(repository, starter)
 
-    first = await relay.relay_once()
+    first = await delivery.run_once()
 
-    assert first == RequestStartRelayStats(claimed=1, lost_leases=1)
+    assert first == RequestStartWorkerStats(claimed=1, lost_leases=1)
     assert starter.calls == 0
     assert starter.effects == set()
     assert repository.acknowledged == []
     assert repository.rescheduled == []
     assert repository.started == set()
 
-    recovered = await relay.relay_once()
+    recovered = await delivery.run_once()
 
-    assert recovered == RequestStartRelayStats(claimed=1, started=1)
+    assert recovered == RequestStartWorkerStats(claimed=1, started=1)
     assert starter.calls == 1
     assert starter.effects == {(tenant_id, request_id)}
     assert repository.acknowledged == [repository.fresh.lease_token]
@@ -378,7 +378,7 @@ async def test_start_relay_skips_a_stale_pre_temporal_lease_until_a_fresh_claim(
     assert repository.fresh.lease_token != record.lease_token
 
 
-async def test_start_relay_does_not_report_a_lost_retry_lease_as_scheduled() -> None:
+async def test_start_worker_does_not_report_a_lost_retry_lease_as_scheduled() -> None:
     """A failed exact retry write becomes lost authority, not a nonexistent backoff retry."""
     tenant_id, request_id = uuid4(), uuid4()
     record = RequestStartRecord(
@@ -389,25 +389,25 @@ async def test_start_relay_does_not_report_a_lost_retry_lease_as_scheduled() -> 
     )
     repository = _StaleRetryLeaseRepository([record])
     starter = LostAcknowledgementStarter()
-    relay = RequestStartRelay(repository, starter)
+    delivery = RequestStartWorker(repository, starter)
 
-    result = await relay.relay_once()
+    result = await delivery.run_once()
 
-    assert result == RequestStartRelayStats(claimed=1, lost_leases=1)
+    assert result == RequestStartWorkerStats(claimed=1, lost_leases=1)
     assert starter.calls == 1
     assert starter.effects == {(tenant_id, request_id)}
     assert repository.rescheduled == []
 
 
-async def test_start_relay_cancels_parent_when_erasure_commits_before_postcheck() -> None:
+async def test_start_worker_cancels_parent_when_erasure_commits_before_postcheck() -> None:
     tenant_id, request_id = uuid4(), uuid4()
     record = RequestStartRecord(request_id, tenant_id, 0, "erasure-race-lease")
     repository = FakeRequestRepository([record])
     starter = _FenceAfterStartStarter(repository)
 
-    result = await RequestStartRelay(repository, starter).relay_once()
+    result = await RequestStartWorker(repository, starter).run_once()
 
-    assert result == RequestStartRelayStats(claimed=1, lost_leases=1)
+    assert result == RequestStartWorkerStats(claimed=1, lost_leases=1)
     assert starter.cancelled == [(tenant_id, request_id)]
     assert starter.effects == set()
     assert repository.started == set()

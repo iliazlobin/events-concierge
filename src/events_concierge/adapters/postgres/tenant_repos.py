@@ -52,7 +52,7 @@ from ...ports.repositories import (
 
 
 class _OutboxRow(Protocol):
-    """Named fields returned by the relay's explicit ``RETURNING`` projection."""
+    """Named fields returned by the worker's explicit ``RETURNING`` projection."""
 
     id: int
     tenant_id: UUID
@@ -72,7 +72,7 @@ class _OutboxQueueSnapshotRow(Protocol):
 
 
 class _RequestStartRow(Protocol):
-    """Named fields returned by the request-start relay's lease projection."""
+    """Named fields returned by the request-start worker's lease projection."""
 
     request_id: UUID
     tenant_id: UUID
@@ -301,7 +301,7 @@ class PostgresRequestRepository:
     async def add_and_enqueue_start(self, request: EventRequest, dedup_key: str) -> None:
         """Commit the RLS-protected request and opaque start instruction in one transaction.
 
-        The cross-tenant relay row holds no raw text; it is safe for the worker to lease globally
+        The cross-tenant outbox row holds no raw text; it is safe for the worker to lease globally
         and then re-read the actual request under this tenant's RLS context.  A duplicate key must
         bind the exact same request identity or the transaction fails closed (ADR-003, AC-48).
         """
@@ -592,7 +592,7 @@ class PostgresRequestRepository:
             yield bool(permitted)
 
     async def mark_start_started(self, record: RequestStartRecord) -> bool:
-        """Acknowledge a start and request state together, only for the active relay lease."""
+        """Acknowledge a start and request state together, only for the active worker lease."""
         async with tenant_session_scope(record.tenant_id) as s:
             marked = (
                 await s.execute(
@@ -696,7 +696,7 @@ class PostgresRequestRepository:
 
     @staticmethod
     def _start_record_from_row(row: _RequestStartRow) -> RequestStartRecord:
-        """Normalize an explicit SQL projection into the port's opaque relay record."""
+        """Normalize an explicit SQL projection into the port's opaque worker record."""
         return RequestStartRecord(
             request_id=row.request_id,
             tenant_id=row.tenant_id,
@@ -857,7 +857,7 @@ class PostgresHandoffRepository:
     async def create_calendar_recovery(
         self, task: HandoffTask, outbox_payload: dict[str, object]
     ) -> None:
-        """Insert the recovery task and one relay record in the same transaction (ADR-007)."""
+        """Insert the recovery task and one worker record in the same transaction (ADR-007)."""
         async with tenant_session_scope(task.tenant_id) as s:
             if not await _insert_handoff_task_and_enqueue_expiry(s, task):
                 return
@@ -872,7 +872,7 @@ class PostgresHandoffRepository:
     async def create_withdrawal_handoff(
         self, task: HandoffTask, outbox_payload: dict[str, object]
     ) -> None:
-        """Persist one manual withdrawal task and one relay row without terminalizing the lifecycle.
+        """Persist one manual withdrawal task and one worker row without terminalizing the lifecycle.
 
         The task id is workflow-minted.  ``ON CONFLICT`` makes a crash between the task and caller
         acknowledgement converge to one task/outbox pair while the lifecycle remains ``withdrawing``
@@ -1103,7 +1103,7 @@ class PostgresHandoffRepository:
 
 class PostgresOutboxRepository:
     async def queue_snapshot(self) -> OutboxQueueSnapshot:
-        """Measure the global relay queue with the exact ADR-009 claim eligibility predicate.
+        """Measure the global worker queue with the exact ADR-009 claim eligibility predicate.
 
         The queue intentionally has no RLS policy: its rows are opaque cross-tenant control
         records, and this projection contains only aggregate counts/timestamps (FR-8.9).
@@ -1146,7 +1146,7 @@ class PostgresOutboxRepository:
         )
 
     async def claim_batch(self, limit: int, lease_seconds: int) -> list[OutboxRecord]:
-        """Atomically lease ready rows so concurrent relays cannot send the same row (ADR-009)."""
+        """Atomically lease ready rows so concurrent workers cannot send the same row (ADR-009)."""
         lease_token = uuid4().hex
         async with system_session_scope() as s:
             rows = (
@@ -1180,7 +1180,7 @@ class PostgresOutboxRepository:
         return [self._record_from_row(cast(_OutboxRow, row)) for row in rows]
 
     async def mark_delivered(self, record: OutboxRecord) -> bool:
-        """Acknowledge a relay result only while its durable lease is still owned."""
+        """Acknowledge a worker result only while its durable lease is still owned."""
         async with system_session_scope() as s:
             result = await s.execute(
                 text(
@@ -1203,7 +1203,7 @@ class PostgresOutboxRepository:
         error: str,
         consume_attempt: bool,
     ) -> bool:
-        """Retry or terminalize only a currently live relay lease (ADR-009, FR-8.9)."""
+        """Retry or terminalize only a currently live worker lease (ADR-009, FR-8.9)."""
         attempt_update = "attempt_count = attempt_count + 1," if consume_attempt else ""
         if retry_at is None:
             sql = f"""UPDATE outbox
@@ -1418,7 +1418,7 @@ class PostgresOutboxRepository:
 async def _renew_current_outbox_lease(
     session: AsyncSession, record: OutboxRecord, lease_seconds: int
 ) -> datetime | None:
-    """Reserve a full send window while holding the exact current relay lease (ADR-009, NFR-8)."""
+    """Reserve a full send window while holding the exact current worker lease (ADR-009, NFR-8)."""
     expires_at = (
         await session.execute(
             text(

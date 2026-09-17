@@ -25,7 +25,10 @@ from events_concierge.adapters.postgres.tenant_repos import (
     PostgresRequestRepository,
     PostgresTenantRepository,
 )
-from events_concierge.application.outbox import OutboxRelay, RelayStats
+from events_concierge.application.outbox import (
+    NotificationDeliveryStats,
+    NotificationDeliveryWorker,
+)
 from events_concierge.domain.account_erasure import (
     AccountErasureFailureStage,
     AccountErasureSnapshot,
@@ -193,7 +196,7 @@ async def _assert_fenced_write(
 
 
 class _BlockingNotifier:
-    """Model a cancellation-resistant provider request behind the real relay boundary."""
+    """Model a cancellation-resistant provider request behind the real worker boundary."""
 
     def __init__(self) -> None:
         self.entered = asyncio.Event()
@@ -1035,18 +1038,18 @@ async def test_erasure_tombstone_is_rls_scoped(db: None) -> None:
 async def test_erasure_begin_waits_for_inflight_notification_and_revokes_all_future_sends(
     db: None,
 ) -> None:
-    """The production relay orders a cancellation-resistant send strictly before erasure begin."""
+    """The production worker orders a cancellation-resistant send strictly before erasure begin."""
     tenant = _tenant("notification-drain")
     await PostgresTenantRepository().add(tenant)
     owner = create_async_engine(_owner_url(), pool_pre_ping=True)
     notifier = _BlockingNotifier()
-    relay_task: asyncio.Task[RelayStats] | None = None
+    delivery_task: asyncio.Task[NotificationDeliveryStats] | None = None
     begin_task: asyncio.Task[AccountErasureSnapshot] | None = None
     try:
         outbox_id = await _insert_notification_outbox(owner, tenant.tenant_id)
         outbox = _TenantScopedOutboxRepository(tenant.tenant_id, outbox_id)
         authority = PostgresTenantEffectAuthority()
-        relay = OutboxRelay(
+        delivery = NotificationDeliveryWorker(
             outbox,
             notifier,
             DevelopmentNotificationSecretProtector(),
@@ -1055,7 +1058,7 @@ async def test_erasure_begin_waits_for_inflight_notification_and_revokes_all_fut
             tenant_effect_timeout_seconds=5.0,
         )
 
-        relay_task = asyncio.create_task(relay.relay_once(limit=100))
+        delivery_task = asyncio.create_task(delivery.run_once(limit=100))
         await asyncio.wait_for(notifier.entered.wait(), timeout=2)
         assert notifier.calls == 1
         erasure = PostgresAccountErasureRepository()
@@ -1065,14 +1068,14 @@ async def test_erasure_begin_waits_for_inflight_notification_and_revokes_all_fut
 
         # Shutdown cancellation must not release the authority while the accepted provider call
         # is still running; account-erasure begin therefore remains blocked on the same lock.
-        relay_task.cancel()
+        delivery_task.cancel()
         await asyncio.sleep(0.05)
-        assert relay_task.done() is False
+        assert delivery_task.done() is False
         assert begin_task.done() is False
 
         notifier.release.set()
         with pytest.raises(asyncio.CancelledError):
-            await asyncio.wait_for(relay_task, timeout=2)
+            await asyncio.wait_for(delivery_task, timeout=2)
         assert notifier.completed is True
         started = await asyncio.wait_for(begin_task, timeout=2)
         assert started.status is AccountErasureStatus.ERASING
@@ -1093,9 +1096,9 @@ async def test_erasure_begin_waits_for_inflight_notification_and_revokes_all_fut
             ).one()
         assert tuple(remaining) == (0, 0)
 
-        # The actual relay has no queue authority after begin, and the shared effect authority
+        # The actual worker has no queue authority after begin, and the shared effect authority
         # independently refuses any attempted post-fence notification mutation.
-        assert await relay.relay_once(limit=100) == RelayStats()
+        assert await delivery.run_once(limit=100) == NotificationDeliveryStats()
         assert notifier.calls == 1
         attempted = False
 
@@ -1116,7 +1119,7 @@ async def test_erasure_begin_waits_for_inflight_notification_and_revokes_all_fut
     finally:
         # Never strand the provider or the erasure transaction if an assertion above fails.
         try:
-            await _release_and_drain_notification_race_tasks(notifier, relay_task, begin_task)
+            await _release_and_drain_notification_race_tasks(notifier, delivery_task, begin_task)
         finally:
             await owner.dispose()
 

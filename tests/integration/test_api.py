@@ -22,7 +22,7 @@ from events_concierge.adapters.postgres.tenant_repos import (
     PostgresLifecycleRepository,
 )
 from events_concierge.api.app import create_app
-from events_concierge.application.outbox import OutboxRelay
+from events_concierge.application.outbox import NotificationDeliveryWorker
 from events_concierge.config import Settings
 from events_concierge.domain.enums import (
     HandoffReason,
@@ -237,20 +237,20 @@ async def test_mark_done_uses_one_time_capability_and_signals_exact_retained_wor
                 detail="independent registration verification returned not_present",
             )
             review_notifier = MockNotifier()
-            review_relay = OutboxRelay(
+            review_delivery = NotificationDeliveryWorker(
                 app.state.container.outbox_repo,
                 review_notifier,
                 app.state.container.notification_secret_protector,
             )
             for _ in range(100):
-                relay_stats = await review_relay.relay_once(limit=100)
+                delivery_stats = await review_delivery.run_once(limit=100)
                 if any(
                     item.kind is NotificationKind.HANDOFF_REVIEW_REQUIRED
                     and item.tenant_id == tenant_id
                     for item in review_notifier.sent
                 ):
                     break
-                if relay_stats.claimed == 0:
+                if delivery_stats.claimed == 0:
                     break
             replay_after_consumption = await client.post(f"/v1/tasks/{token}/done")
             used_landing = await client.get(f"/v1/tasks/{token}/done")

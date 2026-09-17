@@ -1,6 +1,6 @@
 """Protection boundary for short-lived secrets carried by notification projections.
 
-The transactional outbox is a global relay queue rather than a tenant-RLS data surface.  A
+The transactional outbox is a global worker queue rather than a tenant-RLS data surface.  A
 user-facing bearer capability must therefore be authenticated-encrypted before it enters an
 outbox payload and revealed only by the notifier process immediately before delivery.
 """

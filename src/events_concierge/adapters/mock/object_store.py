@@ -20,7 +20,7 @@ from ...ports.object_store import ObjectStoreNotFoundError
 class MockFilesystemObjectStore:
     """A tenant-isolated local object store with atomic write-if-absent semantics.
 
-    A filesystem root is intentionally injected so separate API/relay/worker processes can resolve
+    A filesystem root is intentionally injected so separate API and worker processes can resolve
     the same claim.  Keys are strictly tenant-relative and cannot escape the configured root.
     """
 

@@ -5,13 +5,13 @@ from __future__ import annotations
 from datetime import UTC, datetime
 
 from events_concierge.application.notifier import NotifierWakeupMode, NotifierWorker
-from events_concierge.application.outbox import RelayStats
+from events_concierge.application.outbox import NotificationDeliveryStats
 from events_concierge.ports.outbox import OutboxWakeupResult, OutboxWakeupStatus
 from events_concierge.ports.repositories import OutboxQueueSnapshot
 
 
 class FakeOutbox:
-    """Queue-probe seam; relay behavior is isolated behind ``FakeRelay`` in these tests."""
+    """Queue-probe seam; worker behavior is isolated behind ``FakeDeliveryWorker`` in these tests."""
 
     def __init__(self, outcomes: list[OutboxQueueSnapshot | Exception], events: list[str]) -> None:
         self._outcomes = outcomes
@@ -25,16 +25,18 @@ class FakeOutbox:
         return outcome
 
 
-class FakeRelay:
-    """Bounded relay seam that records whether an idle cycle was incorrectly drained or waited."""
+class FakeDeliveryWorker:
+    """Bounded worker seam that records whether an idle cycle was incorrectly drained or waited."""
 
-    def __init__(self, outcomes: list[RelayStats | Exception], events: list[str]) -> None:
+    def __init__(
+        self, outcomes: list[NotificationDeliveryStats | Exception], events: list[str]
+    ) -> None:
         self._outcomes = outcomes
         self._events = events
         self.limits: list[int] = []
 
-    async def relay_once(self, *, limit: int = 50) -> RelayStats:
-        self._events.append("relay")
+    async def run_once(self, *, limit: int = 50) -> NotificationDeliveryStats:
+        self._events.append("worker")
         self.limits.append(limit)
         outcome = self._outcomes.pop(0)
         if isinstance(outcome, Exception):
@@ -82,7 +84,7 @@ def _snapshot(*, pending: int = 0, ready: int = 0, leased: int = 0) -> OutboxQue
 def _worker(
     *,
     outbox: FakeOutbox,
-    relay: FakeRelay,
+    delivery: FakeDeliveryWorker,
     wakeup: FakeWakeup,
     sleeps: list[float],
 ) -> NotifierWorker:
@@ -90,7 +92,7 @@ def _worker(
         sleeps.append(seconds)
 
     return NotifierWorker(
-        relay,
+        delivery,
         outbox,
         wakeup,
         batch_size=7,
@@ -105,14 +107,18 @@ async def test_listener_starts_before_first_drain_and_backlog_does_not_idle_wait
     events: list[str] = []
     wakeup = FakeWakeup([OutboxWakeupResult(OutboxWakeupStatus.LISTENING)], [], events)
     outbox = FakeOutbox([_snapshot(pending=7, ready=7)], events)
-    relay = FakeRelay([RelayStats(claimed=7, acknowledged=7, sent=7)], events)
+    delivery = FakeDeliveryWorker(
+        [NotificationDeliveryStats(claimed=7, acknowledged=7, sent=7)], events
+    )
     sleeps: list[float] = []
 
-    cycle = await _worker(outbox=outbox, relay=relay, wakeup=wakeup, sleeps=sleeps).run_cycle()
+    cycle = await _worker(
+        outbox=outbox, delivery=delivery, wakeup=wakeup, sleeps=sleeps
+    ).run_cycle()
 
-    assert events == ["start", "snapshot", "relay"]
-    assert relay.limits == [7]
-    assert cycle.relay.claimed == 7
+    assert events == ["start", "snapshot", "worker"]
+    assert delivery.limits == [7]
+    assert cycle.delivery.claimed == 7
     assert cycle.wakeup is None
     assert cycle.health.ready is True
     assert cycle.health.wakeup_mode is NotifierWakeupMode.LISTENING
@@ -128,15 +134,17 @@ async def test_empty_queue_waits_for_signal_without_claiming_provider_delivery()
         events,
     )
     outbox = FakeOutbox([_snapshot()], events)
-    relay = FakeRelay([RelayStats()], events)
+    delivery = FakeDeliveryWorker([NotificationDeliveryStats()], events)
     sleeps: list[float] = []
 
-    cycle = await _worker(outbox=outbox, relay=relay, wakeup=wakeup, sleeps=sleeps).run_cycle()
+    cycle = await _worker(
+        outbox=outbox, delivery=delivery, wakeup=wakeup, sleeps=sleeps
+    ).run_cycle()
 
-    assert events == ["start", "snapshot", "relay", "wait"]
+    assert events == ["start", "snapshot", "worker", "wait"]
     assert wakeup.wait_timeouts == [2.0]
     assert cycle.wakeup == OutboxWakeupResult(OutboxWakeupStatus.NOTIFIED)
-    assert cycle.relay == RelayStats()
+    assert cycle.delivery == NotificationDeliveryStats()
     assert cycle.health.wakeups == 1
     assert cycle.health.ready is True
     assert sleeps == []
@@ -148,12 +156,14 @@ async def test_listener_start_failure_stays_visible_while_backlog_drains() -> No
         [OutboxWakeupResult(OutboxWakeupStatus.POLL_FALLBACK, "connect refused")], [], events
     )
     outbox = FakeOutbox([_snapshot(pending=1, ready=1)], events)
-    relay = FakeRelay([RelayStats(claimed=1)], events)
+    delivery = FakeDeliveryWorker([NotificationDeliveryStats(claimed=1)], events)
     sleeps: list[float] = []
 
-    cycle = await _worker(outbox=outbox, relay=relay, wakeup=wakeup, sleeps=sleeps).run_cycle()
+    cycle = await _worker(
+        outbox=outbox, delivery=delivery, wakeup=wakeup, sleeps=sleeps
+    ).run_cycle()
 
-    assert events == ["start", "snapshot", "relay"]
+    assert events == ["start", "snapshot", "worker"]
     assert cycle.health.ready is True
     assert cycle.health.wakeup_mode is NotifierWakeupMode.POLL_FALLBACK
     assert cycle.health.last_error == "connect refused"
@@ -169,10 +179,12 @@ async def test_listener_poll_fallback_remains_ready_when_the_durable_queue_is_qu
         events,
     )
     outbox = FakeOutbox([_snapshot()], events)
-    relay = FakeRelay([RelayStats()], events)
+    delivery = FakeDeliveryWorker([NotificationDeliveryStats()], events)
     sleeps: list[float] = []
 
-    cycle = await _worker(outbox=outbox, relay=relay, wakeup=wakeup, sleeps=sleeps).run_cycle()
+    cycle = await _worker(
+        outbox=outbox, delivery=delivery, wakeup=wakeup, sleeps=sleeps
+    ).run_cycle()
 
     assert cycle.health.ready is True
     assert cycle.health.wakeup_mode is NotifierWakeupMode.POLL_FALLBACK
@@ -194,9 +206,11 @@ async def test_listener_recovers_from_poll_fallback_on_the_next_idle_cycle() -> 
         events,
     )
     outbox = FakeOutbox([_snapshot(), _snapshot()], events)
-    relay = FakeRelay([RelayStats(), RelayStats()], events)
+    delivery = FakeDeliveryWorker(
+        [NotificationDeliveryStats(), NotificationDeliveryStats()], events
+    )
     sleeps: list[float] = []
-    worker = _worker(outbox=outbox, relay=relay, wakeup=wakeup, sleeps=sleeps)
+    worker = _worker(outbox=outbox, delivery=delivery, wakeup=wakeup, sleeps=sleeps)
 
     first = await worker.run_cycle()
     second = await worker.run_cycle()
@@ -218,30 +232,34 @@ async def test_failed_queue_probe_marks_worker_unready_and_backs_off_without_cla
     events: list[str] = []
     wakeup = FakeWakeup([OutboxWakeupResult(OutboxWakeupStatus.LISTENING)], [], events)
     outbox = FakeOutbox([RuntimeError("database unavailable")], events)
-    relay = FakeRelay([RelayStats(claimed=1)], events)
+    delivery = FakeDeliveryWorker([NotificationDeliveryStats(claimed=1)], events)
     sleeps: list[float] = []
 
-    cycle = await _worker(outbox=outbox, relay=relay, wakeup=wakeup, sleeps=sleeps).run_cycle()
+    cycle = await _worker(
+        outbox=outbox, delivery=delivery, wakeup=wakeup, sleeps=sleeps
+    ).run_cycle()
 
     assert events == ["start", "snapshot"]
     assert cycle.queue_snapshot is None
-    assert cycle.relay == RelayStats()
+    assert cycle.delivery == NotificationDeliveryStats()
     assert cycle.wakeup is None
     assert cycle.health.ready is False
     assert cycle.health.last_error == "RuntimeError: database unavailable"
     assert sleeps == [2.0]
 
 
-async def test_relay_failure_keeps_a_successful_queue_probe_ready_and_retries_boundedly() -> None:
+async def test_worker_failure_keeps_a_successful_queue_probe_ready_and_retries_boundedly() -> None:
     events: list[str] = []
     wakeup = FakeWakeup([OutboxWakeupResult(OutboxWakeupStatus.LISTENING)], [], events)
     outbox = FakeOutbox([_snapshot(pending=1, ready=1)], events)
-    relay = FakeRelay([RuntimeError("temporary claim failure")], events)
+    delivery = FakeDeliveryWorker([RuntimeError("temporary claim failure")], events)
     sleeps: list[float] = []
 
-    cycle = await _worker(outbox=outbox, relay=relay, wakeup=wakeup, sleeps=sleeps).run_cycle()
+    cycle = await _worker(
+        outbox=outbox, delivery=delivery, wakeup=wakeup, sleeps=sleeps
+    ).run_cycle()
 
-    assert events == ["start", "snapshot", "relay"]
+    assert events == ["start", "snapshot", "worker"]
     assert cycle.queue_snapshot == _snapshot(pending=1, ready=1)
     assert cycle.health.ready is True
     assert cycle.health.last_error == "RuntimeError: temporary claim failure"
@@ -254,7 +272,7 @@ async def test_close_delegates_to_the_listener_port() -> None:
     wakeup = FakeWakeup([OutboxWakeupResult(OutboxWakeupStatus.LISTENING)], [], events)
     worker = _worker(
         outbox=FakeOutbox([_snapshot()], events),
-        relay=FakeRelay([RelayStats()], events),
+        delivery=FakeDeliveryWorker([NotificationDeliveryStats()], events),
         wakeup=wakeup,
         sleeps=[],
     )

@@ -114,7 +114,7 @@ Refined at **2026-07-02** after research wave 1 surfaced the risk profile — HA
 ## Surfaces
 
 - **Local workspace (authoritative for iteration):** `~/Claude/events-concierge/`. Preserve unrelated work when preparing commits.
-- **Published 2026 source:** https://github.com/iliazlobin/events-concierge — private repository, remote `origin`. The initial published source checkpoint is `11ed6adc996de069a9e4afb6fe1423c7162362be` on `codex/documentation-source-baseline`; it is documentation evidence, not a release. The public 2025 repository remains the separate `legacy-prototype` remote.
+- **Published 2026 source:** https://github.com/iliazlobin/events-concierge — private repository, remote `origin`, permanent integration branch `main`. Follow the [development workflow](README.md#development-workflow) for task branches, PRs and releases. The public 2025 repository remains the separate `legacy-prototype` remote.
 - **Living Notion documentation:** [Events Concierge](https://app.notion.com/p/391d865005a8814181c1c508a5d70f34), directly under Workspace.
   - [Development](https://app.notion.com/p/3d6d865005a88185928bc16ba4883b31)
   - [Deployment](https://app.notion.com/p/3d3d865005a881339dc1f760bf5277e9)
@@ -123,6 +123,8 @@ Refined at **2026-07-02** after research wave 1 surfaced the risk profile — HA
   - Do NOT touch the unrelated inline DB "System Design Interview Questions" (`62b6f08be0a74b81b3e48a203fa9e48d`).
 
 ## Conventions
+
+- **Worker terminology (agreed 2026-09-07):** name background processes by their job: request-start worker, notification worker, change-delivery worker, watch-projection worker, and ingestion-command worker. Use these names consistently in code, logs, tests, diagrams and living documentation. Preserve historical evidence and proper provider names.
 
 - **Code references (agreed 2026-09-07):** publish reviewed source changes to the approved GitHub repository before citing them in living Notion documentation. Use commit-pinned `blob/<full-commit-sha>/<path>` links for files and `tree/<full-commit-sha>/<path>` for directories; use verified line anchors when they clarify a specific mechanism. Display concise repository-relative labels rather than workstation paths. Verify each referenced path exists at that remote revision. Keep experimental branches and test dates distinct from deployed behavior; preserve dated historical evidence. If source is not yet published, label the reference pending instead of inventing a URL or linking an older revision as current. Preserve unrelated work and keep commits scoped; committing and pushing do not imply merging, deployment or migration.
 

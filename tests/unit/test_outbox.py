@@ -1,4 +1,4 @@
-"""Unit tests for the ADR-009 outbox relay's retry and visible-deduplication boundary."""
+"""Unit tests for the ADR-009 outbox worker's retry and visible-deduplication boundary."""
 
 from __future__ import annotations
 
@@ -13,7 +13,10 @@ from events_concierge.adapters.mock.notification_secrets import (
     DevelopmentNotificationSecretProtector,
 )
 from events_concierge.adapters.mock.notifier import MockNotifier
-from events_concierge.application.outbox import OutboxRelay, RelayStats
+from events_concierge.application.outbox import (
+    NotificationDeliveryStats,
+    NotificationDeliveryWorker,
+)
 from events_concierge.application.tenant_effects import settle_tenant_effect
 from events_concierge.ports.notifications import Notification, NotificationKind
 from events_concierge.ports.repositories import (
@@ -27,7 +30,7 @@ _SECRETS = DevelopmentNotificationSecretProtector()
 
 
 class FakeOutbox:
-    """In-memory repository seam exposing relay decisions without a database dependency."""
+    """In-memory repository seam exposing worker decisions without a database dependency."""
 
     def __init__(self, batches: list[list[OutboxRecord]]) -> None:
         self._batches = batches
@@ -116,7 +119,7 @@ class EchoingFailNotifier:
 
 
 class _CancellationResistantNotifier:
-    """Model an executor-backed provider call that remains active after relay cancellation."""
+    """Model an executor-backed provider call that remains active after worker cancellation."""
 
     def __init__(self) -> None:
         self.entered = asyncio.Event()
@@ -167,7 +170,7 @@ def _record(*, attempt_count: int, lease_token: str) -> OutboxRecord:
     )
 
 
-async def test_relay_retries_after_lost_notifier_ack_with_one_visible_notification() -> None:
+async def test_worker_retries_after_lost_notifier_ack_with_one_visible_notification() -> None:
     now = datetime(2026, 7, 16, 12, tzinfo=UTC)
     fake = FakeOutbox(
         [
@@ -176,10 +179,12 @@ async def test_relay_retries_after_lost_notifier_ack_with_one_visible_notificati
         ]
     )
     delivered = MockNotifier()
-    relay = OutboxRelay(fake, RaiseAfterVisibleSend(delivered), _SECRETS, now=lambda: now)
+    delivery = NotificationDeliveryWorker(
+        fake, RaiseAfterVisibleSend(delivered), _SECRETS, now=lambda: now
+    )
 
-    first = await relay.relay_once()
-    second = await relay.relay_once()
+    first = await delivery.run_once()
+    second = await delivery.run_once()
 
     assert first.retried == 1
     assert first.sent == 0
@@ -197,7 +202,7 @@ async def test_relay_retries_after_lost_notifier_ack_with_one_visible_notificati
     assert delivered.sent[0].dedup_key == "tenant:event:handoff_available:handoff:1"
 
 
-async def test_relay_renders_expired_handoff_once_across_redelivery() -> None:
+async def test_worker_renders_expired_handoff_once_across_redelivery() -> None:
     """An expired handoff has a stable lifecycle dedup key and deadline-specific copy (ADR-009)."""
     now = datetime(2026, 7, 16, 12, tzinfo=UTC)
     tenant_id = uuid4()
@@ -231,10 +236,12 @@ async def test_relay_renders_expired_handoff_once_across_redelivery() -> None:
         ]
     )
     notifier = MockNotifier()
-    relay = OutboxRelay(fake, RaiseAfterVisibleSend(notifier), _SECRETS, now=lambda: now)
+    delivery = NotificationDeliveryWorker(
+        fake, RaiseAfterVisibleSend(notifier), _SECRETS, now=lambda: now
+    )
 
-    first = await relay.relay_once()
-    second = await relay.relay_once()
+    first = await delivery.run_once()
+    second = await delivery.run_once()
 
     assert first.retried == 1
     assert second.sent == 1
@@ -247,7 +254,7 @@ async def test_relay_renders_expired_handoff_once_across_redelivery() -> None:
     assert notification.dedup_key == "tenant:event:handoff_expired:handoff-expired:1"
 
 
-async def test_relay_renders_handoff_reminder_once_across_redelivery() -> None:
+async def test_worker_renders_handoff_reminder_once_across_redelivery() -> None:
     """Reminder outbox retries retain their cadence-specific visible-deduplication key (B23)."""
     now = datetime(2026, 7, 17, 12, tzinfo=UTC)
     tenant_id = uuid4()
@@ -284,10 +291,12 @@ async def test_relay_renders_handoff_reminder_once_across_redelivery() -> None:
         ]
     )
     notifier = MockNotifier()
-    relay = OutboxRelay(fake, RaiseAfterVisibleSend(notifier), _SECRETS, now=lambda: now)
+    delivery = NotificationDeliveryWorker(
+        fake, RaiseAfterVisibleSend(notifier), _SECRETS, now=lambda: now
+    )
 
-    first = await relay.relay_once()
-    second = await relay.relay_once()
+    first = await delivery.run_once()
+    second = await delivery.run_once()
 
     assert first.retried == 1
     assert second.sent == 1
@@ -302,7 +311,9 @@ async def test_relay_renders_handoff_reminder_once_across_redelivery() -> None:
     assert notification.dedup_key == "tenant:event:handoff_reminder:tenant:event:t24h:1"
 
 
-async def test_relay_delivers_handoff_completion_review_instead_of_silently_acknowledging() -> None:
+async def test_worker_delivers_handoff_completion_review_instead_of_silently_acknowledging() -> (
+    None
+):
     """A consumed mark-done discrepancy remains visible through the durable notifier path."""
     tenant_id = uuid4()
     record = OutboxRecord(
@@ -322,7 +333,7 @@ async def test_relay_delivers_handoff_completion_review_instead_of_silently_ackn
     fake = FakeOutbox([[record]])
     notifier = MockNotifier()
 
-    stats = await OutboxRelay(fake, notifier, _SECRETS).relay_once()
+    stats = await NotificationDeliveryWorker(fake, notifier, _SECRETS).run_once()
 
     assert stats.sent == 1
     assert stats.acknowledged == 1
@@ -337,7 +348,7 @@ async def test_relay_delivers_handoff_completion_review_instead_of_silently_ackn
     )
 
 
-async def test_relay_renders_request_no_result_once_across_redelivery() -> None:
+async def test_worker_renders_request_no_result_once_across_redelivery() -> None:
     """A request-scoped empty-discovery terminal is a deduplicated NO_RESULT notification."""
     now = datetime(2026, 7, 17, 12, tzinfo=UTC)
     tenant_id = uuid4()
@@ -372,10 +383,12 @@ async def test_relay_renders_request_no_result_once_across_redelivery() -> None:
         ]
     )
     notifier = MockNotifier()
-    relay = OutboxRelay(fake, RaiseAfterVisibleSend(notifier), _SECRETS, now=lambda: now)
+    delivery = NotificationDeliveryWorker(
+        fake, RaiseAfterVisibleSend(notifier), _SECRETS, now=lambda: now
+    )
 
-    first = await relay.relay_once()
-    second = await relay.relay_once()
+    first = await delivery.run_once()
+    second = await delivery.run_once()
 
     assert first.retried == 1
     assert second.sent == 1
@@ -391,7 +404,7 @@ async def test_relay_renders_request_no_result_once_across_redelivery() -> None:
     )
 
 
-async def test_relay_acknowledges_suppressed_candidate_close_without_sending() -> None:
+async def test_worker_acknowledges_suppressed_candidate_close_without_sending() -> None:
     """A parent fall-through persists its audit event without a false user-facing cancellation."""
     record = OutboxRecord(
         outbox_id=31,
@@ -409,9 +422,9 @@ async def test_relay_acknowledges_suppressed_candidate_close_without_sending() -
     )
     fake = FakeOutbox([[record]])
     notifier = MockNotifier()
-    relay = OutboxRelay(fake, notifier, _SECRETS)
+    delivery = NotificationDeliveryWorker(fake, notifier, _SECRETS)
 
-    stats = await relay.relay_once()
+    stats = await delivery.run_once()
 
     assert stats.acknowledged == 1
     assert stats.sent == 0
@@ -420,42 +433,42 @@ async def test_relay_acknowledges_suppressed_candidate_close_without_sending() -
     assert notifier.sent == []
 
 
-async def test_relay_marks_fifth_delivery_failure_terminal() -> None:
+async def test_worker_marks_fifth_delivery_failure_terminal() -> None:
     now = datetime(2026, 7, 16, 12, tzinfo=UTC)
     fake = FakeOutbox([[_record(attempt_count=4, lease_token="final")]])
-    relay = OutboxRelay(fake, AlwaysFailNotifier(), _SECRETS, now=lambda: now)
+    delivery = NotificationDeliveryWorker(fake, AlwaysFailNotifier(), _SECRETS, now=lambda: now)
 
-    stats = await relay.relay_once()
+    stats = await delivery.run_once()
 
     assert stats.failed == 1
     assert fake.rescheduled == [(17, None, "notification materialization or delivery failed", True)]
     assert fake.released == ["tenant:event:handoff_available:handoff:1"]
 
 
-async def test_relay_busy_deferrals_do_not_consume_the_delivery_failure_budget() -> None:
+async def test_worker_busy_deferrals_do_not_consume_the_delivery_failure_budget() -> None:
     now = datetime(2026, 7, 16, 12, tzinfo=UTC)
     fake = FakeOutbox(
         [[_record(attempt_count=0, lease_token=f"busy-{index}")] for index in range(5)]
         + [[_record(attempt_count=0, lease_token="send")]]
     )
     notifier = AlwaysFailNotifier()
-    relay = OutboxRelay(fake, notifier, _SECRETS, now=lambda: now)
+    delivery = NotificationDeliveryWorker(fake, notifier, _SECRETS, now=lambda: now)
 
     fake.claim = NotificationClaim.BUSY
-    busy_stats = [await relay.relay_once() for _ in range(5)]
+    busy_stats = [await delivery.run_once() for _ in range(5)]
     fake.claim = NotificationClaim.ACQUIRED
-    failure_stats = await relay.relay_once()
+    failure_stats = await delivery.run_once()
 
     assert all(stats.retried == 1 and stats.failed == 0 for stats in busy_stats)
     assert notifier.calls == 1
     assert failure_stats.retried == 1
     assert failure_stats.failed == 0
     assert fake.rescheduled == [
-        (17, now + timedelta(seconds=2), "notification ledger is leased by another relay", False),
-        (17, now + timedelta(seconds=2), "notification ledger is leased by another relay", False),
-        (17, now + timedelta(seconds=2), "notification ledger is leased by another relay", False),
-        (17, now + timedelta(seconds=2), "notification ledger is leased by another relay", False),
-        (17, now + timedelta(seconds=2), "notification ledger is leased by another relay", False),
+        (17, now + timedelta(seconds=2), "notification ledger is leased by another worker", False),
+        (17, now + timedelta(seconds=2), "notification ledger is leased by another worker", False),
+        (17, now + timedelta(seconds=2), "notification ledger is leased by another worker", False),
+        (17, now + timedelta(seconds=2), "notification ledger is leased by another worker", False),
+        (17, now + timedelta(seconds=2), "notification ledger is leased by another worker", False),
         (
             17,
             now + timedelta(seconds=30),
@@ -465,14 +478,14 @@ async def test_relay_busy_deferrals_do_not_consume_the_delivery_failure_budget()
     ]
 
 
-async def test_relay_acknowledges_a_durable_delivered_ledger_without_sending() -> None:
+async def test_worker_acknowledges_a_durable_delivered_ledger_without_sending() -> None:
     """A ledger-delivered redelivery acknowledges only the outbox row (FR-6.6, ADR-009)."""
     fake = FakeOutbox([[_record(attempt_count=4, lease_token="already-delivered")]])
     fake.claim = NotificationClaim.DELIVERED
     notifier = MockNotifier()
-    relay = OutboxRelay(fake, notifier, _SECRETS)
+    delivery = NotificationDeliveryWorker(fake, notifier, _SECRETS)
 
-    stats = await relay.relay_once()
+    stats = await delivery.run_once()
 
     assert stats.claimed == 1
     assert stats.acknowledged == 1
@@ -486,14 +499,14 @@ async def test_relay_acknowledges_a_durable_delivered_ledger_without_sending() -
     assert fake.released == []
 
 
-async def test_relay_does_not_send_or_reschedule_after_losing_its_outbox_lease() -> None:
-    """A stale relay record cannot turn into a late user-visible effect (ADR-009, NFR-8)."""
+async def test_worker_does_not_send_or_reschedule_after_losing_its_outbox_lease() -> None:
+    """A stale worker record cannot turn into a late user-visible effect (ADR-009, NFR-8)."""
     fake = FakeOutbox([[_record(attempt_count=4, lease_token="stale")]])
     fake.claim = NotificationClaim.LEASE_LOST
     notifier = MockNotifier()
-    relay = OutboxRelay(fake, notifier, _SECRETS)
+    delivery = NotificationDeliveryWorker(fake, notifier, _SECRETS)
 
-    stats = await relay.relay_once()
+    stats = await delivery.run_once()
 
     assert stats.claimed == 1
     assert stats.acknowledged == 0
@@ -507,16 +520,16 @@ async def test_relay_does_not_send_or_reschedule_after_losing_its_outbox_lease()
     assert fake.released == []
 
 
-async def test_relay_rechecks_send_authority_after_a_successful_ledger_claim() -> None:
+async def test_worker_rechecks_send_authority_after_a_successful_ledger_claim() -> None:
     """A pause after a claim cannot reach the port after durable ownership has changed (ADR-009)."""
     fake = FakeOutbox([[_record(attempt_count=0, lease_token="paused")]])
     fake.send_authorized = False
     notifier = MockNotifier()
-    relay = OutboxRelay(fake, notifier, _SECRETS)
+    delivery = NotificationDeliveryWorker(fake, notifier, _SECRETS)
 
-    stats = await relay.relay_once()
+    stats = await delivery.run_once()
 
-    assert stats == RelayStats(claimed=1)
+    assert stats == NotificationDeliveryStats(claimed=1)
     assert notifier.sent == []
     assert fake.delivered == []
     assert fake.rescheduled == []
@@ -524,42 +537,42 @@ async def test_relay_rechecks_send_authority_after_a_successful_ledger_claim() -
     assert fake.released == []
 
 
-async def test_relay_cancellation_drains_provider_before_releasing_erasure_guard() -> None:
+async def test_worker_cancellation_drains_provider_before_releasing_erasure_guard() -> None:
     """Shutdown cannot let erasure pass a still-running executor-backed provider call."""
     fake = FakeOutbox([[_record(attempt_count=0, lease_token="shutdown")]])
     notifier = _CancellationResistantNotifier()
     authority = _RecordingTenantEffectAuthority()
-    relay = OutboxRelay(
+    delivery = NotificationDeliveryWorker(
         fake,
         notifier,
         _SECRETS,
         tenant_effect_authority=authority,
     )
 
-    relay_task = asyncio.create_task(relay.relay_once())
+    delivery_task = asyncio.create_task(delivery.run_once())
     await asyncio.wait_for(notifier.entered.wait(), timeout=1)
     assert authority.scope_active is True
 
-    relay_task.cancel()
+    delivery_task.cancel()
     await asyncio.sleep(0)
-    assert relay_task.done() is False
+    assert delivery_task.done() is False
     assert authority.scope_active is True
 
     notifier.release.set()
     with pytest.raises(asyncio.CancelledError):
-        await asyncio.wait_for(relay_task, timeout=1)
+        await asyncio.wait_for(delivery_task, timeout=1)
     assert notifier.completed is True
     assert authority.scope_active is False
 
 
-async def test_relay_lost_ledger_lease_defers_without_consuming_delivery_budget() -> None:
+async def test_worker_lost_ledger_lease_defers_without_consuming_delivery_budget() -> None:
     now = datetime(2026, 7, 16, 12, tzinfo=UTC)
     fake = FakeOutbox([[_record(attempt_count=4, lease_token="lost-ledger")]])
     fake.ledger_result = False
     notifier = MockNotifier()
-    relay = OutboxRelay(fake, notifier, _SECRETS, now=lambda: now)
+    delivery = NotificationDeliveryWorker(fake, notifier, _SECRETS, now=lambda: now)
 
-    stats = await relay.relay_once()
+    stats = await delivery.run_once()
 
     assert stats.retried == 1
     assert stats.failed == 0
@@ -570,7 +583,7 @@ async def test_relay_lost_ledger_lease_defers_without_consuming_delivery_budget(
     ]
 
 
-async def test_relay_reveals_protected_completion_link_only_for_visible_delivery() -> None:
+async def test_worker_reveals_protected_completion_link_only_for_visible_delivery() -> None:
     tenant_id = uuid4()
     completion_url = "http://localhost:8000/v1/tasks/local-capability/done"
     protected = await _SECRETS.protect_completion_url(tenant_id, completion_url)
@@ -591,7 +604,7 @@ async def test_relay_reveals_protected_completion_link_only_for_visible_delivery
     fake = FakeOutbox([[record]])
     notifier = MockNotifier()
 
-    stats = await OutboxRelay(fake, notifier, _SECRETS).relay_once()
+    stats = await NotificationDeliveryWorker(fake, notifier, _SECRETS).run_once()
 
     assert stats.sent == 1
     assert len(notifier.sent) == 1
@@ -600,7 +613,7 @@ async def test_relay_reveals_protected_completion_link_only_for_visible_delivery
     assert protected not in notifier.sent[0].body
 
 
-async def test_relay_quarantines_unknown_topic_instead_of_silent_ack() -> None:
+async def test_worker_quarantines_unknown_topic_instead_of_silent_ack() -> None:
     record = OutboxRecord(
         outbox_id=62,
         tenant_id=uuid4(),
@@ -611,7 +624,7 @@ async def test_relay_quarantines_unknown_topic_instead_of_silent_ack() -> None:
     )
     fake = FakeOutbox([[record]])
 
-    stats = await OutboxRelay(fake, MockNotifier(), _SECRETS).relay_once()
+    stats = await NotificationDeliveryWorker(fake, MockNotifier(), _SECRETS).run_once()
 
     assert stats.failed == 1
     assert fake.delivered == []
@@ -639,7 +652,7 @@ async def test_notification_suppressed_cannot_silence_an_unknown_topic() -> None
     )
     fake = FakeOutbox([[record]])
 
-    stats = await OutboxRelay(fake, MockNotifier(), _SECRETS).relay_once()
+    stats = await NotificationDeliveryWorker(fake, MockNotifier(), _SECRETS).run_once()
 
     assert stats.failed == 1
     assert fake.delivered == []
@@ -664,7 +677,7 @@ async def test_completion_capable_handoff_without_protected_url_is_quarantined()
     )
     fake = FakeOutbox([[record]])
 
-    stats = await OutboxRelay(fake, MockNotifier(), _SECRETS).relay_once()
+    stats = await NotificationDeliveryWorker(fake, MockNotifier(), _SECRETS).run_once()
 
     assert stats.failed == 1
     assert fake.delivered == []
@@ -675,7 +688,7 @@ async def test_completion_capable_handoff_without_protected_url_is_quarantined()
     )
 
 
-async def test_relay_acknowledges_only_explicit_audit_topic_without_send() -> None:
+async def test_worker_acknowledges_only_explicit_audit_topic_without_send() -> None:
     record = OutboxRecord(
         outbox_id=63,
         tenant_id=uuid4(),
@@ -687,7 +700,7 @@ async def test_relay_acknowledges_only_explicit_audit_topic_without_send() -> No
     fake = FakeOutbox([[record]])
     notifier = MockNotifier()
 
-    stats = await OutboxRelay(fake, notifier, _SECRETS).relay_once()
+    stats = await NotificationDeliveryWorker(fake, notifier, _SECRETS).run_once()
 
     assert stats.acknowledged == 1
     assert fake.delivered == [63]
@@ -708,7 +721,7 @@ async def test_plaintext_capability_is_quarantined_even_when_notification_is_sup
     )
     fake = FakeOutbox([[record]])
 
-    stats = await OutboxRelay(fake, MockNotifier(), _SECRETS).relay_once()
+    stats = await NotificationDeliveryWorker(fake, MockNotifier(), _SECRETS).run_once()
 
     assert stats.failed == 1
     assert fake.delivered == []
@@ -741,7 +754,7 @@ async def test_notifier_exception_text_cannot_enter_persisted_outbox_error() -> 
     )
     fake = FakeOutbox([[record]])
 
-    stats = await OutboxRelay(fake, EchoingFailNotifier(), _SECRETS).relay_once()
+    stats = await NotificationDeliveryWorker(fake, EchoingFailNotifier(), _SECRETS).run_once()
 
     assert stats.retried == 1
     assert fake.rescheduled[0][2] == "notification materialization or delivery failed"
