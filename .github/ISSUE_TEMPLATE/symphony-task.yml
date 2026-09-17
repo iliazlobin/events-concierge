@@ -1,0 +1,58 @@
+name: Symphony task
+description: Define one bounded coding task with a verifiable outcome.
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Describe one reviewable change within the current discovery milestone.
+        Follow the repository's AGENTS.md and WORKFLOW.md. Creating this issue does
+        not dispatch an agent or authorize publication, merge, deployment or access
+        changes. The operator applies routing labels after reviewing the scope.
+
+  - type: textarea
+    id: outcome
+    attributes:
+      label: Outcome
+      description: What problem should this solve, and what observable behavior should change?
+      placeholder: Describe the current behavior and the intended result.
+    validations:
+      required: true
+
+  - type: textarea
+    id: scope
+    attributes:
+      label: Scope
+      description: Name the affected components or paths, constraints, and explicit exclusions.
+      placeholder: |
+        In scope:
+        Out of scope:
+        Constraints:
+    validations:
+      required: true
+
+  - type: textarea
+    id: acceptance
+    attributes:
+      label: Acceptance criteria
+      description: Define observable success, relevant failure cases, and the checks that establish them.
+      placeholder: |
+        - [ ] Expected behavior:
+        - [ ] Failure or regression case:
+        - [ ] Validation command or evidence:
+    validations:
+      required: true
+
+  - type: input
+    id: dependencies
+    attributes:
+      label: Dependencies
+      description: 'Enter exactly Depends on: none or Depends on: #12, #34. Use at most 20 distinct issues from this repository; each must be closed before dispatch.'
+      placeholder: 'Depends on: none'
+    validations:
+      required: true
+
+  - type: textarea
+    id: references
+    attributes:
+      label: References
+      description: Link relevant repository architecture, code, related issues or reproducible evidence. Include no secrets or personal data.
