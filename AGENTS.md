@@ -4,8 +4,8 @@
 
 The current product milestone is private event discovery: search, shared filters,
 Events/Map/Calendar views, event details and provider registration links. Google sign-in
-is selected next; deployed identity acceptance is pending. Chat, automated RSVP,
-managed handoffs, notifications, calendar synchronization, purchases and programmatic
+is implemented; configuration and deployed identity acceptance remain pending. Chat, automated
+RSVP, managed handoffs, notifications, calendar synchronization, purchases and programmatic
 API keys are deferred unless the assigned task explicitly changes their scope.
 
 - [Architecture](ARCHITECTURE.md): code map, runtime boundaries and invariants.

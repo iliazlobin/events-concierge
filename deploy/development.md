@@ -19,54 +19,67 @@ two retained cloud disks remain with the legacy application owner.
 
 This profile uses real PostgreSQL, Redis, Temporal and GCS with explicit mock external product adapters. No real email, booking or Calendar actions. The older staging Terraform root remains separate.
 
-## Current verification
+## Current deployment
 
-A read-only check on September 13 confirmed all six application deployments and both PostgreSQL
-stores ready on the shared cluster, schema `0194`, no container restarts or current Kubernetes
-warnings, and all 92 enabled sources freshly successful within the previous 24 hours. The catalog
-reported 17,179 fresh events; four source warnings remained (one retry warning and three empty
-feeds). API readiness and the Next.js shell responded successfully. This was not a repeat of the
-full browser acceptance below. Identity is still local-demo, database/Redis/Temporal transport is
-the development profile, and the shared project has no alert policies. The only shared backup is
-the verified September 12 recovery set linked below; backup scheduling and independent project-loss
-protection remain open.
+The shared cluster `platform-dev` in `iz27-platform-dev/us-west1-a` runs private discovery in
+`events-concierge-dev`. Read-only inspection on September 17 found all six application Deployments,
+both PostgreSQL StatefulSets, Redis and the four Temporal server Deployments ready. Services are
+ClusterIP-only with no Ingress. The ingestion cadence CronJob is enabled and schedules every five
+minutes; it checks due sources rather than refreshing every source on every tick.
 
-On September 11, the shared cluster passed the actual Next.js/API discovery walkthrough, private
-admin reads, keyboard/mobile navigation, loading/error recovery, profile and saved-filter changes,
-logout, two-tenant isolation and completed worker erasure. Additional live checks covered multiple
-sources/cities/scopes, additive date ranges, all price comparisons, availability/sorting and
-Week/Month/six-month Calendar navigation. Avatar bytes matched across the browser,
-two API replicas and private GCS; explicit deletion and account erasure left no tenant media.
-The backend runs `d5cac841`; frontend `f3fc7c9` fixes cleared-city URL reloads. Backend runtime code
-is unchanged between those revisions; all six application deployments now have one ready replica.
+The API health/readiness checks pass with schema `0194` and identity `not_configured`. Its
+reported revision is `d5cac84111eeea2fdf8329dcedc5d937e2a20390`. The running images are:
 
-All eight checks passed `f3fc7c9`: 2,238 unit tests plus 11 subtests, 409 integration tests,
-40 quality scenarios, 253 browser tests, 584 frontend tests, 10 restore checks, 37 container canary
-checks and deployment validation. [Application CI](https://github.com/iliazlobin/events-concierge/actions/runs/34662322573)
-· [Deployment checks](https://github.com/iliazlobin/events-concierge/actions/runs/34662323874).
-The shared crawler acceptance captured at September 12, 01:40 UTC verified all 92 enabled sources
-freshly succeeded, with no active runs, commands or leases. Distinct future events inside the same
-recorded collection windows were **16,830 shared / 16,590 local**, with no per-source deficit.
-The moving 90-day comparison was 16,830 / 16,591; one Oakland boundary event falls outside its
-recorded shared window. Raw live totals were 16,838 / 16,929 because local history includes 29
-ongoing and 309 events beyond the moving 90-day cutoff, versus 8 and 0 shared. Counts cover the
-same 92 reviewed sources, exclude fixtures and are
-separate from full event-identity equivalence. Two actual scheduler batches completed 50 and 41
-sources after the initial Mountain View refresh. Daily source cadence remains enabled.
+| Component | Artifact Registry image digest |
+| --- | --- |
+| Backend | `sha256:d6b523158cb08d910e24b2242ebfe366a972f0aaf52246b36e2e36b10bb66899` |
+| Frontend | `sha256:c80be4f2664c80f08e1dfae0607131be250a36a2489816fa394cd222c7a741bf` |
 
-The fresh [shared recovery set](https://console.cloud.google.com/storage/browser/_details/iz27-platform-dev-ec-backups/20260912T014120Z-08707790/VERIFIED.json?project=iz27-platform-dev&authuser=4)
-restored all three databases in isolation, checked schema 0194, grants/aggregates and tenant
-isolation, and verified all 16 payload hashes. The original 19 tenants and 18 requests remain;
-all browser test accounts were erased. [Runtime acceptance evidence](https://console.cloud.google.com/storage/browser/_details/iz27-platform-dev-ec-backups/20260912T014120Z-08707790/acceptance.json?project=iz27-platform-dev&authuser=4)
-records crawler provenance and deployed browser checks beside that verified backup.
-[Retirement readback](https://console.cloud.google.com/storage/browser/_details/iz27-platform-dev-ec-backups/20260912T014120Z-08707790/retirement.json?project=iz27-platform-dev&authuser=4)
-verified removal of the old Helm releases, cluster/node pool and five dedicated network resources,
-with clean repeat plans. The legacy app state retains 98 resources; network state retains its two
-FAST preconditions. Both old 20 GiB PostgreSQL disks remain intact and unattached. The unrelated
-default VPC, 42 subnets and four firewall rules are unchanged. Do not destroy retained foundation,
-state, backups or identities as part of routine cleanup.
-These private development checks do not close real identity/CSRF, transport, monitoring,
-per-process permissions or non-mock provider-cleanup gates.
+The running profile is still `development` / `discovery`: `EC_MOCK_CLOUD=true`,
+`EC_OIDC_BFF_ENABLED=false`, `EC_DATABASE_CONNECTION_MODE=development_plaintext` and
+`EC_TEMPORAL_TLS_ENABLED=false`. PostgreSQL, Redis, Temporal, catalog collection and GCS are real;
+consumer identity and deferred product integrations use the development behavior. The deployed
+images predate the current `main`. Healthy pods do not establish acceptance of the new candidate.
+
+Google sign-in, startup safeguards, datastore TLS and self-hosted Temporal mTLS preparation are
+merged into `main`. The source migration head is `0195`; the live database remains at `0194`.
+Merging or passing CI does not publish images, migrate data or update the cluster. Releases remain
+manual and require one reviewed commit with immutable backend/frontend image digests.
+
+### Remaining release work
+
+1. Implement an authenticated private application Helm profile for the existing in-cluster stores.
+   The development profile requires mock integrations/plaintext PostgreSQL and disables OIDC;
+   the managed profile requires Cloud SQL Proxy. Neither is the desired private authenticated
+   composition. Add per-process Secret/IAM and certificate mounts rather than bypassing those guards.
+   The account-erasure worker currently uses full application/BFF preflight; preserve its session
+   revocation and cleanup responsibilities when defining its minimum credentials.
+2. Obtain the remaining identity approvals and complete configuration: a separate Events Concierge Google OAuth client,
+   exact `https://localhost:14443/auth/callback`, verified subject-to-tenant provisioning and trusted
+   private browser HTTPS. A private Google pilot requires an explicit owner decision to keep
+   self-service account deletion unavailable until independent reauthentication exists. Do not
+   reuse Symphony's OAuth client. [Identity contract](../docs/production-operations.md#built-in-oidc-bff-activation).
+3. Rehearse the combined candidate, migration and retained-data transport rollback. Confirm node
+   capacity for steady workloads, cadence, migration hooks and rollout overlap. Deliver versioned
+   certificates and restricted credentials through the approved secret mechanism.
+4. Obtain deployment authorization for the concrete candidate and configuration. Suspend cadence,
+   drain writers, take and verify a fresh shared backup, then coordinate datastore/client transport,
+   migration and application rollout. Preserve PVCs and restored Temporal databases.
+   [Transport cutover](#encrypted-dependency-preparation) and [recovery](#manual-recovery) own the commands.
+5. Verify actual TLS/mTLS handshakes and rejection cases, serving revision/digests, Google
+   login/logout, CSRF, tenant isolation, discovery/crawler behavior and worker recovery on GKE.
+   Close application monitoring, alert routing, scheduled backups and restore checks before
+   claiming production acceptance. Independent project-loss recovery remains deferred.
+
+The existing [verified shared recovery set](https://console.cloud.google.com/storage/browser/_details/iz27-platform-dev-ec-backups/20260912T014120Z-08707790/VERIFIED.json?project=iz27-platform-dev&authuser=4)
+and [deployed discovery acceptance evidence](https://console.cloud.google.com/storage/browser/_details/iz27-platform-dev-ec-backups/20260912T014120Z-08707790/acceptance.json?project=iz27-platform-dev&authuser=4)
+cover the earlier development release, not the pending authenticated candidate. The September 17
+metadata check found no newer completed/verified shared backup set and no Cloud Monitoring alert
+policies in `iz27-platform-dev`. Backups remain manual. Redis persistence survived its retained-disk recovery drill but is outside the database/
+payload backup; avatar media is intentionally excluded so erasure can delete it.
+The [legacy retirement readback](https://console.cloud.google.com/storage/browser/_details/iz27-platform-dev-ec-backups/20260912T014120Z-08707790/retirement.json?project=iz27-platform-dev&authuser=4)
+records the old cluster/network removal. Retained legacy foundation, state, identities, backups
+and PostgreSQL disks remain recovery dependencies; routine release work must preserve them.
 
 ## Shared application landing
 
@@ -89,8 +102,8 @@ release-value generation, readiness, store-recovery drills and backups. Use `.ve
 
 Layer `values-shared-development.yaml` after `values-development.yaml` for the application, and
 the data chart's shared overlay after its defaults. These select the shared project/bucket,
-discovery-only UI/API and platform-owned storage. The shared overlay omits transactional, request
-starter, notifier and change-delivery workers so restored deferred work cannot resume. Catalog and
+discovery-only UI/API and platform-owned storage. The shared overlay omits transactional,
+request-start, notification and change-delivery workers so restored deferred work cannot resume. Catalog and
 account-erasure workers remain active; shared readiness requires all six intended deployments and
 rejects any deferred Deployment. Image digests belong to the selected committed
 candidate in `us-west1-docker.pkg.dev/iz27-platform-dev/ec-dev/`. They must pass combined CI before
@@ -185,8 +198,8 @@ rollout too: even a Service forward stays attached to its initially selected pod
 `kubectl port-forward` process does not prove that its IAP connection or selected pod remains available.
 
 The private HTTPS proxy prepares `https://localhost:14443` for the planned Google sign-in release,
-with the intended exact callback `https://localhost:14443/auth/callback`. The startup-validation
-candidate supports that exact browser origin with `EC_PUBLIC_ORIGIN_PROFILE=private_loopback_https`;
+with the intended exact callback `https://localhost:14443/auth/callback`. The application startup checks
+support that exact browser origin with `EC_PUBLIC_ORIGIN_PROFILE=private_loopback_https`;
 it still requires real identity, encrypted dependency connections and restricted runtime credentials
 before a non-mock process starts. Google provider code is integrated, while its client secret,
 verified subject-to-account mapping and encrypted dependency rollout remain pending.
