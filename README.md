@@ -63,6 +63,40 @@ Install the locked application and development dependencies:
 make install
 ```
 
+## Development workflow
+
+`main` is the permanent integration branch. GitHub Issues hold task intent; pull requests
+hold changes, review and check evidence. Each task uses a short-lived `codex/<issue>-<description>`
+branch (omit the issue number when none exists) in an isolated worktree or Symphony clone.
+Start from the freshly fetched `origin/main`; preserve other worktrees and uncommitted work.
+
+1. Define the outcome, scope and acceptance checks. Read [AGENTS.md](AGENTS.md) and the
+   affected component before editing; Symphony assignments also follow [WORKFLOW.md](WORKFLOW.md).
+2. Implement and run the relevant checks below. Open a ready PR targeting `main`, unless
+   a draft is explicitly requested. Independent review and CI must cover the current head;
+   resolve conflicts and invalidate stale review evidence after changes.
+3. Squash-merge when authorized and all applicable checks pass. Then verify the changes
+   reached `main` before retiring the task branch. Keep branches needed by another worktree,
+   an open dependent PR or unpublished work. A closed PR alone is not proof of integration.
+4. Release only a tested, approved commit and immutable image digests. Deployment, database
+   migration, infrastructure and access changes require their separate authorization.
+   [Release acceptance](docs/production-operations.md#first-release-acceptance) and
+   [deployment and recovery](deploy/development.md) own those operations; CI does not deploy.
+
+Use stacked PRs only for an explicit dependency. Name the parent and final `main` target;
+after the parent merges, retarget the child to `main`, reconcile its commits (especially
+after a squash), and rerun checks/review. Do not leave finished work on a temporary parent.
+Existing admin/performance worktrees keep their current work until it is reviewed through
+scoped PRs into `main`; switching the remote default must not reset their local state.
+
+The Symphony host targets `main` with an explicit reviewed `base_sha`. It must fetch that
+commit into its configured source repository and repin both scheduler and publisher together
+when the baseline moves; it does not automatically rebase or advance the pin. Preserve task
+holds, consumed budgets and evidence during the change. Follow the
+[host profile procedure](https://github.com/iliazlobin/symphony/blob/main/profiles/events-concierge/README.md#verification-and-recovery).
+Workers cannot publish or merge. Automatic merge remains disabled until the host's branch
+protection, checks and explicit low-risk allowlist requirements can be satisfied.
+
 ## Local development
 
 Start dependency services, apply migrations, and run the tests:

@@ -72,8 +72,8 @@ Each task must contain exactly one dependency declaration: `Depends on: none` or
 `Depends on: #12, #34` (at most 20 distinct issues in this repository). The host
 holds the task until every named dependency is a visible closed issue.
 
-The host profile must validate the approved repository and base revision, prepare an
-isolated task branch, and launch the builder through Codex app-server using `gpt-6-astra`
+The host profile targets `main` and must validate its approved, explicitly pinned base
+revision before preparing an isolated task branch, and launch the builder through Codex app-server using `gpt-6-astra`
 with `medium` reasoning. These are runner requirements, not capabilities implemented
 by this Markdown. The initial control mode is paused; this file does not authorize its
 own activation or label additional issues for dispatch.
