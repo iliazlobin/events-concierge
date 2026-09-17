@@ -73,6 +73,7 @@ def _execute(args: argparse.Namespace) -> tuple[dict[str, Any], bool]:
                 session_cookie=os.environ.get("EC_CANARY_SESSION_COOKIE"),
                 csrf_token=os.environ.get("EC_CANARY_CSRF_TOKEN"),
                 timeout_seconds=args.timeout_seconds,
+                profile=args.profile,
             )
         )
         return canary_report.to_dict(), canary_report.passed
@@ -117,6 +118,12 @@ def _parser() -> argparse.ArgumentParser:
     canary.add_argument("--expected-release-revision")
     canary.add_argument("--expected-image-digest")
     canary.add_argument("--timeout-seconds", type=float, default=5.0)
+    canary.add_argument(
+        "--profile",
+        choices=("production", "private_google_pilot"),
+        default="production",
+        help="private_google_pilot checks only the exact private Google sign-in contract",
+    )
     canary.add_argument("--allow-http", action="store_true", help="local rehearsal only")
     canary.add_argument("--allow-local-mode", action="store_true", help="local rehearsal only")
     canary.add_argument(

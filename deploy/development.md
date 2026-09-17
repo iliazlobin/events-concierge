@@ -188,11 +188,12 @@ The private HTTPS proxy prepares `https://localhost:14443` for the planned Googl
 with the intended exact callback `https://localhost:14443/auth/callback`. The startup-validation
 candidate supports that exact browser origin with `EC_PUBLIC_ORIGIN_PROFILE=private_loopback_https`;
 it still requires real identity, encrypted dependency connections and restricted runtime credentials
-before a non-mock process starts. Google provider integration, its client secret and subject-to-account
-mapping remain pending. The current shared development overlay still uses local-demo identity.
+before a non-mock process starts. Google provider code is integrated, while its client secret,
+verified subject-to-account mapping and encrypted dependency rollout remain pending.
+The current shared development overlay still uses local-demo identity.
 [Identity activation](../docs/production-operations.md#built-in-oidc-bff-activation) owns the existing
-OIDC contract and remaining production prerequisites; Google-specific activation instructions must
-be completed with its implementation. These proxy instructions alone do not authorize activation.
+OIDC contract, Google configuration and remaining production prerequisites. These proxy instructions
+alone do not authorize activation.
 
 Keep the frontend forward above running. Supply a certificate valid for `localhost`, trusted by
 the operator's browser, and its protected private key using `EC_LOCAL_TLS_CERT` and

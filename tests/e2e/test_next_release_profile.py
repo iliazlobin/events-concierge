@@ -174,7 +174,7 @@ def test_config_failure_can_retry_without_exposing_onboarding_or_chat(release_pa
     harness.allowed_console_error_fragments.append("503")
     page = harness.page
     page.goto(f"{BASE}/?view=chat")
-    expect(page.get_by_role("main").get_by_role("alert")).to_contain_text("Config unavailable")
+    expect(page.get_by_role("main").get_by_role("alert")).to_contain_text("Sign-in is temporarily unavailable. Please try again.")
     expect(page.get_by_role("button", name="Continue", exact=True)).to_have_count(0)
     expect(page.get_by_role("navigation")).to_have_count(0)
     assert api.calls == [("GET", "/v1/ui-config")]

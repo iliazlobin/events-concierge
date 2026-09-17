@@ -14,6 +14,7 @@ from collections import OrderedDict
 from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass
 from time import monotonic
+from typing import Literal
 from unicodedata import category
 from urllib.parse import urlsplit
 from uuid import UUID
@@ -21,6 +22,12 @@ from uuid import UUID
 from jwt import PyJWK, PyJWKClient, PyJWTError, decode, get_unverified_header
 from jwt.exceptions import PyJWKClientError
 
+from ...domain.oidc import (
+    GOOGLE_ISSUER,
+    GOOGLE_ISSUER_ALIASES,
+    GOOGLE_JWKS_URL,
+    google_subject_binding,
+)
 from ...ports.auth import AuthenticationFailedError
 
 _AUTHORIZATION_HEADER = "authorization"
@@ -148,7 +155,9 @@ class OidcJwtAuthContext:
         issuer: str,
         audience: str,
         jwks_url: str,
-        tenant_claim: str,
+        tenant_claim: str | None = None,
+        provider: Literal["custom_claim", "google"] = "custom_claim",
+        google_tenant_lookup: Callable[[str], Awaitable[UUID | None]] | None = None,
         algorithms: tuple[str, ...] = ("RS256",),
         leeway_seconds: int = 30,
         jwks_timeout_seconds: float = 5.0,
@@ -161,8 +170,25 @@ class OidcJwtAuthContext:
         self._jwks_url = _validated_https_url(jwks_url, label="JWKS URL", allow_query=True)
         if not audience.strip() or len(audience) > _MAX_AUDIENCE_LENGTH:
             raise ValueError("OIDC audience must be a non-empty bounded value")
-        if not tenant_claim.strip() or len(tenant_claim) > _MAX_CLAIM_NAME_LENGTH:
+        if provider not in {"custom_claim", "google"}:
+            raise ValueError("unknown OIDC provider")
+        if provider == "google":
+            if (
+                issuer != GOOGLE_ISSUER
+                or jwks_url != GOOGLE_JWKS_URL
+                or algorithms != ("RS256",)
+                or tenant_claim is not None
+                or google_tenant_lookup is None
+            ):
+                raise ValueError("Google identity requires fixed provider configuration and lookup")
+        elif (
+            not tenant_claim
+            or not tenant_claim.strip()
+            or len(tenant_claim) > _MAX_CLAIM_NAME_LENGTH
+        ):
             raise ValueError("OIDC tenant claim must be a non-empty bounded value")
+        elif google_tenant_lookup is not None:
+            raise ValueError("custom-claim OIDC cannot use Google tenant lookup")
         if (
             not algorithms
             or len(set(algorithms)) != len(algorithms)
@@ -175,6 +201,8 @@ class OidcJwtAuthContext:
             raise ValueError("OIDC JWKS timeout must be between 0 and 30 seconds")
 
         self._audience = audience
+        self._provider = provider
+        self._google_tenant_lookup = google_tenant_lookup
         self._tenant_claim = tenant_claim
         self._algorithms = algorithms
         self._leeway_seconds = leeway_seconds
@@ -223,8 +251,9 @@ class OidcJwtAuthContext:
                 "aud",
                 "exp",
                 "iat",
-                self._tenant_claim,
             ]
+            if self._tenant_claim is not None:
+                required_claims.append(self._tenant_claim)
             if expected_nonce is not None:
                 required_claims.append("nonce")
             if require_auth_time:
@@ -234,27 +263,14 @@ class OidcJwtAuthContext:
                 signing_key,
                 algorithms=list(self._algorithms),
                 audience=self._audience,
-                issuer=self._issuer,
+                issuer=GOOGLE_ISSUER_ALIASES if self._provider == "google" else self._issuer,
                 leeway=self._leeway_seconds,
                 options={
                     "require": required_claims,
                 },
             )
             _validate_authorized_party(claims, self._audience)
-            raw_subject = claims["sub"]
-            if (
-                not isinstance(raw_subject, str)
-                or not raw_subject
-                or len(raw_subject.encode("utf-8")) > _MAX_SUBJECT_BYTES
-                or any(category(character) in {"Cc", "Cf"} for character in raw_subject)
-            ):
-                raise ValueError("subject claim must be a bounded printable string")
-            raw_tenant_id = claims[self._tenant_claim]
-            if not isinstance(raw_tenant_id, str):
-                raise ValueError("tenant claim must be a string")
-            tenant_id = UUID(raw_tenant_id)
-            if raw_tenant_id != str(tenant_id):
-                raise ValueError("tenant claim must be canonical")
+            tenant_id, subject = _identity_binding(claims, tenant_claim=self._tenant_claim)
             if expected_nonce is not None:
                 raw_nonce = claims["nonce"]
                 if (
@@ -277,11 +293,43 @@ class OidcJwtAuthContext:
                 authenticated_at = raw_authenticated_at
         except (KeyError, PyJWTError, TypeError, ValueError) as error:
             raise AuthenticationFailedError("valid tenant authentication is required") from error
+        # All token, nonce and claim checks precede the only cross-tenant lookup. Its UUID is
+        # internal authorization data; an unknown or erased identity never creates an account.
+        if self._provider == "google":
+            assert self._google_tenant_lookup is not None
+            resolved = await self._google_tenant_lookup(subject)
+            if not isinstance(resolved, UUID):
+                raise AuthenticationFailedError("valid tenant authentication is required")
+            tenant_id = resolved
+        assert tenant_id is not None
         return OidcIdentity(
             tenant_id=tenant_id,
-            subject=raw_subject,
+            subject=subject,
             authenticated_at=authenticated_at,
         )
+
+
+def _identity_binding(
+    claims: Mapping[str, object], *, tenant_claim: str | None
+) -> tuple[UUID | None, str]:
+    """Extract bounded identity only from verified claims; absent private claim selects Google."""
+    subject = claims["sub"]
+    if (
+        not isinstance(subject, str)
+        or not subject
+        or len(subject.encode("utf-8")) > _MAX_SUBJECT_BYTES
+        or any(category(character) in {"Cc", "Cf"} for character in subject)
+    ):
+        raise ValueError("subject claim must be a bounded printable string")
+    if tenant_claim is None:
+        return None, google_subject_binding(subject)
+    raw_tenant_id = claims[tenant_claim]
+    if not isinstance(raw_tenant_id, str):
+        raise ValueError("tenant claim must be a string")
+    tenant_id = UUID(raw_tenant_id)
+    if raw_tenant_id != str(tenant_id):
+        raise ValueError("tenant claim must be canonical")
+    return tenant_id, subject
 
 
 def _bearer_token(headers: Mapping[str, str]) -> str:

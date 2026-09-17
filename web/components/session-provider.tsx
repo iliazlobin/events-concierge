@@ -12,6 +12,7 @@ import {
 } from "@/lib/api";
 import { clearCatalogCache } from "@/lib/catalog-cache";
 import { clearEntityGraphCache } from "@/lib/entity-graph-cache";
+import { signInFailurePath } from "@/lib/sign-in";
 import type { Me, UiConfig } from "@/lib/types";
 
 type SessionStatus = "booting" | "ready" | "unauthenticated" | "failed";
@@ -68,7 +69,7 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
           setStatus("ready");
         } catch (loadError) {
           if (cancelled) return;
-          if (loadError instanceof ApiError && (loadError.status === 401 || loadError.status === 404)) {
+          if (loadError instanceof ApiError && (loadError.status === 401 || loadError.status === 403 || loadError.status === 404)) {
             // No resolvable account. Settings has no onboarding of its own; the catalog shell owns
             // that flow, so hand the browser back rather than rendering an orphaned form here.
             if (nextConfig.local_demo) {
@@ -80,6 +81,7 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
               clearEntityGraphCache();
             }
             setStatus("unauthenticated");
+            if (!nextConfig.local_demo) window.location.replace(signInFailurePath(loadError.status));
             return;
           }
           setError(loadError instanceof Error ? loadError.message : "Settings are unavailable.");
@@ -98,8 +100,8 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
   }, [generation]);
 
   useEffect(() => {
-    if (status === "unauthenticated") window.location.assign("/");
-  }, [status]);
+    if (status === "unauthenticated" && config?.local_demo) window.location.assign("/");
+  }, [status, config]);
 
   return (
     <SessionContext.Provider

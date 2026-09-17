@@ -1,0 +1,75 @@
+.page {
+  display: grid;
+  place-items: center;
+  min-height: 100svh;
+  padding: 32px 20px;
+}
+
+.card {
+  width: min(100%, 460px);
+  padding: 40px;
+  border: 1px solid var(--line-strong);
+  border-radius: 24px;
+  background: var(--panel);
+  text-align: center;
+}
+
+.card > span { margin: 0 auto 24px; }
+.brand {
+  color: var(--accent);
+  font-size: 11px;
+  font-weight: 750;
+  letter-spacing: .14em;
+  text-transform: uppercase;
+  margin: 0 0 20px;
+}
+
+.card h1 {
+  font-size: clamp(28px, 6vw, 38px);
+  font-weight: 550;
+  letter-spacing: -.045em;
+  line-height: 1.12;
+  margin: 0;
+  overflow-wrap: break-word;
+}
+
+.description, .notice {
+  color: var(--muted);
+  font-size: 15px;
+  line-height: 1.6;
+  margin: 20px 0 0;
+}
+.actions { margin-top: 28px; }
+.loading {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  font-size: 14px;
+  color: var(--muted);
+}
+.loading svg { width: 18px; height: 18px; }
+.notice { margin: 0 0 20px; }
+.continue {
+  width: 100%;
+  min-height: 48px;
+  background: var(--ink);
+  color: var(--black);
+  border: 1px solid var(--line-strong);
+  font-size: 14px;
+  font-weight: 650;
+  text-decoration: none;
+  justify-content: center;
+}
+.continue:hover { background: #fff; }
+.footnote {
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.6;
+  margin: 24px 0 0;
+}
+
+@media (max-width: 480px) {
+  .page { padding: 20px 16px; }
+  .card { padding: 32px 24px; }
+}

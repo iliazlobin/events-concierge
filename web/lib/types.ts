@@ -57,6 +57,8 @@ export interface UiConfig {
   product_name: string;
   local_demo: boolean;
   auth_mode: "local_demo" | "deployment_session";
+  /** Absent on older deployments; provider-specific UI must fail back to a generic label. */
+  auth_provider?: "google" | "custom_claim" | null;
   auth_start_url: string | null;
   reauth_url: string | null;
   logout_url: string | null;

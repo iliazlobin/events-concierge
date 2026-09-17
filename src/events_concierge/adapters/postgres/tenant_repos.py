@@ -17,6 +17,8 @@ from typing import Protocol, cast
 from uuid import UUID, uuid4
 
 from sqlalchemy import text
+from sqlalchemy.exc import DBAPIError
+from sqlalchemy.exc import TimeoutError as SqlAlchemyTimeoutError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ...domain.credentials import Tenant
@@ -40,6 +42,7 @@ from ...domain.lifecycle import (
 )
 from ...domain.request import EventRequest, RequestConstraints, TimeWindow
 from ...infra.db import system_session_scope, tenant_session_scope
+from ...ports.auth import BrowserSessionUnavailableError
 from ...ports.repositories import (
     NotificationClaim,
     OutboxQueueSnapshot,
@@ -199,6 +202,42 @@ async def _attach_handoff_completion_token(session: AsyncSession, task: HandoffT
 
 class PostgresTenantRepository:
     """Read tenant identity under RLS and provision it through its sole narrow capability."""
+
+    async def google_identity_is_ready(self) -> bool:
+        """Check the exact migration capability without querying an account or contact data."""
+        try:
+            async with system_session_scope() as session:
+                return bool(
+                    (
+                        await session.execute(
+                            text("""
+                                SELECT coalesce(has_function_privilege(
+                                    current_user,
+                                    to_regprocedure('public.fn_resolve_google_tenant(text)'),
+                                    'EXECUTE'
+                                ), false)
+                            """)
+                        )
+                    ).scalar_one()
+                )
+        except (DBAPIError, SqlAlchemyTimeoutError, TimeoutError):
+            return False
+
+    async def resolve_google_tenant(self, subject_binding: str) -> UUID | None:
+        """Resolve only an exact verified Google binding; never provision or expose contact data."""
+        try:
+            async with system_session_scope() as session:
+                tenant_id = (
+                    await session.execute(
+                        text("SELECT public.fn_resolve_google_tenant(:subject_binding)"),
+                        {"subject_binding": subject_binding},
+                    )
+                ).scalar_one()
+        except (DBAPIError, SqlAlchemyTimeoutError, TimeoutError) as error:
+            raise BrowserSessionUnavailableError("browser identity lookup unavailable") from error
+        if tenant_id is not None and not isinstance(tenant_id, UUID):
+            raise BrowserSessionUnavailableError("browser identity lookup returned invalid data")
+        return tenant_id
 
     async def get(self, tenant_id: UUID) -> Tenant | None:
         """Read only the tenant identity visible to its established RLS context."""

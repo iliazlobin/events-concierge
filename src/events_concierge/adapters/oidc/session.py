@@ -13,9 +13,9 @@ import hashlib
 import hmac
 import json
 import secrets
-from collections.abc import Mapping
+from collections.abc import Awaitable, Callable, Mapping
 from time import time as wall_time
-from typing import Any, Protocol, cast
+from typing import Any, Literal, Protocol, cast
 from unicodedata import category
 from urllib.parse import urlencode, urlsplit
 from uuid import UUID
@@ -24,6 +24,7 @@ import httpx
 import redis.asyncio as aioredis
 from redis.exceptions import RedisError
 
+from ...domain.oidc import GOOGLE_AUTHORIZATION_URL, GOOGLE_SUBJECT_PREFIX, GOOGLE_TOKEN_URL
 from ...ports.auth import (
     AuthenticationFailedError,
     BrowserIdentity,
@@ -31,6 +32,7 @@ from ...ports.auth import (
     BrowserLoginStart,
     BrowserSessionCredentials,
     BrowserSessionUnavailableError,
+    BrowserStepUpUnavailableError,
     CsrfVerificationFailedError,
     RecentAuthenticationRequiredError,
 )
@@ -345,7 +347,10 @@ class OidcBffSessionAdapter:
         jwks_url: str,
         client_id: str,
         client_secret: str,
-        tenant_claim: str,
+        tenant_claim: str | None = None,
+        provider: Literal["custom_claim", "google"] = "custom_claim",
+        google_tenant_lookup: Callable[[str], Awaitable[UUID | None]] | None = None,
+        google_identity_ready: Callable[[], Awaitable[bool]] | None = None,
         redirect_uri: str,
         trusted_origin: str,
         redis_url: str,
@@ -360,6 +365,12 @@ class OidcBffSessionAdapter:
     ) -> None:
         self._authorization_url = _https_url(authorization_url, "authorization URL")
         self._token_url = _https_url(token_url, "token URL")
+        self._provider = provider
+        self._google_identity_ready = google_identity_ready
+        if provider == "google" and (
+            authorization_url != GOOGLE_AUTHORIZATION_URL or token_url != GOOGLE_TOKEN_URL
+        ):
+            raise ValueError("Google login requires fixed Google authorization and token endpoints")
         self._redirect_uri = _https_url(redirect_uri, "redirect URI")
         self._trusted_origin = _origin(trusted_origin)
         if _url_origin(self._redirect_uri) != self._trusted_origin:
@@ -392,6 +403,8 @@ class OidcBffSessionAdapter:
             audience=client_id,
             jwks_url=jwks_url,
             tenant_claim=tenant_claim,
+            provider=provider,
+            google_tenant_lookup=google_tenant_lookup,
             algorithms=algorithms,
             jwks_timeout_seconds=http_timeout_seconds,
         )
@@ -409,6 +422,10 @@ class OidcBffSessionAdapter:
     ) -> BrowserLoginStart:
         """Bind a purpose-specific provider step-up to the current live browser session."""
         await self.verify_state_change(tenant_id, headers)
+        if self._provider == "google":
+            raise BrowserStepUpUnavailableError(
+                "Google account deletion requires a separately configured step-up method"
+            )
         session_token, record = await self._session(headers)
         if record["tenant_id"] != tenant_id:
             raise AuthenticationFailedError("valid tenant authentication is required")
@@ -456,12 +473,15 @@ class OidcBffSessionAdapter:
             "response_type": "code",
             "client_id": self._client_id,
             "redirect_uri": self._redirect_uri,
-            "scope": "openid",
+            "scope": "openid email" if self._provider == "google" else "openid",
             "state": state,
             "nonce": nonce,
             "code_challenge": challenge,
             "code_challenge_method": "S256",
         }
+        if self._provider == "google":
+            # Account choice makes a denied-account retry useful. It is never reauthentication.
+            authorization_parameters["prompt"] = "select_account"
         if transaction["purpose"] == _REAUTH_PURPOSE:
             # Both controls are deliberate. ``prompt=login`` requests visible interaction while
             # ``max_age=0`` makes OIDC require an ``auth_time`` claim in the resulting ID token.
@@ -473,6 +493,24 @@ class OidcBffSessionAdapter:
             transaction_token=transaction_token,
         )
 
+    async def cancel_login(self, headers: Mapping[str, str], *, state: str) -> None:
+        """Provider denial consumes only a browser-bound, one-shot login transaction."""
+        await self._consume_transaction(headers, state=state)
+
+    async def _consume_transaction(
+        self, headers: Mapping[str, str], *, state: str
+    ) -> dict[str, Any]:
+        if not _valid_token(state):
+            raise AuthenticationFailedError("valid login callback is required")
+        transaction_token = _required_cookie(headers, self.login_cookie_name)
+        raw_transaction = await self._store.consume_login(transaction_token)
+        if raw_transaction is None:
+            raise AuthenticationFailedError("valid login callback is required")
+        transaction = _login_transaction(raw_transaction)
+        if not hmac.compare_digest(transaction["state"], state):
+            raise AuthenticationFailedError("valid login callback is required")
+        return transaction
+
     async def complete_login(
         self,
         headers: Mapping[str, str],
@@ -483,16 +521,9 @@ class OidcBffSessionAdapter:
         """Consume before exchange so every callback, successful or not, is strictly one-shot."""
         if not _bounded_text(code, _MAX_CODE_BYTES) or not _valid_token(state):
             raise AuthenticationFailedError("valid login callback is required")
-        transaction_token = _required_cookie(headers, self.login_cookie_name)
-        try:
-            raw_transaction = await self._store.consume_login(transaction_token)
-        except BrowserSessionUnavailableError:
-            raise
-        if raw_transaction is None:
-            raise AuthenticationFailedError("valid login callback is required")
-        transaction = _login_transaction(raw_transaction)
-        if not hmac.compare_digest(transaction["state"], state):
-            raise AuthenticationFailedError("valid login callback is required")
+        transaction = await self._consume_transaction(headers, state=state)
+        if self._provider == "google" and transaction["purpose"] == _REAUTH_PURPOSE:
+            raise BrowserStepUpUnavailableError("Google destructive-action step-up is unavailable")
 
         bound_session_token: str | None = None
         bound_record: dict[str, Any] | None = None
@@ -556,6 +587,11 @@ class OidcBffSessionAdapter:
                     "subject": identity.subject,
                     "csrf_hash": _digest(csrf_token),
                     "recent_auth_at": None,
+                    **(
+                        {"oidc_provider": "google", "oidc_client_id": self._client_id}
+                        if self._provider == "google"
+                        else {}
+                    ),
                 }
             )
             if await self._store.create_session(
@@ -617,6 +653,10 @@ class OidcBffSessionAdapter:
         """Require one tenant-bound session backed by a recent provider ``auth_time`` claim."""
         if not 1 <= max_age_seconds <= _MAX_RECENT_AUTH_SECONDS:
             raise ValueError("recent authentication age must be between 1 and 900 seconds")
+        if self._provider == "google":
+            raise BrowserStepUpUnavailableError(
+                "Google account deletion requires a separately configured step-up method"
+            )
         try:
             _, record = await self._session(headers)
             if record["tenant_id"] != tenant_id or not _auth_time_is_recent(
@@ -636,7 +676,11 @@ class OidcBffSessionAdapter:
         await self._store.revoke_tenant_sessions(tenant_id)
 
     async def is_ready(self) -> bool:
-        return await self._store.is_ready()
+        if not await self._store.is_ready():
+            return False
+        if self._provider == "google":
+            return self._google_identity_ready is not None and await self._google_identity_ready()
+        return True
 
     async def aclose(self) -> None:
         await self._store.aclose()
@@ -657,6 +701,15 @@ class OidcBffSessionAdapter:
             # Corrupt or incompatible records cannot remain repeatedly parseable authority.
             await self._store.delete_session(session_token)
             raise
+        if self._provider == "google":
+            if (
+                record.get("oidc_provider") != "google"
+                or record.get("oidc_client_id") != self._client_id
+                or not record["subject"].startswith(GOOGLE_SUBJECT_PREFIX)
+            ):
+                raise AuthenticationFailedError("browser session identity authority changed")
+        elif "oidc_provider" in record:
+            raise AuthenticationFailedError("browser session identity authority changed")
         return session_token, record
 
     async def _exchange_code(self, code: str, verifier: str) -> str:
@@ -762,10 +815,12 @@ def _session_record(raw: str) -> dict[str, Any]:
     old_fields = {"v", "tenant_id", "subject", "csrf_hash"}
     intermediate_fields = old_fields | {"authenticated_at"}
     new_fields = old_fields | {"recent_auth_at"}
+    google_fields = new_fields | {"oidc_provider", "oidc_client_id"}
     if frozenset(payload) not in {
         frozenset(old_fields),
         frozenset(intermediate_fields),
         frozenset(new_fields),
+        frozenset(google_fields),
     }:
         raise ValueError("invalid browser session record")
     if payload["v"] != _STORE_VERSION:
@@ -795,11 +850,22 @@ def _session_record(raw: str) -> dict[str, Any]:
         or recent_auth_at < 0
     ):
         raise ValueError("invalid browser session record")
+    provider_fields: dict[str, str] = {}
+    if frozenset(payload) == frozenset(google_fields):
+        if payload["oidc_provider"] != "google" or not _bounded_text(
+            payload["oidc_client_id"], _MAX_CLIENT_ID_BYTES
+        ):
+            raise ValueError("invalid browser session identity authority")
+        provider_fields = {
+            "oidc_provider": "google",
+            "oidc_client_id": cast("str", payload["oidc_client_id"]),
+        }
     return {
         "tenant_id": tenant_id,
         "subject": subject,
         "csrf_hash": csrf_hash,
         "recent_auth_at": recent_auth_at,
+        **provider_fields,
     }
 
 

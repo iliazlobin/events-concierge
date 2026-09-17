@@ -6,12 +6,13 @@ import re
 from dataclasses import asdict, dataclass
 from datetime import UTC, datetime
 from time import monotonic
-from typing import Any
+from typing import Any, Literal
 from urllib.parse import urlsplit
 from uuid import uuid4
 
 import httpx
 
+from ..config import PRIVATE_LOOPBACK_HTTPS_ORIGIN
 from .network_safety import is_loopback_host, is_non_remote_host
 
 _SHA256_DIGEST = re.compile(r"^sha256:[0-9a-f]{64}$")
@@ -55,6 +56,7 @@ class CanaryOptions:
     session_cookie: str | None = None
     csrf_token: str | None = None
     timeout_seconds: float = 5.0
+    profile: Literal["production", "private_google_pilot"] = "production"
 
 
 @dataclass(frozen=True, slots=True)
@@ -74,6 +76,7 @@ class CanaryReport:
     expected_release_revision: str | None
     expected_image_digest: str | None
     checks: tuple[CanaryCheck, ...]
+    profile: Literal["production", "private_google_pilot"] = "production"
 
     @property
     def passed(self) -> bool:
@@ -85,6 +88,7 @@ class CanaryReport:
             "kind": "events-concierge-release-canary",
             "evidence_class": "deployment_canary",
             "release_eligible": False,
+            "profile": self.profile,
             "generated_at": self.generated_at,
             "origin": self.origin,
             "expected_release_revision": self.expected_release_revision,
@@ -264,10 +268,12 @@ def run_canary(
         expected_release_revision=options.expected_release_revision,
         expected_image_digest=options.expected_image_digest,
         checks=tuple(checks),
+        profile=options.profile,
     )
 
 
 def _validate_options(options: CanaryOptions) -> str:
+    _validate_profile(options)
     try:
         parsed = urlsplit(options.base_url)
         port = parsed.port
@@ -291,7 +297,11 @@ def _validate_options(options: CanaryOptions) -> str:
         raise ValueError("HTTP and Temporal-degraded canaries require explicit local mode")
     if options.allow_local_mode and not is_loopback_host(parsed.hostname):
         raise ValueError("local-mode canary must target a loopback origin")
-    if not options.allow_local_mode and is_non_remote_host(parsed.hostname):
+    if (
+        not options.allow_local_mode
+        and options.profile != "private_google_pilot"
+        and is_non_remote_host(parsed.hostname)
+    ):
         raise ValueError("production canary must target a remote origin")
     if parsed.scheme == "http" and (
         options.session_cookie is not None or options.csrf_token is not None
@@ -313,6 +323,21 @@ def _validate_options(options: CanaryOptions) -> str:
     if options.csrf_token is not None and options.session_cookie is None:
         raise ValueError("CSRF acceptance canary requires a throwaway session cookie")
     return f"{parsed.scheme}://{parsed.netloc}"
+
+
+def _validate_profile(options: CanaryOptions) -> None:
+    if options.profile not in {"production", "private_google_pilot"}:
+        raise ValueError("unknown canary profile")
+    if options.profile == "private_google_pilot" and (
+        options.base_url != PRIVATE_LOOPBACK_HTTPS_ORIGIN
+        or options.allow_http
+        or options.allow_local_mode
+        or not options.require_temporal
+    ):
+        raise ValueError(
+            "private Google pilot requires exactly https://localhost:14443, "
+            "real browser identity and ready Temporal without local relaxations"
+        )
 
 
 def _request(
@@ -441,6 +466,8 @@ def _check_ui_config(
         _expect(checks, "ui_config_contract", False, "", "UI config did not return JSON")
         return
     expected_mode = "local_demo" if options.allow_local_mode else "deployment_session"
+    private_google_pilot = options.profile == "private_google_pilot"
+    expected_reauth = None if private_google_pilot else "/auth/reauth"
     passed = (
         isinstance(body, dict)
         and body.get("auth_mode") == expected_mode
@@ -450,7 +477,9 @@ def _check_ui_config(
             options.allow_local_mode
             or (
                 body.get("auth_start_url") == "/auth/login"
-                and body.get("reauth_url") == "/auth/reauth"
+                and "reauth_url" in body
+                and body["reauth_url"] == expected_reauth
+                and (not private_google_pilot or body.get("auth_provider") == "google")
                 and body.get("logout_url") == "/auth/logout"
                 and body.get("csrf_cookie_name") == "__Host-ec_csrf"
                 and body.get("csrf_header_name") == _CSRF_HEADER_NAME

@@ -69,6 +69,7 @@ _BROWSER_SESSION_METHODS = (
     *_AUTH_CONTEXT_METHODS,
     *_CSRF_METHODS,
     "start_login",
+    "cancel_login",
     "start_reauthentication",
     "complete_login",
     "issue_session",
@@ -501,7 +502,7 @@ def _check_builtin_identity_configuration(settings: Settings) -> ConfigCheck:
         )
         and 0 < len(client_id.encode("utf-8")) <= _MAX_OIDC_CLIENT_ID_BYTES
         and 0 < len(secret.encode("utf-8")) <= _MAX_OIDC_CLIENT_SECRET_BYTES
-        and 0 < len(tenant_claim) <= _MAX_OIDC_CLAIM_LENGTH
+        and (settings.oidc_provider == "google" or 0 < len(tenant_claim) <= _MAX_OIDC_CLAIM_LENGTH)
         and bool(algorithms)
         and len(set(algorithms)) == len(algorithms)
         and set(algorithms) <= _ALLOWED_OIDC_ALGORITHMS

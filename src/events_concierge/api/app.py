@@ -30,6 +30,7 @@ from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, Redirect
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 from sqlalchemy import text
 from sqlalchemy.exc import DBAPIError
+from sqlalchemy.exc import TimeoutError as SqlAlchemyTimeoutError
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
 from ..api.release_profile import apply_release_profile
@@ -64,8 +65,10 @@ from ..ports.account_erasure import (
 from ..ports.api_keys import ApiKeyRecord
 from ..ports.auth import (
     AuthenticationFailedError,
+    BrowserSessionCredentials,
     BrowserSessionLifecyclePort,
     BrowserSessionUnavailableError,
+    BrowserStepUpUnavailableError,
     CsrfVerificationFailedError,
     RecentAuthenticationRequiredError,
 )
@@ -80,6 +83,7 @@ from ..ports.saved_catalog_filters import (
 from ..ports.tenant_effects import (
     TenantEffectFencedError,
     TenantEffectKind,
+    TenantEffectLockTimeoutError,
     TenantEffectRequest,
     TenantEffectTimedOutError,
 )
@@ -730,6 +734,7 @@ class UiConfigOut(BaseModel):
     release_profile: Literal["full", "discovery"] = "full"
     local_demo: bool
     auth_mode: Literal["local_demo", "deployment_session"]
+    auth_provider: Literal["custom_claim", "google"] | None = None
     auth_start_url: str | None
     reauth_url: str | None
     logout_url: str | None
@@ -1974,6 +1979,11 @@ async def _account_erasure_protected_tenant(request: Request) -> UUID:
                 status_code=428,
                 detail="recent sign-in required before account erasure",
             ) from error
+        except BrowserStepUpUnavailableError as error:
+            raise HTTPException(
+                status_code=503,
+                detail="account deletion is unavailable until a supported step-up method is configured",
+            ) from error
     return tenant_id
 
 
@@ -2504,10 +2514,15 @@ def create_app() -> FastAPI:
             release_profile=settings.release_profile,
             local_demo=settings.mock_cloud,
             auth_mode="local_demo" if settings.mock_cloud else "deployment_session",
+            auth_provider=settings.oidc_provider if settings.oidc_bff_enabled else None,
             auth_start_url=(
                 settings.ui_auth_start_url or ("/auth/login" if settings.oidc_bff_enabled else None)
             ),
-            reauth_url="/auth/reauth" if browser_session is not None else None,
+            reauth_url=(
+                "/auth/reauth"
+                if browser_session is not None and settings.oidc_provider != "google"
+                else None
+            ),
             logout_url="/auth/logout" if browser_session is not None else None,
             csrf_cookie_name=(
                 browser_session.csrf_cookie_name if browser_session is not None else None
@@ -2582,6 +2597,11 @@ def create_app() -> FastAPI:
                     status_code=403,
                     detail="state-change verification required",
                 ) from error
+            except BrowserStepUpUnavailableError as error:
+                raise HTTPException(
+                    status_code=503,
+                    detail="account deletion is unavailable until a supported step-up method is configured",
+                ) from error
             response = JSONResponse(
                 {"authorization_url": login.authorization_url},
                 headers={"Cache-Control": "no-store, max-age=0"},
@@ -2593,12 +2613,21 @@ def create_app() -> FastAPI:
         @app.get("/auth/callback", include_in_schema=False)
         async def oidc_callback(
             request: Request,
-            code: str = Query(min_length=1, max_length=4096),
+            code: str | None = Query(default=None, min_length=1, max_length=4096),
             state: str = Query(min_length=1, max_length=256),
-        ) -> RedirectResponse:
+            error: str | None = Query(default=None, min_length=1, max_length=256),
+        ) -> Response:
             browser_session = configured_browser_session()
             credentials = None
+            failure_reason = "not_authorized"
+            failure: Response
             try:
+                if error is not None:
+                    await browser_session.cancel_login(request.headers, state=state)
+                    failure_reason = "cancelled"
+                    raise AuthenticationFailedError("provider login did not complete")
+                if code is None:
+                    raise AuthenticationFailedError("valid login callback is required")
                 completion = await browser_session.complete_login(
                     request.headers,
                     code=code,
@@ -2611,19 +2640,50 @@ def create_app() -> FastAPI:
                 ):
                     raise AuthenticationFailedError("OIDC identity is not bound to this account")
                 if not completion.reauthenticated:
-                    # Rotate an existing same-browser session only after signed account binding.
-                    await browser_session.revoke_session(request.headers)
-                    credentials = await browser_session.issue_session(completion.identity)
-            except AuthenticationFailedError as error:
-                raise HTTPException(
-                    status_code=401,
-                    detail="login could not be verified",
-                ) from error
-            except BrowserSessionUnavailableError as error:
-                raise HTTPException(
-                    status_code=503,
-                    detail="browser identity is unavailable",
-                ) from error
+                    # The account read finishes before acquiring the erasure lock; the guarded
+                    # effect needs Redis only, so it cannot exhaust the pool awaiting another DB
+                    # connection. The authority rechecks the durable tombstone before issuance.
+                    async def issue_bound_session() -> BrowserSessionCredentials:
+                        await browser_session.revoke_session(request.headers)
+                        return await browser_session.issue_session(completion.identity)
+
+                    credentials = await app.state.container.tenant_effect_authority.run(
+                        TenantEffectRequest(
+                            tenant_id=completion.identity.tenant_id,
+                            kind=TenantEffectKind.BROWSER_SESSION,
+                            timeout_seconds=settings.tenant_effect_timeout_seconds,
+                        ),
+                        issue_bound_session,
+                    )
+            except (AuthenticationFailedError, TenantEffectFencedError):
+                failure = (
+                    RedirectResponse(f"/sign-in?reason={failure_reason}", status_code=303)
+                    if settings.oidc_provider == "google"
+                    else JSONResponse(
+                        status_code=401, content={"detail": "login could not be verified"}
+                    )
+                )
+                _clear_login_cookie(failure, browser_session)
+                _secure_auth_response(failure)
+                return failure
+            except (
+                BrowserSessionUnavailableError,
+                BrowserStepUpUnavailableError,
+                SqlAlchemyTimeoutError,
+                DBAPIError,
+                TenantEffectLockTimeoutError,
+                TenantEffectTimedOutError,
+            ):
+                failure = (
+                    RedirectResponse("/sign-in?reason=unavailable", status_code=303)
+                    if settings.oidc_provider == "google"
+                    else JSONResponse(
+                        status_code=503, content={"detail": "browser identity is unavailable"}
+                    )
+                )
+                _clear_login_cookie(failure, browser_session)
+                _secure_auth_response(failure)
+                return failure
             response = RedirectResponse(completion.return_to, status_code=303)
             if completion.reauthenticated:
                 _clear_login_cookie(response, browser_session)

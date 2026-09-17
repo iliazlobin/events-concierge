@@ -9,6 +9,12 @@ from urllib.parse import urlsplit
 from pydantic import Field, SecretStr, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+from .domain.oidc import (
+    GOOGLE_AUTHORIZATION_URL,
+    GOOGLE_ISSUER,
+    GOOGLE_JWKS_URL,
+    GOOGLE_TOKEN_URL,
+)
 from .secret_files import read_secret_file
 
 _MAX_UI_AUTH_URL_LENGTH = 2048
@@ -256,6 +262,7 @@ class Settings(BaseSettings):
     # identity/access tokens never enter browser storage, while opaque login and session handles
     # live in Secure __Host- cookies and resolve through the shared Redis control plane.
     oidc_bff_enabled: bool = False
+    oidc_provider: Literal["custom_claim", "google"] = "custom_claim"
     oidc_issuer: str | None = None
     oidc_authorization_url: str | None = None
     oidc_token_url: str | None = None
@@ -484,14 +491,7 @@ class Settings(BaseSettings):
             raise ValueError("OIDC BFF sessions cannot be enabled in mock-cloud mode")
         if self.ui_auth_start_url not in {None, "/auth/login"}:
             raise ValueError("OIDC BFF UI auth start URL must be the same-origin /auth/login route")
-        required = {
-            "oidc_issuer": self.oidc_issuer,
-            "oidc_authorization_url": self.oidc_authorization_url,
-            "oidc_token_url": self.oidc_token_url,
-            "oidc_jwks_url": self.oidc_jwks_url,
-            "oidc_client_id": self.oidc_client_id,
-            "oidc_tenant_claim": self.oidc_tenant_claim,
-        }
+        required = self._oidc_required_provider_values()
         missing = sorted(name for name, value in required.items() if not value or not value.strip())
         if missing:
             raise ValueError(f"OIDC BFF configuration is missing: {', '.join(missing)}")
@@ -503,6 +503,29 @@ class Settings(BaseSettings):
         if not self.oidc_algorithm_allowlist:
             raise ValueError("OIDC algorithms must contain at least one configured value")
         return self
+
+    def _oidc_required_provider_values(self) -> dict[str, str | None]:
+        required = {
+            "oidc_issuer": self.oidc_issuer,
+            "oidc_authorization_url": self.oidc_authorization_url,
+            "oidc_token_url": self.oidc_token_url,
+            "oidc_jwks_url": self.oidc_jwks_url,
+            "oidc_client_id": self.oidc_client_id,
+        }
+        if self.oidc_provider == "custom_claim":
+            required["oidc_tenant_claim"] = self.oidc_tenant_claim
+        elif (
+            self.oidc_issuer != GOOGLE_ISSUER
+            or self.oidc_authorization_url != GOOGLE_AUTHORIZATION_URL
+            or self.oidc_token_url != GOOGLE_TOKEN_URL
+            or self.oidc_jwks_url != GOOGLE_JWKS_URL
+            or self.oidc_tenant_claim is not None
+            or self.oidc_algorithm_allowlist != ("RS256",)
+        ):
+            raise ValueError(
+                "Google OIDC requires fixed Google endpoints, RS256 and no tenant claim"
+            )
+        return required
 
     @property
     def enabled_sources(self) -> list[str]:

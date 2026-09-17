@@ -320,14 +320,68 @@ production identity safety.
 
 ### Built-in OIDC BFF activation
 
-Enable `EC_OIDC_BFF_ENABLED=true` only with `EC_MOCK_CLOUD=false`. Configure the public HTTPS origin
+Enable `EC_OIDC_BFF_ENABLED=true` only with `EC_MOCK_CLOUD=false`. Configure the canonical HTTPS origin
 in `EC_PUBLIC_BASE_URL` without a path or query, and register the exact callback
 `<public-origin>/auth/callback` at the IdP. Supply HTTPS issuer, authorization, token, and JWKS URLs;
 the confidential client ID/secret; the private tenant UUID claim name; and an explicit asymmetric
 algorithm allowlist. The current token exchange uses `client_secret_basic`. Keep the client secret
 in the deployment secret manager. Set `EC_UI_AUTH_START_URL=/auth/login` for explicit production
 validation; any different value that bypasses the same-origin transaction route is rejected at
-configuration time.
+configuration time. `EC_OIDC_PROVIDER=custom_claim` preserves this default identity contract.
+
+For Google ordinary sign-in, select `EC_OIDC_PROVIDER=google`, leave `EC_OIDC_TENANT_CLAIM` unset,
+and use these exact values with the confidential web client ID/secret:
+
+| Setting | Value |
+| --- | --- |
+| `EC_OIDC_ISSUER` | `https://accounts.google.com` |
+| `EC_OIDC_AUTHORIZATION_URL` | `https://accounts.google.com/o/oauth2/v2/auth` |
+| `EC_OIDC_TOKEN_URL` | `https://oauth2.googleapis.com/token` |
+| `EC_OIDC_JWKS_URL` | `https://www.googleapis.com/oauth2/v3/certs` |
+| `EC_OIDC_ALGORITHMS` | `RS256` |
+
+The server requests `openid email`, as required by Google's OIDC scope contract, and validates
+signature, audience/authorized party, expiry, issued-at and transaction nonce before any tenant lookup.
+The two documented Google issuer
+spellings normalize to one identity; `sub` stays case-sensitive. Email and profile claims are never
+used to find or link accounts. `prompt=select_account` lets an unapproved-account retry choose
+another account; it does not prove recent authentication. Google sessions bind the provider and
+client ID, and cannot be reused in custom-claim mode or by a different Google client.
+[Google's OIDC contract](https://developers.google.com/identity/openid-connect/openid-connect)
+and [discovery metadata](https://accounts.google.com/.well-known/openid-configuration) define the provider endpoints.
+
+An explicitly authorized provisioning operation must first verify the Google identity and store
+`google_subject_binding(verified_sub)` from `events_concierge.domain.oidc` as `tenants.oidc_subject`.
+Its exact encoding is `oidc:v1:https://accounts.google.com:<sub>`. Use the existing parameter-bound
+`fn_provision_tenant(uuid, text, text, text)` capability with a new internal UUID and approved contact
+and relay values. Do not log tokens, derive the binding from email, rewrite existing account
+bindings, or infer a legacy-account transfer. Migration `0195` adds only an exact read capability,
+`fn_resolve_google_tenant(text)`, returning a UUID or null; unknown and erased identities cannot
+sign up. Re-enrollment after erasure requires another explicit provisioning decision.
+
+Google callback failures go to the terminal `/sign-in` page with one bounded reason: `cancelled`,
+`not_authorized` or `unavailable`. Provider error text and tokens are never reflected. Cancellation
+consumes the matching one-shot browser transaction. Google readiness requires Redis and the exact
+lookup capability/EXECUTE grant; it does not prove OAuth client configuration or a real login.
+
+The UI advertises `reauth_url=null` for Google and disables self-service account deletion. If the
+owner accepts that limitation for the private pilot, run the canary with
+`--profile private_google_pilot --base-url https://localhost:14443` and the candidate's full
+`--expected-release-revision` and `--expected-image-digest`. Supply the trusted localhost CA through
+the normal `SSL_CERT_FILE` trust configuration. This profile requires real identity and healthy
+dependencies; it rejects HTTP, local-demo and Temporal-degradation overrides. It records the
+selected profile in its report and never establishes production eligibility. Default production
+checks still require supported destructive-action reauthentication. The pilot profile does not
+authorize activation or replace the live Google login/logout, CSRF and tenant-isolation walkthrough.
+Before deployment, verify the exact registered private HTTPS callback, login/cancellation/logout,
+CSRF rejection and replica-independent sessions. Keep access through IAP and loopback forwarding;
+this mode does not authorize a public listener or relax production transport gates.
+
+Google does not support forced Google Account reauthentication. Its optional `auth_time` describes
+the Google session, not a new app login. Google mode therefore rejects `/auth/reauth` and account
+deletion with `503` until a separately reviewed step-up method exists. Callback time, `iat`, account
+selection and consent cannot substitute for this proof. This is ordinary sign-in support, not full
+production acceptance. [Google's authentication-time limitation](https://developers.google.com/identity/siwg/security-bundle#authentication_time)
 
 The login transaction stores only a SHA-256-keyed opaque handle in a Secure, HttpOnly,
 SameSite=Lax `__Host-ec_login` cookie and seals state, nonce, S256 PKCE verifier, and a bounded
@@ -352,7 +406,7 @@ deletes the Redis session and only then expires all three cookies; a Redis outag
 deliberately preserves the browser reference rather than pretending revocation succeeded. Logout
 ends this product session, not the IdP's global SSO session.
 
-Account erasure requires a separate, current-session `POST /auth/reauth` before its destructive
+In the custom-claim mode, account erasure requires a separate, current-session `POST /auth/reauth` before its destructive
 command. That POST passes ordinary authentication and exact-Origin/CSRF verification, then stores a
 one-shot transaction bound to purpose=`account_erasure`, the current session digest, tenant,
 subject, state, nonce, S256 PKCE verifier, and same-origin return path. Its authorization request

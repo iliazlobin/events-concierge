@@ -14,6 +14,7 @@ import {
 import { clearCatalogCache } from "@/lib/catalog-cache";
 import { clearEntityGraphCache } from "@/lib/entity-graph-cache";
 import { releaseProfile } from "@/lib/release-profile";
+import { accountDeletionUnavailable } from "@/lib/sign-in";
 import type { AccountErasureReceipt } from "@/lib/types";
 
 const CONFIRMATION = "DELETE MY ACCOUNT";
@@ -44,8 +45,10 @@ export function AccountPanel() {
   const [error, setError] = useState<string | null>(null);
   const [receipt, setReceipt] = useState<AccountErasureReceipt | null>(null);
   const [dialogOpen, setDialogOpen] = useState(false);
+  const deletionUnavailable = accountDeletionUnavailable(config);
 
   const erase = async () => {
+    if (deletionUnavailable) return;
     setBusy(true);
     setError(null);
     try {
@@ -138,15 +141,15 @@ export function AccountPanel() {
             <dt>Sign-in method</dt>
             <dd>
               {config?.auth_mode === "deployment_session"
-                ? "Single sign-on"
+                ? config.auth_provider === "google" ? "Google" : "Single sign-on"
                 : "Local demo session"}
             </dd>
           </div>
         </dl>
         {config?.auth_mode === "deployment_session" ? (
           <p className="settings-hint">
-            Sessions last up to eight hours and do not extend as you use them. Destructive actions
-            ask you to sign in again first.
+            Sessions last up to eight hours and do not extend as you use them.
+            {!deletionUnavailable ? " Destructive actions ask you to sign in again first." : null}
           </p>
         ) : null}
       </section>
@@ -182,6 +185,12 @@ export function AccountPanel() {
           calendar entries, revokes sessions and stored credentials, and starts deletion from
           account-scoped storage. It cannot be undone.
         </p>
+        {deletionUnavailable ? (
+          <p className="settings-hint" id="deletion-unavailable">
+            Account deletion is currently unavailable with Google sign-in. It requires an additional
+            identity check that is not available yet. Signing in again will not enable deletion.
+          </p>
+        ) : null}
         {error ? (
           <p className="settings-error" role="alert">
             {error}
@@ -213,7 +222,7 @@ export function AccountPanel() {
               <button
                 type="button"
                 className="button button-quiet-danger"
-                disabled={confirmation !== CONFIRMATION || busy}
+                disabled={confirmation !== CONFIRMATION || busy || deletionUnavailable}
                 onClick={erase}
               >
                 {busy ? <LoaderCircle className="spin" aria-hidden="true" /> : null}
@@ -225,6 +234,8 @@ export function AccountPanel() {
           <button
             type="button"
             className="button button-quiet-danger"
+            disabled={deletionUnavailable}
+            aria-describedby={deletionUnavailable ? "deletion-unavailable" : undefined}
             onClick={() => setDialogOpen(true)}
           >
             Erase my account…
