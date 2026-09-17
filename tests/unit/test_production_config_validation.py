@@ -3,10 +3,12 @@
 from __future__ import annotations
 
 from dataclasses import replace
+from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock
 
 import pytest
+from tests.unit.test_temporal_client import mtls_settings
 
 from events_concierge.adapters.mock.calendar import MockCalendar
 from events_concierge.api import app as api
@@ -123,6 +125,34 @@ def _production_settings(**overrides: object) -> Settings:
     }
     values.update(overrides)
     return Settings(**values)
+
+
+def test_production_preflight_accepts_complete_mtls_without_cloud_api_key(tmp_path: Path) -> None:
+    settings = _production_settings(**mtls_settings(tmp_path))
+    report = config_validation.validate_production_config(settings, load_provider=False)
+    assert report.passed is True
+    assert settings.temporal_api_key is None
+
+
+@pytest.mark.parametrize("incomplete", [True, False])
+def test_production_preflight_rejects_incomplete_or_invalid_mtls(
+    tmp_path: Path, incomplete: bool
+) -> None:
+    values = mtls_settings(tmp_path)
+    if incomplete:
+        values["temporal_tls_client_key_file"] = None
+    else:
+        Path(values["temporal_tls_client_key_file"]).write_text("private-test-marker")
+    report = config_validation.validate_production_config(
+        _production_settings(**values), load_provider=False
+    )
+    assert report.passed is False
+    failures = {check.name for check in report.checks if not check.passed}
+    assert "temporal_transport_configuration" in failures
+    if incomplete:
+        assert "temporal_credentials" in failures
+    assert "private-test-marker" not in str(report.to_dict())
+    assert str(tmp_path) not in str(report.to_dict())
 
 
 def test_structural_production_config_accepts_a_remote_fail_closed_shape() -> None:

@@ -214,6 +214,70 @@ release gates. Caddy 2.11.4 passed configuration and real TLS proxy checks with 
 certificate, including hostname-mismatch rejection; browser trust and deployed Google login are
 not established by that check.
 
+### Encrypted dependency preparation
+
+The opt-in [data TLS values](helm/events-concierge-dev-data/values-private-tls.yaml) and
+[Temporal TLS values](helm/temporal-private-tls.yaml) prepare an encrypted private release. The
+active development overlays remain plaintext/local-demo. These files do not provision certificates,
+change the application secret mounts or enable non-mock startup. Application Helm and its secret
+ownership plan still need an explicit authenticated profile; do not bypass their development guards.
+
+| Connection | Required contract |
+| --- | --- |
+| Application and operator PostgreSQL | Service FQDN, `sslmode=verify-full`, `PGSSLROOTCERT` pointing to a CA-only mount; preserve each process's restricted DB role |
+| Temporal PostgreSQL | Service FQDN in both SQL `connectAddr` values, verified TLS and CA-only mount; restored database/schema/namespace initialization stays disabled |
+| Application Redis | `rediss`, trusted CA file, required certificate verification and hostname checking; existing password authentication |
+| Application to Temporal | Frontend Service FQDN, server CA and separate client certificate/key files with `clientAuth` usage |
+| Temporal internode and internal frontend clients | Server certificate with `serverAuth` and `clientAuth`, trusted client CA, verified server names |
+
+Each datastore Secret named in the values file contains `ca.crt`, `tls.crt` and `tls.key`. Issue
+server certificates with the exact Service FQDN in the DNS subject alternative names (SANs); use a
+short common name because a full Service FQDN can exceed its length limit. Temporal's server
+certificate additionally needs the SAN `ec-dev-temporal-internode`.
+`ec-dev-postgres-ca-v1` contains **only** `ca.crt`; PostgreSQL private keys never go to Temporal or
+application containers. Keep signing keys outside workloads and Git. Use separate, versioned client
+credentials per allowed workload and mount no Google/OIDC secret into operator or catalog processes.
+
+The PostgreSQL/Redis charts stage private keys in memory with image-native ownership and `0600`
+permissions. Versioned Secret names are part of the pod template: rotate by creating the next
+Secret version and rolling the workload. Updating a Secret's contents alone does not refresh that
+staged copy. Redis's loopback probe verifies CA and password; Redis 7 `--sni` does not verify the
+hostname. Application clients must additionally enforce hostname verification.
+
+Inspect the candidate without changing a cluster:
+
+```bash
+helm template ec-dev-data deploy/helm/events-concierge-dev-data -n events-concierge-dev -f deploy/helm/events-concierge-dev-data/values-shared-development.yaml -f deploy/helm/events-concierge-dev-data/values-private-tls.yaml
+helm template ec-dev-temporal temporal --repo https://go.temporal.io/helm-charts --version 1.6.0 -n events-concierge-dev -f deploy/helm/temporal-development.yaml -f deploy/helm/temporal-private-tls.yaml
+EC_HELM_BINARY=helm EC_DATA_TLS_DOCKER=1 .venv/bin/python -m pytest tests/unit/test_development_data_tls.py -q
+```
+
+Activation is a coordinated maintenance operation, not a rolling flag change:
+
+1. Review application-owned Secret/IAM/volume wiring, certificate lifetimes and recovery access.
+   Verify **every** application/operator/executor and Temporal login already has a SCRAM verifier;
+   record booleans, never password hashes. The new PostgreSQL HBA rejects plaintext and requires
+   SCRAM for every TCP login. A successful owner readiness probe does not validate other roles.
+2. Verify shared-node CPU/memory request headroom for existing pods, cadence, migration hooks and
+   rollout overlap. A 90-second cadence deadline includes scheduling time. `FailedScheduling` or
+   `NotTriggerScaleUp` must be resolved before rollout; do not add Symphony-worker tolerations.
+3. Rehearse retained-data TLS conversion and rollback in isolation. Capture a fresh, verified backup,
+   quiesce cadence/application/Temporal writers and inventory Redis session/pacing state. Preserve
+   PVC identities and existing database contents throughout; never initialize restored Temporal
+   databases. The chart retains an echo-only schema completion hook with schema mutations disabled.
+4. Change datastore listeners and all corresponding clients together; keep writers stopped until
+   verified SQL queries, Redis commands and an actual Temporal mTLS handshake succeed. Verify
+   plaintext, wrong CA/hostname and untrusted/missing client certificate failures. Resume intended
+   writers only after migration and authenticated application acceptance pass.
+5. Roll back by stopping writers and restoring the prior reviewed listener/client configuration as
+   one unit. Retain certificate versions and PVCs; do not restore an older database over new writes
+   without a separate data-recovery decision. Recheck readiness and queue continuity before resume.
+
+Local pinned-image tests establish the listener and client contracts. They do not establish GKE
+certificate delivery, Temporal authorization, browser identity or a completed deployment. The
+[Temporal operations contract](../docs/production-operations.md#temporal) describes client settings
+and the self-hosted server's authorization limit.
+
 Avatars use the separate private `iz27-platform-dev-ec-media` bucket, with no versioning, soft
 delete or retention so account erasure can remove them. Only the API, private admin and erasure
 worker can access it; the adapter verifies this policy before accepting destructive completion.

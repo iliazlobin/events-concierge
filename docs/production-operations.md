@@ -156,8 +156,8 @@ make staging-canary \
 The full validator fails on a local/test environment, mock cloud graph, missing runtime provider,
 HTTP/unapproved loopback browser origin, process-local pacing, plaintext/loopback Redis, local PostgreSQL,
 disabled Redis certificate/hostname verification, an invalid database transport profile,
-plaintext/default or internally inconsistent Temporal configuration, absent Temporal Cloud
-credential, a mutable release label, or an incomplete/non-callable provider boundary bundle. Direct
+plaintext/default or internally inconsistent Temporal configuration, absent Temporal API-key or
+mTLS credentials, a mutable release label, or an incomplete/non-callable provider boundary bundle. Direct
 database TLS requires a non-local endpoint and exactly `sslmode=verify-full`; Cloud SQL Auth Proxy
 mode instead requires `127.0.0.1`, an explicit port, and exactly `sslmode=disable` for the Pod-local
 hop. Production also requires distinct transactional/catalog task queues, immutable Worker
@@ -192,9 +192,10 @@ Keep trusted TLS, Secure host-only cookies, exact-origin CSRF and certificate ve
 This origin setting does not encrypt the shared development data services or authorize non-mock
 activation. Verified private PostgreSQL, Redis and Temporal transports, validated CA/certificate
 mounts and per-process credentials remain prerequisites. PostgreSQL still requires the accepted
-`verify-full` or Cloud SQL Proxy contract; Redis requires verified `rediss`; Temporal retains its
-accepted TLS/API-key posture. A private self-hosted Temporal identity/trust profile needs a separate
-supported implementation. The current shared runtime secret mounts and consumer composition still
+`verify-full` or Cloud SQL Proxy contract; Redis requires verified `rediss`; Temporal supports
+TLS with an API key or explicit CA/client-certificate authentication. The
+[private transport preparation](../deploy/development.md#encrypted-dependency-preparation) covers
+the self-hosted profile and its activation gates. The current shared runtime secret mounts still
 need per-process isolation before deployment; startup checks and transport labels do not prove
 live encryption, browser trust, provider behavior or production readiness.
 
@@ -583,9 +584,26 @@ target. The vendor configuration must satisfy all of the following before the RP
 ### Temporal
 
 Temporal is the durable executor, not a replacement for PostgreSQL backups. Production must use TLS,
-an API key from the secret manager, the intended namespace, and the same claim-check data converter
+an API key or mutually authenticated client certificate from protected secret storage, the intended
+namespace, and the same claim-check data converter
 on every API and worker client. Verify namespace retention, availability, throughput, archival/export
 needs, and vendor recovery behavior in the O-6 contract review.
+
+The private self-hosted client uses `EC_TEMPORAL_TLS_ENABLED=true`, an explicit DNS
+`EC_TEMPORAL_TLS_DOMAIN`, and three read-only PEM files: `EC_TEMPORAL_TLS_SERVER_CA_FILE`,
+`EC_TEMPORAL_TLS_CLIENT_CERT_FILE` and `EC_TEMPORAL_TLS_CLIENT_KEY_FILE`. Leave
+`EC_TEMPORAL_API_KEY` unset. All three files are required together; startup rejects invalid/expired
+certificates, a non-CA trust bundle, missing client-authentication usage, a mismatched key, plaintext
+or combined API-key/mTLS profiles. The SDK still verifies the server chain and hostname during its
+handshake; configuration validation alone does not prove reachability or server authorization.
+Client material is loaded when the client is constructed; restart the process after rotating its
+certificate/key/CA files rather than assuming an existing connection reloads them.
+
+The pinned self-hosted server authenticates clients using its configured client CA. Its default
+authorizer does not restrict an accepted identity by namespace or API. Issue client certificates
+only to trusted application workloads, keep server/internode keys separate, and retain private
+network boundaries. Per-workload authorization, certificate rotation and actual unauthorized-client
+rejection remain deployment acceptance requirements; mTLS alone does not provide tenant isolation.
 
 Never purge a workflow history while a lifecycle, pending queue item, audit reference, or claim-check
 object still depends on it. Monitor task-queue pollers, schedule-to-start latency, workflow failures,
@@ -607,10 +625,10 @@ Deployment version derived from an immutable build identity. Workflow-task slots
 because Temporal caching requires at least two; activity slots validate to 1–64. The compatibility
 combined role remains for local use, but it is not the production deployment topology. Keep
 activity slots within the worker process's explicit database pool and the environment-wide Cloud
-SQL budget, and size the workflow executor to the workflow-task limit. The request-start relay waits
+SQL budget, and size the workflow executor to the workflow-task limit. The request-start worker waits
 at least
 `EC_REQUEST_START_POLL_SECONDS` between all passes, including non-empty ones, and claims at most
-`EC_REQUEST_START_BATCH_SIZE` parents per pass. That cadence is per relay process, so budget the
+`EC_REQUEST_START_BATCH_SIZE` parents per pass. That cadence is per worker process, so budget the
 aggregate rate across replicas. Account for each parent's registration-child fanout before raising
 either value. Do not mask worker saturation by increasing Temporal's workflow-task timeout:
 schedule-to-start latency, database checkout timeouts, late `Task not found` completions, or SDK

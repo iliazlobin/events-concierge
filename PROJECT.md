@@ -13,6 +13,9 @@ Private discovery acceptance is verified on the shared development stack. Produc
 on real identity/CSRF, transport, monitoring, permissions and provider-cleanup evidence.
 Google sign-in is implemented for explicitly provisioned identities in the next release candidate.
 OAuth configuration, private HTTPS activation and deployed identity acceptance remain pending.
+Opt-in datastore TLS and self-hosted Temporal mTLS are implemented as
+[transport preparation](deploy/development.md#encrypted-dependency-preparation); the active shared
+development values remain unchanged and encrypted connections have not been accepted on GKE.
 Google self-service account deletion stays unavailable until independent reauthentication is supported;
 using that limitation for a private pilot requires an explicit scope decision. The existing OIDC
 contract is recorded in [production operations](docs/production-operations.md#built-in-oidc-bff-activation).

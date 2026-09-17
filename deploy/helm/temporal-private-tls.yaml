@@ -1,0 +1,71 @@
+# Preparation only. Layer after temporal-development.yaml for the existing restored namespace.
+# Provision and verify these versioned Secrets before a coordinated encrypted cutover.
+# temporal-private: ca.crt, tls.crt, tls.key; certificate requires serverAuth and clientAuth,
+# with SANs for ec-dev-temporal-internode and the frontend Service FQDN below.
+# postgres-ca: ca.crt only; never mount the PostgreSQL server private key in Temporal.
+server:
+  additionalVolumes:
+    - name: temporal-private
+      secret:
+        secretName: ec-dev-temporal-tls-v1
+        defaultMode: 0440
+    - name: postgres-ca
+      secret:
+        secretName: ec-dev-postgres-ca-v1
+        defaultMode: 0444
+  additionalVolumeMounts:
+    - name: temporal-private
+      mountPath: /etc/temporal/private-tls
+      readOnly: true
+    - name: postgres-ca
+      mountPath: /etc/temporal/postgres-tls
+      readOnly: true
+  config:
+    namespaces:
+      create: false
+    tls:
+      internode:
+        server:
+          certFile: /etc/temporal/private-tls/tls.crt
+          keyFile: /etc/temporal/private-tls/tls.key
+          requireClientAuth: true
+          clientCaFiles:
+            - /etc/temporal/private-tls/ca.crt
+        client:
+          serverName: ec-dev-temporal-internode
+          rootCaFiles:
+            - /etc/temporal/private-tls/ca.crt
+      frontend:
+        server:
+          certFile: /etc/temporal/private-tls/tls.crt
+          keyFile: /etc/temporal/private-tls/tls.key
+          requireClientAuth: true
+          clientCaFiles:
+            - /etc/temporal/private-tls/ca.crt
+        client:
+          serverName: ec-dev-temporal-frontend.events-concierge-dev.svc.cluster.local
+          rootCaFiles:
+            - /etc/temporal/private-tls/ca.crt
+    persistence:
+      datastores:
+        default:
+          sql:
+            # Temporal 1.31.2 PostgreSQL verifies connectAddr, not tls.serverName.
+            connectAddr: ec-dev-temporal-postgres.events-concierge-dev.svc.cluster.local:5432
+            createDatabase: false
+            manageSchema: false
+            tls:
+              enabled: true
+              caFile: /etc/temporal/postgres-tls/ca.crt
+              serverName: ec-dev-temporal-postgres.events-concierge-dev.svc.cluster.local
+              enableHostVerification: true
+        visibility:
+          sql:
+            connectAddr: ec-dev-temporal-postgres.events-concierge-dev.svc.cluster.local:5432
+            createDatabase: false
+            manageSchema: false
+            tls:
+              enabled: true
+              caFile: /etc/temporal/postgres-tls/ca.crt
+              serverName: ec-dev-temporal-postgres.events-concierge-dev.svc.cluster.local
+              enableHostVerification: true
