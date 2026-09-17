@@ -634,8 +634,8 @@ def _temporal_credentials_configured(settings: Settings) -> bool:
         settings.temporal_tls_client_key_file,
     )
     if settings.temporal_api_key is not None:
-        return bool(settings.temporal_api_key.get_secret_value().strip()) and not any(files)
-    return bool(settings.temporal_tls_domain) and all(bool(path) for path in files)
+        return bool(settings.temporal_api_key.get_secret_value().strip()) and all(value is None for value in files)
+    return bool(settings.temporal_tls_domain and settings.temporal_tls_domain.strip()) and all(value is not None and value.strip() for value in files)
 
 
 def _runtime_port_ready(name: str, value: object) -> bool:
