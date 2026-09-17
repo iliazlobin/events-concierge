@@ -16,6 +16,7 @@ from temporalio.worker import Worker, WorkerDeploymentConfig
 from ..catalog_runtime import build_catalog_container, verify_catalog_executor_database
 from ..composition import build_container
 from ..config import Settings, get_settings
+from ..deployment.startup import preflight_application_runtime, preflight_catalog_runtime
 from ..infra.logging import configure_logging, get_logger
 from .activities import (
     await_confirmation,
@@ -276,12 +277,13 @@ async def run_worker() -> None:
         settings.temporal_worker_role == "catalog" and settings.ingestion_executor_enabled
     )
     if catalog_profile:
+        preflight_catalog_runtime(settings)
         catalog_container = build_catalog_container(settings)
         await verify_catalog_executor_database()
         set_catalog_container(catalog_container)
         object_store = catalog_container.object_store
     else:
-        container = build_container(settings)
+        container = build_container(settings, runtime_ports=preflight_application_runtime(settings))
         set_container(container)
         object_store = container.object_store
 

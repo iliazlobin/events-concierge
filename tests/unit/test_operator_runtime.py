@@ -22,6 +22,8 @@ from events_concierge.infra.operator_database import (
 from events_concierge.workers import ingestion_cadence, ingestion_commands
 from events_concierge.workflows import activities
 
+_PRODUCTION_EXAMPLE = Path(__file__).resolve().parents[2] / "deployment/production.env.example"
+
 
 def test_local_catalog_workflows_use_executor_profile_and_the_command_queue() -> None:
     """A combined tenant worker cannot execute the catalog driver's payloads or window grants."""
@@ -164,8 +166,10 @@ async def test_executor_rejects_wrong_database_role_before_router_or_claim(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     settings = Settings(
-        _env_file=None,
+        _env_file=_PRODUCTION_EXAMPLE,
         mock_cloud=False,
+        oidc_bff_enabled=False,
+        oidc_client_secret=None,
         ingestion_executor_enabled=True,
         ingestion_executor_database_url="postgresql+psycopg://executor_login:secret@db.example/ec?sslmode=verify-full",
     )
@@ -191,7 +195,10 @@ async def test_production_cadence_once_enqueues_and_closes_without_provider_grap
 ) -> None:
     settings = Settings(
         _env_file=None,
+        env="production",
         mock_cloud=False,
+        release_revision="0123456789abcdef0123456789abcdef01234567",
+        image_digest="sha256:" + "a" * 64,
         catalog_ingestion_scheduler_enabled=True,
         operator_database_url="postgresql+psycopg://operator_login:secret@db.example/ec?sslmode=verify-full",
     )

@@ -16,6 +16,7 @@ _MAX_OPERATOR_SUBJECT_LENGTH = 200
 _MAX_OPERATOR_SUBJECTS = 100
 _MIN_PRINTABLE_CODEPOINT = 0x20
 _MAX_URL_PORT = 65535
+PRIVATE_LOOPBACK_HTTPS_ORIGIN = "https://localhost:14443"
 _RELEASE_REVISION_PATTERN = r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$"
 _IMAGE_DIGEST_PATTERN = r"^sha256:[0-9a-f]{64}$"
 _TEMPORAL_TASK_QUEUE_PATTERN = r"^[A-Za-z0-9][A-Za-z0-9._-]{0,199}$"
@@ -48,6 +49,8 @@ class Settings(BaseSettings):
     image_digest: str | None = Field(default=None, pattern=_IMAGE_DIGEST_PATTERN)
     # Public origin used in user-facing capability links. Production composition requires HTTPS.
     public_base_url: str = "http://localhost:8000"
+    # This opt-in changes only the browser origin, never dependency or identity-provider TLS.
+    public_origin_profile: Literal["remote_https", "private_loopback_https"] = "remote_https"
     # The local ingestion control room relies on the deployment edge publishing the API only on
     # loopback. Compose passes its actual host-side bind value into this contract.
     api_bind_address: str = "127.0.0.1"
@@ -59,6 +62,10 @@ class Settings(BaseSettings):
     # Dependency services (docker-compose in local dev).
     database_url: str = "postgresql+psycopg://ec_app:ec_app@localhost:5433/ec"
     database_url_file: str | None = Field(default=None, exclude=True, repr=False)
+    # Detection only: application startup must reject migration-owner authority, including a
+    # mounted path. Never resolve or read that file in an application process.
+    migration_url: SecretStr | None = Field(default=None, exclude=True, repr=False)
+    migration_url_file: str | None = Field(default=None, exclude=True, repr=False)
     # Direct deployments verify the PostgreSQL hostname themselves. Cloud SQL Auth Proxy
     # deployments terminate the authenticated tunnel on loopback and explicitly disable a second
     # TLS layer in the application DSN; production preflight validates the two shapes separately.
@@ -432,6 +439,17 @@ class Settings(BaseSettings):
                 )
         if self.ingestion_executor_enabled and not self.ingestion_executor_database_url:
             raise ValueError("ingestion executor requires a separate database credential")
+        return self
+
+    @model_validator(mode="after")
+    def validate_private_browser_origin(self) -> Settings:
+        if (
+            self.public_origin_profile == "private_loopback_https"
+            and self.public_base_url != PRIVATE_LOOPBACK_HTTPS_ORIGIN
+        ):
+            raise ValueError(
+                "private_loopback_https requires EC_PUBLIC_BASE_URL=https://localhost:14443"
+            )
         return self
 
     @model_validator(mode="after")

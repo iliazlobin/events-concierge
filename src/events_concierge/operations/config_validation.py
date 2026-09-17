@@ -14,7 +14,7 @@ from typing import Any
 from urllib.parse import parse_qsl, urlsplit
 
 from ..adapters.disabled import DisabledProductPort, is_disabled_discovery_port
-from ..config import Settings
+from ..config import PRIVATE_LOOPBACK_HTTPS_ORIGIN, Settings
 from ..deployment.discovery_runtime import discovery_effects_disabled, validate_discovery_settings
 from ..domain.enums import Source
 from ..ports.sources import SourceCapability
@@ -157,7 +157,7 @@ def validate_production_config(
             "deployment runtime provider is named",
             "EC_RUNTIME_PROVIDER_FACTORY is required",
         ),
-        _check_public_origin(settings.public_base_url),
+        _check_public_origin(settings.public_base_url, profile=settings.public_origin_profile),
         _check(
             "ui_auth_entrypoint",
             bool(settings.ui_auth_start_url),
@@ -211,7 +211,9 @@ def validate_production_config(
         ),
         _check(
             "migration_credential_absent",
-            not migration_credential_present,
+            not migration_credential_present
+            and settings.migration_url is None
+            and settings.migration_url_file is None,
             "application runtime does not receive EC_MIGRATION_URL",
             "remove the migration-owner credential from the application runtime",
         ),
@@ -346,11 +348,12 @@ def _provider_checks(settings: Settings) -> list[ConfigCheck]:
             detail="deployment-owned provider loaded without dependency I/O",
         )
     ]
-    checks.extend(_runtime_port_checks(runtime, settings=settings))
+    checks.extend(validate_runtime_ports(runtime, settings=settings))
     return checks
 
 
-def _runtime_port_checks(runtime: RuntimePorts, *, settings: Settings) -> list[ConfigCheck]:
+def validate_runtime_ports(runtime: RuntimePorts, *, settings: Settings) -> list[ConfigCheck]:
+    """Inspect the actual provider bundle without constructing a second client graph."""
     checks: list[ConfigCheck] = []
     discovery = settings.release_profile == "discovery"
     if discovery:
@@ -436,7 +439,14 @@ def _runtime_port_checks(runtime: RuntimePorts, *, settings: Settings) -> list[C
     return checks
 
 
-def _check_public_origin(value: str) -> ConfigCheck:
+def _check_public_origin(value: str, *, profile: str = "remote_https") -> ConfigCheck:
+    if profile == "private_loopback_https":
+        return _check(
+            "public_origin",
+            value == PRIVATE_LOOPBACK_HTTPS_ORIGIN,
+            "explicit private browser origin is https://localhost:14443",
+            "private_loopback_https requires exactly https://localhost:14443",
+        )
     try:
         parsed = urlsplit(value)
         port = parsed.port
@@ -444,7 +454,8 @@ def _check_public_origin(value: str) -> ConfigCheck:
         parsed = urlsplit("")
         port = None
     passed = (
-        parsed.scheme == "https"
+        profile == "remote_https"
+        and parsed.scheme == "https"
         and bool(parsed.hostname)
         and parsed.username is None
         and parsed.password is None

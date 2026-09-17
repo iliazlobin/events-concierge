@@ -40,6 +40,7 @@ from ..application.ranking_feedback import UnknownFeedbackEventError
 from ..application.request_start import RequestIntakeService, RequestStartRelay
 from ..composition import Container, build_container
 from ..config import Settings, get_settings
+from ..deployment.startup import preflight_application_runtime
 from ..domain.account_erasure import AccountErasureStatus
 from ..domain.catalog_browse import CatalogBrowseCursor, CatalogBrowseEvent
 from ..domain.consumer import (
@@ -2361,7 +2362,9 @@ def create_app() -> FastAPI:
 
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> Any:
-        app.state.container = build_container(settings)
+        app.state.container = build_container(
+            settings, runtime_ports=preflight_application_runtime(settings)
+        )
         operator_database = None
         try:
             if settings.admin_ingestion_enabled:

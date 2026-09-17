@@ -154,7 +154,7 @@ make staging-canary \
 ```
 
 The full validator fails on a local/test environment, mock cloud graph, missing runtime provider,
-HTTP/loopback public origin, process-local pacing, plaintext/loopback Redis, local PostgreSQL,
+HTTP/unapproved loopback browser origin, process-local pacing, plaintext/loopback Redis, local PostgreSQL,
 disabled Redis certificate/hostname verification, an invalid database transport profile,
 plaintext/default or internally inconsistent Temporal configuration, absent Temporal Cloud
 credential, a mutable release label, or an incomplete/non-callable provider boundary bundle. Direct
@@ -170,6 +170,33 @@ is marked `mode=structural_only`, `evidence_class=example_contract`,
 `evidence_class=wiring_preflight` and `preflight_eligible=true`, but remains
 `release_eligible=false`: callable-surface inspection cannot prove provider behavior or close field
 gates. `--structural-only` is forbidden as release evidence.
+
+API and consumer-worker startup now enforce these configuration checks before constructing services
+or becoming ready. They inspect the actual provider bundle once and pass it to composition; the
+CLI is not the only enforcement point. Catalog executors independently require their isolated DB
+credential, verified Redis/Temporal configuration, shared payload storage and immutable release.
+The operator API and one-shot cadence controller require their isolated DB transport and release
+identity; they do not acquire consumer, Google, Redis or Temporal credentials. Each connected
+operator/executor login still has to pass its existing database-role check. Migration-owner values
+and file paths are rejected from these non-local processes, including when loaded from `.env`.
+Explicit local/mock processes retain their development behavior; mock mode cannot bypass startup
+validation in staging/production.
+
+For the private IAP/loopback browser path, set `EC_PUBLIC_ORIGIN_PROFILE=private_loopback_https` and
+exactly `EC_PUBLIC_BASE_URL=https://localhost:14443`; register the exact OAuth callback
+`https://localhost:14443/auth/callback`. The default `remote_https` profile still rejects loopback.
+The private profile admits no alternate host, IP, port, path or query and changes no IdP or dependency
+validation. Follow the [private access runbook](../deploy/development.md) for the loopback TLS proxy.
+Keep trusted TLS, Secure host-only cookies, exact-origin CSRF and certificate verification enabled.
+
+This origin setting does not encrypt the shared development data services or authorize non-mock
+activation. Verified private PostgreSQL, Redis and Temporal transports, validated CA/certificate
+mounts and per-process credentials remain prerequisites. PostgreSQL still requires the accepted
+`verify-full` or Cloud SQL Proxy contract; Redis requires verified `rediss`; Temporal retains its
+accepted TLS/API-key posture. A private self-hosted Temporal identity/trust profile needs a separate
+supported implementation. The current shared runtime secret mounts and consumer composition still
+need per-process isolation before deployment; startup checks and transport labels do not prove
+live encryption, browser trust, provider behavior or production readiness.
 
 The staging canary is bounded and non-mutating. It verifies liveness; database and Temporal
 readiness; consumer assets, types, and edge security headers; deployment-session UI mode; absence of

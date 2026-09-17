@@ -24,9 +24,7 @@ def test_temporal_worker_limits_have_conservative_validated_defaults() -> None:
 
     for invalid in (0, 1, 65):
         with pytest.raises(ValidationError):
-            Settings.model_validate(
-                {"temporal_worker_max_concurrent_workflow_tasks": invalid}
-            )
+            Settings.model_validate({"temporal_worker_max_concurrent_workflow_tasks": invalid})
     minimum = Settings(temporal_worker_max_concurrent_workflow_tasks=2)
     assert minimum.temporal_worker_max_concurrent_workflow_tasks == 2
 
@@ -104,7 +102,7 @@ async def test_worker_runtime_shuts_down_its_executor_after_failure(
 
     monkeypatch.setattr(worker_module, "get_settings", lambda: settings)
     monkeypatch.setattr(worker_module, "configure_logging", lambda *args, **kwargs: None)
-    monkeypatch.setattr(worker_module, "build_container", lambda _: container)
+    monkeypatch.setattr(worker_module, "build_container", lambda _, **kwargs: container)
     monkeypatch.setattr(worker_module, "set_container", lambda _: None)
     monkeypatch.setattr(worker_module, "connect_temporal", connect)
     monkeypatch.setattr(worker_module, "build_temporal_worker", build)

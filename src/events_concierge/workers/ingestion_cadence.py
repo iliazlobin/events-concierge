@@ -21,6 +21,7 @@ from ..application.ingestion_cadence_scheduler import (
     IngestionCadenceScheduleReport,
 )
 from ..config import get_settings
+from ..deployment.startup import preflight_operator_runtime
 from ..infra.logging import configure_logging, get_logger
 from ..infra.operator_database import OperatorDatabase
 
@@ -44,6 +45,7 @@ async def run_ingestion_cadence(*, once: bool = False) -> None:
         raise ValueError("production cadence is deployment-owned; use --once")
     if settings.mock_cloud and not settings.admin_ingestion_enabled:
         raise ValueError("local cadence requires explicit local ingestion administration")
+    preflight_operator_runtime(settings)
     database = OperatorDatabase(settings)
     repository = PostgresIngestionAdminRepository(
         CatalogExecutionDescriptorRegistry(settings.temporal_catalog_queue),

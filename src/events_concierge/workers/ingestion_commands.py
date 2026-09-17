@@ -17,6 +17,7 @@ from ..adapters.postgres.command_investigation import CommandInvestigationStore
 from ..application.ingestion_command_execution import ResumableIngestionCommandProcessor
 from ..catalog_runtime import build_catalog_container, verify_catalog_executor_database
 from ..config import get_settings
+from ..deployment.startup import preflight_catalog_runtime
 from ..domain.ingestion_admin import IngestionProcessReport
 from ..infra.db import dispose_engine
 from ..infra.logging import configure_logging, get_logger
@@ -40,6 +41,7 @@ async def run_ingestion_commands() -> None:
         return
     if not settings.mock_cloud and not settings.ingestion_executor_enabled:
         raise ValueError("non-mock command execution requires explicit executor enablement")
+    preflight_catalog_runtime(settings)
     container = build_catalog_container(settings)
     try:
         await verify_catalog_executor_database()

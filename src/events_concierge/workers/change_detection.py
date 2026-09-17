@@ -18,6 +18,7 @@ from ..application.change_detection import ChangeDetectionService
 from ..application.watch_projection import LifecycleWatchProjectionRelay
 from ..composition import build_container
 from ..config import Settings, get_settings
+from ..deployment.startup import preflight_application_runtime
 from ..infra.logging import configure_logging, get_logger
 from ..ports.object_store import ObjectStorePort
 from ..workflows.start import TemporalOrganizerChangeFanout
@@ -30,7 +31,7 @@ async def run_change_delivery() -> None:
     """Continuously recover watch projection and Temporal fanout from durable queues (ADR-008)."""
     settings = get_settings()
     configure_logging(settings.log_level, local=settings.env == "local")
-    container = build_container(settings)
+    container = build_container(settings, runtime_ports=preflight_application_runtime(settings))
     projection = LifecycleWatchProjectionRelay(
         container.watch_projection_outbox,
         container.change_detection_repo,
