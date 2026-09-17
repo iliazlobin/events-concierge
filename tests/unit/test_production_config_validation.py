@@ -44,6 +44,7 @@ def _browser_session() -> SimpleNamespace:
         "resolve_tenant_id",
         "verify_state_change",
         "start_login",
+        "cancel_login",
         "start_reauthentication",
         "complete_login",
         "issue_session",

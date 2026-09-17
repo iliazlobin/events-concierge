@@ -28,6 +28,13 @@ const nextConfig: NextConfig = {
           { key: "Cache-Control", value: "no-cache, must-revalidate" },
         ],
       },
+      {
+        source: "/sign-in",
+        headers: [
+          { key: "Cache-Control", value: "no-store, max-age=0" },
+          { key: "Referrer-Policy", value: "no-referrer" },
+        ],
+      },
     ];
   },
 };

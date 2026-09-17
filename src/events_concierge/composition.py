@@ -873,13 +873,12 @@ def _build_oidc_bff_session(settings: Settings) -> OidcBffSessionAdapter:
         settings.oidc_token_url,
         settings.oidc_jwks_url,
         settings.oidc_client_id,
-        settings.oidc_tenant_claim,
     )
     if any(value is None for value in values) or settings.oidc_client_secret is None:
         # Settings normally rejects this first; keep direct composition calls fail closed too.
         raise ValueError("built-in OIDC BFF requires complete provider configuration")
-    issuer, authorization_url, token_url, jwks_url, client_id, tenant_claim = cast(
-        "tuple[str, str, str, str, str, str]", values
+    issuer, authorization_url, token_url, jwks_url, client_id = cast(
+        "tuple[str, str, str, str, str]", values
     )
     public_origin = settings.public_base_url.rstrip("/")
     return OidcBffSessionAdapter(
@@ -889,7 +888,18 @@ def _build_oidc_bff_session(settings: Settings) -> OidcBffSessionAdapter:
         jwks_url=jwks_url,
         client_id=client_id,
         client_secret=settings.oidc_client_secret.get_secret_value().strip(),
-        tenant_claim=tenant_claim,
+        tenant_claim=settings.oidc_tenant_claim,
+        provider=settings.oidc_provider,
+        google_tenant_lookup=(
+            PostgresTenantRepository().resolve_google_tenant
+            if settings.oidc_provider == "google"
+            else None
+        ),
+        google_identity_ready=(
+            PostgresTenantRepository().google_identity_is_ready
+            if settings.oidc_provider == "google"
+            else None
+        ),
         redirect_uri=f"{public_origin}/auth/callback",
         trusted_origin=public_origin,
         redis_url=settings.redis_url,

@@ -9,6 +9,7 @@ import pytest
 
 from events_concierge.operations import __main__ as operations_cli
 from events_concierge.operations.app_role import AppRoleRotationReport
+from events_concierge.operations.canary import CanaryOptions, CanaryReport
 
 
 def test_structural_example_is_cli_valid_and_writes_sanitized_evidence(
@@ -153,3 +154,68 @@ def test_role_rotation_cli_reads_mounted_secrets_and_writes_only_sanitized_evide
     assert "fixture-new-app-password" not in rendered
     assert "owner:fixture" not in rendered
     assert json.loads(rendered)["status"] == "passed"
+
+
+@pytest.mark.parametrize("profile", ["production", "private_google_pilot"])
+def test_canary_cli_selects_and_records_profile_explicitly(
+    profile: str,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    origin = (
+        "https://localhost:14443"
+        if profile == "private_google_pilot"
+        else "https://staging.concierge.example"
+    )
+    observed: list[CanaryOptions] = []
+
+    def canary(options: CanaryOptions) -> CanaryReport:
+        observed.append(options)
+        return CanaryReport(
+            generated_at="2026-09-16T00:00:00+00:00",
+            origin=options.base_url,
+            expected_release_revision=options.expected_release_revision,
+            expected_image_digest=options.expected_image_digest,
+            checks=(),
+            profile=options.profile,
+        )
+
+    monkeypatch.setattr(operations_cli, "run_canary", canary)
+    monkeypatch.setenv("EC_CANARY_SESSION_COOKIE", "session=private-fixture")
+    monkeypatch.setenv("EC_CANARY_CSRF_TOKEN", "private-csrf")
+    arguments = ["canary", "--base-url", origin]
+    if profile != "production":
+        arguments += ["--profile", profile]
+    assert operations_cli.main(arguments) == 0
+    assert len(observed) == 1 and observed[0].profile == profile
+    assert observed[0].session_cookie == "session=private-fixture"
+    assert observed[0].csrf_token == "private-csrf"
+    assert not observed[0].allow_http and not observed[0].allow_local_mode
+    assert observed[0].require_temporal
+    rendered = capsys.readouterr().out
+    assert json.loads(rendered)["profile"] == profile
+    assert "private-fixture" not in rendered and "private-csrf" not in rendered
+
+
+@pytest.mark.parametrize("relaxation", ["--allow-http", "--allow-local-mode", "--allow-temporal-degraded"])
+def test_private_google_canary_cli_rejects_relaxation_flags(
+    relaxation: str, capsys: pytest.CaptureFixture[str]
+) -> None:
+    status = operations_cli.main(
+        [
+            "canary",
+            "--base-url",
+            "https://localhost:14443",
+            "--profile",
+            "private_google_pilot",
+            relaxation,
+        ]
+    )
+    assert status == 2
+    assert "ValueError" in capsys.readouterr().err
+
+
+def test_canary_cli_rejects_unknown_profile() -> None:
+    with pytest.raises(SystemExit) as error:
+        operations_cli.main(["canary", "--profile", "unsafe"])
+    assert error.value.code == 2

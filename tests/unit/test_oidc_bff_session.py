@@ -21,6 +21,7 @@ from pydantic import ValidationError
 
 from events_concierge.adapters.oidc.auth import OidcJwtAuthContext
 from events_concierge.adapters.oidc.session import OidcBffSessionAdapter
+from events_concierge.application.tenant_effects import DirectTenantEffectAuthority
 from events_concierge.composition import _build_identity_boundaries
 from events_concierge.config import Settings
 from events_concierge.domain.account_erasure import AccountErasureSnapshot, AccountErasureStatus
@@ -500,6 +501,9 @@ class _FakeBrowserSession:
         assert return_to == "/app"
         return BrowserLoginStart(f"{_ISSUER}/authorize?fixture=1", "l" * 43)
 
+    async def cancel_login(self, headers: Any, *, state: str) -> None:
+        del headers, state
+
     async def start_reauthentication(
         self,
         tenant_id: UUID,
@@ -623,6 +627,7 @@ async def test_bff_api_sets_secure_host_cookies_binds_subject_and_revokes_logout
         auth_context=browser_session,
         csrf_protection=browser_session,
         tenant_repo=_TenantRepository(tenant),
+        tenant_effect_authority=DirectTenantEffectAuthority(),
     )
 
     async with AsyncClient(
@@ -703,6 +708,7 @@ async def test_account_erasure_requires_typed_confirmation_recent_auth_and_clear
         auth_context=browser_session,
         csrf_protection=browser_session,
         tenant_repo=_TenantRepository(tenant),
+        tenant_effect_authority=DirectTenantEffectAuthority(),
         account_erasure_repo=erasure_repository,
     )
     authority = {"Origin": _ORIGIN, "X-EC-CSRF": "c" * 43}
@@ -781,6 +787,7 @@ async def test_bff_callback_rejects_a_signed_tenant_with_the_wrong_subject(
     app.state.container = SimpleNamespace(
         browser_session=browser_session,
         tenant_repo=_TenantRepository(tenant),
+        tenant_effect_authority=DirectTenantEffectAuthority(),
     )
 
     async with AsyncClient(

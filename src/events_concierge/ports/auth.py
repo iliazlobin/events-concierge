@@ -29,6 +29,10 @@ class RecentAuthenticationRequiredError(PermissionError):
     """The browser session was valid but was not backed by sufficiently recent authentication."""
 
 
+class BrowserStepUpUnavailableError(PermissionError):
+    """The selected provider cannot prove the required destructive-action step-up."""
+
+
 @dataclass(frozen=True, slots=True)
 class BrowserIdentity:
     """Signed OIDC identity plus optional provider authentication time for step-up proof."""
@@ -116,6 +120,10 @@ class BrowserSessionLifecyclePort(AuthContextPort, CsrfProtectionPort, Protocol)
 
     async def start_login(self, return_to: str) -> BrowserLoginStart:
         """Persist a one-shot PKCE transaction and return its provider redirect."""
+        ...
+
+    async def cancel_login(self, headers: Mapping[str, str], *, state: str) -> None:
+        """Consume a provider-denied login only with its matching browser transaction/state."""
         ...
 
     async def start_reauthentication(

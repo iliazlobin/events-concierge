@@ -64,6 +64,7 @@ import {
 } from "@/lib/consumer-history";
 import { releaseHistorySnapshot, releaseHome, releaseProfile, releaseViewAllowed } from "@/lib/release-profile";
 import { CATALOG_CITY_VALUES } from "@/lib/presentation";
+import { signInFailurePath } from "@/lib/sign-in";
 import type {
   CalendarMode,
   CatalogDaySummary,
@@ -354,17 +355,12 @@ export function ConciergeApp() {
             setSessionState("onboarding");
             return;
           }
-          if (nextConfig.auth_start_url) {
-            window.location.assign(nextConfig.auth_start_url);
-            return;
-          }
-          setOnboardingError(readableError(error));
-          setSessionState("onboarding");
+          window.location.replace(signInFailurePath(error instanceof ApiError ? error.status : null));
         }
       })
       .catch((error) => {
         if (cancelled) return;
-        setOnboardingError(readableError(error));
+        setOnboardingError("Sign-in is temporarily unavailable. Please try again.");
         setSessionState("onboarding");
       });
     return () => {
@@ -985,17 +981,18 @@ export function ConciergeApp() {
     setSignOutError(null);
     const logoutUrl = config?.logout_url;
     try {
-      if (config?.auth_mode === "deployment_session" && logoutUrl) {
+      if (config?.auth_mode === "deployment_session") {
+        if (!logoutUrl) throw new Error("Sign-out is temporarily unavailable. Please try again.");
         await logout(logoutUrl);
       }
       clearSession();
       // The cached ranges are tenant-keyed; never let them outlive the session that fetched them.
       clearCatalogCache();
       clearEntityGraphCache();
-      window.location.assign("/");
+      window.location.replace(config?.local_demo ? "/" : "/sign-in?reason=signed_out");
     } catch (error) {
       setSigningOut(false);
-      setSignOutError(readableError(error));
+      setSignOutError("We couldn’t sign you out. Please try again.");
     }
   }, [config, signingOut]);
 

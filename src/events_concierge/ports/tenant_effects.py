@@ -38,6 +38,7 @@ class TenantEffectKind(StrEnum):
     NOTIFICATION = "notification"
     PROFILE_MEDIA_WRITE = "profile_media_write"
     TEMPORAL_START = "temporal_start"
+    BROWSER_SESSION = "browser_session"
 
 
 class TenantEffectMode(StrEnum):

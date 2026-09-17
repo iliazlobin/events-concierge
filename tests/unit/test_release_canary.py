@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from dataclasses import replace
 
 import httpx
 import pytest
@@ -11,6 +12,7 @@ from events_concierge.operations.canary import CanaryOptions, run_canary
 
 _REVISION = "0123456789abcdef0123456789abcdef01234567"
 _DIGEST = "sha256:" + "a" * 64
+_PRIVATE_ORIGIN = "https://localhost:14443"
 
 
 def _response(
@@ -31,6 +33,7 @@ def _production_handler(  # noqa: PLR0911, PLR0912
     request: httpx.Request,
 ) -> httpx.Response:
     path = request.url.path
+    origin = f"{request.url.scheme}://{request.url.netloc.decode()}"
     if path == "/healthz":
         return _response(200, json_body={"status": "ok"})
     if path == "/readyz":
@@ -113,7 +116,7 @@ def _production_handler(  # noqa: PLR0911, PLR0912
         return _response(400, json_body={"detail": "invalid application return path"})
     if path == "/auth/reauth":
         assert request.method == "POST"
-        assert request.headers.get("origin") == "https://staging.concierge.example"
+        assert request.headers.get("origin") == origin
         return _response(401, json_body={"detail": "authentication required"})
     if path == "/v1/onboard":
         return _response(404, json_body={"detail": "Not Found"})
@@ -123,11 +126,11 @@ def _production_handler(  # noqa: PLR0911, PLR0912
         return _response(401, json_body={"detail": "authentication required"})
     if path == "/v1/feed-feedback":
         assert request.headers.get("cookie") == "session=fixture-cookie"
-        assert request.headers.get("origin") == "https://staging.concierge.example"
+        assert request.headers.get("origin") == origin
         return _response(403, json_body={"detail": "CSRF verification failed"})
     if path == "/auth/logout":
         assert request.headers.get("cookie") == "session=fixture-cookie"
-        assert request.headers.get("origin") == "https://staging.concierge.example"
+        assert request.headers.get("origin") == origin
         assert request.headers.get("x-ec-csrf") == "fixture-csrf-token"
         return _response(204)
     if path == "/versionz":
@@ -168,6 +171,7 @@ def test_production_canary_passes_and_never_records_the_session_cookie() -> None
     assert report.to_dict()["status"] == "passed"
     assert report.to_dict()["evidence_class"] == "deployment_canary"
     assert report.to_dict()["release_eligible"] is False
+    assert report.to_dict()["profile"] == "production"
     assert "fixture-cookie" not in rendered
     assert "fixture-csrf-token" not in rendered
     assert {check.name for check in report.checks} >= {
@@ -379,3 +383,159 @@ def test_production_canary_requires_release_identity_and_forbids_local_relaxatio
 ) -> None:
     with pytest.raises(ValueError):
         run_canary(options, transport=httpx.MockTransport(_production_handler))
+
+
+def _private_google_handler(request: httpx.Request) -> httpx.Response:
+    response = _production_handler(request)
+    if request.url.path == "/v1/ui-config":
+        body = response.json()
+        body.update(auth_provider="google", reauth_url=None)
+        return _response(200, json_body=body)
+    return response
+
+
+def _private_google_options() -> CanaryOptions:
+    return CanaryOptions(
+        base_url=_PRIVATE_ORIGIN,
+        expected_release_revision=_REVISION,
+        expected_image_digest=_DIGEST,
+        profile="private_google_pilot",
+        session_cookie="session=fixture-cookie",
+        csrf_token="fixture-csrf-token",
+    )
+
+
+def test_private_google_pilot_checks_real_identity_csrf_and_logout_without_claiming_release() -> None:
+    report = run_canary(
+        _private_google_options(), transport=httpx.MockTransport(_private_google_handler)
+    )
+    evidence = report.to_dict()
+    assert report.passed
+    assert evidence["profile"] == "private_google_pilot"
+    assert evidence["origin"] == _PRIVATE_ORIGIN
+    assert evidence["release_eligible"] is False
+    checks = {check.name: check.passed for check in report.checks}
+    for name in (
+        "temporal_ready",
+        "identity_ready",
+        "ui_config_contract",
+        "mock_onboarding_absent",
+        "local_tenant_header_rejected",
+        "unsafe_login_redirect_rejected",
+        "unauthenticated_reauth_rejected",
+        "deployment_session",
+        "missing_csrf_rejected",
+        "csrf_bound_logout_accepted",
+    ):
+        assert checks[name]
+    assert "fixture-cookie" not in str(evidence)
+    assert "fixture-csrf-token" not in str(evidence)
+
+
+@pytest.mark.parametrize(
+    "overrides",
+    [
+        {"profile": "production"},
+        {"profile": "unknown"},
+        {"base_url": "https://localhost:14443/"},
+        {"base_url": "https://localhost:14444"},
+        {"base_url": "https://127.0.0.1:14443"},
+        {"base_url": "https://app.localhost:14443"},
+        {"base_url": "https://staging.concierge.example"},
+        {"base_url": "http://localhost:14443", "allow_http": True},
+        {"allow_http": True},
+        {"allow_local_mode": True},
+        {"require_temporal": False},
+        {"expected_release_revision": None},
+        {"expected_image_digest": None},
+        {"session_cookie": None},
+    ],
+)
+def test_private_google_profile_cannot_relax_other_release_boundaries(
+    overrides: dict[str, object],
+) -> None:
+    def no_request(request: httpx.Request) -> httpx.Response:
+        raise AssertionError("invalid private pilot options must fail before network access")
+
+    with pytest.raises(ValueError):
+        run_canary(
+            replace(_private_google_options(), **overrides),
+            transport=httpx.MockTransport(no_request),
+        )
+
+
+@pytest.mark.parametrize(
+    "changes",
+    [
+        {"auth_provider": "custom_claim"},
+        {"auth_provider": None},
+        {"reauth_url": "/auth/reauth"},
+        {"auth_start_url": "https://accounts.google.com/login"},
+        {"local_demo": True},
+        {"auth_mode": "local_demo"},
+        {"csrf_cookie_name": "ec_csrf"},
+        {"csrf_header_name": "X-Other-CSRF"},
+    ],
+)
+def test_private_google_pilot_rejects_incompatible_session_contract(
+    changes: dict[str, object],
+) -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        response = _private_google_handler(request)
+        if request.url.path == "/v1/ui-config":
+            return _response(200, json_body=response.json() | changes)
+        return response
+
+    report = run_canary(_private_google_options(), transport=httpx.MockTransport(handler))
+    assert not report.passed
+    assert not next(check for check in report.checks if check.name == "ui_config_contract").passed
+
+
+@pytest.mark.parametrize("component", ["database", "temporal", "identity"])
+def test_private_google_pilot_rejects_unavailable_dependencies(component: str) -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        response = _private_google_handler(request)
+        if request.url.path == "/readyz":
+            body = response.json()
+            body["components"][component] = "degraded"
+            return _response(200, json_body=body)
+        return response
+
+    report = run_canary(_private_google_options(), transport=httpx.MockTransport(handler))
+    assert not report.passed
+    assert not next(check for check in report.checks if check.name == f"{component}_ready").passed
+
+
+def test_private_google_pilot_requires_an_explicit_unavailable_step_up_field() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        response = _private_google_handler(request)
+        if request.url.path == "/v1/ui-config":
+            body = response.json()
+            del body["reauth_url"]
+            return _response(200, json_body=body)
+        return response
+
+    report = run_canary(_private_google_options(), transport=httpx.MockTransport(handler))
+    assert not report.passed
+    assert not next(check for check in report.checks if check.name == "ui_config_contract").passed
+
+
+@pytest.mark.parametrize(
+    "path,status,check_name",
+    [
+        ("/v1/feed-feedback", 202, "missing_csrf_rejected"),
+        ("/auth/reauth", 503, "unauthenticated_reauth_rejected"),
+        ("/auth/logout", 403, "csrf_bound_logout_accepted"),
+    ],
+)
+def test_private_google_pilot_preserves_authenticated_boundary_probes(
+    path: str, status: int, check_name: str
+) -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == path:
+            return _response(status)
+        return _private_google_handler(request)
+
+    report = run_canary(_private_google_options(), transport=httpx.MockTransport(handler))
+    assert not report.passed
+    assert not next(check for check in report.checks if check.name == check_name).passed
