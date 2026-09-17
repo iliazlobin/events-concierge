@@ -12,7 +12,7 @@ from collections.abc import Awaitable, Callable
 from time import monotonic
 from typing import Protocol
 
-from ..application.request_start import RequestStartRelay, RequestStartRelayStats
+from ..application.request_start import RequestStartWorker, RequestStartWorkerStats
 from ..composition import build_container
 from ..config import Settings, get_settings
 from ..deployment.startup import preflight_application_runtime
@@ -25,10 +25,10 @@ from ..workflows.temporal_client import connect_temporal
 _log = get_logger(__name__)
 
 
-class _RequestStartRelayPort(Protocol):
-    """Minimal relay seam used by the paced worker loop and its offline tests."""
+class _RequestStartWorkerPort(Protocol):
+    """Minimal worker seam used by the paced worker loop and its offline tests."""
 
-    async def relay_once(self, *, limit: int = 50) -> RequestStartRelayStats: ...
+    async def run_once(self, *, limit: int = 50) -> RequestStartWorkerStats: ...
 
 
 async def run_request_starter() -> None:
@@ -41,7 +41,7 @@ async def run_request_starter() -> None:
         container.object_store,
         container.tenant_effect_authority,
     )
-    relay = RequestStartRelay(
+    delivery = RequestStartWorker(
         container.request_repo,
         starter,
         lease_seconds=settings.request_start_lease_seconds,
@@ -53,15 +53,15 @@ async def run_request_starter() -> None:
         batch_size=settings.request_start_batch_size,
         poll_seconds=settings.request_start_poll_seconds,
     )
-    await _run_request_start_relay(
-        relay,
+    await _run_request_start_worker(
+        delivery,
         batch_size=settings.request_start_batch_size,
         minimum_cycle_seconds=settings.request_start_poll_seconds,
     )
 
 
-async def _run_request_start_relay(
-    relay: _RequestStartRelayPort,
+async def _run_request_start_worker(
+    delivery: _RequestStartWorkerPort,
     *,
     batch_size: int,
     minimum_cycle_seconds: float,
@@ -82,13 +82,13 @@ async def _run_request_start_relay(
     while True:
         cycle_started = clock()
         try:
-            stats = await relay.relay_once(limit=batch_size)
+            stats = await delivery.run_once(limit=batch_size)
         except Exception as exc:
-            _log.warning("request start relay poll failed", error=str(exc))
+            _log.warning("request start worker poll failed", error=str(exc))
         else:
             if stats.claimed:
                 _log.info(
-                    "request start relay cycle",
+                    "request start worker cycle",
                     claimed=stats.claimed,
                     started=stats.started,
                     retried=stats.retried,

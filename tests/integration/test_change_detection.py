@@ -26,7 +26,7 @@ from events_concierge.adapters.postgres.watch_projection import (
     PostgresLifecycleWatchProjectionOutbox,
 )
 from events_concierge.application.watch_projection import (
-    LifecycleWatchProjectionRelay,
+    LifecycleWatchProjectionWorker,
     WatchProjectionStats,
 )
 from events_concierge.domain.credentials import Tenant
@@ -1288,7 +1288,7 @@ async def test_watch_projection_pre_registry_lease_check_reads_database_clock_af
     assert oversized is False
 
 
-async def test_watch_projection_relay_recovers_post_effect_ack_loss_once(
+async def test_watch_projection_worker_recovers_post_effect_ack_loss_once(
     db: None,
 ) -> None:
     """A real projected watch survives ACK loss without duplicating its catch-up delivery (ADR-008)."""
@@ -1347,12 +1347,12 @@ async def test_watch_projection_relay_recovers_post_effect_ack_loss_once(
         {"workflow_id": workflow_id},
     )
     lossy_outbox = _RaiseBeforeFirstProjectionAck(projections)
-    relay = LifecycleWatchProjectionRelay(lossy_outbox, repository, lease_seconds=60)
+    delivery = LifecycleWatchProjectionWorker(lossy_outbox, repository, lease_seconds=60)
 
     assert recorded.inserted is True
     assert recorded.queued_deliveries == 0
     with pytest.raises(RuntimeError, match="simulated watch projection acknowledgement loss"):
-        await relay.relay_once(limit=1)
+        await delivery.run_once(limit=1)
 
     first = lossy_outbox.first_ack_record
     assert first is not None
@@ -1388,7 +1388,7 @@ async def test_watch_projection_relay_recovers_post_effect_ack_loss_once(
     )
     assert await projections.mark_delivered(first) is False
     assert await _owner_projection_state(first.projection_id) == expired_before_reclaim
-    replayed = await relay.relay_once(limit=1)
+    replayed = await delivery.run_once(limit=1)
 
     assert replayed == WatchProjectionStats(claimed=1, acknowledged=1)
     assert len(lossy_outbox.claimed) == 2

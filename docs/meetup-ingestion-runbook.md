@@ -10,7 +10,7 @@ authorize or exercise the tenant-scoped Meetup OAuth/RSVP adapter.
 - The local database owner has explicitly admitted `public_jsonld/browser` collection as described
   in [ingestion administration](ingestion-admin.md#local-source-policy-opt-in).
 - Outbound HTTPS to the exact reviewed Meetup city URL is permitted.
-- The command relay is running for admin-submitted work, or the one-shot catalog command is being
+- The command worker is running for admin-submitted work, or the one-shot catalog command is being
   invoked directly.
 
 The reviewed source keys are:

@@ -68,7 +68,7 @@ class PostgresChangeDetectionRepository:
         the lifecycle row before it creates the opaque subscription.  The non-superuser app role
         cannot take that lock directly because ADR-007 correctly revokes lifecycle UPDATE rights.
         A stale/inactive or mismatched projection is an idempotent ``False`` rather than a worker
-        error, so the durable projection relay can acknowledge it safely.
+        error, so the durable projection worker can acknowledge it safely.
         """
         async with tenant_session_scope(watch.tenant_id) as session:
             registered = (

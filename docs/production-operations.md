@@ -96,7 +96,7 @@ the deployment platform; never copy a populated `.env` into an image.
    before rolling out the matching new application DSN. The detailed no-overlap procedure is under
    [Application database role rotation](#application-database-role-rotation).
 4. Start or roll the independently versioned transactional and catalog Temporal worker roles plus
-   durable relay workers listed below. Schedule the one-shot repair/scanner CronJobs separately.
+   durable workers listed below. Schedule the one-shot repair/scanner CronJobs separately.
    Verify both task-queue pollers, immutable Worker Deployment builds, database connectivity, and
    worker log heartbeats before admitting new traffic.
 5. Start or roll the internal API and public Next.js frontend. Keep the API out of service until its
@@ -262,7 +262,7 @@ HTTP and must not be used to assert dependency health.
   this component.
 - PostgreSQL ready and Temporal reachable: returns `200`, with both components ready.
 - PostgreSQL ready and Temporal unavailable: returns `200`, with Temporal reported as `degraded`.
-  Keep the API serving. Request intake commits to `request_start_outbox`; the request-starter relay
+  Keep the API serving. Request intake commits to `request_start_outbox`; the request-starter worker
   replays deterministic, reject-duplicate starts after Temporal recovers.
 
 Insecure or internally inconsistent Temporal transport settings (for example, an API key without
@@ -296,9 +296,9 @@ whose lease/idempotency contract permits concurrency.
 | API | `uvicorn events_concierge.api.app:app --no-access-log` | Internal tenant-scoped reads/actions, durable intake, and dependency readiness; path logging stays disabled because completion URLs carry capabilities |
 | Transactional Temporal worker | `EC_TEMPORAL_WORKER_ROLE=transactional python -m events_concierge.workflows.worker` | Request/registration workflows and activities on `EC_TEMPORAL_TRANSACTIONAL_TASK_QUEUE` |
 | Catalog Temporal worker | `EC_TEMPORAL_WORKER_ROLE=catalog python -m events_concierge.workflows.worker` | Catalog workflows and activities on `EC_TEMPORAL_CATALOG_TASK_QUEUE` |
-| Request-start relay | `python -m events_concierge.workers.request_starter` | Replays `request_start_outbox` after API or Temporal failure |
+| Request-start worker | `python -m events_concierge.workers.request_starter` | Replays `request_start_outbox` after API or Temporal failure |
 | Account-erasure resume worker | `python -m events_concierge.workers.account_erasure` | Renews leases and resumes fenced tenant cleanup across workflow, calendar, session, vault, object-store, and database stages |
-| Notification relay | `python -m events_concierge.workers.notifier` | Delivers transactional outbox rows through the notification ledger |
+| Notification worker | `python -m events_concierge.workers.notifier` | Delivers transactional outbox rows through the notification ledger |
 | Change-delivery worker | `python -m events_concierge.workers.change_detection` | Signals organizer changes and drains associated repair work |
 | Handoff-expiry repair | `python -m events_concierge.workers.handoff_expiry --once` | CronJob runs one bounded repair of orphaned handoff TTL transitions after the Temporal grace period |
 | Lifecycle invariant scanner | `python -m events_concierge.workers.lifecycle_invariants --once` | CronJob runs one bounded read-only lifecycle/watch/handoff/Temporal divergence scan |
@@ -753,7 +753,7 @@ The handoff-completion URL contains a one-time bearer capability. Configure CDN,
 reverse-proxy, and APM access logs to redact the token segment on `/v1/tasks/*/done`; never emit the
 full URL to telemetry. Preserve `Cache-Control: no-store` and `Referrer-Policy: no-referrer`; GET
 must remain inert and only an explicit POST may signal completion. The database outbox stores only
-an authenticated-encrypted projection, reveals it inside the notification relay immediately before
+an authenticated-encrypted projection, reveals it inside the notification worker immediately before
 delivery, and scrubs the ciphertext on delivery or terminal failure.
 
 Migration `0106` cannot safely reconstruct encryption for an already-persisted plaintext
@@ -809,7 +809,7 @@ Incident sequence:
    dashboards and record provider incident identifiers.
 3. Diagnose: distinguish PostgreSQL unavailability, Temporal degradation, Redis throttle-first
    recovery, notification-provider failure, source ban, and credential compromise.
-4. Recover: restore dependencies first, then workers, then API traffic. Let guarded relays reclaim
+4. Recover: restore dependencies first, then workers, then API traffic. Let guarded workers reclaim
    expired leases naturally; do not force acknowledgements.
 5. Release controls only after a dry-run/read path and one guarded canary prove the hazard is gone.
    Tenant/global switches can be set to `false` with the same functions. Source quarantine release is
@@ -924,7 +924,7 @@ restore vendor backups into a separately fenced account/network and retain its o
 4. Connect a compatible worker build to the designated Temporal recovery/test namespace. Verify
    representative open histories replay and every sampled claim-check reference resolves with a
    valid digest.
-5. Start relays with external effects replaced by audited test endpoints. Prove reject-duplicate
+5. Start workers with external effects replaced by audited test endpoints. Prove reject-duplicate
    request starts, notification-ledger dedup, calendar/provider idempotency, and lease fencing.
 6. Run the lifecycle invariant scanner, authenticated API canary, and `/readyz`; record when the
    restored serving surface becomes ready and stop the RTO clock.

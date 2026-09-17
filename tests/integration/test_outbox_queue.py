@@ -1,4 +1,4 @@
-"""Postgres-backed queue observability for the ADR-009 outbox relay."""
+"""Postgres-backed queue observability for the ADR-009 outbox worker."""
 
 from __future__ import annotations
 
@@ -40,7 +40,7 @@ async def test_queue_snapshot_matches_claim_and_active_lease_predicates(db: None
         ),
         # Pending but scheduled for a future retry.
         ("future", now, now + timedelta(hours=1), None, None, None),
-        # Pending but unavailable to another relay while its lease is active.
+        # Pending but unavailable to another worker while its lease is active.
         (
             "active-lease",
             now,

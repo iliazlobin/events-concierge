@@ -19,7 +19,7 @@ from events_concierge.adapters.postgres.tenant_repos import (
     PostgresRequestRepository,
     PostgresTenantRepository,
 )
-from events_concierge.application.request_start import RequestStartRelay
+from events_concierge.application.request_start import RequestStartWorker
 from events_concierge.config import get_settings
 from events_concierge.domain import ids
 from events_concierge.domain.credentials import Tenant
@@ -124,9 +124,9 @@ async def test_start_outbox_recovers_lost_ack_without_second_parent_effect(db: N
         ids.request_dedup_key(tenant_id, "find a music event", "2026-07-17T19"),
     )
     starter = LostAcknowledgementStarter()
-    relay = RequestStartRelay(repository, starter, now=lambda: datetime.now(UTC))
+    delivery = RequestStartWorker(repository, starter, now=lambda: datetime.now(UTC))
 
-    assert await relay.relay_request(tenant_id, request_id) is False
+    assert await delivery.start_request(tenant_id, request_id) is False
     async with system_session_scope() as session:
         failed = (
             await session.execute(
@@ -149,7 +149,7 @@ async def test_start_outbox_recovers_lost_ack_without_second_parent_effect(db: N
     assert failed.lease_token is None
     assert failed.last_error == "simulated Temporal acknowledgement loss"
 
-    assert await relay.relay_request(tenant_id, request_id) is True
+    assert await delivery.start_request(tenant_id, request_id) is True
     assert starter.calls == 2
     assert starter.effects == {(tenant_id, request_id)}
 
@@ -196,7 +196,7 @@ async def test_start_outbox_reclaims_stale_post_start_ack_lease_without_second_p
 
     async with await WorkflowEnvironment.start_time_skipping() as environment:
         starter = TemporalRequestWorkflowStarter(environment.client, settings)
-        relay = RequestStartRelay(repository, starter)
+        delivery = RequestStartWorker(repository, starter)
 
         # Model a process loss in the only real ACK gap: the guarded Temporal call returned and
         # released its erasure-ordering lock, but mark_start_started was never attempted. Trying to
@@ -220,7 +220,7 @@ async def test_start_outbox_reclaims_stale_post_start_ack_lease_without_second_p
                 )
             ).scalar_one() == "received"
 
-        assert await relay.relay_request(tenant_id, request_id) is True
+        assert await delivery.start_request(tenant_id, request_id) is True
 
     final_state = await _owner_start_outbox_state(first)
     assert final_state.started_at is not None

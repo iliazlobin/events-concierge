@@ -161,7 +161,7 @@ AuditEntry {                      ← append-only operational identity; only era
 - `GET /v1/me`, `PUT /v1/preferences` — account projection and optimistic, whole-profile explicit-interest replacement
 - `POST /v1/feed` — read-only catalog preview; parses and ranks but does not persist an EventRequest or start a workflow
 - `POST /v1/feed-feedback` — replay-safe click/dwell/dismiss preference signal
-- `POST /v1/requests`, `GET /v1/requests` — durable intake plus bounded recent-request projection; `workflow_started=false` means the committed start-outbox row still awaits relay/engine acknowledgement, while an optional `outcome` appears only after the parent immutably links its selected lifecycle
+- `POST /v1/requests`, `GET /v1/requests` — durable intake plus bounded recent-request projection; `workflow_started=false` means the committed start-outbox row still awaits worker/engine acknowledgement, while an optional `outcome` appears only after the parent immutably links its selected lifecycle
 - `GET /v1/registrations`, `GET /v1/tasks` — bounded lifecycle-backed Plans and handoff projections; actionable tasks exclude absolute-TTL-expired rows
 - `POST /v1/me/tasks/{task_id}/done` — authenticated, tenant-bound mark-done; returns only after the lifecycle signal is durably acknowledged
 - `GET /v1/tasks/{token}/done`, `POST /v1/tasks/{token}/done` — email capability flow; GET is inert confirmation and only POST signals completion
@@ -216,7 +216,7 @@ graph TB
 
     subgraph Ing["Ingestion Plane"]
         Admin["Local Admin Shell<br/>filters + source analytics<br/>provenance + durable commands"]
-        CmdQ["Ingestion Command Relay<br/>leased + reclaimable"]
+        CmdQ["Ingestion Command Worker<br/>leased + reclaimable"]
         Crawl["Catalog Crawler +<br/>Search Sweeper"]
         ACL["ACL Normalizer +<br/>Dedup"]
         CDS["Change Detection"]
@@ -262,7 +262,7 @@ graph TB
     Erase -->|"revoke + purge"| Auth
     Erase -->|"crypto-shred credentials"| VLT
     Erase -->|"delete tenant prefix"| Obj
-    PG -->|"request-start relay"| ReqWF
+    PG -->|"request-start worker"| ReqWF
     GW -->|"authenticated task / withdrawal signals"| RegWF
     GW -->|"preferences + feedback"| PG
     U -->|"signed link / reply"| Inb
@@ -316,7 +316,7 @@ graph TB
 - **Components:** Consumer Browser Shell → same-origin FastAPI/AuthContext edge → Preview + Feed Service or durable Request Intake → Postgres (catalog + tenant overlay + start outbox) → EventRequest Workflow → rank stack.
 - **Flow:**
   1. The browser makes the authority choice explicit. `POST /v1/feed` is a preview: it parses and ranks against the persisted catalog, returns a transient request id and candidates, and writes neither an EventRequest nor a workflow start. `POST /v1/requests` means "find and handle it" and crosses the durable boundary.
-  2. Durable intake (the authenticated API today; email/SMS adapters may target the same service later) dedups on `hash(tenant, normalized_text, time_bucket)`, which deterministically mints `request_id`; it commits the EventRequest and a tiny start-outbox row before attempting a reject-duplicate workflow start. `workflow_started=false` is an honest queued state, not failure or registration success: the relay starts the same parent after Temporal recovers.
+  2. Durable intake (the authenticated API today; email/SMS adapters may target the same service later) dedups on `hash(tenant, normalized_text, time_bucket)`, which deterministically mints `request_id`; it commits the EventRequest and a tiny start-outbox row before attempting a reject-duplicate workflow start. `workflow_started=false` is an honest queued state, not failure or registration success: the worker starts the same parent after Temporal recovers.
   3. A schema-constrained parser turns the text into `constraints` (time window, geo radius, category, budget = free) plus an intent embedding; durable replay reconstructs the omitted derived embedding without putting request text or vectors into workflow history.
   4. Discovery fans out per source port: catalog-backed sources (Ticketmaster, the search funnel) are read straight from Postgres — zero live calls; per-user sources (Meetup, Luma) run under the requesting user's own stored token through the fair-share pacer, on a 2 s budget with stale-while-revalidate — a slow source serves its last-known working set and backfills asynchronously, so one slow source cannot push the response past the 5 s bound.
   5. Retrieval is one SQL statement on the read replica, under `SET LOCAL` tenant context — the tenant-neutral catalog `UNION ALL` the requester's RLS-scoped overlay, both legs filter-pushed on time/geo/free:
@@ -488,7 +488,7 @@ A stateless coordinator owns parse → discover → rank → select → attempt 
 
 **Approach 2: Event-driven choreography**
 The transactional outbox plus a broker is the spine: intake, discovery, ranking, and selection each emit events; small per-event workflows subscribe for the side-effecting leg; the event log is the lifecycle.
-- **Challenges:** the shape closes the registration workflow at `scheduled` — not a terminal state — and spawns per-change reconcile workflows, fragmenting the one-workflow-per-(user, event) lifecycle. The 5 s interactive path cannot afford broker hops, so the hot path would bypass the spine anyway. And a broker, relay, and inbox-dedup estate is net-new operational surface for a v1 whose outbox already delivers the audit-and-notification fan-out as a projection.
+- **Challenges:** the shape closes the registration workflow at `scheduled` — not a terminal state — and spawns per-change reconcile workflows, fragmenting the one-workflow-per-(user, event) lifecycle. The 5 s interactive path cannot afford broker hops, so the hot path would bypass the spine anyway. And a broker, worker, and inbox-dedup estate is net-new operational surface for a v1 whose outbox already delivers the audit-and-notification fan-out as a projection.
 
 **Approach 3: Two-tier durable workflows with service-plane pacing**
 A short-lived parent EventRequest workflow (`req:{tenant}:{request_id}`) owns parse → discover → rank → conflict gate and the attempt loop as journaled activities; per-(user, event) children (`{tenant}:{event}`, reject-duplicate, abandoned on parent close) own the register saga, the confirmation and handoff waits, and the months-long lifecycle. Pacing and pool admission live outside the engine in a Redis fair-share service.
@@ -603,7 +603,7 @@ fn_transition(lifecycle_id, expected_from, next, transition_id, payload):
   INSERT INTO outbox VALUES (...);                       -- announcement atomic with the state
 ```
 
-The workflow mints `transition_id`s once, owns every durable timer (TTL, reminders, confirmation, park-to-event-end), receives every signal, and advances state only through `fn_transition` inside activities; a partial unique index enforces one non-terminal row per (tenant, event), pairing with the engine's reject-duplicate id. Detection: a watch registry of distinct `(canonical_event_id, source)` pairs; the crawl delta plus the reserve-funded by-id re-poll covers Ticketmaster, a 3 h poller issues one Meetup status query per distinct event across the watchers' own tokens, and public JSON-LD polling plus relay change-emails cover Luma and every handoff-lane event; changes dedup on a fingerprint and fan out as signals. A 15-min sweeper repairs orphans through the same function — a safety net with a divergence metric, not a second authority.
+The workflow mints `transition_id`s once, owns every durable timer (TTL, reminders, confirmation, park-to-event-end), receives every signal, and advances state only through `fn_transition` inside activities; a partial unique index enforces one non-terminal row per (tenant, event), pairing with the engine's reject-duplicate id. Detection: a watch registry of distinct `(canonical_event_id, source)` pairs; the crawl delta plus the reserve-funded by-id re-poll covers Ticketmaster, a 3 h poller issues one Meetup status query per distinct event across the watchers' own tokens, and public JSON-LD polling plus worker change-emails cover Luma and every handoff-lane event; changes dedup on a fingerprint and fan out as signals. A 15-min sweeper repairs orphans through the same function — a safety net with a divergence metric, not a second authority.
 
 **Rationale:** the outbox requirement decides the fork almost by itself — an outbox row can only be atomic with the state it announces if that state is a Postgres row, since engine history and Postgres cannot share a commit. Erasure follows: crypto-shredding PII in rows while retaining non-PII operational fields is a row operation, and histories stay clean because they carry only claim-check keys. Detection keyed by distinct events makes cost scale with the catalog's popular-event count rather than the user count: one poll serves every watcher of a popular event, which is what keeps the per-app-quota worst case survivable.
 
@@ -637,7 +637,7 @@ never authors lifecycle state.
 | Bootstrap and account | `GET /v1/ui-config`, `GET /v1/me`; local-only `POST /v1/onboard` | Deployment `AuthContextPort`, provisioned `tenants`, ranking profile | UI config contains no secret; a resolved claim/session is insufficient until the tenant is provisioned; request JSON never selects `tenant_id` |
 | Catalog browse | `GET /v1/catalog/events` | Current canonical events plus current, reviewed source observations | Omitted dates mean future-only; explicit bounded dates, including past months, are authoritative; text, source, additive place-scope, and price predicates run before keyset pagination; reads never crawl or claim archival completeness; every item retains the source observations used to project it |
 | Preview | `POST /v1/feed` | Parser + feed ranker over the persisted catalog and tenant overlay | No EventRequest row, start-outbox row, workflow, RSVP, or calendar effect |
-| Durable brief and history | `POST /v1/requests`, `GET /v1/requests` | `event_requests` + `request_start_outbox` + immutable `request_outcome_links`; parent workflow after relay | Acceptance means saved; `workflow_started` distinguishes immediate engine acknowledgement from queued recovery; an outcome appears only after the parent explicitly links the selected lifecycle |
+| Durable brief and history | `POST /v1/requests`, `GET /v1/requests` | `event_requests` + `request_start_outbox` + immutable `request_outcome_links`; parent workflow after worker | Acceptance means saved; `workflow_started` distinguishes immediate engine acknowledgement from queued recovery; an outcome appears only after the parent explicitly links the selected lifecycle |
 | Plans | `GET /v1/registrations` | RLS-visible `lifecycle` joined to canonical event/source facts | No Temporal query; internal failed candidate attempts are hidden; source label and URL stay provider-consistent; withdrawal capability is derived from stable state |
 | To do | `GET /v1/tasks`, `POST /v1/me/tasks/{task_id}/done` | RLS-visible `handoff_tasks`; workflow owns completion/verification | Actionable means `open`/`notified` and absolute TTL in the future; the DTO carries neither workflow id nor email bearer capability |
 | Taste signals | `PUT /v1/preferences`, `POST /v1/feed-feedback` | Versioned ranking profile + replay-safe feedback repository | Explicit interests are a whole-profile replacement that preserves implicit affinities; revision conflict is `409` |
@@ -694,7 +694,7 @@ sequenceDiagram
     participant A as FastAPI Edge
     participant F as Parser + Feed
     participant P as Postgres
-    participant S as Request-start Relay
+    participant S as Request-start Worker
     participant W as Temporal
 
     B->>A: POST /v1/feed {text}
@@ -718,7 +718,7 @@ sequenceDiagram
     end
 ```
 
-The request response and recent-brief projection expose no workflow id. `workflow_started=false` means the accepted brief will be replayed by the request-start relay; it does not mean registration failed, and `true` does not mean an RSVP succeeded. Registration truth appears only when a lifecycle row reaches the corresponding state.
+The request response and recent-brief projection expose no workflow id. `workflow_started=false` means the accepted brief will be replayed by the request-start worker; it does not mean registration failed, and `true` does not mean an RSVP succeeded. Registration truth appears only when a lifecycle row reaches the corresponding state.
 
 **Projection and capability boundary.** `ConsumerIdentity`, `ConsumerRequestSummary`,
 `ConsumerRequestOutcome`, `ConsumerRegistrationSummary`, and `ConsumerTaskSummary` are
