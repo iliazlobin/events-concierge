@@ -1,5 +1,24 @@
 {{- range $db := list "application" "temporal" }}
 {{- $application := eq $db "application" }}
+{{- $image := ternary $.Values.postgres.applicationImage $.Values.postgres.temporalImage $application }}
+{{- $tls := $.Values.postgres.tls.enabled }}
+{{- $probe := list "sh" "-c" "pg_isready -U \"$POSTGRES_USER\" -d \"$POSTGRES_DB\"" }}
+{{- if $tls }}
+{{- $probe = list "sh" "-ec" "PGPASSWORD=\"$POSTGRES_PASSWORD\" PGSSLMODE=verify-full PGSSLROOTCERT=/tls/ca.crt PGHOST=\"$POSTGRES_TLS_SERVER_NAME\" PGHOSTADDR=127.0.0.1 PGCONNECT_TIMEOUT=3 psql --no-password -U \"$POSTGRES_USER\" -d \"$POSTGRES_DB\" --tuples-only --no-align --command 'SELECT 1' >/dev/null" }}
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: ec-dev-{{ $db }}-postgres-tls
+data:
+  pg_hba.conf: |
+    # Preserve in-container Unix-socket administration and initdb recovery.
+    local all all trust
+    hostnossl all all 0.0.0.0/0 reject
+    hostnossl all all ::/0 reject
+    hostssl all all 0.0.0.0/0 scram-sha-256
+    hostssl all all ::/0 scram-sha-256
+{{- end }}
 ---
 apiVersion: v1
 kind: Service
@@ -28,11 +47,61 @@ spec:
       automountServiceAccountToken: false
       terminationGracePeriodSeconds: 60
       securityContext: {fsGroup: 999, seccompProfile: {type: RuntimeDefault}}
+      {{- if $tls }}
+      initContainers:
+        - name: stage-postgres-tls
+          image: {{ $image | quote }}
+          command: [sh, -ec]
+          args:
+            - |
+              umask 077
+              cp /tls-source/tls.crt /tls/tls.crt
+              cp /tls-source/tls.key /tls/tls.key
+              cp /tls-source/ca.crt /tls/ca.crt
+              chmod 0600 /tls/*
+              chmod 0700 /tls
+              chown postgres:postgres /tls/*
+              chown postgres:postgres /tls
+          securityContext:
+            runAsUser: 0
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: {drop: [ALL], add: [CHOWN]}
+          resources:
+            requests: {cpu: 10m, memory: 16Mi}
+            limits: {cpu: 100m, memory: 64Mi}
+          volumeMounts:
+            - {name: tls-source, mountPath: /tls-source, readOnly: true}
+            - {name: tls, mountPath: /tls}
+      {{- end }}
       containers:
         - name: postgres
-          image: {{ ternary $.Values.postgres.applicationImage $.Values.postgres.temporalImage $application | quote }}
-          args: ["-c", "max_connections=80", "-c", "shared_buffers=128MB"]
+          image: {{ $image | quote }}
+          args:
+            - -c
+            - max_connections=80
+            - -c
+            - shared_buffers=128MB
+            {{- if $tls }}
+            - -c
+            - ssl=on
+            - -c
+            - ssl_cert_file=/tls/tls.crt
+            - -c
+            - ssl_key_file=/tls/tls.key
+            - -c
+            - ssl_min_protocol_version=TLSv1.2
+            - -c
+            - hba_file=/tls-config/pg_hba.conf
+            - -c
+            - password_encryption=scram-sha-256
+            {{- end }}
           env:
+            {{- if $tls }}
+            # Verify the Service certificate without depending on its ready Endpoint.
+            - name: POSTGRES_TLS_SERVER_NAME
+              value: {{ default (printf "ec-dev-%s-postgres.%s.svc.cluster.local" $db $.Release.Namespace) (index $.Values.postgres.tls (printf "%sServerName" $db)) | quote }}
+            {{- end }}
             - {name: PGDATA, value: /var/lib/postgresql/data/pgdata}
             - {name: POSTGRES_USER, value: {{ ternary "ec_owner" "temporal" $application }}}
             - {name: POSTGRES_DB, value: {{ ternary "events" "temporal" $application }}}
@@ -44,20 +113,38 @@ spec:
             requests: {cpu: 50m, memory: 256Mi}
             limits: {cpu: "1", memory: 768Mi}
           startupProbe:
-            exec: {command: [sh, -c, 'pg_isready -U "$POSTGRES_USER" -d "$POSTGRES_DB"']}
+            exec: {command: {{ $probe | toJson }}}
             timeoutSeconds: 5
             periodSeconds: 2
             failureThreshold: 90
           readinessProbe:
-            exec: {command: [sh, -c, 'pg_isready -U "$POSTGRES_USER" -d "$POSTGRES_DB"']}
+            exec: {command: {{ $probe | toJson }}}
             timeoutSeconds: 5
           livenessProbe:
-            exec: {command: [sh, -c, 'pg_isready -U "$POSTGRES_USER" -d "$POSTGRES_DB"']}
+            exec: {command: {{ $probe | toJson }}}
             timeoutSeconds: 5
             periodSeconds: 20
           volumeMounts:
             - {name: data, mountPath: /var/lib/postgresql/data}
+            {{- if $tls }}
+            - {name: tls, mountPath: /tls, readOnly: true}
+            - {name: tls-config, mountPath: /tls-config, readOnly: true}
+            {{- end }}
       volumes:
+        {{- if $tls }}
+        - name: tls-source
+          secret:
+            secretName: {{ required (printf "postgres.tls.%sSecretName is required when TLS is enabled" $db) (index $.Values.postgres.tls (printf "%sSecretName" $db)) | quote }}
+            defaultMode: 0400
+            items:
+              - {key: tls.crt, path: tls.crt}
+              - {key: tls.key, path: tls.key}
+              - {key: ca.crt, path: ca.crt}
+        - name: tls
+          emptyDir: {medium: Memory, sizeLimit: 1Mi}
+        - name: tls-config
+          configMap: {name: ec-dev-{{ $db }}-postgres-tls}
+        {{- end }}
         - name: data
           persistentVolumeClaim: {claimName: ec-dev-{{ $db }}}
 {{- end }}

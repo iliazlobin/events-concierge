@@ -5,8 +5,13 @@ from __future__ import annotations
 import asyncio
 import re
 from dataclasses import replace
+from datetime import UTC, datetime
 from typing import Any
 
+from cryptography import x509
+from cryptography.exceptions import UnsupportedAlgorithm
+from cryptography.hazmat.primitives import serialization
+from cryptography.x509.oid import ExtendedKeyUsageOID
 from temporalio.client import (
     Client,
     Interceptor,
@@ -20,6 +25,7 @@ from ..adapters.postgres.tenant_effects import PostgresTenantEffectAuthority
 from ..config import Settings
 from ..ports.object_store import ObjectStorePort
 from ..ports.tenant_effects import TenantEffectAuthority, TenantEffectAuthorityConfig
+from ..secret_files import read_secret_file
 from .catalog_claim_check import build_catalog_claim_check_data_converter
 from .claim_check import build_claim_check_data_converter
 
@@ -44,6 +50,9 @@ _TRANSACTIONAL_WORKFLOW_NAMES = frozenset(
 )
 _SPLIT_QUEUE_MIN_WORKFLOW_TASKS = 4
 _SPLIT_QUEUE_MIN_ACTIVITIES = 2
+_TLS_DOMAIN = re.compile(
+    r"(?=.{1,253}\Z)[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?(?:\.[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?)*\Z"
+)
 
 
 class TemporalTaskQueueRoutingInterceptor(Interceptor):
@@ -100,7 +109,7 @@ async def connect_temporal(
     catalog_only: bool = False,
     tenant_effect_authority: TenantEffectAuthority | None = None,
 ) -> Client:
-    """Connect with one consistent namespace, claim-check converter, TLS, and API-key posture.
+    """Connect with one namespace, converter and verified API-key or mTLS transport.
 
     API composition uses a lazy client so a cold-start engine outage can retain database-backed
     intake and reconnect through the same client later. Workers use the eager default so an
@@ -207,6 +216,15 @@ def _temporal_tls(settings: Settings, *, api_key: str | None) -> bool | TLSConfi
     domain = configured_domain.strip() if configured_domain is not None else None
     if configured_domain is not None and not domain:
         raise ValueError("Temporal TLS domain must not be empty when configured")
+    if domain is not None and not _TLS_DOMAIN.fullmatch(domain):
+        raise ValueError("Temporal TLS domain must be a DNS server name without URL or port")
+    files = (
+        settings.temporal_tls_server_ca_file,
+        settings.temporal_tls_client_cert_file,
+        settings.temporal_tls_client_key_file,
+    )
+    if any(value is not None for value in files):
+        return _temporal_mtls(settings, api_key=api_key, domain=domain, files=files)
     if api_key is not None and not settings.temporal_tls_enabled:
         raise ValueError("Temporal API-key authentication requires TLS")
     if not settings.temporal_tls_enabled:
@@ -214,3 +232,69 @@ def _temporal_tls(settings: Settings, *, api_key: str | None) -> bool | TLSConfi
             raise ValueError("Temporal TLS domain requires TLS")
         return None
     return TLSConfig(domain=domain) if domain is not None else True
+
+
+def _temporal_mtls(
+    settings: Settings,
+    *,
+    api_key: str | None,
+    domain: str | None,
+    files: tuple[str | None, str | None, str | None],
+) -> TLSConfig:
+    if not settings.temporal_tls_enabled:
+        raise ValueError("Temporal mTLS requires TLS")
+    if api_key is not None:
+        raise ValueError("Temporal API-key and mTLS authentication cannot be combined")
+    if not domain or not all(files):
+        raise ValueError(
+            "Temporal mTLS requires a server name, CA, client certificate and key files"
+        )
+    try:
+        ca, certificate, key = (
+            read_secret_file(path, setting_name=f"EC_TEMPORAL_TLS_{name}").encode("utf-8")
+            for path, name in zip(files, ("SERVER_CA", "CLIENT_CERT", "CLIENT_KEY"), strict=True)
+            if path is not None
+        )
+        _validate_mtls_material(ca, certificate, key)
+    except (
+        OSError,
+        ValueError,
+        TypeError,
+        UnsupportedAlgorithm,
+        x509.ExtensionNotFound,
+        x509.DuplicateExtension,
+    ):
+        # Crypto and filesystem exceptions can include a path or parsed input. Never expose them.
+        raise ValueError(
+            "Temporal mTLS files must contain valid CA and matching client credentials"
+        ) from None
+    return TLSConfig(
+        server_root_ca_cert=ca,
+        domain=domain,
+        client_cert=certificate,
+        client_private_key=key,
+    )
+
+
+def _validate_mtls_material(ca: bytes, certificate: bytes, key: bytes) -> None:
+    authorities = x509.load_pem_x509_certificates(ca)
+    chain = x509.load_pem_x509_certificates(certificate)
+    if not authorities or not chain:
+        raise ValueError("certificate bundle is empty")
+    now = datetime.now(UTC)
+    for cert in (*authorities, *chain):
+        if not cert.not_valid_before_utc <= now < cert.not_valid_after_utc:
+            raise ValueError("certificate is outside its validity period")
+    for authority in authorities:
+        if not authority.extensions.get_extension_for_class(x509.BasicConstraints).value.ca:
+            raise ValueError("server trust requires CA certificates")
+    client = chain[0]
+    purposes = client.extensions.get_extension_for_class(x509.ExtendedKeyUsage).value
+    if ExtendedKeyUsageOID.CLIENT_AUTH not in purposes:
+        raise ValueError("client certificate does not allow client authentication")
+    private_key = serialization.load_pem_private_key(key, password=None)
+    public_format = serialization.PublicFormat.SubjectPublicKeyInfo
+    if private_key.public_key().public_bytes(
+        serialization.Encoding.DER, public_format
+    ) != client.public_key().public_bytes(serialization.Encoding.DER, public_format):
+        raise ValueError("client certificate and private key do not match")

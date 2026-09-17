@@ -1,3 +1,9 @@
+{{- $tls := .Values.redis.tls.enabled }}
+{{- $serverName := default (printf "ec-dev-redis.%s.svc.cluster.local" .Release.Namespace) .Values.redis.tls.serverName }}
+{{- $probe := list "redis-cli" "ping" }}
+{{- if $tls }}
+{{- $probe = list "sh" "-ec" "test \"$(redis-cli --tls --cacert /tls/ca.crt --sni \"$REDIS_TLS_SERVER_NAME\" -h 127.0.0.1 --raw ping)\" = PONG" }}
+{{- end }}
 apiVersion: v1
 kind: Service
 metadata:
@@ -37,13 +43,51 @@ spec:
     spec:
       automountServiceAccountToken: false
       terminationGracePeriodSeconds: 60
+      {{- if $tls }}
+      initContainers:
+        - name: stage-redis-tls
+          image: {{ .Values.redis.image | quote }}
+          command: [sh, -ec]
+          args:
+            - |
+              umask 077
+              cp /tls-source/tls.crt /tls/tls.crt
+              cp /tls-source/tls.key /tls/tls.key
+              cp /tls-source/ca.crt /tls/ca.crt
+              chmod 0600 /tls/*
+              chmod 0700 /tls
+              chown redis:redis /tls/*
+              chown redis:redis /tls
+          securityContext:
+            runAsUser: 0
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: {drop: [ALL], add: [CHOWN]}
+          resources:
+            requests: {cpu: 10m, memory: 16Mi}
+            limits: {cpu: 100m, memory: 64Mi}
+          volumeMounts:
+            - {name: tls-source, mountPath: /tls-source, readOnly: true}
+            - {name: tls, mountPath: /tls}
+      {{- end }}
       containers:
         - name: redis
           image: {{ .Values.redis.image | quote }}
           command: [sh, -ec]
           args:
-            - 'exec redis-server --dir /data --save 300 1 --appendonly yes --appendfsync everysec --maxmemory 128mb --maxmemory-policy noeviction --requirepass "$REDIS_PASSWORD"'
+            - >-
+              exec redis-server --dir /data --save 300 1 --appendonly yes
+              --appendfsync everysec --maxmemory 128mb --maxmemory-policy noeviction
+              --requirepass "$REDIS_PASSWORD"
+              {{- if $tls }}
+              --tls-port 6379 --port 0 --tls-cert-file /tls/tls.crt
+              --tls-key-file /tls/tls.key --tls-ca-cert-file /tls/ca.crt
+              --tls-auth-clients no --tls-protocols "TLSv1.2 TLSv1.3"
+              {{- end }}
           env:
+            {{- if $tls }}
+            - {name: REDIS_TLS_SERVER_NAME, value: {{ $serverName | quote }}}
+            {{- end }}
             - name: REDIS_PASSWORD
               valueFrom:
                 secretKeyRef: {name: ec-dev-redis, key: password}
@@ -56,18 +100,35 @@ spec:
             limits: {cpu: 250m, memory: 384Mi}
           volumeMounts:
             - {name: data, mountPath: /data}
+            {{- if $tls }}
+            - {name: tls, mountPath: /tls, readOnly: true}
+            {{- end }}
+          # Redis 7 --sni supplies SNI, not hostname verification. This loopback probe
+          # verifies CA and password; application clients must also verify the hostname.
           startupProbe:
-            exec: {command: [redis-cli, ping]}
+            exec: {command: {{ $probe | toJson }}}
             periodSeconds: 2
             timeoutSeconds: 5
             failureThreshold: 150
           readinessProbe:
-            exec: {command: [redis-cli, ping]}
+            exec: {command: {{ $probe | toJson }}}
             timeoutSeconds: 5
           livenessProbe:
-            exec: {command: [redis-cli, ping]}
+            exec: {command: {{ $probe | toJson }}}
             timeoutSeconds: 5
             periodSeconds: 20
       volumes:
+        {{- if $tls }}
+        - name: tls-source
+          secret:
+            secretName: {{ required "redis.tls.secretName is required when TLS is enabled" .Values.redis.tls.secretName | quote }}
+            defaultMode: 0400
+            items:
+              - {key: tls.crt, path: tls.crt}
+              - {key: tls.key, path: tls.key}
+              - {key: ca.crt, path: ca.crt}
+        - name: tls
+          emptyDir: {medium: Memory, sizeLimit: 1Mi}
+        {{- end }}
         - name: data
           persistentVolumeClaim: {claimName: ec-dev-redis}

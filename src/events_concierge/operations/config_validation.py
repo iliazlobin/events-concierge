@@ -226,11 +226,9 @@ def validate_production_config(
         ),
         _check(
             "temporal_credentials",
-            bool(
-                settings.temporal_api_key and settings.temporal_api_key.get_secret_value().strip()
-            ),
-            "Temporal API credential is supplied by deployment configuration",
-            "EC_TEMPORAL_API_KEY is required by the ratified Temporal Cloud posture",
+            _temporal_credentials_configured(settings),
+            "Temporal API-key or complete mTLS authentication is configured",
+            "Temporal requires one TLS authentication profile: an API key or CA, server name and client certificate/key files",
         ),
         _check(
             "temporal_namespace",
@@ -626,6 +624,25 @@ def _check_temporal_transport(settings: Settings) -> ConfigCheck:
         passed,
         "Temporal credential and TLS settings form a valid transport",
         "Temporal credential, TLS, or TLS-domain settings are inconsistent",
+    )
+
+
+def _temporal_credentials_configured(settings: Settings) -> bool:
+    files = (
+        settings.temporal_tls_server_ca_file,
+        settings.temporal_tls_client_cert_file,
+        settings.temporal_tls_client_key_file,
+    )
+    if settings.temporal_api_key is not None:
+        return (
+            settings.temporal_tls_enabled
+            and bool(settings.temporal_api_key.get_secret_value().strip())
+            and all(value is None for value in files)
+        )
+    return (
+        settings.temporal_tls_enabled
+        and bool(settings.temporal_tls_domain and settings.temporal_tls_domain.strip())
+        and all(value is not None and value.strip() for value in files)
     )
 
 

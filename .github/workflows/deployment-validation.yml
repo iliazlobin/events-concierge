@@ -6,6 +6,7 @@ on:
       - "infra/**"
       - "deploy/**"
       - "tests/unit/test_operator_deployment.py"
+      - "tests/unit/test_development_data_tls.py"
       - "web/app/admin/v1/**"
       - "scripts/development/**"
       - "tests/deployment/**"
@@ -16,6 +17,7 @@ on:
       - "infra/**"
       - "deploy/**"
       - "tests/unit/test_operator_deployment.py"
+      - "tests/unit/test_development_data_tls.py"
       - "web/app/admin/v1/**"
       - "scripts/development/**"
       - "tests/deployment/**"
@@ -70,7 +72,7 @@ jobs:
   development:
     name: Private development contracts
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
         with:
@@ -93,8 +95,17 @@ jobs:
       - run: terraform -chdir=infra/terraform/environments/shared-development validate
       - run: terraform -chdir=infra/terraform/environments/shared-development test -no-color
       - run: helm lint deploy/helm/events-concierge-dev-data -n events-concierge-dev
+      - name: Fetch pinned Temporal chart for private TLS render validation
+        run: |
+          helm pull temporal --repo https://go.temporal.io/helm-charts --version 1.6.0 \
+            --untar --untardir "${RUNNER_TEMP}/temporal-private-tls-chart"
       - run: uv sync --locked --extra dev
-      - run: uv run pytest tests/deployment -q -o addopts=''
+      - name: Validate private deployment and disposable store TLS contracts
+        run: uv run pytest tests/deployment tests/unit/test_development_data_tls.py -q -o addopts=''
+        env:
+          EC_TEMPORAL_CHART_DIR: ${{ runner.temp }}/temporal-private-tls-chart/temporal
+          EC_HELM_BINARY: helm
+          EC_DATA_TLS_DOCKER: "1"
 
   helm:
     name: Helm lint and render

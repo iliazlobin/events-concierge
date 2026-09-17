@@ -1,0 +1,14 @@
+# Preparation only. Layer after values-shared-development.yaml for the coordinated TLS cutover.
+# These versioned Secrets must already contain ca.crt, tls.crt and tls.key.
+postgres:
+  tls:
+    enabled: true
+    applicationSecretName: ec-dev-application-postgres-tls-v1
+    temporalSecretName: ec-dev-temporal-postgres-tls-v1
+    applicationServerName: ec-dev-application-postgres.events-concierge-dev.svc.cluster.local
+    temporalServerName: ec-dev-temporal-postgres.events-concierge-dev.svc.cluster.local
+redis:
+  tls:
+    enabled: true
+    secretName: ec-dev-redis-tls-v1
+    serverName: ec-dev-redis.events-concierge-dev.svc.cluster.local

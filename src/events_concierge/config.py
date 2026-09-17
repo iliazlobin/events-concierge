@@ -122,10 +122,13 @@ class Settings(BaseSettings):
         pattern=_RELEASE_REVISION_PATTERN,
     )
     temporal_worker_versioning_enabled: bool = False
-    # Temporal Cloud accepts API-key authentication only over TLS. Self-hosted deployments may
-    # enable TLS without an API key, while local defaults keep the existing plaintext dev server.
+    # Cloud API keys and self-hosted mTLS are separate authentication profiles. mTLS material is
+    # read only at the transport boundary from bounded mounted files, never inline environment PEM.
     temporal_tls_enabled: bool = False
     temporal_tls_domain: str | None = None
+    temporal_tls_server_ca_file: str | None = Field(default=None, exclude=True, repr=False)
+    temporal_tls_client_cert_file: str | None = Field(default=None, exclude=True, repr=False)
+    temporal_tls_client_key_file: str | None = Field(default=None, exclude=True, repr=False)
     temporal_api_key: SecretStr | None = None
     temporal_api_key_file: str | None = Field(default=None, exclude=True, repr=False)
     # Bound every API/worker Temporal RPC independently from workflow execution time. The upper
