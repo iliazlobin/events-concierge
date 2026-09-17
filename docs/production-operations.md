@@ -500,8 +500,9 @@ on this snapshot.
 
 ### Entity-profile, Pacer, command-lease, and ingestion-evidence migration rollout
 
-The current source migration head is `0182`. Migrations `0128`–`0130` are deliberately ordered but should
-not be treated as a migrate-first rolling change. `0128` adds and validates checked JSONB
+The source migration head is `0195`; verify it again for the selected release. The rollout constraints
+below cover earlier entity-profile and authority migrations. Migrations `0128`–`0130` are deliberately
+ordered but should not be treated as a migrate-first rolling change. `0128` adds and validates checked JSONB
 columns/functions for verified entity profiles, `0129` reconciles historical terminal Pacer
 deferrals into retryable paused runs, and `0130` installs renewable command leases plus overview v2.
 They can scan or lock ingestion tables. Schedule them in a measured maintenance window, record
