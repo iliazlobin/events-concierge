@@ -40,15 +40,13 @@ const reqPrompt = [
 
 const sdPrompt = [
   CONVENTIONS,
-  'YOUR TARGET PAGE: the "System Design" placeholder, page_id ' + PAGES.systemDesign + '.',
-  'TASK:',
-  '1. replace_content of that page with the body of ' + WS + '/design/system-design.md (strip nothing at the top — this file has NO H1, it starts at "## 1. Problem"; publish from the first line). Remember the callout color conversion (yellow_background -> yellow_bg) — this file has ~6 callouts. Keep all ```mermaid and ```sql/```text fences verbatim.',
-  '2. Then create 4 child pages under it, in this ascending order, each = the panel file body minus its leading "# Panel N: ..." H1, titled by that H1 text:',
-  '   - ' + WS + '/design/panels/01-discovery-topology.md',
-  '   - ' + WS + '/design/panels/02-registration-orchestration.md',
-  '   - ' + WS + '/design/panels/03-credential-isolation.md',
-  '   - ' + WS + '/design/panels/04-handoff-lifecycle.md',
-  'Verify the body + 4 children landed, then report via the structured tool.',
+  'SYSTEM DESIGN OVERRIDE: the following instructions replace the placeholder, full-copy and child-creation conventions above for this page only.',
+  'YOUR TARGET PAGE: existing Application Design page, page_id ' + PAGES.systemDesign + '.',
+  'Read the current page before editing. It is not an empty placeholder. Preserve its ID, title, child pages, databases and unrelated content.',
+  'Read ' + WS + '/PROJECT.md, ' + WS + '/ARCHITECTURE.md and ' + WS + '/design/system-design.md. Update the existing overview with short factual bullets for current scope, accepted components and flows. Label deferred capabilities and pending deployment acceptance.',
+  'Use targeted update_content edits. Do not paste the full engineering document, decision narratives, option comparisons, schemas or endpoint inventories. Do not create panel subpages or a References section.',
+  'Preserve essential inline links; use verified commit-pinned GitHub links for engineering detail. Do not invent a published revision or treat code as deployed evidence.',
+  'Fetch the page after editing; verify concise content, links and unchanged child IDs. Report via structured output with children_created empty.',
 ].join('\n\n')
 
 const dlPrompt = [

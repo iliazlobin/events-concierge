@@ -113,7 +113,7 @@ make catalog-refresh SOURCE_KEY=luma-sf
 - [Ingestion admin](docs/ingestion-admin.md): operator controls, source policy and diagnostics.
 - [Catalog semantics](design/catalog-event-semantics.md) and [browse history](design/catalog-browse-history.md): filters, dates and current projections.
 - [Meetup ingestion](docs/meetup-ingestion-runbook.md): anonymous catalog collection; OAuth/RSVP data remains tenant-scoped.
-- [Manual acceptance](docs/manual-test-plan.md): discovery checks; full-profile lifecycle checks apply only when enabled.
+- [Manual acceptance](docs/manual-test-plan.md): discovery checks, identity boundaries and erasure acceptance.
 - [Account settings](design/account-settings-vertical.md): erasure fencing and cleanup. Accepted erasure is not completed erasure.
 
 ## Containerized application
