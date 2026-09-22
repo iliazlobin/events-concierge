@@ -20,8 +20,7 @@ Google self-service account deletion stays unavailable until independent reauthe
 using that limitation for a private pilot requires an explicit scope decision. The existing OIDC
 contract is recorded in [production operations](docs/production-operations.md#built-in-oidc-bff-activation).
 [Release acceptance](docs/production-operations.md#first-release-acceptance) owns those gates;
-[private deployment and recovery](deploy/development.md) owns the current deployment and retained
-legacy recovery resources. `EC_RELEASE_PROFILE=discovery` selects product scope; it does not
+[private deployment and recovery](deploy/development.md) owns current deployment and recovery operations. `EC_RELEASE_PROFILE=discovery` selects product scope; it does not
 provision identity or turn mock integrations into production services.
 
 ## Mission

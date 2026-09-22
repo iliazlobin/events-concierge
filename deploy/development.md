@@ -1,29 +1,27 @@
 # Private GKE development
 
-This runbook operates the shared `platform-dev` development deployment and preserves the legacy
-`ec-dev` recovery procedure. Shared foundation, networking and GKE are owned by [gcp-foundation](https://github.com/iliazlobin/gcp-foundation);
+This runbook operates the shared `platform-dev` development deployment. Shared foundation,
+networking and GKE are owned by [gcp-foundation](https://github.com/iliazlobin/gcp-foundation);
 do not create a second cluster from this application root for that destination.
 Product scope and release gates: [first-release acceptance](../docs/production-operations.md#first-release-acceptance).
 
-The shared discovery deployment has passed restoration, user-flow, crawler and recovery acceptance.
-Legacy application releases, the `ec-dev` cluster/node pool and its dedicated network/NAT are retired.
-Legacy foundation, state, backups, identities and two retained PostgreSQL disks remain with their
-existing owners for recovery. Access remains IAP and loopback-only; production gates remain open.
-Historical commands must not be silently repointed to the shared project.
+The shared discovery deployment has passed private development acceptance. Access remains IAP
+and loopback-only; production gates remain open. Use Terraform 1.16.1, gcloud, kubectl with
+gke-gcloud-auth-plugin, Helm 3, Python 3.12+ and Docker Buildx. Authenticate as
+`iliazlobin27@gmail.com` and target `iz27-platform-dev` explicitly. Initialize the repository with
+`uv sync --frozen --python 3.12`; use `.venv/bin/python` for the operation helpers.
 
 On a shared destination, the platform must install and verify its retained `shared-retain`
 StorageClass before application stores are installed. Set `createStorageClass=false` and
 `storageClass=shared-retain` on the data chart; application Helm must not own the platform class.
-The retired cluster’s `ec-dev-retain` class and claims no longer provide a live endpoint; its
-two retained cloud disks remain with the legacy application owner.
 
 This profile uses real PostgreSQL, Redis, Temporal and GCS with explicit mock external product adapters. No real email, booking or Calendar actions. The older staging Terraform root remains separate.
 
 ## Current deployment
 
 The shared cluster `platform-dev` in `iz27-platform-dev/us-west1-a` runs private discovery in
-`events-concierge-dev`. Read-only inspection on September 17 found all six application Deployments,
-both PostgreSQL StatefulSets, Redis and the four Temporal server Deployments ready. Services are
+`events-concierge-dev`. Six application Deployments, both PostgreSQL StatefulSets, Redis and the
+four Temporal server Deployments are ready. Services are
 ClusterIP-only with no Ingress. The ingestion cadence CronJob is enabled and schedules every five
 minutes; it checks due sources rather than refreshing every source on every tick.
 
@@ -77,9 +75,6 @@ cover the earlier development release, not the pending authenticated candidate. 
 metadata check found no newer completed/verified shared backup set and no Cloud Monitoring alert
 policies in `iz27-platform-dev`. Backups remain manual. Redis persistence survived its retained-disk recovery drill but is outside the database/
 payload backup; avatar media is intentionally excluded so erasure can delete it.
-The [legacy retirement readback](https://console.cloud.google.com/storage/browser/_details/iz27-platform-dev-ec-backups/20260912T014120Z-08707790/retirement.json?project=iz27-platform-dev&authuser=4)
-records the old cluster/network removal. Retained legacy foundation, state, identities, backups
-and PostgreSQL disks remain recovery dependencies; routine release work must preserve them.
 
 ## Shared application landing
 
@@ -87,7 +82,11 @@ The platform owns the two projects, deployment identities, network, GKE/node poo
 VM and `shared-retain`. Follow its [private access and storage gates](https://github.com/iliazlobin/gcp-foundation#private-access)
 before installing application resources. The app-owned [shared-development root](../infra/terraform/environments/shared-development)
 owns its registry, workload identities, secrets and payload, media, backup and state buckets. It never creates a
-cluster or changes shared network resources. The legacy root/state retain ownership of their recovery resources.
+cluster or changes shared network resources.
+
+The separate [`development` root](../infra/terraform/environments/development) remains only to
+manage resources awaiting verified retirement. It is not an operation target. Remove that root
+after its data, image and identity dependencies are resolved and its owning state is empty.
 
 Use the platform's verified `platform_contract` output as the new root's input. Review its exact
 saved plan with `scripts/development/check_shared_plan.py`. Bootstrap the app root into fresh local
@@ -97,8 +96,8 @@ Keep plan, credentials and state out of Git. Do not initialize the legacy backen
 
 All commands use the platform's separate kubeconfig and loopback IAP tunnel. The context must be
 `gke_iz27-platform-dev_us-west1-a_platform-dev`; the namespace remains `events-concierge-dev`.
-The helpers' default target is **legacy**. Select `--target shared` explicitly for secret bootstrap,
-release-value generation, readiness, store-recovery drills and backups. Use `.venv/bin/python`.
+All operation helpers default to **shared** and reject the retired target. `--target shared` remains
+accepted for existing commands. Context and resource checks run before cloud or Kubernetes changes.
 
 Layer `values-shared-development.yaml` after `values-development.yaml` for the application, and
 the data chart's shared overlay after its defaults. These select the shared project/bucket,
@@ -117,26 +116,21 @@ revision labels, tag and push those same images to the private Artifact Registry
 registry digests in release values. Accept the package only after every CI and deployment check
 for that commit passes. The archive is a temporary release artifact, not a backup or deployment.
 
-Restore the coordinated legacy databases and payloads into the new stores before starting writers;
-preserve tenant/request data, schema compatibility and provenance. Take a fresh verified backup
-with old writers stopped for final cutover. Do not substitute local test fixtures for production data.
-Verify restoration, user workflows, private-only Services and worker execution before accepting it.
+For recovery into empty stores, restore a verified coordinated database/payload backup before
+starting writers. Require empty application and Temporal databases; never restore over live data.
+Before `pg_restore --exit-on-error`, create restricted `ec_app` with its pinned app-role password;
+migration 0002 will not rerun after restoration. Create NOLOGIN `ec_operator_viewer`,
+`ec_operator_controller`, `ec_ingestion_executor` and NOINHERIT `ec_operator_aggregate_definer`,
+granting viewer to controller. Preserve original owners/ACLs: `ec_owner` and the aggregate definer
+for the app, `temporal` for its databases. Let migration bootstrap create the two `ec_dev_*`
+operator/executor logins from pinned secrets. Keep Temporal database, schema and namespace
+initialization disabled. Copy the exact payload hierarchy without changing content keys. Run
+candidate migration/bootstrap, then verify manifest aggregates, tenant isolation and historical
+payload reads before resume.
 
-For the schema-0193 backup, install only stores and require an empty application schema and empty
-Temporal databases. Before `pg_restore --exit-on-error`, create restricted `ec_app` with the **new**
-pinned app-role password; migration 0002 will not rerun after restoration. Create NOLOGIN
-`ec_operator_viewer`, `ec_operator_controller`, `ec_ingestion_executor` and NOINHERIT
-`ec_operator_aggregate_definer`, granting viewer to controller. Preserve original owners/ACLs:
-`ec_owner` and the aggregate definer for the app, `temporal` for its databases. Keep the two
-`ec_dev_*` logins absent so the existing migration bootstrap creates them from new pinned secrets.
-Do not run Temporal schema-init jobs before restoring. Copy the exact payload hierarchy; the
-content keys and Temporal history need no bucket-URI rewrite. Then run candidate migration/bootstrap
-and verify manifest counts, isolation and historical payload reads before starting writers.
-
-The old backup excludes Redis. At final quiesce, inventory provider backoffs, admission fences and
-sessions again; preserve or wait out outstanding backoffs before a cold start. Do not infer an empty
-store from the earlier one-key pacer snapshot. New backups inventory and hash every payload-bucket
-object. Older payload-only backups retain their narrower verification.
+Redis is outside this coordinated backup. Inventory sessions, provider backoffs and admission
+fences before recovery; reconstruct or wait out outstanding backoffs before a cold start. Payload
+backups inventory and hash every object. Profile media is excluded for account erasure.
 
 ### Shared release and access
 
@@ -172,7 +166,22 @@ The restored Temporal options disable database/schema/namespace initialization; 
 only a harmless completion hook. They apply to this restored environment, not a fresh empty Temporal
 installation. The application migration runs before its writers and must preserve the restored data.
 
-For subsequent releases, preserve the accepted cadence and replica settings after the backup and
+For a release with migrations, suspend cadence and drain scheduled Jobs and collection commands
+as described in [manual recovery](#manual-recovery). Keep writers stopped through migration and
+bootstrap acceptance:
+
+```bash
+.venv/bin/python scripts/development/backup.py backup --hold-stopped
+.venv/bin/python scripts/development/backup.py verify gs://iz27-platform-dev-ec-backups/SET_ID
+```
+
+A failed bootstrap can leave Alembic changes committed. Keep the application stopped, repair and
+retry bootstrap, then verify roles and credentials before starting the candidate. Do not start an
+older image or use Helm rollback as schema rollback. A schema-changing failure requires compatible
+images and the coordinated database/payload recovery procedure above, in an empty recovery store;
+`backup resume` restores replicas only and refuses a changed schema.
+
+For subsequent releases, preserve the accepted cadence and replica settings after these backup and
 migration gates. Render from the three source value files; do not use `helm get values --all` as
 an input file, because resolved null-removal semantics can reintroduce omitted defaults.
 
@@ -189,8 +198,8 @@ kubectl -n events-concierge-dev port-forward --address=127.0.0.1 deployment/even
 ```
 
 Use `http://127.0.0.1:14001` for consumer acceptance and `http://127.0.0.1:14002/admin` for private
-administration. These forwards grant no public access. Shared backup/verify/resume commands must
-include `--target shared`; never use a legacy recovery prefix against the new cluster.
+administration. These forwards grant no public access. Backup/verify/resume use the shared
+destination; use only its verified recovery prefix.
 
 If the IAP transport exits, restart it with the platform private-access helper, verify the shared
 context and node again, then restart these three forwards. Restart affected forwards after a pod
@@ -298,22 +307,10 @@ Media is excluded from retained payload backups. Database recovery may require u
 avatars; never claim a database/payload restore recovered media. Verify upload, replica-independent
 read, deletion and account erasure on the shared deployment.
 
-The completed September 11 initial cutover is recorded below; do not replay these configuration
-changes as routine release steps. The registry comparison found the same 105 non-fixture registrations in both stores;
-no source inserts or table import are needed. After restoration and migration, use optimistic,
-audited admin configuration changes to match the local reviewed set: enable `berkeley-events`,
-`berkeley-public-library-events`, `berkeley-rep-shows`, `scu-events`, `sf-gov-related-events`,
-`sjsu-events`, `smccd-events`, `stanford-events` and `ucsf-events`; disable `luma-nyc-nyaiengineers`.
-Set the resulting 92 enabled sources to a 1,440-minute refresh interval. First recheck source keys
-and immutable settings; abort on unexpected drift. Preserve destination revisions, review/history
-metadata, URLs, collection windows and retirement records. The local database also contains 497
-fixture registrations: exclude them using `fn_ingestion_admin_source_is_fixture`, never copy them.
-
-For collection acceptance, compare `fn_report_catalog_source_coverage_v1()` on both environments,
-using the same as-of time and collection windows. It excludes fixtures. Require every reviewed source
-to have current successful execution or an explicitly investigated failure, and compare per-source
-live future events and freshness; summed links can count one event from multiple sources. Imported
-counts alone do not prove crawling. Keep the old stack until this parity and recovery gate passes.
+For collection acceptance, use `fn_report_catalog_source_coverage_v1()` with an explicit as-of
+time and collection window. It excludes fixtures. Require reviewed sources to have successful
+execution or an investigated failure; compare per-source future events and freshness. Imported
+counts alone do not prove crawling, and summed links can count the same event more than once.
 
 After a real queued refresh succeeds through the separate ingestion executor, opt in to
 `developmentCatalog.cadenceEnabled=true`. This creates a five-minute CronJob that queues reviewed
@@ -332,122 +329,6 @@ The backup helper refuses running schedules or unfinished Jobs before stopping w
 again before dumping. Keep schedules suspended during cutover/recovery. Restore their previous
 suspension state only after writer readiness and backup/restore verification; `backup resume`
 restores saved Deployment replicas, not CronJob schedules.
-
-Retire old application releases, then their old GKE/node resources and dedicated network/NAT only
-after accepted destination parity, user flows and recovery. Review each owning root's exact removal
-plan; preserve backups, state and retained disks while their recovery or dependency purpose remains.
-
-## Legacy infrastructure
-
-<details>
-<summary>Historical ec-dev deployment and recovery procedure</summary>
-
-These commands describe the old app-owned cluster. The current legacy Terraform root preserves
-recovery resources and removes its cluster/node pool; it cannot provision the historical stack.
-Use the [pre-retirement source](https://github.com/iliazlobin/events-concierge/tree/d5cac84111eeea2fdf8329dcedc5d937e2a20390)
-only for a separately reviewed recovery. Do not execute this procedure against the shared context.
-
-
-Use Terraform 1.16.1, gcloud, kubectl with gke-gcloud-auth-plugin, Helm 3, Python 3.12+ with PyYAML, and Docker Buildx. Authenticate as `iliazlobin27@gmail.com`; target `project-9c8cce04-f94d-40fc-aa6` explicitly. Never copy local credentials to another machine.
-
-Initialize the repository environment with `uv sync --frozen --python 3.12`. Run the backup helper with `.venv/bin/python`; the macOS system `python3` can be too old.
-
-From the repository root:
-
-```bash
-mkdir -p .local
-cp infra/terraform/environments/development/backend.tf.example infra/terraform/environments/development/backend.tf
-export TF_VAR_impersonate_service_account=iac-development-rw@iz27-foundation.iam.gserviceaccount.com
-terraform -chdir=infra/terraform/environments/development init
-terraform -chdir=infra/terraform/environments/development plan -out=../../../../.local/development.tfplan
-terraform -chdir=infra/terraform/environments/development show -json ../../../../.local/development.tfplan > .local/development-plan.json
-python3 scripts/development/check_plan.py .local/development-plan.json
-# Review the exact plan before applying. The initial scope gate permits additions only.
-terraform -chdir=infra/terraform/environments/development apply ../../../../.local/development.tfplan
-```
-
-State is in `gs://iz27-foundation-development-state/events-concierge/development`. Foundation owns networking/NAT and deployer grants; this root only reads its existing network. The fixed node is e2-standard-2; changing size requires a reviewed capacity/cost decision. Deletion protection and retained database PVCs intentionally block accidental removal. The deployer has powerful development-project IAM; runtime identities have separate scoped grants.
-
-## Connect and initialize a new environment
-
-```bash
-export KUBECONFIG="$PWD/.local/kubeconfig"
-gcloud container clusters get-credentials ec-dev --zone=us-west1-a --dns-endpoint --project=project-9c8cce04-f94d-40fc-aa6 --account=iliazlobin27@gmail.com
-kubectl create namespace events-concierge-dev --dry-run=client -o yaml | kubectl apply -f -
-.venv/bin/python scripts/development/bootstrap_secrets.py --project-to-kubernetes
-helm upgrade --install ec-dev-data deploy/helm/events-concierge-dev-data -n events-concierge-dev --wait --timeout 10m
-helm upgrade --install ec-dev-temporal temporal --repo https://go.temporal.io/helm-charts --version 1.6.0 -n events-concierge-dev -f deploy/helm/temporal-development.yaml --wait --timeout 15m
-```
-
-For an existing environment, connect using its task-local kubeconfig and follow the application cutover below. Do not rerun the data-chart installation as part of an application update.
-
-Secret values are generated directly into Secret Manager. Version 1 is pinned and existing credentials are reused; rotation requires a reviewed release. Databases and Redis use separately projected Kubernetes secrets; application pods use the GKE Secret Manager CSI driver.
-
-## Application release
-
-The development admin uses a separate `ec_dev_operator` login with controller capability. The command executor and catalog Temporal worker share an `ec_dev_ingestion` login with executor capability; each has its own workload identity. Both catalog processes use GCS under `events-concierge/catalog/v1`. The consumer `ec_app` role has neither capability.
-
-### Prepare and review
-
-1. Select one committed candidate with passing CI. Build the backend and `web/Dockerfile` for `linux/amd64`, using that full commit as backend `VCS_REF`. Publish to `us-west1-docker.pkg.dev/project-9c8cce04-f94d-40fc-aa6/ec-dev/` and retain the immutable image digests.
-2. Save and review the Terraform plan. For the operator cutover, run `python3 scripts/development/check_plan.py --operator-cutover .local/development-plan.json`. This permits only the two exact old catalog IAM revocations in addition to normal additions; default mode remains initial-additions only. Apply after quiescing below, because the old catalog worker still needs those grants.
-3. Rehearse the candidate migration and logins against disposable PostgreSQL. Existing login collisions and pinned-password mismatches must fail before Alembic. Check controller/executor separation, catalog payload exchange, and the rendered private-development profile. Keep the customer release-scope decision separate from this private development update.
-
-### Quiesce and back up
-
-Disable access/new submissions and wait for current work to settle. Confirm there are no open product workflows in Temporal, active catalog/command leases or pending request-start/notification records. Internal worker-version tracking workflows are expected and are not product work. Repeat the check after application workers stop to close the race. Worker-version promotion does not move existing pinned workflows to the new version; do not remove workers needed by outstanding executions.
-
-```bash
-.venv/bin/python scripts/development/backup.py backup --hold-stopped
-.venv/bin/python scripts/development/backup.py verify gs://iz27-ec-dev-backups/SET_ID
-```
-
-Use the exact completed set printed by backup. Before stopping anything, the helper saves and reads back password-free `recovery.json` in that same prefix with the schema version, original writer replica counts and deployment identities. It then saves all three PostgreSQL databases, payloads and image/schema metadata. Application writers stop before Temporal; PostgreSQL and Redis remain running. A failed backup attempts to restore writer replicas with bounded retries. A successful `--hold-stopped` backup leaves writers stopped until the cutover is accepted. Do not run the data-chart upgrade here: Redis persistence and PostgreSQL probe changes require their own storage rehearsal.
-
-If backup or automatic recovery is interrupted, restore connectivity and run the printed recovery command **before any migration or rollout**:
-
-```bash
-.venv/bin/python scripts/development/backup.py resume gs://iz27-ec-dev-backups/SET_ID
-```
-
-Resume can be repeated. It restores only saved replica counts, starts Temporal first, and refuses unknown names, counts outside 0/1, replaced Deployments, changed workload templates or a changed schema. Check every original Deployment is ready before reopening access. An incomplete prefix may contain recovery metadata and partial dumps; preserve it as failure evidence, but never use it for data restoration. Older backups without `recovery.json` require their saved manifest and reviewed manual recovery. After migration begins, follow the compatible-image recovery procedure below; `resume` is not a schema rollback.
-
-### Apply credentials and application
-
-Apply the reviewed Terraform plan while the old workers are stopped, then initialize the new pinned secret versions. Existing versions and login passwords are preserved.
-
-```bash
-terraform -chdir=infra/terraform/environments/development apply ../../../../.local/development.tfplan
-python3 scripts/development/bootstrap_secrets.py
-.venv/bin/python scripts/development/release_values.py --app-image "$APP_IMAGE" --web-image "$WEB_IMAGE" --revision "$BACKEND_REVISION" --output .local/release-values.yaml
-helm upgrade --install events-concierge deploy/helm/events-concierge -n events-concierge-dev -f deploy/helm/events-concierge/values-development.yaml -f .local/release-values.yaml --wait --wait-for-jobs --timeout 10m
-```
-
-The migration Job preflights existing reserved logins and authenticates their pinned credentials, upgrades the schema, provisions missing logins, then authenticates both. It never grants operator authority to `ec_app`. If bootstrap fails after Alembic commits, keep the application stopped and repair/retry the Job. Migration `0187` has no downgrade: **do not restart schema-0180 images or use Helm rollback after schema-0193 migration**. Recovery uses the verified coordinated database/payload backup and compatible images.
-
-The migration Helm phase removes the old application Deployments. Restore the four `ec-dev-temporal-*` server Deployments to the replica counts in the backup manifest and wait for readiness, then recreate the application:
-
-```bash
-helm upgrade events-concierge deploy/helm/events-concierge -n events-concierge-dev -f deploy/helm/events-concierge/values-development.yaml -f .local/release-values.yaml --set global.releasePhase=application --set global.runtimeProviderReady=true --wait --timeout 10m
-python3 scripts/development/wait_ready.py
-kubectl -n events-concierge-dev exec -i deployment/events-concierge-api -- python - < scripts/development/promote_workers.py
-kubectl -n events-concierge-dev exec -i deployment/events-concierge-api -- python - < scripts/development/smoke.py
-```
-
-### Acceptance and access
-
-- Require all ten application/admin/executor Deployments to have one updated, available, ready replica. Helm readiness alone can accept zero ready replicas with `maxUnavailable=1`.
-- Verify schema, separate controller/executor login access, API/admin reads, Temporal pollers and catalog-prefix GCS access. Process probes alone do not prove worker execution.
-- `smoke.py` proves a completed synthetic request workflow and a GCS round trip; a business outcome such as `failed_no_candidate` is not a successful registration. Isolated catalog/Temporal tests cover executor and publication behavior. A deployed catalog end-to-end check needs a reviewed source refresh; do not bypass fixture exclusion or insert fixture sources in the runtime database.
-- Create and verify a fresh schema-0193 backup before accepting the cutover. Preserve the pre-cutover backup.
-
-```bash
-kubectl -n events-concierge-dev port-forward service/events-concierge-frontend 13000:80
-```
-
-Browse http://localhost:13000. Access remains localhost-only. Recurring jobs and autoscaling remain disabled. One node and one replica mean downtime during replacement and upgrades; disks remain zonal. This is private development, not production.
-
-</details>
 
 ## Persistent storage and self-healing
 
@@ -468,7 +349,7 @@ The development admin runs in `events-concierge-admin`: its frontend and API bot
 kubectl -n events-concierge-dev port-forward --address=127.0.0.1 deployment/events-concierge-admin 14002:3000
 ```
 
-With the shared kubeconfig, open http://127.0.0.1:14002/admin. The dedicated pod uses the shared live development database and current immutable images. Its readiness checks exercise the admin overview through both API and frontend. Legacy recovery requires a separately reviewed recovery environment; the archived procedure does not provide a running legacy endpoint.
+With the shared kubeconfig, open http://127.0.0.1:14002/admin. The dedicated pod uses the shared live development database and current immutable images. Its readiness checks exercise the admin overview through both API and frontend.
 
 ## Manual recovery
 

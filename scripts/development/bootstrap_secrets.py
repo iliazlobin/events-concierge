@@ -13,10 +13,10 @@ from urllib.parse import quote
 
 from events_concierge.deployment.development_targets import TARGETS
 
-PROJECT = "project-9c8cce04-f94d-40fc-aa6"
+PROJECT = TARGETS["shared"].project
 ACCOUNT = "iliazlobin27@gmail.com"
 NS = "events-concierge-dev"
-CONTEXT = "gke_" + PROJECT + "_us-west1-a_ec-dev"
+CONTEXT = TARGETS["shared"].context
 
 
 def gc(*args, input=None, check=True):
@@ -45,7 +45,7 @@ def read_or_create(name, factory):
     return value
 
 
-def initialize_credentials(*, project_to_kubernetes=False, target="legacy"):
+def initialize_credentials(*, project_to_kubernetes=False, target="shared"):
     global PROJECT, CONTEXT
     destination = TARGETS[target]
     PROJECT, CONTEXT = destination.project, destination.context
@@ -130,7 +130,7 @@ def initialize_credentials(*, project_to_kubernetes=False, target="legacy"):
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--project-to-kubernetes", action="store_true")
-    parser.add_argument("--target", choices=TARGETS, default="legacy")
+    parser.add_argument("--target", choices=TARGETS, default="shared")
     args = parser.parse_args()
     initialize_credentials(project_to_kubernetes=args.project_to_kubernetes, target=args.target)
 

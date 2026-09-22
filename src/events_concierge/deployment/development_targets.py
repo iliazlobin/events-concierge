@@ -17,13 +17,6 @@ class DevelopmentTarget:
 
 
 TARGETS = {
-    "legacy": DevelopmentTarget(
-        "project-9c8cce04-f94d-40fc-aa6",
-        "ec-dev",
-        "iz27-ec-dev-payloads",
-        "iz27-ec-dev-backups",
-        "development",
-    ),
     "shared": DevelopmentTarget(
         "iz27-platform-dev",
         "platform-dev",

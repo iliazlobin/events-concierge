@@ -16,7 +16,7 @@ p.add_argument("--app-image", required=True)
 p.add_argument("--web-image", required=True)
 p.add_argument("--output", required=True)
 p.add_argument("--revision", required=True, help="Backend image source commit")
-p.add_argument("--target", choices=TARGETS, default="legacy")
+p.add_argument("--target", choices=TARGETS, default="shared")
 a = p.parse_args()
 target = TARGETS[a.target]
 if not re.fullmatch("[0-9a-f]{40}", a.revision):

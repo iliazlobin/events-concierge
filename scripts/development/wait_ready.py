@@ -9,20 +9,16 @@ import time
 from events_concierge.deployment.development_targets import TARGETS
 
 NAMESPACE = "events-concierge-dev"
-CONTEXT = "gke_project-9c8cce04-f94d-40fc-aa6_us-west1-a_ec-dev"
+CONTEXT = TARGETS["shared"].context
 EXPECTED = {
     "events-concierge-" + name
     for name in [
         "api",
         "admin",
         "frontend",
-        "temporal-transactional",
         "temporal-catalog",
         "ingestion-executor",
-        "request-starter",
-        "notifier",
         "account-erasure",
-        "change-delivery",
     ]
 }
 
@@ -33,14 +29,12 @@ DEFERRED = {
 }
 
 
-def pending_deployments(items, *, target="legacy"):
+def pending_deployments(items):
     """Require every expected process, including the command executor, to finish rollout."""
     by_name = {x["metadata"]["name"]: x for x in items}
     pending = []
-    expected = EXPECTED - DEFERRED if target == "shared" else EXPECTED
-    if target == "shared":
-        pending.extend(sorted(name for name in DEFERRED if name in by_name))
-    for name in sorted(expected):
+    pending.extend(sorted(name for name in DEFERRED if name in by_name))
+    for name in sorted(EXPECTED):
         d = by_name.get(name, {})
         status = d.get("status", {})
         if (
@@ -55,7 +49,7 @@ def pending_deployments(items, *, target="legacy"):
     return pending
 
 
-def main(*, target="legacy"):
+def main(*, target="shared"):
     expected_context = TARGETS[target].context
     kubectl = os.environ.get("KUBECTL", "kubectl")
     context = subprocess.check_output([kubectl, "config", "current-context"], text=True).strip()
@@ -77,9 +71,9 @@ def main(*, target="legacy"):
                 ]
             )
         )["items"]
-        pending = pending_deployments(items, target=target)
+        pending = pending_deployments(items)
         if not pending:
-            count = len(EXPECTED - DEFERRED if target == "shared" else EXPECTED)
+            count = len(EXPECTED)
             print(f"All {count} expected deployments have one updated, available, ready replica")
             return
         print("Waiting:", ", ".join(pending), flush=True)
@@ -89,5 +83,5 @@ def main(*, target="legacy"):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument("--target", choices=TARGETS, default="legacy")
+    parser.add_argument("--target", choices=TARGETS, default="shared")
     main(target=parser.parse_args().target)

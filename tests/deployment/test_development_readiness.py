@@ -17,7 +17,7 @@ spec.loader.exec_module(readiness)
 EXECUTOR = "events-concierge-ingestion-executor"
 
 
-def ready_deployments():
+def ready_deployments(*, include_deferred=False):
     return [
         {
             "metadata": {"name": name, "generation": 2},
@@ -41,10 +41,11 @@ def ready_deployments():
             "events-concierge-change-delivery",
             EXECUTOR,
         )
+        if include_deferred or name not in readiness.DEFERRED
     ]
 
 
-def test_previous_nine_ready_deployments_cannot_hide_a_missing_executor():
+def test_other_ready_deployments_cannot_hide_a_missing_executor():
     items = [d for d in ready_deployments() if d["metadata"]["name"] != EXECUTOR]
     assert readiness.pending_deployments(items) == [EXECUTOR]
     assert readiness.pending_deployments(ready_deployments()) == []
@@ -103,7 +104,7 @@ def test_waits_for_executor_and_pins_cluster_on_every_read(monkeypatch, capsys):
     assert sleeps == [5]
     output = capsys.readouterr().out
     assert "Waiting: " + EXECUTOR in output
-    assert "All 10 expected deployments" in output
+    assert "All 6 expected deployments" in output
 
 
 def test_wrong_context_fails_before_deployment_read(monkeypatch):
@@ -121,9 +122,9 @@ def test_wrong_context_fails_before_deployment_read(monkeypatch):
 
 def test_shared_discovery_requires_active_catalog_and_no_deferred_deployments():
     items = [d for d in ready_deployments() if d["metadata"]["name"] not in readiness.DEFERRED]
-    assert readiness.pending_deployments(items, target="shared") == []
-    assert readiness.pending_deployments(ready_deployments(), target="shared") == sorted(
+    assert readiness.pending_deployments(items) == []
+    assert readiness.pending_deployments(ready_deployments(include_deferred=True)) == sorted(
         readiness.DEFERRED
     )
     missing = [d for d in items if d["metadata"]["name"] != EXECUTOR]
-    assert readiness.pending_deployments(missing, target="shared") == [EXECUTOR]
+    assert readiness.pending_deployments(missing) == [EXECUTOR]
