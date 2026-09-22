@@ -22,7 +22,7 @@ Current product scope and delivery priorities. GitHub Issues and PRs own task pr
 - A private pilot accepting unavailable self-service deletion needs an explicit owner decision.
 - [Release acceptance](docs/production-operations.md#first-release-acceptance) owns launch gates. Development acceptance does not establish production acceptance.
 
-## Design decisions
+## System design
 
 | Component | Responsibility |
 | --- | --- |

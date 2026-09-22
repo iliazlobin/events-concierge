@@ -144,7 +144,7 @@ function proposePrompt(item, bias) {
 
 function judgePrompt(item, proposals) {
   return [
-    'You are an adversarial judge deciding ONE contested architecture fork for the Events Concierge system design. Three proposals argue deliberately divergent biases. Your job: VERIFY their claims against the binding requirements and the research dossiers YOURSELF - do not trust any proposal self-assessment - then attack each proposal at its weakest binding constraint, then DECIDE. A graft (winning base + salvaged ideas from losers) is often the right verdict. Your output must be concrete enough that a design-doc deep dive (Problem -> Approaches -> Decision -> Rationale -> Edge cases) and an ADR can be written from it directly, without going back to the proposals.',
+    'You are an adversarial judge deciding ONE contested architecture fork for the Events Concierge system design. Three proposals argue deliberately divergent biases. Your job: VERIFY their claims against the binding requirements and the research dossiers YOURSELF - do not trust any proposal self-assessment - then attack each proposal at its weakest binding constraint, then DECIDE. A graft (winning base + salvaged ideas from losers) is often the right verdict. Your output must support a concise accepted-design summary with mechanisms, invariants and limits; keep alternatives and rationale in a separate ADR. Do not require decision narratives in the living system design.',
     COMMON,
     'FORK-SPECIFIC DOSSIERS (read these): ' + item.dossiers.map(d => R + '/' + d).join(' , '),
     'THE FORK: ' + item.question,

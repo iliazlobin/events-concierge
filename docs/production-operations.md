@@ -215,7 +215,7 @@ Start only the processes required by the selected release profile. Isolate long-
 - `EC_TENANT_EFFECT_LOCK_TIMEOUT_SECONDS`: 0.1–30, default 5. `EC_TENANT_EFFECT_TIMEOUT_SECONDS`: 0.1–60, default 30.
 - Adapter transport deadline ≤ effect deadline. Alert on overdue effects; cancellation does not prove an SDK thread stopped.
 - Default canary requires `auth_mode=deployment_session`, `/auth/login`, `/auth/reauth`, `/auth/logout` and matching CSRF names. Unauthenticated `POST /auth/reauth` returns `401`; Google pilot uses its explicit exception. `/v1/onboard` and local tenant-header authentication stay absent.
-- Source: [OIDC/session implementation](../src/events_concierge/adapters/oidc/session.py), [erasure design](../design/system-design.md#dd6-fenced-resumable-account-erasure-across-database-and-external-systems), [Google OIDC](https://developers.google.com/identity/openid-connect/openid-connect), [Google reauthentication limit](https://developers.google.com/identity/siwg/security-bundle#authentication_time).
+- Source: [OIDC/session implementation](../src/events_concierge/adapters/oidc/session.py), [erasure design](../design/system-design.md#account-erasure), [Google OIDC](https://developers.google.com/identity/openid-connect/openid-connect), [Google reauthentication limit](https://developers.google.com/identity/siwg/security-bundle#authentication_time).
 
 **Other worker boundaries**
 

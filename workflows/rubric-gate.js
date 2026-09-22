@@ -1,22 +1,20 @@
 export const meta = {
   name: 'ec-rubric-gate',
-  description: 'Rubric gate for events-concierge system-design.md: linter + 2 independent scorers + consistency adversary',
+  description: 'Review the concise accepted design: structure, two independent scores and contract consistency',
   phases: [{ title: 'Gate', detail: 'lint, score x2, consistency' }],
 }
 
 const WS = '/Users/iliazlobin/Claude/events-concierge'
 const DOC = WS + '/design/system-design.md'
-const REQ = WS + '/design/requirements.md'
-const RUBRIC = '/Users/iliazlobin/.hermes/skills/research/system-design-kanban/references/design-doc-rubric.md'
-const PANELS = [1, 2, 3, 4].map(n => WS + '/design/panels/0' + n + '-' + ['discovery-topology', 'registration-orchestration', 'credential-isolation', 'handoff-lifecycle'][n - 1] + '.md')
+const PROJECT = WS + '/PROJECT.md'
+const ARCHITECTURE = WS + '/ARCHITECTURE.md'
 
 const SCOPE = [
-  'SCOPING RULES (apply these; they override conflicting clauses in the rubric file):',
-  '1. This PROJECT BUILDOUT design doc has seven sections: sections 1-6 as in the rubric, then "## 7. Trade-offs" (a decision/rejected/why table). Primary-source links belong inline beside the claims they support; do not require or add a standalone References section or numbered bibliography. Score the references dimension on source quality, relevance, clickable links and claim coverage. These rules override the rubric file wherever it requires a references section or numbered list; all eight scoring dimensions still apply.',
-  '2. Ignore every Notion-row concern: the Sources row-property, page icons, Notion block types (bulleted_list_item vs paragraph rendering). This artifact is a markdown FILE; judge the markdown source.',
-  '3. Callouts are represented in markdown as <callout icon="..." color="yellow_background"> HTML blocks - treat these as valid callout blocks (this is the house convention for the format; the icon lives on the attribute, the body must not repeat the glyph).',
-  '4. The trailing "Human Writing Standard" typography section of the rubric (em-dash/en-dash ban, ASCII-only) does NOT apply to this buildout format - do not flag em-dashes. ALL other voice rules (dim 7: no provenance/agentic language, no study-resource or company-attribution-as-justification, no AI-tell phrasing) apply in full.',
-  '5. Everything else in the rubric applies verbatim: the two-bars philosophy (scaffolding = concision, substance = explanation), all dimension bars, mechanism-leakage rules for section 2, no decisions in section 3, brace-block entities, bullet API, per-FR H4 walkthroughs with Components/Flow/Design consideration, Problem-framed DDs with numbered Approach headings, Mermaid-only diagrams with fill+color styling, the 6-box cap on the section 1 overview, no emoji outside callout icons.',
+  'Review a living accepted-design summary, not an options paper. Read PROJECT.md and ARCHITECTURE.md before the design, then follow relevant links to detailed contracts and code.',
+  'PROJECT.md defines current product scope. Distinguish implemented behavior, accepted but deferred capabilities, and deployment acceptance. Do not promote historical full-concierge requirements or ADR parameters into current launch commitments.',
+  'Prefer short factual bullets, tables and ordered flows; one point per item. Remove long paragraphs, rejected options and decision narratives. Do not demand a numbered pyramid, Approach/Decision/Rationale sections, trade-off tables or a bibliography.',
+  'Preserve ownership, data flow, safety invariants, failure behavior and active limits. Link detailed contracts beside the relevant statement instead of copying schemas, endpoint inventories, commands or research. Primary-source citations stay inline.',
+  'Concise linked coverage is sufficient; fewer words do not excuse missing invariants. Report missing or contradictory facts, not absent historical narration. Do not invent sizes, quotas, performance figures or verification evidence.',
 ].join('\n')
 
 const FIND = { type: 'object', required: ['findings'], properties: { findings: { type: 'array', items: { type: 'object', required: ['severity', 'location', 'issue', 'proposed_fix'], properties: { severity: { type: 'string', enum: ['blocker', 'major', 'minor'] }, location: { type: 'string' }, issue: { type: 'string' }, proposed_fix: { type: 'string' } } } } } }
@@ -31,33 +29,31 @@ const SCORECARD = { type: 'object', required: ['scores', 'total', 'gate', 'block
 
 function scorerPrompt(id) {
   return [
-    'You are independent rubric scorer ' + id + ' for a system-design document. Read, in order: (1) the rubric file ' + RUBRIC + ' IN FULL, (2) the document ' + DOC + ' IN FULL. Then score every one of the 8 dimensions 0-5 (integers) applying the rubric bars verbatim under the scoping rules below. Be harsh where the rubric says to be harsh: scaffolding dims score DOWN when borderline-verbose; substance dims score DOWN when thin or unexplained. Quote the offending passage in any justification below 4. Gate: PASS requires total >= 33, no dimension < 3, and dims requirements/back_of_envelope/data_model/hld each >= 4; otherwise BLOCK with concrete blockers.',
+    'You are independent scorer ' + id + '. Read ' + PROJECT + ', ' + ARCHITECTURE + ' and ' + DOC + ', then the relevant linked contracts/code. Score all eight existing dimensions 0-5.',
     SCOPE,
-    'Also list the highest-leverage improvements (concrete edits with location + exact replacement direction) even on PASS. Return via structured output.',
+    'Dimension meanings: requirements = current scope and deferred boundaries; back_of_envelope = relevant active limits and honestly labelled targets, without speculative scale arithmetic; data_model = authoritative stores, ownership and isolation; api = public versus operator authority and durable boundaries; hld = components and execution/data flows; deep_dives = critical invariants and failure behavior, with detail linked; voice = concise factual accepted design; references = relevant, accessible inline sources and contract links.',
+    'PASS requires total >= 33, no dimension < 3, and requirements/back_of_envelope/data_model/hld each >= 4. Otherwise BLOCK with concrete findings. Quote the passage or identify the missing contract for scores below 4. Return only actionable improvements; do not expand the document to satisfy an old format. Use structured output.',
   ].join('\n\n')
 }
 
 const lintPrompt = [
-  'You are a structural linter for a system-design markdown document. Read ' + DOC + ' and check ONLY these hard structural gates (not prose quality):',
-  '- Body is EXACTLY these 7 H2 sections in order, nothing before section 1, nothing after section 7\'s table: "## 1. Problem", "## 2. Requirements", "## 3. Back of the envelope", "## 4. Entities", "## 5. High-Level Design", "## 6. Deep dives", "## 7. Trade-offs". Case-sensitive, lowercase past the number where shown (e.g. "Back of the envelope", "Deep dives"). No H1 title, no TL;DR, no pre-section-1 content.',
-  '- Section 1 Mermaid overview has <= 6 nodes and role/tech-neutral labels (no product names).',
-  '- Section 2: labels are exactly **Functional** and **Non-functional** as bare bold paragraphs; FR/NFR lines are markdown bullets "- FR1: ..."; one bold **Out of scope:** line.',
-  '- Section 4: ONE sql-fenced brace-block for all entities; markers limited to PK/FK/CK; then an "### API" H3 with a bullet list of `METHOD /path` chips (no table, no escaped backticks/braces).',
-  '- Section 5: per-FR subsections are H4 "#### FR<N>:" matching section 2 FR numbering; each has Components / Flow (numbered steps) / Design consideration bullets.',
-  '- Section 6: dives headed "### DD<N>: <name>"; approaches headed on their own line as "**Approach N: <name>**" (no trailing period, no run-in prose, no (chosen) marker); sub-points bold-labelled; each dive opens with "**Problem.**".',
-  '- Diagrams: every diagram is a ```mermaid fence (no ASCII-art boxes in plain fences); no literal \\n in node labels; flowchart classDefs set BOTH fill: and color:; NO classDef/class lines inside any sequenceDiagram; no ";" inside sequenceDiagram message labels; no "@" in node labels; no empty ""-labelled node/subgraph; edge labels containing { } [ ] ( ) are quoted; every edge references a declared node.',
-  '- No emoji/icon glyphs anywhere in body text; the ONLY sanctioned glyph carrier is the icon="..." attribute of <callout> blocks, all of which must have color="yellow_background", and the callout BODY must not start with the icon glyph.',
-  '- Section 7 is a single table (header row: Decision | Rejected alternative | Why). Cite primary sources as inline [descriptive label](url) links beside relevant claims throughout the document. No standalone References section, bibliography, bare URLs or interview-prep/tutorial sources.',
-  'Report every violation as a finding with exact location; severity blocker for hard-gate breaks, major for borderline. Empty findings array if fully conformant. Return via structured output.',
+  'Read ' + DOC + ' and its linked Markdown targets. Check structural correctness only:',
+  SCOPE,
+  '- Short topic headings, factual bullets/tables and bounded numbered flows. No mandatory heading names or section count.',
+  '- No standalone References, alternative-comparison or decision-narrative sections. Keep ADR/research evidence in its owning files.',
+  '- Links resolve, including incoming anchors from other repository docs; code fences and tables are valid.',
+  '- Mermaid diagrams use declared nodes and understandable direction, label people User and browsers Web client, and distinguish application services from shared infrastructure. Do not require a fixed node count.',
+  '- Deferred features and unverified deployment claims are visibly labelled; source/code presence is not deployed acceptance.',
+  'Return exact locations and proposed fixes. Use blocker for broken structure/links or misleading scope; major for material readability defects. Return an empty findings array when conformant. Use structured output.',
 ].join('\n')
 
 const consistencyPrompt = [
-  'You are a consistency adversary. Cross-check the design document ' + DOC + ' against (a) the BINDING signed requirements ' + REQ + ' and (b) the four judge-panel verdicts: ' + PANELS.join(' , ') + '. Hunt for silent drift - report ONLY real contradictions or misrepresentations, most severe first:',
-  '- A number in the doc that contradicts the requirements or a verdict (SLA targets, quotas, budgets, attempt counts, TTLs, concurrency, costs, cadences).',
-  '- A mechanism the doc claims that a panel verdict decided AGAINST, or a verdict-decided mechanism the doc materially misstates (silently weakened launch default, inverted posture, dropped invariant that the verdict called load-bearing).',
-  '- A doc statement that violates a HARD scope decision or a requirements-level obligation (e.g. Gmail scopes, IP rotation, paid checkout, per-action confirmation prompts, RelayInbox used outbound, blind re-POST).',
-  '- An internal contradiction between two sections of the doc itself.',
-  'Do NOT report: abstraction (the doc legitimately omits panel detail - it is a summary artifact over the verdicts); stylistic differences; owner-ratification items being presented as decisions WITH their parameters (that is expected - the ADR log carries the riders). Verify quotes before reporting; include the doc passage AND the contradicting source passage in each finding. Return via structured output.',
+  'Cross-check ' + DOC + ' against ' + PROJECT + ', ' + ARCHITECTURE + ', relevant linked component contracts, code and operations docs.',
+  SCOPE,
+  '- Report actual contradictions in scope, component ownership, authority, persistence, retry behavior, security boundaries, active limits or deployment status.',
+  '- Historical ADRs and research describe their own accepted context. Do not overwrite them, treat their open riders as settled, or demand deferred behavior for the current discovery milestone.',
+  '- Verify quotes and include both the design passage and supporting source passage. Omission of linked implementation detail is not a contradiction; omission of an essential safety invariant is.',
+  'Read only. Return structured findings; do not run migrations, providers, cloud operations or publishing workflows.',
 ].join('\n')
 
 phase('Gate')
