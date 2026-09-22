@@ -8,9 +8,10 @@ identity, GKE, and `shared-retain` remain in the
 [shared platform repository](https://github.com/iliazlobin/gcp-foundation).
 The app Helm charts own namespace policies, releases, stores, and PVCs.
 
-The `development` root retains legacy identities, secrets, registry and recovery resources after
-compute retirement. The `shared-development` root owns active application resources and separate
-state. Use the [deployment and recovery runbook](../../deploy/development.md);
+The `shared-development` root owns active application resources and separate state. Operation
+helpers default to this destination and reject retired targets. The separate `development` root
+remains until its retained resources have been removed and its state is empty; it cannot provision
+a running application environment. Use the [deployment and recovery runbook](../../deploy/development.md);
 `scripts/development/check_shared_plan.py` accepts only additions within the new app boundary.
 The shared app's first reviewed plan bootstraps `iz27-platform-dev-ec-state` locally, after which
 only that root's new state moves to the backend in `backend.tf.example`. Never migrate platform

@@ -12,7 +12,7 @@ from events_concierge.deployment.development_targets import TARGETS
 
 K = os.environ.get("KUBECTL", "kubectl")
 N = "events-concierge-dev"
-CONTEXT = "gke_project-9c8cce04-f94d-40fc-aa6_us-west1-a_ec-dev"
+CONTEXT = TARGETS["shared"].context
 STORE_CLAIMS = {
     "ec-store=application-postgres": "ec-dev-application",
     "ec-store=temporal-postgres": "ec-dev-temporal",
@@ -172,7 +172,7 @@ def cleanup_markers(created, redis_created, table, primary_failure):
         )
 
 
-def main(*, target="legacy"):
+def main(*, target="shared"):
     # The CLI selects one context before either inspection or the recovery drill.
     global CONTEXT  # noqa: PLW0603
     CONTEXT = TARGETS[target].context
@@ -246,5 +246,5 @@ def main(*, target="legacy"):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument("--target", choices=TARGETS, default="legacy")
+    parser.add_argument("--target", choices=TARGETS, default="shared")
     main(target=parser.parse_args().target)

@@ -21,7 +21,7 @@ translate the complete local Compose stack one-for-one.
   platform after environment inputs and credentials are supplied.
 - Complete the partial GCP runtime provider inside the installed Python package; do not weaken its
   fail-closed production preflight while required ports remain absent.
-- Start with a zonal GKE control plane to use the monthly management-fee credit, while distributing
+- Start with a zonal GKE control plane to use the [monthly management-fee credit](https://cloud.google.com/kubernetes-engine/pricing), while distributing
   worker nodes across three zones.
 - Treat migration to a regional GKE control plane as a later blue/green cluster migration.
 
@@ -156,7 +156,7 @@ The shared client in
 TLS/API-key authentication, RPC bounds, the claim-check data converter, and workflow-type routing
 to transactional or catalog queues. [worker.py](../src/events_concierge/workflows/worker.py)
 supports compatibility `combined`, `transactional`, and `catalog` roles. The deployed roles register
-only their workflow/activity set and use immutable Temporal Worker Deployment build identities with
+only their workflow/activity set and use immutable [Temporal Worker Deployment](https://docs.temporal.io/production-deployment/worker-deployments) build identities with
 pinned behavior; promotion to a current/ramping version remains a release-controller action.
 
 ### Local investigation commands
@@ -258,12 +258,12 @@ flowchart TD
 
 ### GKE foundation
 
-- GKE Standard, VPC-native, private worker nodes.
+- [GKE Standard](https://docs.cloud.google.com/kubernetes-engine/docs/concepts/configuration-overview), VPC-native, private worker nodes.
 - Initial zonal control plane in `us-west1-a`, subject to final region selection.
 - One `e2-standard-2` node in each of three explicitly configured node locations.
 - Release channel: Regular or Stable.
 - Custom node service account with only node-system and Artifact Registry pull permissions.
-- Workload Identity Federation enabled for Pod identities.
+- [Workload Identity Federation](https://docs.cloud.google.com/kubernetes-engine/docs/concepts/workload-identity) enabled for Pod identities.
 - Cloud Router and Cloud NAT for controlled internet egress and Temporal/provider access.
 - Non-overlapping subnet, Pod, Service, and Private Service Access address ranges reserved up front.
 - Pod topology-spread constraints and disruption budgets for replicated serving workloads.
@@ -285,8 +285,8 @@ can continue, but scheduling, scaling, rollout, and repair operations may be una
 - Explicit database connection budgets per process and replica.
 - A restore drill before production launch and at a scheduled interval afterward.
 
-The preferred initial connection design is a Cloud SQL Auth Proxy sidecar in every database-using
-Pod. The application connects to the sidecar over Pod-local TCP while the proxy uses Workload
+The preferred initial connection design is a [Cloud SQL Auth Proxy](https://docs.cloud.google.com/sql/docs/postgres/sql-proxy) sidecar in every [database-using
+Pod](https://docs.cloud.google.com/sql/docs/postgres/connect-kubernetes-engine). The application connects to the sidecar over Pod-local TCP while the proxy uses Workload
 Identity and encrypted upstream connections. Production validation now distinguishes this posture:
 `EC_DATABASE_CONNECTION_MODE=cloud_sql_proxy` requires a Pod-local `127.0.0.1` endpoint and
 `sslmode=disable` only for the already-encrypted proxy hop, while `direct_tls` requires a non-local
@@ -309,7 +309,7 @@ rotation.
 
 - Memorystore for Redis Standard Tier.
 - Private connectivity.
-- TLS and AUTH enabled.
+- [TLS](https://docs.cloud.google.com/memorystore/docs/redis/manage-in-transit-encryption) and AUTH enabled.
 - No-eviction behavior chosen explicitly for pacing, browser admission, and OIDC session state.
 - Alerts for memory use, rejected connections, evictions, failovers, and latency.
 
@@ -328,7 +328,7 @@ rotation.
 
 Secret Manager holds deployment secrets such as:
 
-- Temporal Cloud API key;
+- [Temporal Cloud API key](https://docs.temporal.io/cloud/api-keys);
 - OIDC client secret;
 - database role passwords if password authentication remains selected;
 - Redis AUTH secret and CA material where required;
@@ -339,7 +339,7 @@ Dynamic per-tenant OAuth or provider credentials should not become one Secret Ma
 user. The intended design is an encrypted durable credential vault using envelope encryption and a
 Cloud KMS key, with ciphertext stored in the application data layer and tenant-scoped deletion.
 
-The GKE Secret Manager add-on mounts secrets as files. Runtime settings now accept strict `*_FILE`
+The [GKE Secret Manager add-on](https://docs.cloud.google.com/secret-manager/docs/secret-manager-managed-csi-component) mounts secrets as files. Runtime settings now accept strict `*_FILE`
 references for the database and Redis URLs, Temporal API key, OIDC client secret, and selected model
 credentials; migrations separately accept `EC_MIGRATION_URL_FILE` and
 `EC_APP_ROLE_PASSWORD_FILE`. A value and its corresponding file reference are mutually exclusive,
@@ -505,8 +505,8 @@ to GKE, execute the rendered Jobs against Cloud SQL, or verify and promote a dep
 #### Target GCP delivery pipeline
 
 Keep GitHub Actions as the CI/CD orchestrator initially. There is no strong reason to add Cloud
-Build or Cloud Deploy for the first production version. Use GitHub OIDC with GCP Workload Identity
-Federation, so Actions receives short-lived credentials and no service-account JSON key is stored in
+Build or Cloud Deploy for the first production version. Use GitHub OIDC with [GCP Workload Identity
+Federation](https://docs.cloud.google.com/iam/docs/workload-identity-federation-with-deployment-pipelines), so Actions receives short-lived credentials and no service-account JSON key is stored in
 GitHub.
 
 Split responsibilities into the following workflows:
@@ -527,17 +527,17 @@ credentials, obtains narrowly scoped access to the target GKE namespace, and exe
 Job and `helm upgrade --install`. This keeps the first delivery path small and reuses the CI system
 already present in the repository.
 
-Kubernetes still pulls container images from Artifact Registry in this model. “Push” versus “pull”
+Kubernetes still [pulls container images from Artifact Registry](https://docs.cloud.google.com/artifact-registry/docs/integrate-gke) in this model. “Push” versus “pull”
 here describes how desired Kubernetes state reaches the cluster:
 
 | Model | How desired state reaches GKE | Recommendation |
 | --- | --- | --- |
 | GitHub Actions push | A protected Actions job invokes Helm against the GKE API | Use for the first dev, staging, and production-shaped releases |
-| Cloud Deploy | GitHub creates a release; GCP renders, promotes, verifies, and rolls it out through managed targets | Consider when staging-to-production promotion, managed approvals, or canary rollout becomes valuable enough to justify Skaffold and another delivery abstraction |
-| Pull-based GitOps | Flux, Argo CD, or Config Sync runs in or alongside the cluster and continuously reconciles Git/OCI desired state | Defer until drift correction, multiple clusters, multiple application teams, or a requirement to remove direct cluster-write access from CI warrants another controller and source-of-truth workflow |
+| [Cloud Deploy](https://docs.cloud.google.com/deploy/docs/overview) | GitHub creates a release; GCP renders, promotes, verifies, and rolls it out through managed targets | Consider when staging-to-production promotion, managed approvals, or canary rollout becomes valuable enough to justify Skaffold and another delivery abstraction |
+| Pull-based GitOps | [Flux](https://fluxcd.io/flux/concepts/), Argo CD, or [Config Sync](https://docs.cloud.google.com/kubernetes-engine/config-sync/docs/overview) runs in or alongside the cluster and continuously reconciles Git/OCI desired state | Defer until drift correction, multiple clusters, multiple application teams, or a requirement to remove direct cluster-write access from CI warrants another controller and source-of-truth workflow |
 
-The initial push workflow must still be declarative: Helm values are versioned, images are pinned by
-digest, deployment concurrency is one per environment, and CI records the deployed Git revision and
+The initial push workflow must still be declarative: Helm values are versioned, [images are pinned by
+digest](https://kubernetes.io/docs/concepts/containers/images/), deployment concurrency is one per environment, and CI records the deployed Git revision and
 digests. A pull-based controller can be introduced later without rebuilding the images or chart.
 
 #### Delivery maturity sequence
@@ -554,7 +554,7 @@ Do not implement every target workflow before the first remote deployment.
    exact digests proven in staging, enforce expand/contract database migrations, and gate Temporal
    workflow changes with replay/versioning checks.
 4. **Later maturity:** introduce Cloud Deploy for managed promotions/canaries or pull-based GitOps
-   for continuous reconciliation; add signing and Binary Authorization when supply-chain policy,
+   for continuous reconciliation; add signing and [Binary Authorization](https://docs.cloud.google.com/binary-authorization/docs/overview) when supply-chain policy,
    team size, or compliance justifies enforcement.
 
 The committed topology requires the Next.js frontend image as the production public surface. Image
@@ -566,7 +566,7 @@ The application delivery pipeline should:
 
 1. Run lint, type checking, unit, integration, browser, and operations tests.
 2. Build the Python and frontend images once.
-3. Scan and optionally sign images.
+3. [Scan](https://docs.cloud.google.com/artifact-analysis/docs/container-scanning-overview) and optionally sign images.
 4. Push to Artifact Registry.
 5. Resolve and retain immutable image digests.
 6. Run the production configuration preflight using the real runtime provider.
@@ -844,7 +844,7 @@ replacement. Model the destination as a separately named resource and state tran
 
 ### Application
 
-- API availability, latency, error rate, and saturation.
+- API availability, latency, error rate, and saturation; [Managed Service for Prometheus](https://docs.cloud.google.com/stackdriver/docs/managed-prometheus) documents metrics collection.
 - Database and identity readiness.
 - PostgreSQL pool checkout latency and exhaustion.
 - Durable queue pending count and oldest-ready age.
@@ -859,7 +859,7 @@ replacement. Model the destination as a separately named resource and state tran
 - Workflow-task failures, nondeterminism, timeouts, and stuck executions.
 - Activity retry/failure/timeout rates.
 - History length/size and continue-as-new rate.
-- Open workflow count, Actions, active storage, and retained storage.
+- [Open workflow count](https://docs.temporal.io/visibility), Actions, active storage, and retained storage.
 
 ### Managed state
 
@@ -997,25 +997,3 @@ The first production-shaped GCP deployment is complete when:
 - Backup/restore, account erasure, secret rotation, and rollback drills pass.
 - Monitoring and cost alerts fire in a controlled test.
 - Remaining disabled product lanes are stated honestly in the release evidence.
-
-## Primary references
-
-- [GKE pricing](https://cloud.google.com/kubernetes-engine/pricing)
-- [GKE cluster configuration choices](https://docs.cloud.google.com/kubernetes-engine/docs/concepts/configuration-overview)
-- [Workload Identity Federation for GKE](https://docs.cloud.google.com/kubernetes-engine/docs/concepts/workload-identity)
-- [Workload Identity Federation for deployment pipelines](https://docs.cloud.google.com/iam/docs/workload-identity-federation-with-deployment-pipelines)
-- [Use Artifact Registry with GKE](https://docs.cloud.google.com/artifact-registry/docs/integrate-gke)
-- [Connect GKE to Cloud SQL for PostgreSQL](https://docs.cloud.google.com/sql/docs/postgres/connect-kubernetes-engine)
-- [Cloud SQL Auth Proxy](https://docs.cloud.google.com/sql/docs/postgres/sql-proxy)
-- [Secret Manager add-on for GKE](https://docs.cloud.google.com/secret-manager/docs/secret-manager-managed-csi-component)
-- [Memorystore in-transit encryption](https://docs.cloud.google.com/memorystore/docs/redis/manage-in-transit-encryption)
-- [Managed Service for Prometheus](https://docs.cloud.google.com/stackdriver/docs/managed-prometheus)
-- [Cloud Deploy overview](https://docs.cloud.google.com/deploy/docs/overview)
-- [Artifact Analysis container scanning](https://docs.cloud.google.com/artifact-analysis/docs/container-scanning-overview)
-- [Binary Authorization overview](https://docs.cloud.google.com/binary-authorization/docs/overview)
-- [GKE Config Sync overview](https://docs.cloud.google.com/kubernetes-engine/config-sync/docs/overview)
-- [Kubernetes container image names and pull policy](https://kubernetes.io/docs/concepts/containers/images/)
-- [Flux reconciliation concepts](https://fluxcd.io/flux/concepts/)
-- [Temporal Cloud API keys](https://docs.temporal.io/cloud/api-keys)
-- [Temporal Worker deployments and versioning](https://docs.temporal.io/production-deployment/worker-deployments)
-- [Temporal Visibility](https://docs.temporal.io/visibility)

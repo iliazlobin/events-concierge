@@ -9,8 +9,7 @@ RSVP, managed handoffs, notifications, calendar synchronization, purchases and p
 API keys are deferred unless the assigned task explicitly changes their scope.
 
 - [Architecture](ARCHITECTURE.md): code map, runtime boundaries and invariants.
-- [Current milestone](PROJECT.md#current-milestone-private-discovery-candidate): product scope;
-  historical entries later in that file do not expand the current milestone.
+- [Current milestone](PROJECT.md#current-milestone-private-discovery-candidate): current product scope and priorities.
 - [README](README.md): dependencies and developer commands.
 - [Development workflow](README.md#development-workflow): `main`, task branches, PRs and release authority.
 - [Release acceptance](docs/production-operations.md#first-release-acceptance): release gates.
