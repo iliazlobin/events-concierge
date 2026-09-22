@@ -28,7 +28,7 @@ All three were carried out of research as empirical (not further-researchable) g
 
 Each subdirectory has a `RUNBOOK.md` (setup + procedure + how to interpret results into the design).
 G2/G3 retain their standalone spike dependencies; G1 runs from the locked application environment.
-Record every verdict + report path in `PROJECT.md`, and where a result diverges from a carried
+Record every verdict + report path in the owning GitHub issue or PR, and where a result diverges from a carried
 assumption, open a superseding note on the affected ADR (ADR-002/008 for G1, ADR-005/008 for G2,
 ADR-011 for G3) — accepted ADRs are immutable.
 

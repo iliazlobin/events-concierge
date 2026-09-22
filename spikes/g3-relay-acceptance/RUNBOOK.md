@@ -56,4 +56,4 @@ The receiver is a faithful prototype of the **FR-5.7/FR-5.8 EmailIngestionPort**
 - **A source rejects the alias** → walk the `test-plan.md` fallback ladder (dedicated domain → per-user mailbox → first-login handoff) and record which clears it. If only first-login-handoff works for a source, its onboarding gains a one-time mandatory handoff — fold into FR-2.13 and write a superseding note on ADR-011.
 - **Accepts but no delivery** → MX/inbound-routing or allowlist gap, not a validator problem; fix infra + `sender_domains`, retest.
 
-Record the source × {acceptance, deliverability, fallback} matrix in `PROJECT.md` and update the ADR-011 G3 rider.
+Record the source × {acceptance, deliverability, fallback} matrix in the owning GitHub issue or PR and update the ADR-011 G3 rider.

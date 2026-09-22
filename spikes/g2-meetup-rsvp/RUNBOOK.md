@@ -81,4 +81,4 @@ Obtaining a token: create an OAuth consumer at https://www.meetup.com/api/oauth/
 - **C = not idempotent** → the FR-5.3 read-before-mutate guard is strictly load-bearing (already in the design); confirm the guard's read reflects a just-committed RSVP with no propagation lag.
 - **D** → feeds the measured or contracted headroom math in ADR-005 and the watched-event poll budget in ADR-008; if the real cost is materially above ~15 points—or the API exposes no stable accounting—tighten the worst case and keep autonomous Meetup disabled until conservative pacing is validated.
 
-Record the four verdicts + the JSON report in `PROJECT.md` and open a superseding ADR note for ADR-005/008 if B or D diverges from the carried assumptions.
+Record the four verdicts + the JSON report in the owning GitHub issue or PR and open a superseding ADR note for ADR-005/008 if B or D diverges from the carried assumptions.

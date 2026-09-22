@@ -1,339 +1,178 @@
-# Production operations runbook
+# Production operations
 
-This runbook describes the intended production posture. It is not evidence that the service is
-production-ready. Every unchecked item in [External launch gates](#external-launch-gates), and every
-restore-drill assertion below, must be closed with dated evidence before launch.
+Release, recovery and incident requirements. Current environment commands: [private runbook](../deploy/development.md).
 
-The binding recovery objectives are from
-[NFR-13](../design/requirements.md#5-non-functional-requirements):
-
-- RPO: no more than 60 seconds of committed workflow, audit, or vault state, with zero
-  committed-and-acknowledged transactions lost.
-- RTO: restore the serving API within 24 hours.
-- PostgreSQL projections must be rebuildable from restored relational state, Temporal history, and
-  durable outboxes.
-
-These are targets, not current achievements.
+- **Current release scope:** discovery. Full concierge capabilities remain deferred.
+- **Acceptance:** configuration checks and CI do not establish production readiness.
+- **Recovery targets ([NFR-13](../design/requirements.md#5-non-functional-requirements)):** RPO ≤60 seconds; no acknowledged transaction loss; serving API RTO ≤24 hours.
+- **Recovery requirement:** rebuild PostgreSQL projections from relational state, Temporal histories and durable outboxes.
+- **Cleanup evidence:** disabled provider ports cannot prove absence of credentials or completed cleanup, including never-connected tenants.
 
 ## First release acceptance
 
-The approved first release is catalog discovery, search/filters, Events/Map/Calendar, details and
-provider registration links. Configure `EC_RELEASE_PROFILE=discovery`; keep the full profile for
-development of deferred chat, automated RSVP, handoffs, notifications, Calendar sync, purchases
-and programmatic API keys. Existing key records remain preserved; key authentication is not yet
-implemented, so discovery must not advertise key creation as usable programmatic access.
-The server removes deferred consumer routes before serving or generating OpenAPI. This product
-boundary is independent of `EC_MOCK_CLOUD`: a private mock-backed deployment is still a development
-candidate, even when it uses real catalog data.
+- Set `EC_RELEASE_PROFILE=discovery`: search, filters, Events/Map/Calendar, details and provider registration links.
+- Keep chat, automated RSVP, handoffs, notifications, Calendar sync, purchases and API keys disabled.
+- Existing API-key records remain preserved; key authentication is not implemented.
+- `EC_MOCK_CLOUD` is independent of product scope. Mock-backed deployments remain development candidates.
 
-Before accepting the candidate:
+| Gate | Required evidence |
+| --- | --- |
+| Source | Locked lint/types, unit/deployment contracts, disposable-database integration/migrations, quality/load, restore rehearsal, web tests/builds/browser checks |
+| User flows | Actual Next.js + candidate API: identity, filters, views, history/pagination, provider links, loading/empty/error states, mobile/keyboard, settings, tenant isolation and erasure |
+| Deferred capabilities | Direct routes rejected; no enqueue/provider call; workers and credentials disabled; retained work cannot resume external effects |
+| Catalog | Reviewed sources imported; last-good data preserved; same-window non-fixture counts compared; refresh and later scheduled runs observed; no unexplained loss |
+| Destination | Private endpoints, real identity/CSRF, monitoring, complete restore and compatible immutable images |
 
-1. Pass locked lint/type checks, unit/deployment contracts, disposable-database integration and
-   migration tests, quality/load tests, restore rehearsal, all web behavior tests, production builds
-   and browser tests. Record failures and skipped/unavailable gates explicitly.
-2. Exercise the actual Next.js application against the candidate API through localhost-only access:
-   onboarding/authentication, shared filters, Events/Map/Calendar, history/pagination, provider links,
-   loading/empty/error states, mobile/keyboard use, account settings, tenant isolation and erasure.
-   The legacy hermetic browser suite does not establish this real-stack acceptance.
-3. Verify deferred routes reject direct calls without enqueueing or contacting providers. Disable
-   their workers and provider credentials in the release configuration; retained work from an older
-   database must not resume external effects during migration.
-4. Prove real catalog collection on the destination: import the reviewed source configuration and
-   preserve last-good data, compare non-fixture per-source counts over the same collection window,
-   run refreshes and observe subsequent scheduled runs. Require no unexplained loss relative to the
-   local baseline. An imported count, an empty queue or healthy worker is not crawl evidence.
-5. Verify private endpoints, real identity/CSRF and account isolation, monitoring, a complete data
-   restore and compatible immutable images. Move access only after acceptance; retire old compute
-   through its owning Terraform state after protecting the recovery copies.
-
-Shared foundation/network/GKE belong to [gcp-foundation](https://github.com/iliazlobin/gcp-foundation).
-The application owns its namespace, workload identities/permissions, releases, data, migrations and
-backups. Exact current commands and relocation limits are in the [private runbook](../deploy/development.md).
+- Record failed, skipped and unavailable gates. Fixtures, imported counts, empty queues and healthy workers do not prove live behavior.
+- Switch access after acceptance. Protect recovery copies before retiring compute through its owning Terraform state.
+- **Platform owner:** [gcp-foundation](https://github.com/iliazlobin/gcp-foundation) — foundation, network, GKE.
+- **Application owner:** namespace, workload identities/permissions, releases, data, migrations and backups.
 
 ## Runtime implementation
 
-Repository-owned deployment scaffolding now includes offline-validated Terraform/OpenTofu and Helm,
-native GCS claim-check storage, strict mounted-secret loading, Cloud SQL Auth Proxy-aware database
-validation, explicit zero-overflow pools, secure `ec_app` bootstrap/rotation, split and versioned
-Temporal workers, bounded one-shot CronJobs, and a runtime-configured Next.js proxy.
+| Boundary | Current limit |
+| --- | --- |
+| Discovery | Real GCS, PostgreSQL, Redis and built-in OIDC composition; deferred providers disabled |
+| Full product | Notifier, production notification-secret protector, vault/injection broker and production Calendar binding/access remain unprovisioned |
+| Account erasure | Unavailable provider cleanup keeps erasure fenced and pending; no false purge receipt or final database deletion |
+| Secret mounts/IAM | Shared runtime mounts require per-process isolation before least-privilege acceptance |
+| Browser registration | No production browser-fleet worker; fleet, broker, egress and isolation evidence required before activation |
 
-The full product profile is still not production-ready. Its GCP runtime omits notification delivery,
-a production notification-secret protector, the credential vault/injection broker, and usable
-production Google Calendar binding/access. The discovery profile can construct real GCS, PostgreSQL,
-Redis and repository OIDC boundaries while explicitly disabling those product providers. It rejects
-enabled provider overrides and configuration; full-product preflight rejects disabled ports.
-Account erasure remains fenced and pending at unavailable Calendar or credential cleanup, with no
-false purge receipt or final database deletion. Production acceptance requires actual cleanup
-evidence, including tenants with no previously connected provider credentials; disabled cleanup
-ports cannot certify their absence. On September 11, the private shared deployment verified avatar
-upload/read across two API replicas, explicit deletion, tenant isolation and completed worker erasure
-under the dedicated GCS bucket policy in the [private runbook](../deploy/development.md). This uses
-local-demo identity and mocked external cleanup; production provider-cleanup proof remains open. The current chart
-still mounts shared runtime secrets and relies on common runtime composition more broadly than strict
-per-process IAM permits. Do not interpret a successful structural example check, Terraform/Helm
-validation, or container test as authorization to deploy traffic.
+Source: [runtime composition](../src/events_concierge/runtime.py), [deployment validation](../src/events_concierge/operations/config_validation.py), [Helm configuration](../deploy/helm/events-concierge/README.md).
 
 ## Release and deployment order
 
-Use one immutable Python image digest for the migration Job, API, and all Python workers, plus one
-separately recorded immutable Next.js image digest. Production configuration and secrets come from
-the deployment platform; never copy a populated `.env` into an image.
+Use one immutable Python image digest for migration, API and Python workers; record the separate Next.js digest. Supply platform-managed configuration/secrets. Never bake a populated `.env` into an image.
 
-1. Confirm an on-call owner, change ticket, rollback image digest, current database migration head,
-   and a fresh recoverable database restore point. Record global, tenant, and source control state
-   plus the current queue baselines. If any kill switch or quarantine is engaged, preserve it; only
-   the incident owner may authorize release through an audited change.
-2. Build and scan the locked image. Run lint, type checks, unit tests, migration tests, integration
-   tests, static consumer-asset and security-header checks, Temporal replay/compatibility tests, and
-   the committed `make test-browser` Playwright gate against that exact source revision. The
-   hermetic browser suite uses deterministic product API fixtures; retain separate deployment-canary
-   evidence for the real BFF/session and CSRF policy.
-3. Run `alembic heads` and require exactly one head. Apply `alembic upgrade head` once, as the
-   migration-owner role. A new database receives the initial `ec_app` password only from
-   `EC_APP_ROLE_PASSWORD(_FILE)`; application processes receive only the non-owner,
-   non-`BYPASSRLS` DSN. If an existing environment also rotates that password, keep application
-   workloads quiesced, complete the separate role-rotation Job, and record its sanitized report
-   before rolling out the matching new application DSN. The detailed no-overlap procedure is under
-   [Application database role rotation](#application-database-role-rotation).
-4. Start or roll the independently versioned transactional and catalog Temporal worker roles plus
-   durable workers listed below. Schedule the one-shot repair/scanner CronJobs separately.
-   Verify both task-queue pollers, immutable Worker Deployment builds, database connectivity, and
-   worker log heartbeats before admitting new traffic.
-5. Start or roll the internal API and public Next.js frontend. Keep the API out of service until its
-   `/readyz` succeeds; use the frontend-local `/healthz` only for frontend liveness and its proxied
-   `/readyz` for API dependency readiness. Verify `/`, Next.js assets, manifest metadata, runtime
-   proxying of `/v1` and `/auth`, expected content types, cache/no-sniff handling, CSP, frame denial,
-   referrer, and permissions headers. The FastAPI Service remains ClusterIP-only.
-6. Query `/v1/ui-config` and require `auth_mode=deployment_session`. Prove `/v1/onboard` is absent,
-   the local `X-EC-Tenant-ID` header alone cannot authenticate, unsafe return targets are rejected,
-   and the built-in BFF session resolves the expected pre-provisioned tenant and OIDC subject.
-   Require `auth_start_url=/auth/login`, `reauth_url=/auth/reauth`, `logout_url=/auth/logout`,
-   matching CSRF cookie/header names, and no provider-supplied identity boundary in the current
-   production profile. The unauthenticated canary must receive `401` from `POST /auth/reauth`,
-   proving the advertised route is mounted without starting an identity transaction. Reject the
-   release if any authenticated mutation accepts missing, mismatched, cross-origin, replayed,
-   revoked, or expired evidence.
-7. Send a synthetic authenticated preview and verify it creates no durable request. Then submit the
-   durable form once, verify one deterministic request row and start-outbox result, and verify the
-   workflow and notification ledgers converge without duplicate effects or a false registration
-   claim. When the parent selects an outcome, require exactly one immutable, tenant-consistent
-   `request_outcome_links` row and confirm Recent briefs follows that lifecycle's current state. Also
-   observe one jittered pending-request refresh, confirm the dependent collections refresh once on
-   changed request truth, and confirm backgrounding or resolving the request stops the timer.
-8. Compare queue age, error rate, latency, and lifecycle-invariant findings with the pre-release
-   baseline. Complete the change only after the observation window is clean.
+1. Record owner/change ticket, prior revision/digests, schema head, recoverable restore point, queue baseline and controls. Preserve kill switches/quarantines unless the incident owner approves release.
+2. Build and scan locked images. Run CI, migration/integration, security-header, Temporal replay/compatibility and `make test-browser` checks. Keep real BFF/CSRF canary evidence separate from fixture tests.
+3. Require one `alembic heads` result. Run `alembic upgrade head` once with migration-owner authority. Bootstrap `ec_app` through `EC_APP_ROLE_PASSWORD(_FILE)`; workloads receive only non-owner, non-`BYPASSRLS` credentials. Use the separate [rotation procedure](#application-database-role-rotation) for existing passwords.
+4. Roll the required workers and bounded CronJobs. Verify queue pollers, immutable Worker Deployment builds, database connectivity and heartbeats before traffic.
+5. Roll API/Next.js. Admit API traffic only after `/readyz`. Check frontend liveness, proxied readiness, assets/manifest, `/v1`/`/auth` proxying, content types and security headers. Keep FastAPI ClusterIP-only.
+6. Verify the [identity contract](#built-in-oidc-bff-activation): deployment-session UI, no onboarding/local tenant-header authentication, safe return URLs and exact session/CSRF behavior.
+7. For **full-product activation only**, prove preview creates no durable request; one submission produces one request/start-outbox outcome; workflows and notification ledgers converge without duplicate effects. Verify one tenant-consistent `request_outcome_links` row and bounded UI refresh. Keep these routes disabled in discovery.
+8. Compare queue age, errors, latency and lifecycle invariants with baseline. Close the change after a clean observation window.
 
-Catalog refresh commands are separately scheduled, policy-gated jobs. A release must not implicitly
-enable a source, run a live crawl, or turn a one-shot dispatcher into an unbounded loop.
-
-For `meetup_city_jsonld`, release review must preserve the closed anonymous contract in
-[the Meetup ingestion design](../design/meetup-ingestion.md): one exact reviewed city request plus at
-most forty deterministic, same-origin, identity-checked event-detail requests; no redirects,
-credential/cookie, application state, or member/RSVP/attendee ingestion. Detail failure is
-best-effort and must preserve the valid city candidate with a closed reason; city-page failure is
-atomic for the run.
-The Meetup GraphQL OAuth action lane is a different tenant-scoped capability and must not be enabled
-or treated as shared-catalog authority as a side effect of rolling out the public adapter.
+- Release does not authorize source activation, a live crawl or unbounded dispatch.
+- Anonymous Meetup: one reviewed city request + at most 40 same-origin, identity-checked detail requests. No redirects, credentials, cookies, app state or member/RSVP/attendee data.
+- Detail failure preserves the city candidate; city-page failure is atomic. Tenant OAuth actions are a separate capability.
+- Source-specific checks: [Meetup design](../design/meetup-ingestion.md), [ingestion runbook](meetup-ingestion-runbook.md).
 
 ### Executable release evidence
 
-The repository-owned checks are commands, not substitutes for deployment review:
-
 ```bash
-# CI/schema contract only: the example has no usable secret and the built-in GCP provider is partial.
+# Structural example only; no usable secrets or release eligibility.
 make validate-production-example
 
-# Real pre-deploy job: reads EC_ settings and imports the deployment-owned RuntimePorts factory.
+# Deployment-owned EC_ settings and RuntimePorts provider.
 make validate-production
 
-# Post-deploy canary against the exact expected immutable release.
+# Replace every example value with the approved candidate identity.
 make staging-canary \
   BASE_URL=https://staging.concierge.example \
   EXPECTED_RELEASE_REVISION=0123456789abcdef0123456789abcdef01234567 \
   EXPECTED_IMAGE_DIGEST=sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
 ```
 
-The full validator fails on a local/test environment, mock cloud graph, missing runtime provider,
-HTTP/unapproved loopback browser origin, process-local pacing, plaintext/loopback Redis, local PostgreSQL,
-disabled Redis certificate/hostname verification, an invalid database transport profile,
-plaintext/default or internally inconsistent Temporal configuration, absent Temporal API-key or
-mTLS credentials, a mutable release label, or an incomplete/non-callable provider boundary bundle. Direct
-database TLS requires a non-local endpoint and exactly `sslmode=verify-full`; Cloud SQL Auth Proxy
-mode instead requires `127.0.0.1`, an explicit port, and exactly `sslmode=disable` for the Pod-local
-hop. Production also requires distinct transactional/catalog task queues, immutable Worker
-Deployment versioning, an explicit GCS project/bucket/prefix, zero database-pool overflow, and a
-pool at least as large as configured activity concurrency. The validator reports check names and
-outcomes but never DSNs, credential values, or provider exception text.
-`deployment/production.env.example` is only a credential-free structural contract; its output
-is marked `mode=structural_only`, `evidence_class=example_contract`,
-`preflight_eligible=false`, and `release_eligible=false`. A passing full check is marked
-`evidence_class=wiring_preflight` and `preflight_eligible=true`, but remains
-`release_eligible=false`: callable-surface inspection cannot prove provider behavior or close field
-gates. `--structural-only` is forbidden as release evidence.
+| Contract | Required configuration |
+| --- | --- |
+| Database | Direct non-local TLS with `sslmode=verify-full`; or Cloud SQL Proxy at `127.0.0.1`, explicit port, `sslmode=disable` for the Pod-local hop |
+| Redis | Shared verified `rediss`; certificate and hostname verification enabled |
+| Temporal | Valid TLS + API key or explicit CA/client-certificate authentication; distinct queues and immutable Worker Deployment versioning |
+| Pools/storage | Zero pool overflow; pool ≥ activity concurrency; explicit GCS project/bucket/prefix |
+| Identity/provider | Approved HTTPS origin; complete callable runtime boundaries; no mock graph in staging/production |
+| Process credentials | Isolated operator/controller/executor database roles; no migration-owner values or file paths in non-local application processes |
 
-API and consumer-worker startup now enforce these configuration checks before constructing services
-or becoming ready. They inspect the actual provider bundle once and pass it to composition; the
-CLI is not the only enforcement point. Catalog executors independently require their isolated DB
-credential, verified Redis/Temporal configuration, shared payload storage and immutable release.
-The operator API and one-shot cadence controller require their isolated DB transport and release
-identity; they do not acquire consumer, Google, Redis or Temporal credentials. Each connected
-operator/executor login still has to pass its existing database-role check. Migration-owner values
-and file paths are rejected from these non-local processes, including when loaded from `.env`.
-Explicit local/mock processes retain their development behavior; mock mode cannot bypass startup
-validation in staging/production.
+- API/consumer-worker startup enforces preflight before readiness. Catalog executors require isolated DB, verified Redis/Temporal, shared payload storage and immutable release.
+- Operator API/cadence controller require isolated DB transport and release identity; no consumer, Google, Redis or Temporal credentials.
+- `--structural-only`: `example_contract`, `preflight_eligible=false`, `release_eligible=false`.
+- Full configuration check: `wiring_preflight`, `preflight_eligible=true`, `release_eligible=false`.
+- Successful wiring cannot prove provider behavior or close external launch gates.
 
-For the private IAP/loopback browser path, set `EC_PUBLIC_ORIGIN_PROFILE=private_loopback_https` and
-exactly `EC_PUBLIC_BASE_URL=https://localhost:14443`; register the exact OAuth callback
-`https://localhost:14443/auth/callback`. The default `remote_https` profile still rejects loopback.
-The private profile admits no alternate host, IP, port, path or query and changes no IdP or dependency
-validation. Follow the [private access runbook](../deploy/development.md) for the loopback TLS proxy.
-Keep trusted TLS, Secure host-only cookies, exact-origin CSRF and certificate verification enabled.
+**Private browser origin**
 
-This origin setting does not encrypt the shared development data services or authorize non-mock
-activation. Verified private PostgreSQL, Redis and Temporal transports, validated CA/certificate
-mounts and per-process credentials remain prerequisites. PostgreSQL still requires the accepted
-`verify-full` or Cloud SQL Proxy contract; Redis requires verified `rediss`; Temporal supports
-TLS with an API key or explicit CA/client-certificate authentication. The
-[private transport preparation](../deploy/development.md#encrypted-dependency-preparation) covers
-the self-hosted profile and its activation gates. The current shared runtime secret mounts still
-need per-process isolation before deployment; startup checks and transport labels do not prove
-live encryption, browser trust, provider behavior or production readiness.
+- `EC_PUBLIC_ORIGIN_PROFILE=private_loopback_https`.
+- Exact `EC_PUBLIC_BASE_URL=https://localhost:14443`; callback `https://localhost:14443/auth/callback`.
+- No alternate host, port, path or query. Default `remote_https` rejects loopback.
+- Preserve trusted TLS, Secure host-only cookies and exact-Origin CSRF.
+- Origin configuration does not encrypt dependencies or authorize non-mock activation. Follow [encrypted dependency preparation](../deploy/development.md#encrypted-dependency-preparation).
 
-The staging canary is bounded and non-mutating. It verifies liveness; database and Temporal
-readiness; consumer assets, types, and edge security headers; deployment-session UI mode; absence of
-mock onboarding; rejection of an unsafe login return URL and the local tenant header; Prometheus
-metric families; and the serving revision/image digest. Set `EC_CANARY_SESSION_COOKIE` only through a
-protected job secret to add real session resolution and missing-CSRF rejection. For a throwaway
-canary session, also set `EC_CANARY_CSRF_TOKEN`; the canary then proves CSRF acceptance by revoking
-that session through `POST /auth/logout`. Neither value appears in argv or evidence. A dated
-real-IdP field run must still prove login/callback, expiry, replay rejection, and cleanup; do not use
-a persistent operator or customer session for the logout probe.
+**Canary evidence**
 
-A non-local canary requires both the expected immutable revision and image digest. `--allow-http`
-and `--allow-temporal-degraded` are rejected unless `--allow-local-mode` is also explicit; these are
-loopback-only outage-rehearsal controls, never staging exceptions. Session cookies and CSRF tokens
-are rejected over HTTP even in local mode. The committed staging canary enforces the current built-in
-BFF routes and cookie/header contract.
-
-`python -m events_concierge.operations ... --output PATH` writes sanitized JSON using exclusive
-creation, so a rerun cannot replace prior evidence. Keep that file with the change ticket along with
-image provenance/signature, vulnerability scan, provider canaries, approval, dashboard snapshots,
-and the observation-window timestamps. Individual reports deliberately retain
-`release_eligible=false`; the release controller and owner must combine the distinct wiring,
-deployment-canary, recovery, security, field, and approval evidence. Passing repository checks alone
-does not close an external launch gate.
+- Checks liveness, database/Temporal readiness, assets/headers, identity UI, unsafe returns, tenant-header rejection, metrics and immutable release identity.
+- Protected `EC_CANARY_SESSION_COOKIE`: add real session resolution and missing-CSRF rejection.
+- Also supplying `EC_CANARY_CSRF_TOKEN` revokes that session through `POST /auth/logout`. Use a throwaway session only.
+- Real IdP login/callback, expiry, replay and cleanup still require a field walkthrough.
+- Non-local canaries require revision + digest. HTTP/degraded-Temporal exceptions require explicit `--allow-local-mode` and loopback; never send session secrets over HTTP.
+- `python -m events_concierge.operations ... --output PATH` creates sanitized JSON exclusively; existing evidence is never replaced.
+- Keep provenance/scan, canaries, recovery, approval and observation timestamps with the change. Individual reports remain `release_eligible=false`.
 
 ### Rollback and migration safety
 
-- Prefer expand/contract schema changes: deploy additive schema first, then compatible code, and
-  remove old schema only in a later release after every old process is gone.
-- Do not run Alembic downgrades in production as a routine rollback. Many migrations intentionally
-  preserve safety changes on downgrade or cannot reverse external effects.
-- Roll application processes back only when the prior image is compatible with the current schema
-  and Temporal histories. Otherwise stop rollout, engage the kill switch if mutations are unsafe,
-  and fail forward.
-- Never restore the entire database merely to undo an application release; doing so discards newer
-  committed user state. Point-in-time restore is an incident-recovery operation.
-- Temporal workflow code replays against long-lived histories. A workflow change needs deterministic
-  patch/version handling and replay tests before rollout. Keep the prior worker build available until
-  every affected history can replay or is deliberately migrated/continued-as-new.
-- Never repair lifecycle, lease, outbox, or notification-ledger rows with ad hoc `UPDATE`/`DELETE`.
-  Use guarded functions and application repair paths so stale owners cannot acknowledge new work.
-
-Before rollout, record the prior immutable revision and image digest and prove it remains available
-and schema/Temporal-compatible. After the deployment controller performs an application rollback,
-run `make rollback-verify` with `BASE_URL`, `EXPECTED_RELEASE_REVISION`, and
-`EXPECTED_IMAGE_DIGEST` set to that prior identity. This target reruns the full staging canary and
-fails if traffic still reaches a mixed or unexpected build. It deliberately does not change the
-deployment or downgrade the database; those remain controller- and incident-owner actions.
+- Prefer expand/contract changes; remove old schema only after old processes are gone.
+- Application rollback requires compatibility with current schema and Temporal histories.
+- Incompatible rollback: stop rollout, contain unsafe effects, fail forward.
+- No routine Alembic downgrade or whole-database restore to undo a release.
+- Replay-test workflow changes; retain prior builds until affected histories can replay or are explicitly migrated.
+- No ad hoc lifecycle/lease/outbox/notification-ledger `UPDATE`/`DELETE`; use guarded repair paths.
+- After controller rollback, run `make rollback-verify` with `BASE_URL`, `EXPECTED_RELEASE_REVISION` and `EXPECTED_IMAGE_DIGEST` set to the prior immutable release.
+- This verifies serving identity; it does not deploy, change schema or restore data.
 
 ## Health, readiness, and engine degradation
 
-`GET /healthz` is shallow process liveness. It returns success while the process event loop can serve
-HTTP and must not be used to assert dependency health.
+| Endpoint/state | Meaning/action |
+| --- | --- |
+| `/healthz` | Process liveness only |
+| `/readyz`: PostgreSQL unavailable | `503`; remove replica from service |
+| `/readyz`: built-in identity Redis unavailable | `503`, `identity=unavailable`; remove replica |
+| `/readyz`: database ready, Temporal unavailable | `200`, Temporal `degraded`; retain durable intake |
+| `/readyz`: dependencies ready | `200`; local/non-BFF identity reports `not_configured` |
+| `/versionz` | Immutable revision and OCI digest |
+| `/metrics` | Prometheus readiness, build, HTTP counts and latency; network-restrict and scrape each replica |
 
-`GET /readyz` is traffic readiness:
-
-- PostgreSQL unavailable: returns `503`; remove the replica from service. Intake cannot be durably
-  committed without PostgreSQL.
-- Built-in OIDC BFF enabled and its bounded Redis session-store probe unavailable: returns `503`
-  with `identity=unavailable`; remove the replica because it cannot safely authenticate, verify
-  CSRF, or revoke sessions. Local or externally injected non-BFF auth reports `not_configured` for
-  this component.
-- PostgreSQL ready and Temporal reachable: returns `200`, with both components ready.
-- PostgreSQL ready and Temporal unavailable: returns `200`, with Temporal reported as `degraded`.
-  Keep the API serving. Request intake commits to `request_start_outbox`; the request-starter worker
-  replays deterministic, reject-duplicate starts after Temporal recovers.
-
-Insecure or internally inconsistent Temporal transport settings (for example, an API key without
-TLS) fail process startup before any connection attempt. With a valid configuration, endpoint,
-credential-service, or engine unreachability is an operational degradation: the API keeps the
-database-backed intake path available and reports Temporal as degraded until reconnection.
-
-During a Temporal outage, intake is durable but no new workflow-owned handoff task can be created,
-and in-flight workflows do not advance. This is the bounded outage posture described by
-[ADR-010](../decisions/adr-010-temporal-cloud-engine.md); it remains an owner-ratification and restore
-drill gate. Page on the start-outbox age and engine outage. Do not bypass Temporal with a second,
-non-idempotent execution path.
-
-`GET /versionz` returns only the configured immutable release revision and OCI image digest.
-`GET /metrics` returns Prometheus text with build identity, process start time, last database,
-Temporal, and browser-identity readiness result, request totals, and duration histograms. HTTP labels
-are limited to a finite method, status, and framework route template. Raw paths, query strings,
-tenant IDs, headers, bodies, and handoff capability tokens are never labels. Restrict metrics at the
-network/edge, scrape each API replica, and aggregate in the independent monitoring plane; the
-endpoint is not an authorization boundary or a replacement for database/Temporal/provider metrics.
+- Invalid Temporal security configuration fails startup. Valid but unreachable engine/credentials degrade readiness.
+- Temporal outage: new intake remains in `request_start_outbox`; workflows and new workflow-owned handoffs stop progressing.
+- Page on engine outage and start-outbox age. Recover through deterministic reject-duplicate starts; no alternate execution path.
+- Outage acceptance: [ADR-010](../decisions/adr-010-temporal-cloud-engine.md) and [restore drill](#restore-drill).
+- Metrics exclude raw paths, queries, tenant IDs, headers, bodies and capabilities. They do not replace database/engine/provider monitoring.
 
 ## Required process inventory
 
-Run each long-lived process independently so one backlog or crash does not stop another. Run the two
-scheduled entries only as one-shot CronJobs with `concurrencyPolicy: Forbid`. Scale only processes
-whose lease/idempotency contract permits concurrency.
+Start only the processes required by the selected release profile. Isolate long-lived workers; scale only within lease/idempotency contracts. Run scheduled repairs/scans as one-shot CronJobs with `concurrencyPolicy: Forbid`.
 
-| Process | Command | Required responsibility |
-|---|---|---|
-| Next.js frontend | `node server.js` | Public same-origin shell plus bounded runtime proxy to the internal API; frontend liveness and proxied readiness remain distinct |
-| API | `uvicorn events_concierge.api.app:app --no-access-log` | Internal tenant-scoped reads/actions, durable intake, and dependency readiness; path logging stays disabled because completion URLs carry capabilities |
-| Transactional Temporal worker | `EC_TEMPORAL_WORKER_ROLE=transactional python -m events_concierge.workflows.worker` | Request/registration workflows and activities on `EC_TEMPORAL_TRANSACTIONAL_TASK_QUEUE` |
-| Catalog Temporal worker | `EC_TEMPORAL_WORKER_ROLE=catalog python -m events_concierge.workflows.worker` | Catalog workflows and activities on `EC_TEMPORAL_CATALOG_TASK_QUEUE` |
-| Request-start worker | `python -m events_concierge.workers.request_starter` | Replays `request_start_outbox` after API or Temporal failure |
-| Account-erasure resume worker | `python -m events_concierge.workers.account_erasure` | Renews leases and resumes fenced tenant cleanup across workflow, calendar, session, vault, object-store, and database stages |
-| Notification worker | `python -m events_concierge.workers.notifier` | Delivers transactional outbox rows through the notification ledger |
-| Change-delivery worker | `python -m events_concierge.workers.change_detection` | Signals organizer changes and drains associated repair work |
-| Handoff-expiry repair | `python -m events_concierge.workers.handoff_expiry --once` | CronJob runs one bounded repair of orphaned handoff TTL transitions after the Temporal grace period |
-| Lifecycle invariant scanner | `python -m events_concierge.workers.lifecycle_invariants --once` | CronJob runs one bounded read-only lifecycle/watch/handoff/Temporal divergence scan |
+| Process | Command | Responsibility |
+| --- | --- | --- |
+| Next.js | `node server.js` | Same-origin frontend and bounded runtime API proxy |
+| API | `uvicorn events_concierge.api.app:app --no-access-log` | Tenant reads/actions, durable intake, readiness |
+| Transactional Temporal worker | `EC_TEMPORAL_WORKER_ROLE=transactional python -m events_concierge.workflows.worker` | Request/registration workflows; disabled when deferred |
+| Catalog Temporal worker | `EC_TEMPORAL_WORKER_ROLE=catalog python -m events_concierge.workflows.worker` | Catalog workflows/activities |
+| Request-start worker | `python -m events_concierge.workers.request_starter` | Start-outbox replay; deferred request lane |
+| Account-erasure worker | `python -m events_concierge.workers.account_erasure` | Fenced resumable cleanup |
+| Notification worker | `python -m events_concierge.workers.notifier` | Deferred notification delivery |
+| Change-delivery worker | `python -m events_concierge.workers.change_detection` | Deferred workflow signals/repair |
+| Handoff-expiry repair | `python -m events_concierge.workers.handoff_expiry --once` | Bounded deferred TTL repair |
+| Lifecycle scanner | `python -m events_concierge.workers.lifecycle_invariants --once` | Bounded read-only divergence scan |
 
-The consumer web surface is a separately built Next.js image in front of the internal FastAPI
-Service. Its runtime route handlers read `EC_API_ORIGIN` at request time and proxy `/v1`, `/auth`,
-`/healthz`, and `/readyz` without baking a cluster service name into the image. They strip
-hop-by-hop and untrusted forwarding headers, preserve cookies/same-origin redirects, cap request
-bodies at 64 KiB, and apply a hard body-read deadline. Preserve that same-origin and security-header
-contract through the edge. Local onboarding and the tenant-header adapter are mock-only
-conveniences and must never be enabled in production. The application invokes
-`CsrfProtectionPort` for every authenticated consumer mutation. Non-mock
-composition can represent an injected lifecycle adapter, but the current production profile, UI,
-account-erasure revocation contract, and release canary require the built-in OIDC BFF described
-below. Provider-supplied identity ports must therefore be absent in that profile, and a partial or
-mixed graph fails preflight. An alternate external BFF is unsupported until it has a separately
-parameterized UI contract, tenant-wide session-revocation boundary, and deployment canary. Serving
-the static shell or constructing a verifier without real-IdP canary evidence does not establish
-production identity safety.
+- `EC_API_ORIGIN` is read at request time. Preserve same-origin cookies, redirects and edge headers.
+- Proxy: untrusted forwarding/hop headers stripped; 64 KiB body cap; bounded body-read deadline.
+- Consumer mutation authentication always includes CSRF. Local onboarding/tenant-header adapters are mock-only.
+- Current production supports the built-in OIDC BFF. Mixed/injected identity graphs require a separate UI/revocation/canary contract before support.
 
 ### Built-in OIDC BFF activation
 
-Enable `EC_OIDC_BFF_ENABLED=true` only with `EC_MOCK_CLOUD=false`. Configure the canonical HTTPS origin
-in `EC_PUBLIC_BASE_URL` without a path or query, and register the exact callback
-`<public-origin>/auth/callback` at the IdP. Supply HTTPS issuer, authorization, token, and JWKS URLs;
-the confidential client ID/secret; the private tenant UUID claim name; and an explicit asymmetric
-algorithm allowlist. The current token exchange uses `client_secret_basic`. Keep the client secret
-in the deployment secret manager. Set `EC_UI_AUTH_START_URL=/auth/login` for explicit production
-validation; any different value that bypasses the same-origin transaction route is rejected at
-configuration time. `EC_OIDC_PROVIDER=custom_claim` preserves this default identity contract.
+**Required configuration**
 
-For Google ordinary sign-in, select `EC_OIDC_PROVIDER=google`, leave `EC_OIDC_TENANT_CLAIM` unset,
-and use these exact values with the confidential web client ID/secret:
+- `EC_OIDC_BFF_ENABLED=true`, `EC_MOCK_CLOUD=false`.
+- Canonical HTTPS `EC_PUBLIC_BASE_URL`; exact `<public-origin>/auth/callback` registration.
+- HTTPS issuer/authorization/token/JWKS URLs; secret-managed confidential client ID/secret; explicit asymmetric algorithms.
+- `EC_UI_AUTH_START_URL=/auth/login`; token exchange uses `client_secret_basic`.
+- `EC_OIDC_PROVIDER=custom_claim`: private tenant UUID claim + pre-provisioned subject mapping.
 
-| Setting | Value |
+**Google ordinary sign-in**
+
+- Set `EC_OIDC_PROVIDER=google`; leave `EC_OIDC_TENANT_CLAIM` unset.
+
+| Setting | Exact value |
 | --- | --- |
 | `EC_OIDC_ISSUER` | `https://accounts.google.com` |
 | `EC_OIDC_AUTHORIZATION_URL` | `https://accounts.google.com/o/oauth2/v2/auth` |
@@ -341,370 +180,131 @@ and use these exact values with the confidential web client ID/secret:
 | `EC_OIDC_JWKS_URL` | `https://www.googleapis.com/oauth2/v3/certs` |
 | `EC_OIDC_ALGORITHMS` | `RS256` |
 
-The server requests `openid email`, as required by Google's OIDC scope contract, and validates
-signature, audience/authorized party, expiry, issued-at and transaction nonce before any tenant lookup.
-The two documented Google issuer
-spellings normalize to one identity; `sub` stays case-sensitive. Email and profile claims are never
-used to find or link accounts. `prompt=select_account` lets an unapproved-account retry choose
-another account; it does not prove recent authentication. Google sessions bind the provider and
-client ID, and cannot be reused in custom-claim mode or by a different Google client.
-[Google's OIDC contract](https://developers.google.com/identity/openid-connect/openid-connect)
-and [discovery metadata](https://accounts.google.com/.well-known/openid-configuration) define the provider endpoints.
+- Scopes: `openid email`. Accounts bind verified case-sensitive `sub`, never email/profile claims.
+- Explicit provisioning: `google_subject_binding(verified_sub)` → `tenants.oidc_subject`, encoded `oidc:v1:https://accounts.google.com:<sub>`.
+- Use parameter-bound `fn_provision_tenant(uuid, text, text, text)` with an approved internal UUID/contact/relay. No automatic signup, legacy rebinding or account transfer.
+- Migration `0195` supplies `fn_resolve_google_tenant(text)` and its `EXECUTE` grant. Unknown/erased subjects cannot sign in; re-enrollment requires approval.
+- Callback failures expose only `cancelled`, `not_authorized` or `unavailable`; no provider errors/tokens.
+- Redis + lookup readiness does not prove OAuth registration or real login.
+- Google reauthentication/account deletion return `503`; UI advertises `reauth_url=null`. Account selection, consent, callback time and `iat` cannot prove recent authentication.
 
-An explicitly authorized provisioning operation must first verify the Google identity and store
-`google_subject_binding(verified_sub)` from `events_concierge.domain.oidc` as `tenants.oidc_subject`.
-Its exact encoding is `oidc:v1:https://accounts.google.com:<sub>`. Use the existing parameter-bound
-`fn_provision_tenant(uuid, text, text, text)` capability with a new internal UUID and approved contact
-and relay values. Do not log tokens, derive the binding from email, rewrite existing account
-bindings, or infer a legacy-account transfer. Migration `0195` adds only an exact read capability,
-`fn_resolve_google_tenant(text)`, returning a UUID or null; unknown and erased identities cannot
-sign up. Re-enrollment after erasure requires another explicit provisioning decision.
+**Private Google pilot**
 
-Google callback failures go to the terminal `/sign-in` page with one bounded reason: `cancelled`,
-`not_authorized` or `unavailable`. Provider error text and tokens are never reflected. Cancellation
-consumes the matching one-shot browser transaction. Google readiness requires Redis and the exact
-lookup capability/EXECUTE grant; it does not prove OAuth client configuration or a real login.
+- Owner acceptance of unavailable destructive-action reauthentication required.
+- Canary: `python -m events_concierge.operations canary --profile private_google_pilot --base-url https://localhost:14443` plus full `--expected-release-revision` and `--expected-image-digest`.
+- Supply trusted localhost CA through `SSL_CERT_FILE`; no HTTP/local-demo/degraded-Temporal overrides.
+- Retain IAP + loopback access. Verify registered callback, login/cancellation/logout, CSRF, tenant isolation and replica-independent sessions.
+- Pilot evidence neither authorizes activation nor establishes production eligibility.
 
-The UI advertises `reauth_url=null` for Google and disables self-service account deletion. If the
-owner accepts that limitation for the private pilot, run the canary with
-`--profile private_google_pilot --base-url https://localhost:14443` and the candidate's full
-`--expected-release-revision` and `--expected-image-digest`. Supply the trusted localhost CA through
-the normal `SSL_CERT_FILE` trust configuration. This profile requires real identity and healthy
-dependencies; it rejects HTTP, local-demo and Temporal-degradation overrides. It records the
-selected profile in its report and never establishes production eligibility. Default production
-checks still require supported destructive-action reauthentication. The pilot profile does not
-authorize activation or replace the live Google login/logout, CSRF and tenant-isolation walkthrough.
-Before deployment, verify the exact registered private HTTPS callback, login/cancellation/logout,
-CSRF rejection and replica-independent sessions. Keep access through IAP and loopback forwarding;
-this mode does not authorize a public listener or relax production transport gates.
+**Session/erasure contract**
 
-Google does not support forced Google Account reauthentication. Its optional `auth_time` describes
-the Google session, not a new app login. Google mode therefore rejects `/auth/reauth` and account
-deletion with `503` until a separately reviewed step-up method exists. Callback time, `iat`, account
-selection and consent cannot substitute for this proof. This is ordinary sign-in support, not full
-production acceptance. [Google's authentication-time limitation](https://developers.google.com/identity/siwg/security-bundle#authentication_time)
+| Boundary | Requirement |
+| --- | --- |
+| Login | One-shot Redis transaction; state, nonce, S256 PKCE and same-origin return path; default 10-minute TTL, max 15 minutes |
+| Session | `__Host-ec_session`: Secure, HttpOnly, SameSite=Lax, Path=/, no Domain; default 8-hour TTL, allowed 5 minutes–24 hours |
+| CSRF | `__Host-ec_csrf`: Secure, SameSite=Strict, Path=/, no Domain; exact Origin + matching cookie/`X-EC-CSRF` + session digest |
+| Logout | Delete Redis session before clearing cookies; outage returns `503` without false revocation; product logout does not end IdP SSO |
+| Revocation | ≤32 live sessions/tenant; bounded tenant-wide revocation and permanent issuance fence |
+| Custom-claim erasure | Same-session `POST /auth/reauth`; `prompt=login&max_age=0`; provider `auth_time` ≤2 minutes + bounded skew; exact `DELETE MY ACCOUNT` confirmation |
+| Recent-auth grant | `EC_ACCOUNT_ERASURE_RECENT_AUTH_SECONDS`: 60–900 seconds, default 300; no session TTL extension |
+| Accepted erasure | Clear cookies; underway receipt only; no authenticated completion polling after revocation |
 
-The login transaction stores only a SHA-256-keyed opaque handle in a Secure, HttpOnly,
-SameSite=Lax `__Host-ec_login` cookie and seals state, nonce, S256 PKCE verifier, and a bounded
-same-origin return path in Redis for at most 15 minutes (10 minutes by default). A callback consumes
-that record once before token exchange, verifies the ID token and nonce, and requires its canonical
-tenant UUID plus subject to match the existing product account. It then rotates any current browser
-session and issues:
+- Require `identity=ready` before traffic. Redis: network isolation, authentication, TLS, no eviction and bounded-session capacity.
+- No callback-created accounts. No provider-supplied identity ports in the current production profile.
+- Tenant-effect authority holds the erasure lock until admitted provider work settles, including cancellation/overdue work.
+- `EC_TENANT_EFFECT_LOCK_TIMEOUT_SECONDS`: 0.1–30, default 5. `EC_TENANT_EFFECT_TIMEOUT_SECONDS`: 0.1–60, default 30.
+- Adapter transport deadline ≤ effect deadline. Alert on overdue effects; cancellation does not prove an SDK thread stopped.
+- Default canary requires `auth_mode=deployment_session`, `/auth/login`, `/auth/reauth`, `/auth/logout` and matching CSRF names. Unauthenticated `POST /auth/reauth` returns `401`; Google pilot uses its explicit exception. `/v1/onboard` and local tenant-header authentication stay absent.
+- Source: [OIDC/session implementation](../src/events_concierge/adapters/oidc/session.py), [erasure design](../design/system-design.md#dd6-fenced-resumable-account-erasure-across-database-and-external-systems), [Google OIDC](https://developers.google.com/identity/openid-connect/openid-connect), [Google reauthentication limit](https://developers.google.com/identity/siwg/security-bundle#authentication_time).
 
-- `__Host-ec_session`: opaque, Secure, HttpOnly, SameSite=Lax, Path=/, no Domain;
-- `__Host-ec_csrf`: independent opaque token, Secure, SameSite=Strict, Path=/, no Domain, readable
-  only so same-origin JavaScript can copy it to `X-EC-CSRF`.
+**Other worker boundaries**
 
-Redis stores the session under the SHA-256 digest of the session handle, retains the tenant/subject
-binding and only a digest—not the raw value—of the CSRF token, and applies a fixed
-5-minute-to-24-hour TTL (8 hours by default). Each tenant's session set uses a SHA-256 digest of the
-tenant UUID in its Redis key, prunes expired handles before admission, caps at 32 live sessions, and
-is consumed in one bounded tenant-wide revocation. The permanent issuance fence is likewise
-pseudonymous; its retention/legal basis remains an owner gate. Every mutation resolves the same session twice—
-authentication then CSRF—and requires `Origin` to exactly equal the public origin, the CSRF
-cookie/header values to match, and their digest to match that session. `POST /auth/logout` first
-deletes the Redis session and only then expires all three cookies; a Redis outage returns 503 and
-deliberately preserves the browser reference rather than pretending revocation succeeded. Logout
-ends this product session, not the IdP's global SSO session.
+- Deferred request UI polling: authenticated + visible + unresolved request under six hours old; jittered 30-second base, failure backoff ≤5 minutes. Budget reads before changing cadence; polling is not notification evidence.
+- Lifecycle scanner: `EC_LIFECYCLE_INVARIANT_LIVENESS_CALLS_PER_SECOND` 1–20, default 10; aggregate all replicas. After uncertain Temporal response, remaining executions are uninspectable; no inferred closure/repair.
+- Catalog dispatch: `python -m events_concierge.workers.catalog_refresh_dispatcher`; source refresh: `python -m events_concierge.workers.catalog_refresh SOURCE_KEY`. Both one-shot; registry/policy/legal approval controls egress.
+- Hosted operator profile: separate IAP frontend/API, signed identity, exact-Origin JSON mutations, assigned viewer/operator/reviewer roles. Consumer identity grants no operator access; `EC_ADMIN_INGESTION_ENABLED` stays local/mock-only.
+- With `operator.enabled`, `ingestion_cadence --once` appends deterministic durable commands; executor owns leases/results. Legacy direct-refresh Job is rejected; Temporal Schedule cutover remains inactive.
+- Operator metrics are shared database totals: aggregate replicas with **max**, never sum. Missing progress is unknown, not zero; pair backlog age with scrape age and independent worker/poller health.
+- Entity refresh remains unleased; do not scale it from overview counts. Details: [ingestion administration](ingestion-admin.md#hosted-operator-boundary).
 
-In the custom-claim mode, account erasure requires a separate, current-session `POST /auth/reauth` before its destructive
-command. That POST passes ordinary authentication and exact-Origin/CSRF verification, then stores a
-one-shot transaction bound to purpose=`account_erasure`, the current session digest, tenant,
-subject, state, nonce, S256 PKCE verifier, and same-origin return path. Its authorization request
-adds `prompt=login&max_age=0`; callback requires a numeric provider `auth_time` no more than two
-minutes old (plus bounded clock skew), re-verifies the same still-live session/tenant/subject, and
-atomically adds a server-timestamped recent-auth grant without extending the session TTL. Set
-`EC_ACCOUNT_ERASURE_RECENT_AUTH_SECONDS` to 60–900 seconds (300 by default). The erasure POST also
-requires the exact literal `DELETE MY ACCOUNT`; a client timestamp, dialog state, callback alone,
-or different session is never authority. On acceptance it clears the current cookies and the UI
-shows only an “underway” receipt—there is intentionally no authenticated completion poll after
-tenant-wide session revocation.
-
-Every tenant-scoped live external mutation must pass through the PostgreSQL tenant-effect authority.
-It holds the same transaction-scoped advisory lock used by the erasure fence from authorization
-until the already-started provider operation actually settles; after a tombstone commits, new live
-effects fail closed. `EC_TENANT_EFFECT_LOCK_TIMEOUT_SECONDS` bounds lock acquisition to 0.1–30
-seconds (5 by default), and `EC_TENANT_EFFECT_TIMEOUT_SECONDS` marks an effect overdue within
-0.1–60 seconds (30 by default). Each HTTP/SDK adapter must have a transport deadline no greater than
-the effect deadline. An overdue or caller-cancelled operation is still drained before the lock is
-released, so alert on deadline breaches rather than assuming cancellation stopped an SDK thread.
-The erasure worker records the post-fence drain stage before starting workflow/provider cleanup.
-
-Before admitting traffic, require `/readyz` to report `identity=ready`. Protect Redis with network
-isolation, authentication, encryption appropriate to the deployment, no-eviction capacity for the
-bounded session working set, and monitoring for latency, errors, memory pressure, and key eviction.
-The signed tenant/subject account mapping must be provisioned through an authenticated control-plane
-process; the callback never creates an account from arbitrary IdP claims.
-
-The consumer shell polls only while authenticated, visible, and holding a request created within six
-hours that remains `received`/`started` without a selected outcome. Recent briefs use a jittered
-30-second base delay with exponential failure backoff toward five minutes; Plans and To do refresh
-once only when the request fingerprint changes. Navigation/manual refresh remains the path for later
-lifecycle changes. Capacity estimates must include this bounded read cadence; do not broaden or
-shorten it without measuring database and edge load. A transient background refresh retains the last
-rendered projection, so monitoring—not a blank UI—is the signal for sustained freshness failure.
-This poll is not notification delivery evidence; ADR-009's durable email ledger remains the launch
-notification authority.
-
-The lifecycle scanner spaces Temporal describe RPCs at the per-process
-`EC_LIFECYCLE_INVARIANT_LIVENESS_CALLS_PER_SECOND` cadence (10 calls/second by default, validated
-from 1 through 20). It still keyset-pages the full nightly PostgreSQL inventory and emits only
-aggregate counts. After the first uncertain Temporal response, it stops issuing liveness RPCs for
-that scan and counts every remaining nonterminal workflow as uninspectable; it never guesses that
-an execution is closed or invokes a repair path. Do not scale scanner replicas or raise the cadence
-without budgeting their aggregate load alongside workflow traffic and health probes.
-
-The catalog cadence dispatcher is a bounded, one-shot scheduled job:
-`python -m events_concierge.workers.catalog_refresh_dispatcher`. Source-specific refresh is also
-one-shot: `python -m events_concierge.workers.catalog_refresh SOURCE_KEY`. The scheduler, approved
-source registry, crawl policy, and source-legal review are production inputs; merely deploying these
-commands does not authorize source egress.
-
-The anonymous Meetup city sources use this same dispatcher and catalog policy; there is no separate
-Meetup daemon. A production schedule may invoke the due-source dispatcher, but each source's
-registry interval, review state, policy, approved origin, pacer, and refresh lease remain
-authoritative. Follow [the Meetup ingestion runbook](meetup-ingestion-runbook.md) for source-specific
-verification and containment. Never substitute the local recurring scheduler or the tenant OAuth
-adapter for the reviewed production scheduling/control plane.
-
-The hosted management profile is a separate IAP-protected frontend and operator API. It verifies
-signed identity, exact-Origin JSON mutations, assigned viewer/operator/reviewer capabilities, and
-server-derived receipt actors. Consumer authentication never grants operator authority. See
-[ingestion administration](ingestion-admin.md#hosted-operator-boundary) for exact settings and roles.
-`EC_ADMIN_INGESTION_ENABLED` remains local/mock-only.
-
-Migration `0181` enforces stored adapter identity while preserving configuration OCC and audit;
-`0182` separates controller/viewer/executor capabilities and removes consumer admin access. Drain
-cadence and command execution before applying the authority split. Provision separate non-owner
-LOGIN principals and versioned URL secrets, then deploy the matching API/executor images together.
-Do not roll back to a consumer-credential admin image: `0182` is forward-only and does not restore
-old grants. The local fixture bootstrap is never a production provisioning procedure.
-The new aggregate definer requires CREATEROLE plus owner/grant authority over its eleven input
-tables and the public schema; it needs no SUPERUSER/BYPASSRLS. It has SELECT-only privileges, with
-an explicit policy for FORCE-RLS account erasure. On PostgreSQL 16 only trusted migrator ADMIN
-metadata remains, with SET and INHERIT false. Earlier migrations still have their own privileged
-owner requirements; target Cloud SQL compatibility for the full migration chain remains unproven.
-
-With `operator.enabled`, the existing deployment CronJob invokes `ingestion_cadence --once` and
-appends a deterministic durable due command. The executor owns leases and linked refresh outcomes.
-The local recurring cadence loop is not production schedule authority; Temporal Schedule cutover
-has not been activated. The legacy direct refresh Job is rejected by the operator profile.
-
-Operator `/metrics` exports aggregate queue counts and available progress timestamps through a
-private GMP scrape. It contains no tenant, command, or source labels. `ready` and `leased` describe
-pending work; failure signals can overlap pending. Use scrape failure/age and backlog age together;
-absence of a progress sample is unknown, not zero. Multiple API replicas expose the same DB totals:
-use a max across replicas, never a sum. Worker liveness and Temporal poller health need independent
-runtime evidence. Entity refresh remains an unleased due projection and must not be scaled based
-on this snapshot.
+<a id="entity-profile-pacer-and-command-lease-migration-rollout"></a>
 
 ### Entity-profile, Pacer, command-lease, and ingestion-evidence migration rollout
 
-The source migration head is `0195`; verify it again for the selected release. The rollout constraints
-below cover earlier entity-profile and authority migrations. Migrations `0128`–`0130` are deliberately
-ordered but should not be treated as a migrate-first rolling change. `0128` adds and validates checked JSONB
-columns/functions for verified entity profiles, `0129` reconciles historical terminal Pacer
-deferrals into retryable paused runs, and `0130` installs renewable command leases plus overview v2.
-They can scan or lock ingestion tables. Schedule them in a measured maintenance window, record
-table size and lock-wait telemetry, and validate on a production-shaped restore before applying.
+Use `alembic heads` for the selected release, not a copied schema number. Rehearse on a production-shaped restore; measure ingestion-table scans, locks and duration.
 
-Later additive migrations must still be applied in order. `0135` installs closed, bounded run-stage
-and execution evidence; `0136` adds deterministic topic/facet and exact free-inference provenance;
-`0137` advances only the two reviewed Meetup city rows to their 41-unit detail-enrichment
-contract, and `0138` replaces OID-sensitive temporary topic scans with bounded record streaming.
-Validate that older runs project as `legacy_unavailable`, that shared Temporal workers
-leave CPU/RSS null with wall-clock-only scope, and that the Meetup row revisions/page limits match
-the deployed adapter before resuming cadence.
+| Upgrade boundary | Required action |
+| --- | --- |
+| Before `0129`/`0130` | Stop cadence/dispatch; drain old source and command workers before reconciliation |
+| `0128`–`0130` | Apply in order; deploy matching API/controller/command/source workers together |
+| Post-`0130` | Confirm paused runs have null completion/lease fields; old leases expire once; one reclaim; long runs renew; recheck before cadence resumes |
+| `0152` entity index | If older images refreshed during migration, run the documented idempotent index rebuild after cutover |
+| `0181`/`0182` operator split | Drain command plane; provision distinct non-owner logins/versioned secrets; deploy matching operator/executor images; no consumer-admin rollback |
 
-Migrations `0139`–`0146` then tighten retired-source lifecycle, execution evidence, interval
-overlap, sorting, and city-facet contracts. Migrations `0147`–`0152` add the catalog entity index,
-quality gates, provider-neutral enrichment, single-scan topic facets, and retained entity history
-and insights. Deploy the `0152` application image with the migration; if an older image refreshed
-sources during the migration window, run the documented idempotent entity-index rebuild once after
-cutover before reopening ingestion.
-
-Drain or stop every pre-`0129` ingestion worker before running the reconciliation. Old workers can
-still write the legacy terminal Pacer form after a one-time backfill, so a mixed-version worker
-fleet makes the classification race unavoidable. The safe sequence is:
-
-1. stop cadence/command dispatch and drain every old source and ingestion-command worker;
-2. apply `0128`, `0129`, and `0130`;
-3. verify every `paused` run has null `completed_at`, `lease_token`, and `lease_expires_at`;
-4. deploy the new API, scheduler, command worker, and source workers together;
-5. verify each pre-`0130` live command lease expired once, each affected command is reclaimed only
-   once, and a long source run renews its command lease;
-6. run the reconciliation check again before resuming cadence; and
-7. alert if a new failed run contains the exact legacy `Pacer wait:`, `Pacer degrade:`, or
-   `Pacer saturated:` form.
-
-The migration intentionally recognizes only that exact bounded worker-produced form. Provider
-errors that merely mention pacing remain failures. Runtime pause is lease-fenced; losing the fence
-returns busy rather than claiming that the run was deferred.
-
-Migration `0130` requires the drained ingestion command plane above. Its one-time reconciliation
-expires every still-live pre-heartbeat command lease so the new worker can reclaim abandoned work
-promptly; an old worker left executing is fenced from recording completion. The new worker claims a
-300-second lease and renews only the exact live command/token pair every
-`min(60 seconds, lease / 3)`. A false renewal result or renewal error cancels the in-flight
-operation without a terminal command mutation; lease expiry and guarded reclaim choose the next
-owner. Do not use downgrade to infer that prior lease timestamps were restored—the reconciliation
-is intentionally irreversible.
-
-Overview v2 reports live-running work from normalized, unexpired source-run and command-lease facts,
-not stale status text. Its failed-24h counter includes only each source's latest unresolved failure,
-so recovered sources and repeated attempts do not inflate the operator alarm. The local/mock
-`ingestion-cadence` scheduler checks for due sources every 300 seconds; it only enqueues a durable
-fleet command and never performs provider work itself.
-
-There is no production browser-fleet worker in this repository. Do not claim the browser lane is
-available until the fleet, broker, egress controls, provider adapter, and isolation evidence are
-deployed.
+- Legacy `Pacer wait:`, `Pacer degrade:` and `Pacer saturated:` failed forms after cutover require investigation. Provider errors merely mentioning pacing remain failures.
+- Lease reconciliation is irreversible. Failed renewal cancels work without a terminal mutation; expiry and guarded reclaim choose the next owner.
+- Validate old evidence as `legacy_unavailable`; shared Temporal CPU/RSS stays null. Match reviewed Meetup revisions/page limits to the adapter.
+- Aggregate-role migration requires CREATEROLE + owner/grant authority, not SUPERUSER/BYPASSRLS. Full-chain Cloud SQL compatibility remains unproven.
+- Exact migration contracts: [migration sources](../migrations/versions/), [ingestion execution model](ingestion-admin.md#execution-model).
 
 ## Data-store durability
 
 ### PostgreSQL
 
-PostgreSQL is the lifecycle and queue system of record. Production requires a managed Multi-AZ
-deployment, continuous WAL archiving/PITR, encrypted storage and backups, and an isolated restore
-target. The vendor configuration must satisfy all of the following before the RPO/RTO can be claimed:
-
-- [ ] PITR restore-point granularity and WAL archival lag are continuously measured at 60 seconds or
-  less.
-- [ ] Synchronous/durable commit and failover semantics are documented to prove that an acknowledged
-  transaction is not lost.
-- [ ] Automated full/base backups and continuous WAL retention cover the declared recovery window.
-- [ ] Backup encryption keys, deletion protection, access logging, and cross-account recovery access
-  survive loss of the primary account.
-- [ ] The migration-owner credential is separate from the application role; the app role remains
-  non-owner, non-superuser, and non-`BYPASSRLS`.
-- [ ] Alerts cover replication/WAL archival lag, storage exhaustion, connection saturation,
-  long-running transactions, failed backups, and restore-point age.
-- [ ] A dated restore drill demonstrates actual RPO, RTO, RLS isolation, queue continuity, and serving
-  recovery. A provider dashboard saying “backups enabled” is not a drill.
+- System of record for lifecycle and queues; production requires managed Multi-AZ, encrypted storage/backups, continuous WAL/PITR and an isolated restore target.
+- Measure restore-point granularity and WAL lag ≤60 seconds. Document durable commit/failover with no acknowledged-transaction loss.
+- Retain base backups/WAL for the recovery window; protect keys, deletion controls, audit logs and cross-account recovery access.
+- Separate migration owner; runtime role non-owner, non-superuser, non-`BYPASSRLS`.
+- Alert on WAL/replication lag, storage, connections, long transactions, failed backups and restore-point age.
+- Demonstrate actual RPO/RTO, RLS, queues and serving recovery in a dated drill.
 
 ### Temporal
 
-Temporal is the durable executor, not a replacement for PostgreSQL backups. Production must use TLS,
-an API key or mutually authenticated client certificate from protected secret storage, the intended
-namespace, and the same claim-check data converter
-on every API and worker client. Verify namespace retention, availability, throughput, archival/export
-needs, and vendor recovery behavior in the O-6 contract review.
-
-The private self-hosted client uses `EC_TEMPORAL_TLS_ENABLED=true`, an explicit DNS
-`EC_TEMPORAL_TLS_DOMAIN`, and three read-only PEM files: `EC_TEMPORAL_TLS_SERVER_CA_FILE`,
-`EC_TEMPORAL_TLS_CLIENT_CERT_FILE` and `EC_TEMPORAL_TLS_CLIENT_KEY_FILE`. Leave
-`EC_TEMPORAL_API_KEY` unset. All three files are required together; startup rejects invalid/expired
-certificates, a non-CA trust bundle, missing client-authentication usage, a mismatched key, plaintext
-or combined API-key/mTLS profiles. The SDK still verifies the server chain and hostname during its
-handshake; configuration validation alone does not prove reachability or server authorization.
-Client material is loaded when the client is constructed; restart the process after rotating its
-certificate/key/CA files rather than assuming an existing connection reloads them.
-
-The pinned self-hosted server authenticates clients using its configured client CA. Its default
-authorizer does not restrict an accepted identity by namespace or API. Issue client certificates
-only to trusted application workloads, keep server/internode keys separate, and retain private
-network boundaries. Per-workload authorization, certificate rotation and actual unauthorized-client
-rejection remain deployment acceptance requirements; mTLS alone does not provide tenant isolation.
-
-Never purge a workflow history while a lifecycle, pending queue item, audit reference, or claim-check
-object still depends on it. Monitor task-queue pollers, schedule-to-start latency, workflow failures,
-non-determinism, stuck open executions, and history growth. An engine outage should grow the
-start-outbox while leaving committed requests intact; recovery should drain it through
-reject-duplicate starts.
-
-Every eager connection, workflow start, signal, and execution-description read has the independently
-validated `EC_TEMPORAL_RPC_TIMEOUT_SECONDS` bound (five seconds by default, 0.1–60 seconds). A start
-timeout is not an acknowledgement: the request remains in `request_start_outbox` for deterministic
-reject-duplicate replay after the engine or network recovers.
-
-Production runs separate transactional and catalog roles on distinct
-`EC_TEMPORAL_TRANSACTIONAL_TASK_QUEUE` and `EC_TEMPORAL_CATALOG_TASK_QUEUE` values. Each role has
-explicit, validated workflow-task and activity slot limits
-(`EC_TEMPORAL_WORKER_MAX_CONCURRENT_WORKFLOW_TASKS` and
-`EC_TEMPORAL_WORKER_MAX_CONCURRENT_ACTIVITIES`, both eight by default) and a pinned Temporal Worker
-Deployment version derived from an immutable build identity. Workflow-task slots validate to 2–64
-because Temporal caching requires at least two; activity slots validate to 1–64. The compatibility
-combined role remains for local use, but it is not the production deployment topology. Keep
-activity slots within the worker process's explicit database pool and the environment-wide Cloud
-SQL budget, and size the workflow executor to the workflow-task limit. The request-start worker waits
-at least
-`EC_REQUEST_START_POLL_SECONDS` between all passes, including non-empty ones, and claims at most
-`EC_REQUEST_START_BATCH_SIZE` parents per pass. That cadence is per worker process, so budget the
-aggregate rate across replicas. Account for each parent's registration-child fanout before raising
-either value. Do not mask worker saturation by increasing Temporal's workflow-task timeout:
-schedule-to-start latency, database checkout timeouts, late `Task not found` completions, or SDK
-deadlock warnings require backpressure or capacity correction.
-
-Service-backed tests must never target a runtime database. The Make targets create and destroy only
-randomized `ec_test_*` databases, and the integration fixture rejects any other database name. This
-prevents durable test start-outbox rows from being replayed when a runtime request-start worker is
-later enabled. Database/user/host/service query overrides are rejected before database creation so
-the driver cannot silently route around the checked URL path.
-
-API request bodies are capped at 64 KiB and must finish within the validated
-`EC_REQUEST_BODY_TIMEOUT_SECONDS` interval (ten seconds by default, 0.1–60 seconds). Safe
-body-independent routes such as health checks bypass buffering; stalled mutation bodies receive 408.
+- TLS + secret-managed API key or mTLS; intended namespace; identical claim-check converter on every client.
+- Review retention, availability, throughput, archival/export and recovery under O-6.
+- Private mTLS: `EC_TEMPORAL_TLS_ENABLED=true`, explicit `EC_TEMPORAL_TLS_DOMAIN`, and all three read-only files: `EC_TEMPORAL_TLS_SERVER_CA_FILE`, `EC_TEMPORAL_TLS_CLIENT_CERT_FILE`, `EC_TEMPORAL_TLS_CLIENT_KEY_FILE`. Leave `EC_TEMPORAL_API_KEY` unset.
+- Validate CA, expiry, client usage and key match; SDK verifies server chain/hostname. Restart clients after file rotation.
+- Self-hosted default authorization does not restrict accepted clients by namespace/API. Keep private networking and trusted workload certificates; prove unauthorized-client rejection. mTLS is not tenant isolation.
+- Preserve histories while lifecycle, queues, audit or claim checks reference them.
+- Separate `EC_TEMPORAL_TRANSACTIONAL_TASK_QUEUE` and `EC_TEMPORAL_CATALOG_TASK_QUEUE`; immutable Worker Deployment builds required.
+- `EC_TEMPORAL_WORKER_MAX_CONCURRENT_WORKFLOW_TASKS`: 2–64, default 8. `EC_TEMPORAL_WORKER_MAX_CONCURRENT_ACTIVITIES`: 1–64, default 8; activity slots ≤ database pool/budget.
+- `EC_TEMPORAL_RPC_TIMEOUT_SECONDS`: 0.1–60, default 5. A start timeout is not acknowledgement; preserve start-outbox replay.
+- Request-start cadence/batch: `EC_REQUEST_START_POLL_SECONDS`, `EC_REQUEST_START_BATCH_SIZE`. Budget across replicas and child fanout; correct saturation rather than extending task timeout.
+- Service-backed tests use randomized disposable `ec_test_*` databases only; never runtime databases or routing overrides.
+- API body cap: 64 KiB. `EC_REQUEST_BODY_TIMEOUT_SECONDS`: 0.1–60, default 10; stalled mutation bodies receive `408`.
 
 ### Claim-check object storage
 
-Claim-check objects are required to replay Temporal histories that contain opaque references. The
-local filesystem implementation is not production storage. The repository's native GCS adapter uses
-generation-zero conditional creation, byte-identical replay checks, bounded reads, and all-generation
-tenant-prefix deletion, but those contracts still need deployment IAM, lifecycle, KMS, recovery, and
-cross-tenant field proof. Production storage must be shared by all API/worker replicas and provide:
-
-- tenant-prefixed access control, encryption at rest, TLS, immutable conditional create, integrity
-  checks, versioning, and audit logs;
-- backup/replication and key availability within the same RPO/RTO envelope as Temporal and
-  PostgreSQL;
-- lifecycle retention at least as long as every referencing workflow history, with no age-only
-  deletion rule that can orphan a history;
-- tested tenant-prefix erasure without cross-tenant deletion; and
-- restore validation that retrieves and integrity-checks a sampled payload from a restored workflow.
+- Shared storage required for every referencing API/worker; local filesystem is not production storage.
+- Tenant-prefix access control, encryption/TLS, immutable conditional creation, integrity checks, versioning and audit logs.
+- Backup/replication/KMS recovery within PostgreSQL/Temporal RPO/RTO.
+- Retention ≥ referencing histories; no age-only deletion that orphans references.
+- Prove tenant-prefix erasure without cross-tenant deletion and integrity-check payloads from restored workflows.
 
 ### Redis
 
-Redis holds shared pacing, fairness, and admission state; it is not lifecycle truth. Use an
-authenticated, TLS, Multi-AZ service with eviction disabled for the application database and alerts
-for memory pressure, failover, command latency, and unavailable scripts.
-
-On state loss, the pacer must recover throttle-first: no cold-start burst, and browser admission must
-honor its recovery fence. Temporal timers and PostgreSQL ledgers own durable work. Do not reconstruct
-Redis by replaying provider calls, and do not weaken the safety fence to clear a backlog. Redis
-snapshot/AOF recovery can reduce delay, but it is not evidence for the lifecycle RPO.
+- Shared pacing/fairness/admission and BFF sessions; not lifecycle truth.
+- Authenticated TLS Multi-AZ service; no eviction; alert on memory, failover, latency and script availability.
+- Recover throttle-first; preserve browser admission recovery fence. No provider-call replay or fence weakening to clear backlog.
+- Snapshot/AOF recovery reduces delay; it does not prove lifecycle RPO.
 
 ## Monitoring and alerting
 
-Ship structured logs and metrics to a system independent of the application failure domain. At
-minimum, dashboard and page on:
+Independent logs/metrics/traces and staffed alert ownership required.
 
-- `/healthz` and `/readyz` synthetic probes at the NFR-3 one-minute cadence, separated into database
-  unready and Temporal-degraded time;
-- API error/latency, database saturation, Temporal task-queue schedule-to-start latency, worker
-  restarts, and absence of each required worker heartbeat;
-- pending count and oldest age for `request_start_outbox`; a rising backlog plus Temporal degradation
-  is expected briefly, but age beyond the incident budget pages;
-- erasing account count and oldest request age, expired erasure leases, maximum attempt count,
-  last-failure stage, and the account-erasure worker heartbeat; page on any stalled fenced tenant,
-  because browser-request completion is not the durability boundary;
-- pending/ready/leased/terminal-failed `outbox` rows, oldest ready age, notification-ledger leases,
-  retry count, and provider send/delivery/bounce/suppression events;
-- notification routing-to-provider-delivery latency by lane. ADR-009 requires warning/page thresholds
-  at 45/90 seconds against the 120-second handoff-notification target;
-- pending organizer-change deliveries and calendar repairs, overdue handoff expiry repairs, watch
-  freshness, catalog cadence failures, per-source last-success age and candidate/canonical yield,
-  zero-candidate shifts, source quarantines, and lifecycle-invariant findings;
-- for anonymous Meetup city sources, endpoint/redirect drift, missing or malformed root Event
-  JSON-LD, response-size rejection, detail identity/envelope/cap outcomes, implausible source yield
-  changes, and any indication that member/RSVP/attendee material reached a shared projection;
-- catalog-run stage outcomes, wall-time trends, and measurement scope/quality. Shared Temporal
-  workers intentionally omit CPU/RSS; direct sequential-worker CPU and boundary RSS are best-effort
-  whole-process correlations, not host utilization or a continuously sampled peak. Use independent
-  host/container telemetry for saturation and capacity alerts; and
-- global/tenant kill-switch state and every policy change, including actor, ticket, reason, old/new
-  value, and propagation verification.
+| Signal | Monitor/page on |
+| --- | --- |
+| API/dependencies | One-minute health/readiness probes; errors/latency; database saturation; Temporal schedule-to-start, failures/non-determinism/history growth; worker restarts/missing heartbeats |
+| Start outbox | Pending count and oldest age; page beyond incident budget |
+| Erasure | Oldest erasing request, expired lease, attempts/failure stage, worker heartbeat |
+| Deferred notifications | Ready/leased/failed rows, age, provider delivery/bounce/suppression; ADR-009 warn/page 45/90 seconds against 120-second target |
+| Catalog | Cadence failure, source freshness/yield/quarantine, zero-yield shifts, stage wall times |
+| Deferred lifecycle | Organizer/calendar repairs, handoff expiry, watch freshness, invariant findings |
+| Controls | Global/tenant/source policy changes with actor, ticket, reason, old/new value and propagation |
 
-Useful read-only queue checks (run with a separately audited operations read role) include:
+- Meetup: alert on endpoint/redirect drift, malformed JSON-LD, size/cap/identity failures, yield shifts and private-member data reaching shared projections.
+- Shared Temporal execution evidence omits CPU/RSS. Direct-worker resource samples are best-effort process correlations; use container/host telemetry for capacity.
+- Read-only queue checks require a separately audited operations read role:
 
 ```sql
 SELECT count(*) AS pending,
@@ -747,277 +347,119 @@ FROM handoff_expiry_queue
 WHERE resolved_at IS NULL;
 ```
 
-Never include notification payloads, tokens, email bodies, OAuth credentials, or claim-check bytes in
-logs, metrics, traces, tickets, or chat.
-
-The handoff-completion URL contains a one-time bearer capability. Configure CDN, load-balancer,
-reverse-proxy, and APM access logs to redact the token segment on `/v1/tasks/*/done`; never emit the
-full URL to telemetry. Preserve `Cache-Control: no-store` and `Referrer-Policy: no-referrer`; GET
-must remain inert and only an explicit POST may signal completion. The database outbox stores only
-an authenticated-encrypted projection, reveals it inside the notification worker immediately before
-delivery, and scrubs the ciphertext on delivery or terminal failure.
-
-Migration `0106` cannot safely reconstruct encryption for an already-persisted plaintext
-capability. It scrubs and terminal-quarantines any such pending row (and clears its non-delivered
-ledger lease); never copy the old value into a replacement. Recreate the handoff through the normal
-workflow if the user still needs an action link.
+- Never record payloads, tokens, email bodies, OAuth credentials or claim-check bytes in telemetry/tickets/chat.
+- Redact bearer tokens in `/v1/tasks/*/done` at CDN/proxy/APM. Preserve `no-store`, `no-referrer`, inert GET and explicit completion POST.
+- Legacy plaintext handoff rows quarantined by `0106` cannot be recovered by copying tokens. Recreate through the normal workflow.
 
 ## Incident controls
 
-Use a control-plane/migration-owner session, never the ordinary application role, for operator policy
-changes. Capture the incident ticket and current value before changing anything.
-
-Freeze all autonomous mutations:
+Use control-plane/migration-owner authority for policy changes; record ticket and prior values. Replace placeholder identifiers only after audited lookup.
 
 ```sql
+-- Freeze all autonomous mutations.
 BEGIN;
 SELECT public.fn_set_policy_global_kill_switch(true);
 COMMIT;
-```
 
-Freeze one tenant:
-
-```sql
+-- Freeze one verified tenant.
 BEGIN;
 SELECT public.fn_set_tenant_policy_kill_switch(
     '00000000-0000-0000-0000-000000000000'::uuid,
     true
 );
 COMMIT;
-```
 
-The UUID above is a placeholder and must be replaced only after tenant identity is verified through
-an audited operations lookup. A kill switch prevents new mutations; in-flight workflows park and
-re-check. Confirm the durable control row and a pre-mutation denial before relying on it.
-
-A trusted ban/forbidden detector may irreversibly quarantine a known source through the app role:
-
-```sql
+-- One-way quarantine of a known source; also callable by the app role.
 SELECT public.fn_quarantine_source('meetup', 'ban');
 ```
 
-That function can only move `quarantined` from false to true. Operators should use it for emergency
-containment too. Never rotate identities, proxies, or accounts to evade a source block. Clearing a
-quarantine requires owner/legal review and the owner-only `fn_set_source_policy` path; preserve every
-other source-policy field and record the review evidence.
+1. Contain with the narrowest safe control; use global when scope is unknown. If propagation fails, disable egress or stop the faulty worker.
+2. Verify the durable control row and pre-mutation denial. Preserve leases, histories, outboxes, objects, logs and failed rows.
+3. Distinguish database outage, engine degradation, Redis recovery, provider failure, ban and credential compromise.
+4. Restore dependencies → workers → API traffic. Let guarded workers reclaim leases; never force acknowledgement.
+5. Prove safe read/dry run and one guarded canary before release. Tenant/global switches use the same functions with `false`.
+6. Verify queue convergence, notification failures, invariants, claim-check reads and no duplicate external effects.
 
-Incident sequence:
-
-1. Contain: engage the narrowest tenant/source control that is safe; use the global switch when blast
-   radius is unknown. Disable external egress or scale the specific faulty worker to zero if policy
-   propagation itself is suspect.
-2. Preserve: do not delete leases, histories, outboxes, claim checks, logs, or failed rows. Snapshot
-   dashboards and record provider incident identifiers.
-3. Diagnose: distinguish PostgreSQL unavailability, Temporal degradation, Redis throttle-first
-   recovery, notification-provider failure, source ban, and credential compromise.
-4. Recover: restore dependencies first, then workers, then API traffic. Let guarded workers reclaim
-   expired leases naturally; do not force acknowledgements.
-5. Release controls only after a dry-run/read path and one guarded canary prove the hazard is gone.
-   Tenant/global switches can be set to `false` with the same functions. Source quarantine release is
-   a separate owner-reviewed policy change.
-6. Verify convergence: start-outbox drained, no terminal notification failures, invariant scan clean,
-   claim checks readable, and no duplicate provider/calendar effect.
+- Never evade source blocks with rotated identities/proxies/accounts.
+- Quarantine release requires owner/legal review through `fn_set_source_policy`; preserve other policy fields and review evidence.
 
 ## Secrets and key rotation
 
-Production startup must fail closed unless the deployment-owned runtime provider supplies real
-authentication, shared object storage, notifications, credential vault, calendar access, and
-explicit registration and withdrawal source maps, plus a `NotificationSecretProtector` backed by
-production KMS/envelope encryption. The built-in GCP factory currently supplies GCS, reviewed public
-discovery, PostgreSQL audit/consent, explicit empty mutation maps, and optional Calendar assembly;
-it intentionally leaves notifier, notification-secret protector, credential vault, and production
-Calendar binding/access unprovisioned. Full preflight therefore fails. The stable local AES-GCM key
-is public development scaffolding and must never protect production data. The repository includes
-SDK-injected KMS-envelope and SES v2 adapters in addition to its OIDC, GCS/S3-compatible, Google
-Calendar, and Meetup adapters. A real deployment must still bind and provision the KMS key/policy,
-notification identity/configuration, and delivery-event/bounce/suppression pipeline. SES has no send
-idempotency token, so this does not settle ADR-009's held post-send-ack ownership decision. The
-repository still does not include the separately isolated production credential-vault/injection-
-broker backend. Mock adapters and local claim storage are for local/test environments only.
+- Secret manager/workload identity; least privilege and separate rotation for each database, cache, engine, identity, storage, provider and model credential.
+- No secrets in images, dumps, workflow history, telemetry, prompts, argv or support bundles.
+- Value + `*_FILE` are mutually exclusive; mounted files must be bounded absolute regular UTF-8 files. Split shared runtime mounts by process.
+- Local AES-GCM key is public development scaffolding, never production protection.
+- Full-product provider gaps: [runtime implementation](#runtime-implementation). KMS/SES adapters still require real IAM, notification identity, delivery/bounce/suppression and ADR-009 post-send ownership.
 
-Keep database, Redis, Temporal, OIDC, SES/inbound-email, object-storage, KMS/vault, calendar, model,
-source, and browser-provider credentials in a secret manager. Use workload identity where available;
-otherwise use least-privilege, separately rotatable credentials. Deny secrets in image layers,
-environment dumps, workflow payloads/history, logs, traces, prompts, and tool arguments.
-The committed GKE profile mounts runtime and migration secrets as files: a value and its `*_FILE`
-reference are mutually exclusive, and the loader accepts only a bounded absolute regular UTF-8
-file. The current shared runtime mount/IAM graph is deliberately an interim scaffold; split it by
-process before least-privilege sign-off.
-
-Standard rotation:
-
-1. Create a second credential/key and grant the same least-privilege policy.
-2. Update the secret reference and roll every consumer using one immutable release/config revision.
-3. Verify authentication, claim-check read/write, Temporal polling, queue drain, and provider canary.
-4. Revoke the old credential, verify failed use is visible, and record the completed rotation.
+1. Create a second credential/key with least privilege.
+2. Update secret references; roll every consumer with one immutable release/config revision.
+3. Verify authentication, storage, Temporal polling, queue drain and provider canary.
+4. Revoke old credentials; verify rejected use is visible; record completion.
 
 ### Application database role rotation
 
-`ec_app` is the fixed non-owner runtime role. Migration `0002` creates it as `NOLOGIN` when no
-initial password is supplied, or enables login using the password read from
-`EC_APP_ROLE_PASSWORD(_FILE)` by the migration-owner Job. It never contains a production default.
-Once `0002` is applied, rerunning `alembic upgrade head` does not rotate the role, so use the
-separate `rotate-app-role-password` operation and disabled Helm maintenance Job.
+- `ec_app` is fixed and non-owner. Migration `0002` creates NOLOGIN without an initial password; `EC_APP_ROLE_PASSWORD(_FILE)` enables login.
+- Re-running migrations does not rotate an existing password. Rotation has **no dual-password overlap**.
 
-The rotation has no dual-password overlap and must use this order:
+1. Plan maintenance; retain prior password/DSN versions. Create matching numeric secret versions for `EC_APP_ROLE_PASSWORD` and `EC_DATABASE_URL`; do not update running DSNs yet.
+2. Quiesce API and every database worker. Render `global.releasePhase=role-rotation`, `jobs.roleRotation.enabled=true`; only owner URL/password files enter the maintenance Job.
+3. Run `python -m events_concierge.operations rotate-app-role-password`. Require success report: `role=ec_app`, login enabled, no elevated attributes/memberships. Failure/timeout blocks rollout.
+4. Deploy `global.releasePhase=application` with the new DSN version; verify readiness through `ec_app` and run the canary.
+5. Retain old secrets through observation/rollback window. Rollback: run the gated Job with prior password **before** redeploying prior DSN/images. Helm values alone cannot restore authentication.
 
-1. Schedule a maintenance interval, retain the prior password/DSN secret versions for rollback, and
-   create matching new numeric versions for `EC_APP_ROLE_PASSWORD` and `EC_DATABASE_URL`. Do not
-   change the running application DSN yet.
-2. Quiesce API and every database-using worker. With the committed chart, render
-   `global.releasePhase=role-rotation` and `jobs.roleRotation.enabled=true`; that phase removes
-   application workloads and mounts only the migration-owner URL and app-role password files into
-   the maintenance Job.
-3. Run `python -m events_concierge.operations rotate-app-role-password`, wait for Job completion,
-   and retain its sanitized report proving `role=ec_app`, login enabled, no elevated attributes,
-   and no role memberships. A failed or timed-out Job means no application rollout.
-4. Immediately deploy `global.releasePhase=application` with the new `EC_DATABASE_URL` numeric
-   secret version, verify database readiness through `ec_app`, and complete the application canary.
-5. Revoke the old secret versions only after the observation window and rollback decision expire.
-   To roll back, first rerun the same gated Job with the prior password version, then redeploy the
-   prior DSN and image values. Reverting Helm values alone cannot restore database authentication.
-
-The rotation code binds the password and enables SQLAlchemy `hide_parameters`, so application-side
-SQL logs do not render it. That setting covers only client logging. PostgreSQL/Cloud SQL and any
-database proxy or audit sink used during migration/rotation must also disable or redact SQL
-statement and bind-parameter logging; otherwise the server-side `set_config` call or an error path
-can disclose the password. Never use the plaintext password in Job arguments, Helm values, shell
-history, evidence, or support bundles.
-
-For KMS envelope keys, follow the vault's rewrap/rotation procedure; do not decrypt credential
-plaintext into an operator shell. The notification-secret envelope records the immutable key ID
-returned by KMS, rather than the configured alias, and decrypt verifies the returned identity; alias
-rotation therefore keeps old ciphertext addressable. It also uses a random per-envelope encryption-
-context identifier so provider audit metadata does not contain a tenant UUID; tenant binding is in
-authenticated local AAD. Preserve old key versions until every retained ciphertext and backup has a
-tested recovery path. An emergency compromise rotation also revokes active OAuth/source sessions and
-audits every credential access in the exposure window.
+- Client parameter hiding does not protect server/proxy/audit logs; disable/redact SQL and bind-parameter logging during migration/rotation.
+- KMS rotation: use rewrap procedures; no plaintext in operator shells. Retain old immutable key versions until ciphertext/backups have tested recovery paths.
+- Compromise rotation also revokes active OAuth/source sessions and audits the exposure window.
 
 ## Restore drill
 
-Run this before launch and on a scheduled recurring basis; choose and record the production cadence
-with the on-call owner. A successful drill has evidence, timestamps, and measured values.
+Before launch and at the owner-approved recurring cadence; record timestamps and measured results.
 
-`make restore-drill-local` is the committed CI/developer rehearsal for the PostgreSQL portion. It
-requires the local API and writer workers to be stopped, takes a custom-format `pg_dump`, restores it
-into a random `ec_restore_drill_*` database, compares schema head and sanitized durable aggregate
-counts for the complete current table inventory—including audit, queue, policy, projection,
-catalog-refresh, and account-erasure state—and every sequence position, verifies the application
-role is neither superuser nor
-`BYPASSRLS`, has no role-creation/database-creation/replication attributes or inherited role
-memberships, requires every RLS table to use `FORCE ROW LEVEL SECURITY`, proves a two-tenant
-isolation fixture through `ec_app`, and destroys the restored database in `finally`. It never starts
-a worker, calls a provider, or retains the dump. Its JSON report contains no rows, DSNs, or
-credentials.
+**Local rehearsal:** `make restore-drill-local` starts Compose dependencies and runs migrations; use only an authorized isolated local environment with API/writers stopped.
 
-That local rehearsal proves the recovery tooling contract and catches schema/grant/RLS regressions;
-it does **not** prove managed PITR, WAL lag, encryption-key recovery, Temporal history replay,
-claim-check recovery, actual RPO/RTO, or production network isolation. The managed drill below must
-restore vendor backups into a separately fenced account/network and retain its own dated evidence.
+- Dumps/restores into random `ec_restore_drill_*`; checks schema, durable aggregates, sequences, role restrictions, FORCE RLS and two-tenant isolation.
+- No workers/provider calls; temporary dump/database removed; sanitized report retained.
+- Does not prove managed PITR/WAL, key recovery, Temporal replay, claim-check recovery, production isolation or RPO/RTO.
 
-1. Select a recovery timestamp unknown to the restore operator, record the last acknowledged test
-   transaction before it, and start the RTO clock.
-2. Restore PostgreSQL via PITR into an isolated network/account. Restore or attach the matching
-   claim-check object-store version and ensure required KMS keys are available through recovery-only
-   roles. Do not connect restored workers to real source, calendar, or notification endpoints.
-3. Verify schema head, database integrity, forced RLS with the non-owner app role, audit continuity,
-   lifecycle/transition counts, outbox and request-start continuity, and no plaintext secrets.
-4. Connect a compatible worker build to the designated Temporal recovery/test namespace. Verify
-   representative open histories replay and every sampled claim-check reference resolves with a
-   valid digest.
-5. Start workers with external effects replaced by audited test endpoints. Prove reject-duplicate
-   request starts, notification-ledger dedup, calendar/provider idempotency, and lease fencing.
-6. Run the lifecycle invariant scanner, authenticated API canary, and `/readyz`; record when the
-   restored serving surface becomes ready and stop the RTO clock.
-7. Calculate the actual gap between the recovery point and the last acknowledged test transaction.
-   The drill passes only if it is at most 60 seconds, no acknowledged transaction is missing, serving
-   recovery is at most 24 hours, and projections are rebuildable.
-8. Destroy isolated restored plaintext/ciphertext according to retention policy, retain non-secret
-   drill evidence, and open tracked actions for every gap. Do not mark NFR-13 achieved until a rerun
-   closes them.
+**Managed drill**
 
-The drill must also simulate a Temporal outage: accept durable intake, observe pending
-`request_start_outbox`, restore the engine, and prove exactly one parent workflow per request while
-in-flight state resumes without a duplicate external effect.
+1. Select a recovery timestamp unknown to the restore operator; record last acknowledged test transaction; start RTO clock.
+2. Restore PostgreSQL/PITR and matching object versions into fenced account/network with recovery-only KMS roles. No real provider/calendar/notification access.
+3. Verify schema/integrity, forced RLS via non-owner role, audit/lifecycle/queue continuity and no plaintext secrets.
+4. Use a compatible worker build and designated recovery/test Temporal namespace; replay representative open histories and digest-check sampled claim checks.
+5. Start workers against audited test endpoints; prove start/notification deduplication, provider/calendar idempotency and lease fencing.
+6. Run invariant scanner, authenticated canary and `/readyz`; stop RTO clock when serving is ready.
+7. Require recovery gap ≤60 seconds, zero acknowledged-transaction loss, RTO ≤24 hours and rebuildable projections.
+8. Remove restored data under retention policy; retain sanitized evidence. Track gaps; rerun before claiming NFR-13.
+
+Also rehearse Temporal outage: durable intake → pending start-outbox → engine recovery → exactly one parent workflow/request, resumed state and no duplicate external effects.
 
 ## External launch gates
 
-The following require credentials, contracts, domains, production infrastructure, legal/owner
-judgment, or field evidence and cannot be closed by the offline test suite:
+Offline tests cannot close these gates. Applicable discovery gates remain required; deferred-product gates apply before those capabilities are enabled.
 
-- [ ] Attach the recovered local repository to the intended private upstream, reconcile it with any
-  authoritative prior history, then enable protected review, secret scanning, and required CI
-  checks. Do not force-push this new root history until the upstream and reconciliation strategy are
-  confirmed.
-- [ ] Ratify or supersede every unchecked item in
-  [the owner decision brief](../design/owner-decisions.md), including the Temporal outage posture and
-  notification-channel riders.
-- [ ] Resolve P20 calendar upsert/transition recovery semantics and the ADR-009 post-send
-  acknowledgement ownership decision before changing either recovery contract. P20 must also
-  settle the deferred `organizer_change_applied=False` tri-state contract.
-- [ ] Assign an authenticated operator owner, resolution SLA, and guarded approve/reject command for
-  `handoff_completion_attempts.outcome = 'review_required'`. The foundation records the discrepancy,
-  blocks the calendar write, and notifies the user, but deliberately exposes no unauthenticated or
-  ad hoc database path that can override the receipt.
-- [ ] Obtain owner sign-off on draft requirements v0.3 and either implement and verify FR-11–FR-18
-  or record an explicit signed launch deferral; D9 and D10 remain held.
-- [ ] Approve the retention, legal-hold, pseudonymous tombstone/session-fence, and retained-audit
-  policy. The repository now provides a fail-closed resumable erasure coordinator plus one shared
-  PostgreSQL tenant-effect authority for every enabled RSVP/provider, Calendar, claim-check/object,
-  notification, withdrawal, and Temporal-start path. Cancellation-safe unit and exact database race
-  tests prove that an admitted effect drains before the erasure lock is released and that later
-  effects are refused. FR-10.5 remains open until every real deployment adapter is field-proved with
-  isolated cross-tenant fixtures, retention and backup copies are covered, and the currently
-  disabled Google watch-creation path gains a durable create/store/stop-channel erasure protocol
-  before activation.
-- [ ] Prove Temporal Cloud's asynchronous execution deletion physically completes within NFR-11's
-  72-hour window. `DescribeWorkflowExecution -> NOT_FOUND` proves the execution is no longer
-  addressable, not that history-store deletion has physically completed. Disable archival/history
-  export or separately purge and verify every copy, including late-start histories.
-- [ ] Prove Calendar cleanup from an immutable begin-time inventory. A previously provisioned but
-  now missing binding/access token must fail closed rather than report success; large calendars must
-  converge through bounded resumable pagination; pre-marker events need a backfill/dedicated-calendar
-  purge strategy; and 404, foreign-event, token-cycle, cap, cancellation, and retry cases need field
-  evidence.
-- [ ] Complete O-6 Temporal Cloud contract checks: SLA at least 99.9%, namespace capacity around
-  1,600 peak transitions/second, payload/retention/archival terms, recovery behavior, and cost basis.
-- [ ] Provision production PostgreSQL/PITR, Redis, GCS claim-check storage, KMS/vault, secret
-  manager, and OIDC issuer/audience/JWKS. Complete the built-in GCP provider's missing notifier,
-  notification-secret protector, credential vault, and production Calendar binding/access; require
-  full non-mock preflight to pass, then pass the managed restore drill.
-- [ ] Register and secret-provision a real confidential OIDC client for the built-in BFF, provision
-  the signed tenant/subject account mapping, and verify the real issuer/audience/JWKS, callback, TLS
-  edge, Redis isolation/capacity,
-  login/purpose-bound reauthentication/logout/expiry/tenant-wide-revocation behavior, and absence of
-  mock onboarding/local tenant-header fallback.
-- [ ] Run a deployment-level browser canary against the real production-shaped BFF and CSRF policy,
-  including login/reauthentication/logout/expiry and edge-header behavior. The committed
-  Playwright/CI suite already covers deterministic product flows, selected-outcome rendering, exact
-  typed erasure confirmation, accepted non-polling state and browser-session teardown, desktop and
-  390 px layouts, keyboard/focus and status/error behavior, reduced motion, security headers,
-  horizontal overflow, and console errors; it does not establish real-IdP purpose-bound
-  reauthentication, production identity safety, or complete WCAG conformance.
-- [ ] Complete G1 with a realistic natural-language request corpus and use the measured lane mix to
-  resize browser capacity, Ticketmaster reserve, and handoff staffing.
-- [ ] Complete G2 with a Meetup Pro OAuth consumer and test account before enabling autonomous Meetup
-  or declaring its SLA/quota assumptions.
-- [ ] Complete G3 using the real relay domain and inbound routing before enabling OTP/magic-link
-  account linking.
-- [ ] Finish Google OAuth Production publishing and sensitive-scope verification; provision
-  tenant-scoped token lifecycle and calendar bindings. Permanently forbid Gmail scopes.
-- [ ] Provision distinct inbound relay and outbound notification domains, SES identity/warm-up,
-  delivery-event ingestion, bounce/suppression handling, address verification, and pager routing.
-- [ ] Complete Browserbase/fleet isolation, ZDR, egress, concurrency, injection-broker, and
-  credential-transit reviews before enabling browser registration.
-- [ ] Complete source-specific ToS/commercial-use/legal review and owner-controlled activation.
-  Disabled or quarantined sources stay disabled; deployment is not activation.
-- [ ] Deploy independent metrics/logging/tracing, synthetic canaries, alert routes, worker-heartbeat
-  monitors, a staffed on-call rotation, and rehearse kill-switch/quarantine/channel-swap incidents.
+**Discovery/private release**
 
-Related design authority:
-[ADR-004](../decisions/adr-004-data-plane-policy-killswitch.md),
-[ADR-007](../decisions/adr-007-db-anchored-lifecycle.md),
-[ADR-009](../decisions/adr-009-email-launch-notification-channel.md),
-[ADR-010](../decisions/adr-010-temporal-cloud-engine.md),
-[ADR-011](../decisions/adr-011-relay-inbox-no-gmail.md), and
-[ADR-012](../decisions/adr-012-same-origin-static-consumer.md).
+- [ ] Verify protected review, secret scanning and required CI on the approved upstream.
+- [ ] Ratify applicable [owner decisions](../design/owner-decisions.md), requirements and explicit scope deferrals.
+- [ ] Provision production-shaped PostgreSQL/PITR, Redis, shared storage, secrets and OIDC; pass non-mock preflight and managed restore.
+- [ ] Complete real BFF login/logout/expiry/revocation, tenant mapping, CSRF, edge, TLS and Redis acceptance. Explicitly approve Google pilot reauthentication limits where applicable.
+- [ ] Approve retention/legal hold, pseudonymous tombstone/session-fence and audit policies; field-prove every enabled cleanup adapter and retained backup copy.
+- [ ] Prove Temporal physical deletion within NFR-11's 72-hour window; `NOT_FOUND` alone is insufficient. Disable or separately purge archival/export copies, including late starts.
+- [ ] Close O-6 engine SLA/capacity/retention/recovery/cost review; current target SLA ≥99.9%, approximately 1,600 peak transitions/second.
+- [ ] Complete source-specific legal/commercial-use review and owner activation. Disabled/quarantined sources stay disabled.
+- [ ] Deploy independent telemetry/canaries/alerts, worker heartbeats and on-call ownership; rehearse containment and recovery.
+
+**Before full-product activation**
+
+- [ ] Resolve P20 calendar recovery/tri-state semantics and ADR-009 post-send acknowledgement ownership.
+- [ ] Assign authenticated owner, SLA and guarded resolution for `handoff_completion_attempts.outcome='review_required'`; no ad hoc override.
+- [ ] Ratify FR-11–FR-18 implementation/deferral; D9/D10 remain held.
+- [ ] Provision notifier, notification-secret protector, vault/injection broker and production Calendar binding/access; pass full provider preflight.
+- [ ] Prove recent-auth erasure, real adapter cleanup and immutable Calendar inventory across missing credentials, pagination, legacy events, retries and cancellation. Establish watch create/store/stop cleanup before enabling watches.
+- [ ] Complete G1 real request corpus/capacity, G2 Meetup Pro OAuth and G3 inbound-domain routing checks.
+- [ ] Complete Google OAuth publishing/scope review and tenant token lifecycle; Gmail scopes remain forbidden.
+- [ ] Provision distinct inbound/outbound domains, SES identity/warm-up, delivery/bounce/suppression, address verification and pager routing.
+- [ ] Complete browser fleet/isolation/ZDR/egress/concurrency/injection-broker/credential-transit review.
+
+Design authority: [ADR-004](../decisions/adr-004-data-plane-policy-killswitch.md), [ADR-007](../decisions/adr-007-db-anchored-lifecycle.md), [ADR-009](../decisions/adr-009-email-launch-notification-channel.md), [ADR-010](../decisions/adr-010-temporal-cloud-engine.md), [ADR-011](../decisions/adr-011-relay-inbox-no-gmail.md), [ADR-012](../decisions/adr-012-same-origin-static-consumer.md).

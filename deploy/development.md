@@ -1,146 +1,69 @@
 # Private GKE development
 
-This runbook operates the shared `platform-dev` development deployment. Shared foundation,
-networking and GKE are owned by [gcp-foundation](https://github.com/iliazlobin/gcp-foundation);
-do not create a second cluster from this application root for that destination.
-Product scope and release gates: [first-release acceptance](../docs/production-operations.md#first-release-acceptance).
+Application release, private access and recovery.
 
-The shared discovery deployment has passed private development acceptance. Access remains IAP
-and loopback-only; production gates remain open. Use Terraform 1.16.1, gcloud, kubectl with
-gke-gcloud-auth-plugin, Helm 3, Python 3.12+ and Docker Buildx. Authenticate as
-`iliazlobin27@gmail.com` and target `iz27-platform-dev` explicitly. Initialize the repository with
-`uv sync --frozen --python 3.12`; use `.venv/bin/python` for the operation helpers.
-
-On a shared destination, the platform must install and verify its retained `shared-retain`
-StorageClass before application stores are installed. Set `createStorageClass=false` and
-`storageClass=shared-retain` on the data chart; application Helm must not own the platform class.
-
-This profile uses real PostgreSQL, Redis, Temporal and GCS with explicit mock external product adapters. No real email, booking or Calendar actions. The older staging Terraform root remains separate.
+- **Platform:** [gcp-foundation](https://github.com/iliazlobin/gcp-foundation) owns projects, network, GKE, access VM and `shared-retain`.
+- **Application:** releases, workload identities, secrets, registry, data and backups.
+- **Deployment:** manual; separate approval required; [production acceptance](../docs/production-operations.md#first-release-acceptance).
 
 ## Current deployment
 
-The shared cluster `platform-dev` in `iz27-platform-dev/us-west1-a` runs private discovery in
-`events-concierge-dev`. Six application Deployments, both PostgreSQL StatefulSets, Redis and the
-four Temporal server Deployments are ready. Services are
-ClusterIP-only with no Ingress. The ingestion cadence CronJob is enabled and schedules every five
-minutes; it checks due sources rather than refreshing every source on every tick.
+Last recorded inspection: September 17. Recheck before operating.
 
-The API health/readiness checks pass with schema `0194` and identity `not_configured`. Its
-reported revision is `d5cac84111eeea2fdf8329dcedc5d937e2a20390`. The running images are:
+| Item | Recorded state |
+| --- | --- |
+| Target | `iz27-platform-dev/us-west1-a`; cluster `platform-dev`; namespace `events-concierge-dev` |
+| Readiness | Six app Deployments, two PostgreSQL stores, Redis and four Temporal servers ready |
+| Network | ClusterIP only; no Ingress; IAP and loopback access |
+| Cadence | Five-minute CronJob; queues due sources |
+| API revision / schema | `d5cac84111eeea2fdf8329dcedc5d937e2a20390` / `0194` |
+| Profile | `development` / `discovery`; `EC_MOCK_CLOUD=true`; OIDC and Temporal TLS off |
+| Identity / transport | `not_configured`; demo identity; internal plaintext |
 
 | Component | Artifact Registry image digest |
 | --- | --- |
 | Backend | `sha256:d6b523158cb08d910e24b2242ebfe366a972f0aaf52246b36e2e36b10bb66899` |
 | Frontend | `sha256:c80be4f2664c80f08e1dfae0607131be250a36a2489816fa394cd222c7a741bf` |
 
-The running profile is still `development` / `discovery`: `EC_MOCK_CLOUD=true`,
-`EC_OIDC_BFF_ENABLED=false`, `EC_DATABASE_CONNECTION_MODE=development_plaintext` and
-`EC_TEMPORAL_TLS_ENABLED=false`. PostgreSQL, Redis, Temporal, catalog collection and GCS are real;
-consumer identity and deferred product integrations use the development behavior. The deployed
-images predate the current `main`. Healthy pods do not establish acceptance of the new candidate.
-
-Google sign-in, startup safeguards, datastore TLS and self-hosted Temporal mTLS preparation are
-merged into `main`. The source migration head is `0195`; the live database remains at `0194`.
-Merging or passing CI does not publish images, migrate data or update the cluster. Releases remain
-manual and require one reviewed commit with immutable backend/frontend image digests.
+- **Real:** PostgreSQL, Redis, Temporal, GCS, public collection; no real email, booking or Calendar actions.
+- **Merged, rollout pending:** Google sign-in, startup safeguards, datastore TLS and Temporal mTLS preparation; source schema `0195`.
+- **Recovery:** manual backups; last verified set September 12; no alert policies at recorded inspection.
+- [Verified restore](https://console.cloud.google.com/storage/browser/_details/iz27-platform-dev-ec-backups/20260912T014120Z-08707790/VERIFIED.json?project=iz27-platform-dev&authuser=4) · [Discovery acceptance](https://console.cloud.google.com/storage/browser/_details/iz27-platform-dev-ec-backups/20260912T014120Z-08707790/acceptance.json?project=iz27-platform-dev&authuser=4): earlier demo release only.
 
 ### Remaining release work
 
-1. Implement an authenticated private application Helm profile for the existing in-cluster stores.
-   The development profile requires mock integrations/plaintext PostgreSQL and disables OIDC;
-   the managed profile requires Cloud SQL Proxy. Neither is the desired private authenticated
-   composition. Add per-process Secret/IAM and certificate mounts rather than bypassing those guards.
-   The account-erasure worker currently uses full application/BFF preflight; preserve its session
-   revocation and cleanup responsibilities when defining its minimum credentials.
-2. Obtain the remaining identity approvals and complete configuration: a separate Events Concierge Google OAuth client,
-   exact `https://localhost:14443/auth/callback`, verified subject-to-tenant provisioning and trusted
-   private browser HTTPS. A private Google pilot requires an explicit owner decision to keep
-   self-service account deletion unavailable until independent reauthentication exists. Do not
-   reuse Symphony's OAuth client. [Identity contract](../docs/production-operations.md#built-in-oidc-bff-activation).
-3. Rehearse the combined candidate, migration and retained-data transport rollback. Confirm node
-   capacity for steady workloads, cadence, migration hooks and rollout overlap. Deliver versioned
-   certificates and restricted credentials through the approved secret mechanism.
-4. Obtain deployment authorization for the concrete candidate and configuration. Suspend cadence,
-   drain writers, take and verify a fresh shared backup, then coordinate datastore/client transport,
-   migration and application rollout. Preserve PVCs and restored Temporal databases.
-   [Transport cutover](#encrypted-dependency-preparation) and [recovery](#manual-recovery) own the commands.
-5. Verify actual TLS/mTLS handshakes and rejection cases, serving revision/digests, Google
-   login/logout, CSRF, tenant isolation, discovery/crawler behavior and worker recovery on GKE.
-   Close application monitoring, alert routing, scheduled backups and restore checks before
-   claiming production acceptance. Independent project-loss recovery remains deferred.
+1. Add authenticated private Helm composition for in-cluster stores; per-process Secret/IAM and certificate mounts.
+2. Configure separate Google client, verified subject mapping and trusted HTTPS; decide deletion pilot limitation.
+3. Rehearse combined candidate, migration and transport rollback; check capacity; prepare versioned credentials/certificates.
+4. Approve deployment; suspend cadence, drain writers, verify fresh backup; coordinate migration and encrypted rollout.
+5. Verify identity, TLS/mTLS, CSRF, tenant isolation, discovery and worker recovery; complete monitoring and scheduled recovery.
 
-The existing [verified shared recovery set](https://console.cloud.google.com/storage/browser/_details/iz27-platform-dev-ec-backups/20260912T014120Z-08707790/VERIFIED.json?project=iz27-platform-dev&authuser=4)
-and [deployed discovery acceptance evidence](https://console.cloud.google.com/storage/browser/_details/iz27-platform-dev-ec-backups/20260912T014120Z-08707790/acceptance.json?project=iz27-platform-dev&authuser=4)
-cover the earlier development release, not the pending authenticated candidate. The September 17
-metadata check found no newer completed/verified shared backup set and no Cloud Monitoring alert
-policies in `iz27-platform-dev`. Backups remain manual. Redis persistence survived its retained-disk recovery drill but is outside the database/
-payload backup; avatar media is intentionally excluded so erasure can delete it.
+- **Profile gap:** development requires mock/plaintext/OIDC-off; managed requires Cloud SQL Proxy. Neither supports the intended composition.
+- **Erasure worker:** preserve session revocation and cleanup when narrowing its full application/BFF credentials.
+- **Identity:** no Symphony client reuse; exact callback `https://localhost:14443/auth/callback`; [activation contract](../docs/production-operations.md#built-in-oidc-bff-activation).
+- **Pilot decision:** explicit owner acceptance of unavailable self-service deletion until independent reauthentication exists.
+- **Deferred:** independent project-loss recovery. CI and healthy pods do not prove deployed acceptance.
 
 ## Shared application landing
 
-The platform owns the two projects, deployment identities, network, GKE/node pool, private access
-VM and `shared-retain`. Follow its [private access and storage gates](https://github.com/iliazlobin/gcp-foundation#private-access)
-before installing application resources. The app-owned [shared-development root](../infra/terraform/environments/shared-development)
-owns its registry, workload identities, secrets and payload, media, backup and state buckets. It never creates a
-cluster or changes shared network resources.
+| Boundary | Requirement |
+| --- | --- |
+| App Terraform | [shared-development](../infra/terraform/environments/shared-development); no cluster/network creation |
+| Input / review | Verified `platform_contract`; saved-plan check: `scripts/development/check_shared_plan.py` |
+| State | Fresh app state → `iz27-platform-dev-ec-state`; [backend setup](../infra/terraform/environments/shared-development/backend.tf.example) |
+| Storage | Platform-installed `shared-retain`; data chart `createStorageClass=false`, `storageClass=shared-retain` |
+| Helpers | Default to shared; retired target rejected; `--target shared` remains accepted |
+| Values | Development defaults → shared overlay → generated release values |
+| Workers | Catalog/erasure active; transactional, request-start, notification and change-delivery disabled |
 
-The separate [`development` root](../infra/terraform/environments/development) remains only to
-manage resources awaiting verified retirement. It is not an operation target. Remove that root
-after its data, image and identity dependencies are resolved and its owning state is empty.
+- Keep state/plans/credentials outside Git; never initialize the retired target's backend for this destination.
+- The separate [development root](../infra/terraform/environments/development) manages resources awaiting verified retirement.
+- Remove that root only after data/image/identity dependencies are resolved and its owning state is empty.
+- Existing stores: skip installation below; storage changes require separate rehearsal.
 
-Use the platform's verified `platform_contract` output as the new root's input. Review its exact
-saved plan with `scripts/development/check_shared_plan.py`. Bootstrap the app root into fresh local
-state, then migrate only that state to its protected `iz27-platform-dev-ec-state` bucket as described
-in its [backend example](../infra/terraform/environments/shared-development/backend.tf.example).
-Keep plan, credentials and state out of Git. Do not initialize the legacy backend for this destination.
+**New stores / coordinated restoration only**
 
-All commands use the platform's separate kubeconfig and loopback IAP tunnel. The context must be
-`gke_iz27-platform-dev_us-west1-a_platform-dev`; the namespace remains `events-concierge-dev`.
-All operation helpers default to **shared** and reject the retired target. `--target shared` remains
-accepted for existing commands. Context and resource checks run before cloud or Kubernetes changes.
-
-Layer `values-shared-development.yaml` after `values-development.yaml` for the application, and
-the data chart's shared overlay after its defaults. These select the shared project/bucket,
-discovery-only UI/API and platform-owned storage. The shared overlay omits transactional,
-request-start, notification and change-delivery workers so restored deferred work cannot resume. Catalog and
-account-erasure workers remain active; shared readiness requires all six intended deployments and
-rejects any deferred Deployment. Image digests belong to the selected committed
-candidate in `us-west1-docker.pkg.dev/iz27-platform-dev/ec-dev/`. They must pass combined CI before
-deployment. This remains a private development candidate until real identity and the separate
-[production gates](../docs/production-operations.md#first-release-acceptance) pass.
-
-Manual application CI retains a three-day `candidate-images-COMMIT` artifact in this private
-repository after its image startup/canary checks. Download only from the successful run for the
-selected commit, verify `SOURCE_REVISION` and `SHA256SUMS`, then load the archive. Verify both image
-revision labels, tag and push those same images to the private Artifact Registry, and record their
-registry digests in release values. Accept the package only after every CI and deployment check
-for that commit passes. The archive is a temporary release artifact, not a backup or deployment.
-
-For recovery into empty stores, restore a verified coordinated database/payload backup before
-starting writers. Require empty application and Temporal databases; never restore over live data.
-Before `pg_restore --exit-on-error`, create restricted `ec_app` with its pinned app-role password;
-migration 0002 will not rerun after restoration. Create NOLOGIN `ec_operator_viewer`,
-`ec_operator_controller`, `ec_ingestion_executor` and NOINHERIT `ec_operator_aggregate_definer`,
-granting viewer to controller. Preserve original owners/ACLs: `ec_owner` and the aggregate definer
-for the app, `temporal` for its databases. Let migration bootstrap create the two `ec_dev_*`
-operator/executor logins from pinned secrets. Keep Temporal database, schema and namespace
-initialization disabled. Copy the exact payload hierarchy without changing content keys. Run
-candidate migration/bootstrap, then verify manifest aggregates, tenant isolation and historical
-payload reads before resume.
-
-Redis is outside this coordinated backup. Inventory sessions, provider backoffs and admission
-fences before recovery; reconstruct or wait out outstanding backoffs before a cold start. Payload
-backups inventory and hash every object. Profile media is excluded for account erasure.
-
-### Shared release and access
-
-Keep the platform's IAP tunnel running and export the separate kubeconfig produced by its
-[private-access procedure](https://github.com/iliazlobin/gcp-foundation#private-access). Verify the
-shared context named above before each release. These commands assume the reviewed app Terraform
-apply and state migration are complete, and `.local/shared-release-values.yaml` was generated with
-`release_values.py --target shared` from the passing candidate's registry digests.
-
-For new stores only:
+- First complete [Connect](#shared-release-and-access); verify the dedicated shared kubeconfig, expected context and Ready nodes.
 
 ```bash
 kubectl create namespace events-concierge-dev --dry-run=client -o yaml | kubectl apply -f -
@@ -148,48 +71,90 @@ kubectl create namespace events-concierge-dev --dry-run=client -o yaml | kubectl
 helm upgrade --install ec-dev-data deploy/helm/events-concierge-dev-data -n events-concierge-dev -f deploy/helm/events-concierge-dev-data/values-shared-development.yaml --wait --timeout 10m
 ```
 
-Restore the verified snapshot and restricted roles as described above, and require TCP readiness
-before each restore. After verifying the restored databases and payloads, run the retained-volume
-replacement drill while application and Temporal writers are still absent:
+1. Require TCP readiness and empty application/Temporal databases before restoration.
+2. Create restricted `ec_app` with its pinned password before restore; migration 0002 will not rerun.
+3. Create NOLOGIN `ec_operator_viewer`, `ec_operator_controller`, `ec_ingestion_executor`; create NOINHERIT `ec_operator_aggregate_definer`.
+4. Grant viewer to controller; require `ec_owner`, aggregate-definer and `temporal` owners; leave `ec_dev_*` logins for bootstrap.
+5. Restore verified dumps with `pg_restore --exit-on-error` and exact payload hierarchy; preserve owners, ACLs and provenance.
+6. Disable Temporal database/schema/namespace initialization; run candidate migrations/bootstrap before writers.
+7. Verify counts, isolation and historical payload reads; never substitute test fixtures.
+
+- Redis excluded: inventory sessions, admission fences and backoffs; preserve or wait out backoffs before cold start.
+- Current backups hash every payload object; older payload-only sets have narrower coverage.
+- After restoration, while application and Temporal writers remain absent:
 
 ```bash
 .venv/bin/python scripts/development/check_store_recovery.py --target shared
+```
+
+### Shared release and access
+
+**Connect**
+
+- Tools: Python 3.12, gcloud, `gke-gcloud-auth-plugin`, kubectl, Helm 3, Terraform 1.16.1 and Docker Buildx.
+- Dependencies: `uv sync --frozen --python 3.12`; use `.venv/bin/python` for operation helpers.
+- Account: `iliazlobin27@gmail.com`; explicit cloud project.
+- [Platform access](https://github.com/iliazlobin/gcp-foundation#private-access): keep IAP running; export its dedicated kubeconfig.
+- Required context: `gke_iz27-platform-dev_us-west1-a_platform-dev`; Ready nodes.
+
+```bash
+kubectl config current-context
+kubectl get nodes
+```
+
+**Prepare candidate**
+
+- One reviewed commit; all CI/deployment checks passing; immutable backend/frontend digests.
+- Registry: `us-west1-docker.pkg.dev/iz27-platform-dev/ec-dev/`.
+- Optional CI archive: `candidate-images-COMMIT`, retained three days; verify `SOURCE_REVISION`, `SHA256SUMS` and both revision labels.
+- Push those same images; use registry digests. Archive is neither backup nor deployment.
+- `APP_IMAGE` / `WEB_IMAGE`: `repository@sha256:...`; `BACKEND_REVISION`: full source commit.
+
+```bash
+mkdir -p .local
+.venv/bin/python scripts/development/release_values.py --target shared --app-image "$APP_IMAGE" --web-image "$WEB_IMAGE" --revision "$BACKEND_REVISION" --output .local/shared-release-values.yaml
+```
+
+**Release — after authorization and rehearsal**
+
+- These commands retain the current demo overlays; authenticated private composition remains pending.
+
+1. [Quiesce and verify backup](#manual-recovery) with `--hold-stopped`; preserve cadence state and original replicas.
+2. Apply approved credentials/infrastructure changes; run migration with writers stopped:
+
+```bash
 helm upgrade --install events-concierge deploy/helm/events-concierge -n events-concierge-dev -f deploy/helm/events-concierge/values-development.yaml -f deploy/helm/events-concierge/values-shared-development.yaml -f .local/shared-release-values.yaml --wait --wait-for-jobs --timeout 10m
+```
+
+3. Require successful migration/login bootstrap. Failure after Alembic commits: keep writers stopped; repair/retry.
+4. Restore Temporal replicas from backup manifest; require readiness before application startup.
+5. Newly restored Temporal only: install with initialization disabled. Skip for an existing compatible deployment.
+
+```bash
 helm upgrade --install ec-dev-temporal temporal --repo https://go.temporal.io/helm-charts --version 1.6.0 -n events-concierge-dev -f deploy/helm/temporal-development.yaml --set server.config.persistence.datastores.default.sql.manageSchema=false --set server.config.persistence.datastores.visibility.sql.manageSchema=false --set server.config.persistence.datastores.visibility.sql.createDatabase=false --set server.config.namespaces.create=false --wait --timeout 15m
+```
+
+6. Start application; keep cadence disabled until acceptance:
+
+```bash
 helm upgrade events-concierge deploy/helm/events-concierge -n events-concierge-dev -f deploy/helm/events-concierge/values-development.yaml -f deploy/helm/events-concierge/values-shared-development.yaml -f .local/shared-release-values.yaml --set global.releasePhase=application --set global.runtimeProviderReady=true --wait --timeout 10m
 .venv/bin/python scripts/development/wait_ready.py --target shared
 kubectl -n events-concierge-dev exec -i deployment/events-concierge-api -- python - < scripts/development/promote_workers.py
 kubectl -n events-concierge-dev exec -i deployment/events-concierge-api -- python - < scripts/development/smoke.py
 ```
 
-The restored Temporal options disable database/schema/namespace initialization; the chart retains
-only a harmless completion hook. They apply to this restored environment, not a fresh empty Temporal
-installation. The application migration runs before its writers and must preserve the restored data.
+- Require six intended Deployments ready; no deferred Deployments; correct revision/digests/schema and restricted-role access.
+- Promotion requires candidate catalog pollers. Smoke covers discovery plus Temporal/GCS echo; erasure completes synthetic cleanup.
+- Collection acceptance: real reviewed refresh; command → successful run → publication. Schedule success alone is insufficient.
+- Compare `fn_report_catalog_source_coverage_v1()` at matching times/windows; investigate failures and freshness; exclude fixtures.
+- Moves: preserve source metadata/revisions and old environment until parity/recovery acceptance; never replay historical source toggles.
+- `refresh_due` projection lacks flattened release fields; inspect linked command revision/digest and actual workers.
+- After acceptance, restore prior cadence/replica settings; `developmentCatalog.cadenceEnabled=true` queues due work every five minutes.
+- Render source values; never feed `helm get values --all` back into Helm.
+- Migration `0187` has no downgrade. No schema-0180 images after schema-0193 migration; no incompatible Helm-only rollback.
+- Recovery requires verified coordinated backup and compatible images; overwriting new writes needs separate approval.
 
-For a release with migrations, suspend cadence and drain scheduled Jobs and collection commands
-as described in [manual recovery](#manual-recovery). Keep writers stopped through migration and
-bootstrap acceptance:
-
-```bash
-.venv/bin/python scripts/development/backup.py backup --hold-stopped
-.venv/bin/python scripts/development/backup.py verify gs://iz27-platform-dev-ec-backups/SET_ID
-```
-
-A failed bootstrap can leave Alembic changes committed. Keep the application stopped, repair and
-retry bootstrap, then verify roles and credentials before starting the candidate. Do not start an
-older image or use Helm rollback as schema rollback. A schema-changing failure requires compatible
-images and the coordinated database/payload recovery procedure above, in an empty recovery store;
-`backup resume` restores replicas only and refuses a changed schema.
-
-For subsequent releases, preserve the accepted cadence and replica settings after these backup and
-migration gates. Render from the three source value files; do not use `helm get values --all` as
-an input file, because resolved null-removal semantics can reintroduce omitted defaults.
-
-```bash
-helm upgrade events-concierge deploy/helm/events-concierge -n events-concierge-dev -f deploy/helm/events-concierge/values-development.yaml -f deploy/helm/events-concierge/values-shared-development.yaml -f .local/shared-release-values.yaml --set global.releasePhase=application --set global.runtimeProviderReady=true --set developmentCatalog.cadenceEnabled=true --set workloads.api.replicas=1 --wait --timeout 10m
-```
-
-Run each port-forward in its own terminal, with the same dedicated shared kubeconfig:
+**Access — one forward per terminal**
 
 ```bash
 kubectl -n events-concierge-dev port-forward --address=127.0.0.1 service/events-concierge-api 14000:8000
@@ -197,52 +162,30 @@ kubectl -n events-concierge-dev port-forward --address=127.0.0.1 service/events-
 kubectl -n events-concierge-dev port-forward --address=127.0.0.1 deployment/events-concierge-admin 14002:3000
 ```
 
-Use `http://127.0.0.1:14001` for consumer acceptance and `http://127.0.0.1:14002/admin` for private
-administration. These forwards grant no public access. Backup/verify/resume use the shared
-destination; use only its verified recovery prefix.
+- [Consumer](http://127.0.0.1:14001) · [Admin](http://127.0.0.1:14002/admin); dedicated shared kubeconfig.
+- Tunnel interruption: restart platform access, verify context/nodes, restart forwards.
+- Pod replacement: restart affected forwards; Service forwards stay attached to the selected pod.
 
-If the IAP transport exits, restart it with the platform private-access helper, verify the shared
-context and node again, then restart these three forwards. Restart affected forwards after a pod
-rollout too: even a Service forward stays attached to its initially selected pod. A running
-`kubectl port-forward` process does not prove that its IAP connection or selected pod remains available.
+**Private HTTPS — preparation only**
 
-The private HTTPS proxy prepares `https://localhost:14443` for the planned Google sign-in release,
-with the intended exact callback `https://localhost:14443/auth/callback`. The application startup checks
-support that exact browser origin with `EC_PUBLIC_ORIGIN_PROFILE=private_loopback_https`;
-it still requires real identity, encrypted dependency connections and restricted runtime credentials
-before a non-mock process starts. Google provider code is integrated, while its client secret,
-verified subject-to-account mapping and encrypted dependency rollout remain pending.
-The current shared development overlay still uses local-demo identity.
-[Identity activation](../docs/production-operations.md#built-in-oidc-bff-activation) owns the existing
-OIDC contract, Google configuration and remaining production prerequisites. These proxy instructions
-alone do not authorize activation.
-
-Keep the frontend forward above running. Supply a certificate valid for `localhost`, trusted by
-the operator's browser, and its protected private key using `EC_LOCAL_TLS_CERT` and
-`EC_LOCAL_TLS_KEY` (absolute paths outside Git), then run:
+- Origin: `https://localhost:14443`; callback: `https://localhost:14443/auth/callback`.
+- `EC_PUBLIC_ORIGIN_PROFILE=private_loopback_https`; real identity, encrypted dependencies and restricted credentials still required.
+- Keep frontend forward running; browser-trusted localhost certificate and protected key outside Git.
+- Set absolute `EC_LOCAL_TLS_CERT` / `EC_LOCAL_TLS_KEY` paths; never bypass certificate warnings.
 
 ```bash
 caddy validate --config deploy/private-access.Caddyfile --adapter caddyfile
 caddy run --config deploy/private-access.Caddyfile --adapter caddyfile
 ```
 
-The [private proxy configuration](private-access.Caddyfile) binds only `127.0.0.1:14443`, preserves
-the browser Host, and proxies the loopback frontend forward. Its admin listener, automatic HTTP
-redirects and automatic trust installation are disabled. Obtain trust through the operator's
-approved certificate setup; never bypass a browser certificate warning. No public DNS, ingress,
-load balancer or firewall opening is needed. Local TLS does not encrypt the app's database,
-Redis or Temporal connections; those and live Google login/CSRF/logout acceptance remain separate
-release gates. Caddy 2.11.4 passed configuration and real TLS proxy checks with an isolated test
-certificate, including hostname-mismatch rejection; browser trust and deployed Google login are
-not established by that check.
+- [Proxy](private-access.Caddyfile): loopback `127.0.0.1:14443`; preserves Host; admin listener, redirects and automatic trust installation disabled.
+- No public DNS/ingress/firewall opening. Browser TLS does not encrypt datastores.
+- [Google activation and deployed login/CSRF/logout checks](../docs/production-operations.md#built-in-oidc-bff-activation).
 
 ### Encrypted dependency preparation
 
-The opt-in [data TLS values](helm/events-concierge-dev-data/values-private-tls.yaml) and
-[Temporal TLS values](helm/temporal-private-tls.yaml) prepare an encrypted private release. The
-active development overlays remain plaintext/local-demo. These files do not provision certificates,
-change the application secret mounts or enable non-mock startup. Application Helm and its secret
-ownership plan still need an explicit authenticated profile; do not bypass their development guards.
+- Opt-in [data TLS values](helm/events-concierge-dev-data/values-private-tls.yaml) and [Temporal TLS values](helm/temporal-private-tls.yaml).
+- Current overlays remain plaintext/demo; certificate delivery and authenticated application composition pending.
 
 | Connection | Required contract |
 | --- | --- |
@@ -252,21 +195,14 @@ ownership plan still need an explicit authenticated profile; do not bypass their
 | Application to Temporal | Frontend Service FQDN, server CA and separate client certificate/key files with `clientAuth` usage |
 | Temporal internode and internal frontend clients | Server certificate with `serverAuth` and `clientAuth`, trusted client CA, verified server names |
 
-Each datastore Secret named in the values file contains `ca.crt`, `tls.crt` and `tls.key`. Issue
-server certificates with the exact Service FQDN in the DNS subject alternative names (SANs); use a
-short common name because a full Service FQDN can exceed its length limit. Temporal's server
-certificate additionally needs the SAN `ec-dev-temporal-internode`.
-`ec-dev-postgres-ca-v1` contains **only** `ca.crt`; PostgreSQL private keys never go to Temporal or
-application containers. Keep signing keys outside workloads and Git. Use separate, versioned client
-credentials per allowed workload and mount no Google/OIDC secret into operator or catalog processes.
+- Datastore Secrets: `ca.crt`, `tls.crt`, `tls.key`; exact Service FQDN DNS SAN; short common name.
+- Temporal server SAN also includes `ec-dev-temporal-internode`.
+- `ec-dev-postgres-ca-v1`: **only** `ca.crt`; never distribute PostgreSQL server keys to clients.
+- Signing keys outside workloads/Git; versioned credentials per workload; no Google/OIDC secrets in operator/catalog processes.
+- PostgreSQL/Redis stage keys in memory with native ownership/`0600`; rotate Secret names and roll pods.
+- Redis 7 probe `--sni` does not verify hostnames; application clients must.
 
-The PostgreSQL/Redis charts stage private keys in memory with image-native ownership and `0600`
-permissions. Versioned Secret names are part of the pod template: rotate by creating the next
-Secret version and rolling the workload. Updating a Secret's contents alone does not refresh that
-staged copy. Redis's loopback probe verifies CA and password; Redis 7 `--sni` does not verify the
-hostname. Application clients must additionally enforce hostname verification.
-
-Inspect the candidate without changing a cluster:
+**Validate without cluster changes**
 
 ```bash
 helm template ec-dev-data deploy/helm/events-concierge-dev-data -n events-concierge-dev -f deploy/helm/events-concierge-dev-data/values-shared-development.yaml -f deploy/helm/events-concierge-dev-data/values-private-tls.yaml
@@ -274,106 +210,90 @@ helm template ec-dev-temporal temporal --repo https://go.temporal.io/helm-charts
 EC_HELM_BINARY=helm EC_DATA_TLS_DOCKER=1 .venv/bin/python -m pytest tests/unit/test_development_data_tls.py -q
 ```
 
-Activation is a coordinated maintenance operation, not a rolling flag change:
+**Coordinated maintenance**
 
-1. Review application-owned Secret/IAM/volume wiring, certificate lifetimes and recovery access.
-   Verify **every** application/operator/executor and Temporal login already has a SCRAM verifier;
-   record booleans, never password hashes. The new PostgreSQL HBA rejects plaintext and requires
-   SCRAM for every TCP login. A successful owner readiness probe does not validate other roles.
-2. Verify shared-node CPU/memory request headroom for existing pods, cadence, migration hooks and
-   rollout overlap. A 90-second cadence deadline includes scheduling time. `FailedScheduling` or
-   `NotTriggerScaleUp` must be resolved before rollout; do not add Symphony-worker tolerations.
-3. Rehearse retained-data TLS conversion and rollback in isolation. Capture a fresh, verified backup,
-   quiesce cadence/application/Temporal writers and inventory Redis session/pacing state. Preserve
-   PVC identities and existing database contents throughout; never initialize restored Temporal
-   databases. The chart retains an echo-only schema completion hook with schema mutations disabled.
-4. Change datastore listeners and all corresponding clients together; keep writers stopped until
-   verified SQL queries, Redis commands and an actual Temporal mTLS handshake succeed. Verify
-   plaintext, wrong CA/hostname and untrusted/missing client certificate failures. Resume intended
-   writers only after migration and authenticated application acceptance pass.
-5. Roll back by stopping writers and restoring the prior reviewed listener/client configuration as
-   one unit. Retain certificate versions and PVCs; do not restore an older database over new writes
-   without a separate data-recovery decision. Recheck readiness and queue continuity before resume.
+1. Review Secret/IAM/mounts, certificate lifetimes and recovery access. Verify SCRAM for every login; record booleans, never hashes.
+2. Check CPU/memory for workloads, cadence, migration and rollout overlap. Resolve scheduling failures; no Symphony-worker tolerations.
+3. Rehearse transport conversion/rollback; verify backup; stop cadence and all writers; inventory Redis state.
+4. Preserve PVCs/data; never initialize restored Temporal databases. Change listeners and clients together.
+5. Require SQL queries, Redis commands and actual Temporal mTLS handshake before writers.
+6. Require rejection of plaintext, wrong CA/hostname and missing/untrusted client certificates; complete authenticated application acceptance.
+7. Rollback: stop writers; restore listener/client configuration together; retain certificates/PVCs; verify readiness and queues before resume.
 
-Local pinned-image tests establish the listener and client contracts. They do not establish GKE
-certificate delivery, Temporal authorization, browser identity or a completed deployment. The
-[Temporal operations contract](../docs/production-operations.md#temporal) describes client settings
-and the self-hosted server's authorization limit.
-
-Avatars use the separate private `iz27-platform-dev-ec-media` bucket, with no versioning, soft
-delete or retention so account erasure can remove them. Only the API, private admin and erasure
-worker can access it; the adapter verifies this policy before accepting destructive completion.
-Media is excluded from retained payload backups. Database recovery may require users to reupload
-avatars; never claim a database/payload restore recovered media. Verify upload, replica-independent
-read, deletion and account erasure on the shared deployment.
-
-For collection acceptance, use `fn_report_catalog_source_coverage_v1()` with an explicit as-of
-time and collection window. It excludes fixtures. Require reviewed sources to have successful
-execution or an investigated failure; compare per-source future events and freshness. Imported
-counts alone do not prove crawling, and summed links can count the same event more than once.
-
-After a real queued refresh succeeds through the separate ingestion executor, opt in to
-`developmentCatalog.cadenceEnabled=true`. This creates a five-minute CronJob that queues reviewed
-due sources through the controller credential; it does not fetch providers or enable scheduling in
-the consumer API. Verify the CronJob, command ledger and resulting successful refresh runs separately.
-The legacy dispatcher stays disabled. A successful schedule tick alone does not prove collection.
-Scheduled `refresh_due` runs currently lack the flattened run-level release fields in the admin
-projection. Verify the linked command's executor revision/digest and actual worker deployment;
-this projection gap remains an observability follow-up, not missing command execution evidence.
-`promote_workers.py` selects only catalog in discovery and verifies current candidate pollers before
-promotion. `smoke.py` selects catalog/profile/deferred-route checks in discovery, with a separate
-Temporal/GCS echo; it reports synthetic cleanup as pending until the erasure worker completes it.
-
-Before any backup, suspend the cadence CronJob and wait for all unfinished Jobs to terminate.
-The backup helper refuses running schedules or unfinished Jobs before stopping writers and checks
-again before dumping. Keep schedules suspended during cutover/recovery. Restore their previous
-suspension state only after writer readiness and backup/restore verification; `backup resume`
-restores saved Deployment replicas, not CronJob schedules.
+- Cadence's 90-second deadline includes scheduling.
+- Local TLS tests do not prove GKE delivery/authorization; [Temporal authorization limits](../docs/production-operations.md#temporal).
 
 ## Persistent storage and self-healing
 
-The shared deployment uses retained PostgreSQL and Redis disks. Before starting its writers on
-September 11, replacement of each store pod preserved application/Temporal database markers and
-the Redis marker on the same PVC/PV bindings. This proves pod replacement recovery, not disk-loss
-or zone-loss recovery. Legacy Redis was ephemeral and was not included in the coordinated backup.
+| Store | Persistence | Limit |
+| --- | --- | --- |
+| App PostgreSQL | Retained 20 GiB `pd-balanced` | Zonal; manual backup |
+| Temporal PostgreSQL | Retained 20 GiB disk | Zonal; coordinated workflow backup |
+| Redis | Retained 10 GiB; AOF every second + RDB; `Recreate` | About one second crash loss; excluded from database/payload backup |
+| Avatars | Private `iz27-platform-dev-ec-media` | No versioning, soft delete or retention; excluded from backups |
 
-Application PostgreSQL and Temporal PostgreSQL each mount a retained 20 GiB GCP `pd-balanced` disk. Shared Redis mounts a retained 10 GiB disk at `/data`, with AOF synced every second and periodic RDB snapshots. Redis can lose roughly the last second of writes in a crash; persistence does not make it highly available. Its single-replica Deployment uses `Recreate` so updates stop the old writer before starting the replacement.
-
-Startup probes allow database recovery before liveness checks begin. Failed processes restart; controllers replace missing pods and remount their PVCs. GKE node auto-repair and auto-upgrade are enabled. Disks remain in `us-west1-a`: a node replacement can reattach them, but node repair causes downtime and a zone outage needs separate recovery. Retained disks are not backups; the manual GCS database/payload backup remains the recovery path for those stores. Redis disk loss requires separate restoration/reconstruction; Redis is not included in that GCS backup routine.
+- Pod replacement preserved markers/PVC/PV bindings; not proof of disk/zone-loss recovery.
+- Startup probes permit recovery; controllers restart pods; GKE repairs/upgrades nodes.
+- One zone (`us-west1-a`); repair/replacement can cause downtime. Retained disks are not backups.
+- Redis disk loss needs separate restoration/reconstruction.
+- Avatar access: API, private admin and erasure worker; adapter validates deletion policy.
+- Restore can require avatar reupload; verify upload, cross-replica read, deletion and erasure separately.
 
 ## Private admin
 
-The development admin runs in `events-concierge-admin`: its frontend and API both bind to pod loopback. There is no Service; access requires Kubernetes port-forward permission. The ordinary API keeps administration disabled. Shared ingestion uses the separately enabled cadence CronJob.
-
-```bash
-kubectl -n events-concierge-dev port-forward --address=127.0.0.1 deployment/events-concierge-admin 14002:3000
-```
-
-With the shared kubeconfig, open http://127.0.0.1:14002/admin. The dedicated pod uses the shared live development database and current immutable images. Its readiness checks exercise the admin overview through both API and frontend.
+- `events-concierge-admin`: frontend/API on pod loopback; no Service; Kubernetes port-forward permission required.
+- Ordinary API: administration disabled. Cadence uses separate CronJob.
+- Shared live data and immutable images; readiness checks admin overview through API/frontend.
+- [Open via admin forward](#shared-release-and-access).
 
 ## Manual recovery
 
-Use the dedicated shared kubeconfig. Record the cadence CronJob's current suspension state, suspend
-it, and wait for unfinished Jobs and active ingestion commands to finish before backup. Check the
-private admin command/run views; a completed scheduler Job can leave its collection command running.
+**Backup**
+
+1. Use shared kubeconfig; record cadence suspension state; suspend scheduled jobs.
+2. Wait for unfinished Jobs and active ingestion commands; inspect admin command/run views.
+3. Require no active product workflows, catalog/command leases or pending request/notification work; recheck after writers stop.
 
 ```bash
 kubectl -n events-concierge-dev patch cronjob events-concierge-ingestion-cadence --type=merge -p '{"spec":{"suspend":true}}'
-# After all scheduled Jobs and collection commands finish:
+```
+
+**Normal backup — restores writers automatically**
+
+```bash
 .venv/bin/python scripts/development/backup.py backup --target shared
 .venv/bin/python scripts/development/backup.py verify gs://iz27-platform-dev-ec-backups/SET_ID --target shared
 .venv/bin/python scripts/development/wait_ready.py --target shared
 ```
 
-Restore the CronJob's previous suspension state only after verification and writer readiness.
-Restart affected loopback forwards after the writer pods are replaced. If backup recovery is
-interrupted, use the exact prefix printed before quiescing:
+**Release/cutover — keep writers stopped**
+
+```bash
+.venv/bin/python scripts/development/backup.py backup --target shared --hold-stopped
+.venv/bin/python scripts/development/backup.py verify gs://iz27-platform-dev-ec-backups/SET_ID --target shared
+```
+
+- Run either backup path only after Jobs and collection commands finish.
+- Held-stopped path: run readiness only after migration and application restart; follow [release](#shared-release-and-access).
+- Replace `SET_ID` with exact completed prefix printed by backup.
+- **Normal backup:** stop app writers then Temporal; retain PostgreSQL/Redis; save three databases, payloads and image/schema metadata.
+- `recovery.json`: saved/read back before stopping writers; completion marker last; normal backup restores original replicas.
+- Verification: disposable Docker restore and checksums; only completed sets qualify.
+- Retain at least three successful sets; no automatic deletion; same project boundary, no independent project-loss protection.
+- Excludes Redis/private avatars. Never restore over running stores.
+- Restore prior cadence state after readiness/verification; `resume` restores no CronJob schedules.
+- Restart forwards after pod replacement.
+
+**Interrupted backup — before migration or rollout**
 
 ```bash
 .venv/bin/python scripts/development/backup.py resume gs://iz27-platform-dev-ec-backups/SET_ID --target shared
 ```
 
-Resume restores saved replicas; it neither restores data nor changes images. It refuses changed
-schema, deployment identity or pod templates. Investigate those mismatches instead of forcing resume.
-
-Backup temporarily stops application writers and Temporal while retaining PostgreSQL/Redis, exports all three databases and current payload objects, records image/schema metadata, uploads a completion marker last, then attempts to restore writer replica counts. Only completed sets are restoration candidates. Keep at least three successful sets; no automatic deletion is configured. Verification restores dumps into disposable local Docker databases and validates checksums; the live smoke test also checks workflow completion and real GCS claim checks. Use `smoke.py --repeat 12` inside the API pod for a small sustained development load test. Production disaster recovery remains separate. Never restore over the running development stores. Backups share the same project administrative boundary.
+- Restore connectivity first; exact prefix printed before quiescing.
+- Repeatable; Temporal first; restores replicas only, not data/images/schema.
+- Refuses unknown names, replicas outside 0/1, changed schema/Deployment identities/pod templates; investigate, never force.
+- Preserve incomplete prefixes as evidence; never restore their data.
+- Older sets without `recovery.json`: reviewed manual recovery from saved manifest.
+- After migration starts: compatible-image/coordinated-data recovery; `resume` is not rollback.
+- Optional development load: `smoke.py --repeat 12` inside API pod; not production disaster-recovery acceptance.
