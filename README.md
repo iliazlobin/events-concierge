@@ -312,12 +312,19 @@ local validation, not production infrastructure.
 
 ## Tests and CI
 
-Useful targets:
+After installing the dependencies above, run unit tests from the repository root:
+
+```bash
+make test-unit
+```
+
+This excludes integration and browser E2E tests and requires no external services.
+
+Other useful targets:
 
 ```bash
 make lint
 make typecheck
-make test-unit
 make browser-install  # one-time browser binary install
 make test-browser
 make test-integration
