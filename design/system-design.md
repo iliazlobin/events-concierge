@@ -65,7 +65,7 @@ flowchart TB
 - All-source ranges are bounded to 370 days; selected-source archives to 7,305 days.
 - Filters precede keyset pagination; opaque cursors bind the complete filter scope.
 - Selected cities/areas form an additive union; other dimensions intersect. Multiple topics require every selected topic.
-- Calendar navigation preserves compatible filters and clears the cursor. [Browse/history contract](catalog-browse-history.md).
+- Calendar navigation preserves explicit filters and clears the cursor. [Browse/history contract](catalog-browse-history.md).
 
 **Event and entity facts**
 

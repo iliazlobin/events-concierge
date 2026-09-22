@@ -16,11 +16,10 @@ All filters execute before the stable `(start_at, canonical_event_id)` keyset pa
 facets and counts apply the same date predicate as event rows. Reads remain side-effect free: a
 historical request never fetches a provider, queues a refresh, or changes source cadence.
 
-Calendar navigation expresses a month as `[local month start, next local month start)`. Moving
-between months retains the selected source and starts with no cursor. Changing source retains place
-selections that can still match that source and removes incompatible cities/named areas before the
-next request; the source choice must not appear empty solely because a stale geographic constraint
-survived it.
+- Calendar months use `[local month start, next local month start)`; navigation preserves filters and clears the cursor.
+- Source changes in the filter bar preserve explicit city/area selections. Incompatible combinations may return no events; edit the chips or Reset to broaden the selection.
+
+- An event card's source shortcut opens that source's history and clears query, custom dates and places.
 
 ## Projection and retention boundary
 
