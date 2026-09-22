@@ -48,4 +48,4 @@ Produce a 3x3 matrix (source × {acceptance, deliverability, chosen-fallback}) a
 - **Any source REJECTS** → record which fallback cleared it; if only first-login-handoff works for a source, that source's onboarding gains a mandatory one-time handoff step — fold into FR-2.13 and note in ADR-011 (superseding note).
 - **Deliverability fails** (address accepted, mail never arrives) → the problem is MX / inbound routing or sender-allowlist coverage, not the validator; fix the relay infra and the `SOURCES[...].sender_domains` allowlist in `relay_receiver.py`, then retest.
 
-Log the matrix + screenshots in `PROJECT.md` and update the ADR-011 G3 rider status.
+Log the matrix + screenshots in the owning GitHub issue or PR and update the ADR-011 G3 rider status.
