@@ -17,13 +17,13 @@ import uuid
 from events_concierge.deployment.development_targets import TARGETS
 
 NS = "events-concierge-dev"
-PROJECT = "project-9c8cce04-f94d-40fc-aa6"
+PROJECT = TARGETS["shared"].project
 ACCOUNT = "iliazlobin27@gmail.com"
 K = os.environ.get("KUBECTL", "kubectl")
-CONTEXT = "gke_" + PROJECT + "_us-west1-a_ec-dev"
-BACKUP_ROOT = "gs://iz27-ec-dev-backups/"
-PAYLOAD_ROOT = "gs://iz27-ec-dev-payloads"
-TARGET_NAME = "legacy"
+CONTEXT = TARGETS["shared"].context
+BACKUP_ROOT = "gs://" + TARGETS["shared"].backup_bucket + "/"
+PAYLOAD_ROOT = "gs://" + TARGETS["shared"].payload_bucket
+TARGET_NAME = "shared"
 RECOVERY_FILE = "recovery.json"
 WRITERS = {
     "events-concierge-" + name
@@ -781,7 +781,7 @@ if __name__ == "__main__":
     p = argparse.ArgumentParser()
     p.add_argument("action", choices=["backup", "verify", "resume"])
     p.add_argument("uri", nargs="?")
-    p.add_argument("--target", choices=TARGETS, default="legacy")
+    p.add_argument("--target", choices=TARGETS, default="shared")
     p.add_argument(
         "--hold-stopped",
         action="store_true",

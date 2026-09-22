@@ -1,4 +1,4 @@
-"""Cross-target mistakes must fail before secret, backup or release operations."""
+"""Retired destinations must fail before secret, backup or release operations."""
 
 import importlib.util
 import json
@@ -26,17 +26,20 @@ def load(name):
 def test_shared_bootstrap_refuses_legacy_context_before_any_secret_call():
     module = load("bootstrap_secrets")
     with (
-        patch.object(module.subprocess, "check_output", return_value=TARGETS["legacy"].context),
+        patch.object(
+            module.subprocess,
+            "check_output",
+            return_value="gke_project-9c8cce04-f94d-40fc-aa6_us-west1-a_ec-dev",
+        ),
         patch.object(module, "gc") as cloud,
         pytest.raises(SystemExit, match="cluster context"),
     ):
-        module.initialize_credentials(project_to_kubernetes=True, target="shared")
+        module.initialize_credentials(project_to_kubernetes=True)
     cloud.assert_not_called()
 
 
 def test_shared_backup_refuses_legacy_uri_and_context_before_cloud_io():
     module = load("backup")
-    module.select_target("shared")
     uri = "gs://iz27-ec-dev-backups/20260911T053103Z-e6678337"
     with patch.object(module, "gc") as cloud:
         with pytest.raises(SystemExit, match="backup prefix"):
@@ -44,7 +47,11 @@ def test_shared_backup_refuses_legacy_uri_and_context_before_cloud_io():
         with pytest.raises(SystemExit, match="backup prefix"):
             module.verify(uri)
         with (
-            patch.object(module.subprocess, "check_output", return_value=TARGETS["legacy"].context),
+            patch.object(
+                module.subprocess,
+                "check_output",
+                return_value="gke_project-9c8cce04-f94d-40fc-aa6_us-west1-a_ec-dev",
+            ),
             pytest.raises(SystemExit, match="Wrong cluster"),
         ):
             module.backup()
@@ -53,7 +60,6 @@ def test_shared_backup_refuses_legacy_uri_and_context_before_cloud_io():
 
 def test_shared_commands_keep_selected_project_context_and_payload_bucket():
     module = load("backup")
-    module.select_target("shared")
     with patch.object(module, "run") as command:
         module.k("get", "pods")
         assert "--context=" + TARGETS["shared"].context in command.call_args.args[0]
@@ -69,12 +75,14 @@ def test_shared_acceptance_helpers_refuse_legacy_context_before_inspection_or_wr
     module = load(script)
     with (
         patch.object(
-            module.subprocess, "check_output", return_value=TARGETS["legacy"].context
+            module.subprocess,
+            "check_output",
+            return_value="gke_project-9c8cce04-f94d-40fc-aa6_us-west1-a_ec-dev",
         ) as command,
         patch.object(module.subprocess, "run") as mutation,
         pytest.raises(SystemExit, match="Wrong cluster"),
     ):
-        module.main(target="shared")
+        module.main()
     assert command.call_count == 1
     mutation.assert_not_called()
 
@@ -98,8 +106,6 @@ def test_release_values_use_selected_state_and_refuse_cross_target_outputs(tmp_p
     image = "us-west1-docker.pkg.dev/iz27-platform-dev/ec-dev/app@sha256:" + "a" * 64
     args = [
         "release_values.py",
-        "--target",
-        "shared",
         "--app-image",
         image,
         "--web-image",
@@ -121,3 +127,38 @@ def test_release_values_use_selected_state_and_refuse_cross_target_outputs(tmp_p
             runpy.run_path(str(ROOT / "scripts/development/release_values.py"))
             assert "ec-dev-api@iz27-platform-dev" in output.read_text()
     assert "shared-development" in command.call_args.args[0][1]
+
+
+@pytest.mark.parametrize(
+    "script,arguments",
+    [
+        ("backup", ["backup"]),
+        ("bootstrap_secrets", []),
+        ("check_store_recovery", []),
+        ("wait_ready", []),
+        (
+            "release_values",
+            [
+                "--app-image",
+                "unused",
+                "--web-image",
+                "unused",
+                "--revision",
+                "unused",
+                "--output",
+                "unused",
+            ],
+        ),
+    ],
+)
+def test_retired_target_is_rejected_before_any_subprocess(script, arguments):
+    with (
+        patch.object(sys, "argv", [script + ".py", *arguments, "--target", "legacy"]),
+        patch("subprocess.run") as run,
+        patch("subprocess.check_output") as output,
+        pytest.raises(SystemExit) as error,
+    ):
+        runpy.run_path(str(ROOT / "scripts/development" / (script + ".py")), run_name="__main__")
+    assert error.value.code == 2
+    run.assert_not_called()
+    output.assert_not_called()
