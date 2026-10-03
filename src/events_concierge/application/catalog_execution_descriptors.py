@@ -107,6 +107,9 @@ _ADAPTERS: dict[CatalogSourceMode, CatalogAdapterDescriptor] = {
     CatalogSourceMode.MEETUP_CITY_JSONLD: CatalogAdapterDescriptor(
         "src/events_concierge/adapters/meetup_city/source.py", "MeetupCityCatalogFetcher.fetch"
     ),
+    CatalogSourceMode.MEETUP_GROUP_ICS: CatalogAdapterDescriptor(
+        "src/events_concierge/adapters/meetup_group/source.py", "MeetupGroupCalendarCatalogFetcher.fetch"
+    ),
 }
 
 

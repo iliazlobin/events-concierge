@@ -1406,6 +1406,9 @@ async def test_luma_detail_lease_covers_the_events_its_page_cap_can_carry() -> N
         # Past this the reservation exceeds the one-hour database ceiling and the row fails closed.
         (CatalogSourceMode.LUMA_CALENDAR_JSON, 90, 1_500, 3_570),
         (CatalogSourceMode.LUMA_CALENDAR_JSON, 91, 1_500, None),
+        # One export + 100 details: reserve total request deadlines, pacing and publication.
+        (CatalogSourceMode.MEETUP_GROUP_ICS, 101, 1_500, 2_232),
+        (CatalogSourceMode.MEETUP_GROUP_ICS, 101, 16_000, None),
         # Alameda's 0194 cap: 400s pacing + 500s persistence + 60s completion buffer.
         (CatalogSourceMode.BIBLIOCOMMONS_RSS, 80, 5_000, 960),
         (CatalogSourceMode.BIBLIOCOMMONS_RSS, 314, 5_000, 3_593),

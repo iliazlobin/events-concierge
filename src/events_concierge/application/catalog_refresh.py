@@ -44,6 +44,8 @@ _LUMA_DETAIL_MODES = frozenset(
     {CatalogSourceMode.LUMA_DISCOVER_JSON, CatalogSourceMode.LUMA_CALENDAR_JSON}
 )
 _LUMA_MAX_ITEMS_PER_PAGE = 25
+# The group export/detail contract has a total 20-second deadline per request.
+_MEETUP_GROUP_TIMEOUT_SECONDS = 20
 
 
 class CatalogRefreshOutcome(StrEnum):
@@ -875,6 +877,9 @@ def catalog_refresh_lease_seconds(source: CatalogSource, *, floor_seconds: int) 
         request_units += source.page_limit * _LUMA_MAX_ITEMS_PER_PAGE
     paced_seconds = (request_units * source.min_interval_ms + 999) // 1_000
     persistence_seconds = 0
+    transport_seconds = 0
+    if source.mode is CatalogSourceMode.MEETUP_GROUP_ICS:
+        transport_seconds = request_units * _MEETUP_GROUP_TIMEOUT_SECONDS
     if source.mode is CatalogSourceMode.BIBLIOCOMMONS_RSS:
         # These reviewed feeds can publish thousands of rows. Their atomic catalog merge is
         # intentionally fenced by the same lease as fetch, so reserve a bounded per-event
@@ -885,7 +890,8 @@ def catalog_refresh_lease_seconds(source: CatalogSource, *, floor_seconds: int) 
             * _BIBLIOCOMMONS_PERSISTENCE_BUDGET_MS_PER_EVENT
         )
         persistence_seconds = (persistence_milliseconds + 999) // 1_000
-    required_seconds = paced_seconds + persistence_seconds + _LEASE_COMPLETION_BUFFER_SECONDS
+    required_seconds = (paced_seconds + transport_seconds + persistence_seconds
+                        + _LEASE_COMPLETION_BUFFER_SECONDS)
     lease_seconds = max(floor_seconds, required_seconds)
     if lease_seconds > _MAX_CATALOG_REFRESH_LEASE_SECONDS:
         return None

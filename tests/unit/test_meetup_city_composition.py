@@ -5,6 +5,7 @@ from __future__ import annotations
 import pytest
 
 from events_concierge.adapters.meetup_city.source import MeetupCityCatalogFetcher
+from events_concierge.adapters.meetup_group.source import MeetupGroupCalendarCatalogFetcher
 from events_concierge.composition import build_container
 from events_concierge.config import Settings
 from events_concierge.domain.enums import CatalogSourceMode
@@ -26,4 +27,8 @@ def test_public_catalog_composition_wires_meetup_city_mode(
     assert isinstance(
         container.catalog_refresh._fetchers[CatalogSourceMode.MEETUP_CITY_JSONLD],
         MeetupCityCatalogFetcher,
+    )
+    assert isinstance(
+        container.catalog_refresh._fetchers[CatalogSourceMode.MEETUP_GROUP_ICS],
+        MeetupGroupCalendarCatalogFetcher,
     )

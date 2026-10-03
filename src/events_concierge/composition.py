@@ -1078,6 +1078,7 @@ def build_catalog_fetchers(
         from .adapters.luma_calendar.source import LumaCalendarCatalogFetcher
         from .adapters.luma_discover.source import LumaDiscoverCatalogFetcher
         from .adapters.meetup_city.source import MeetupCityCatalogFetcher
+        from .adapters.meetup_group.source import MeetupGroupCalendarCatalogFetcher
         from .adapters.midpen.source import MidpenCatalogFetcher
         from .adapters.oakland.source import OaklandCatalogFetcher
         from .adapters.sf_gov.source import SfGovCatalogFetcher
@@ -1140,6 +1141,9 @@ def build_catalog_fetchers(
                     user_agent=settings.crawl_user_agent,
                 ),
                 CatalogSourceMode.MEETUP_CITY_JSONLD: MeetupCityCatalogFetcher(
+                    user_agent=settings.crawl_user_agent,
+                ),
+                CatalogSourceMode.MEETUP_GROUP_ICS: MeetupGroupCalendarCatalogFetcher(
                     user_agent=settings.crawl_user_agent,
                 ),
             }

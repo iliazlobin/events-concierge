@@ -8,7 +8,8 @@ Application release, private access and recovery.
 
 ## Current deployment
 
-Last recorded inspection: September 17. Recheck before operating.
+Recheck runtime state before operating. [Collection and release record](https://github.com/iliazlobin/events-concierge/issues/26)
+owns deployed revisions, image digests, backup evidence and open coverage inputs.
 
 | Item | Recorded state |
 | --- | --- |
@@ -16,19 +17,22 @@ Last recorded inspection: September 17. Recheck before operating.
 | Readiness | Six app Deployments, two PostgreSQL stores, Redis and four Temporal servers ready |
 | Network | ClusterIP only; no Ingress; IAP and loopback access |
 | Cadence | Five-minute CronJob; queues due sources |
-| API revision / schema | `d5cac84111eeea2fdf8329dcedc5d937e2a20390` / `0194` |
 | Profile | `development` / `discovery`; `EC_MOCK_CLOUD=true`; OIDC and Temporal TLS off |
 | Identity / transport | `not_configured`; demo identity; internal plaintext |
 
-| Component | Artifact Registry image digest |
-| --- | --- |
-| Backend | `sha256:d6b523158cb08d910e24b2242ebfe366a972f0aaf52246b36e2e36b10bb66899` |
-| Frontend | `sha256:c80be4f2664c80f08e1dfae0607131be250a36a2489816fa394cd222c7a741bf` |
-
 - **Real:** PostgreSQL, Redis, Temporal, GCS, public collection; no real email, booking or Calendar actions.
-- **Merged, rollout pending:** Google sign-in, startup safeguards, datastore TLS and Temporal mTLS preparation; source schema `0195`.
-- **Recovery:** manual backups; last verified set September 12; no alert policies at recorded inspection.
-- [Verified restore](https://console.cloud.google.com/storage/browser/_details/iz27-platform-dev-ec-backups/20260912T014120Z-08707790/VERIFIED.json?project=iz27-platform-dev&authuser=4) · [Discovery acceptance](https://console.cloud.google.com/storage/browser/_details/iz27-platform-dev-ec-backups/20260912T014120Z-08707790/acceptance.json?project=iz27-platform-dev&authuser=4): earlier demo release only.
+- **Pending activation:** Google sign-in, datastore TLS and Temporal mTLS; merged preparation is not encrypted or authenticated runtime acceptance.
+- **Recovery:** manual quiesced backups and disposable restore rehearsals; [freshness alerts](https://github.com/iliazlobin/events-concierge/issues/23) remain open.
+
+### Public collection
+
+- The five-minute cadence CronJob queues only due, reviewed sources. Luma and Meetup sources use a six-hour refresh interval; other admitted sources refresh at least daily.
+- Luma Discover supplies a city listing; separately reviewed organizer calendars walk their future-event cursor. Discover alone does not contain each organizer's full program.
+- Meetup city JSON-LD supplies a limited public listing. `meetup_group_ics` adds the [official public group calendar export](https://help.meetup.com/hc/en-us/articles/39237118960013-Exporting-an-event-to-your-calendar), plus identity-checked public event details. Export coverage is provider-limited; neither feed proves complete city/platform search.
+- Group exports accept only explicit public dated occurrences: at most 100 events, 2 MB, one feed plus 100 detail requests, 1.5 seconds minimum pacing and a 90-day maximum horizon. No member/RSVP feeds, attendee data, login or redirect following.
+- Register new groups disabled and unreviewed through the owner control plane; activate via the audited source-configuration API. Retain handoff-only mode, the exact `/GROUP/events/ical/` URL and `https://www.meetup.com` as the sole origin.
+- Malformed or incomplete feeds preserve the last successful catalog. Access denial stops collection; throttling respects backoff. Keep rights-held, paused and retired sources disabled.
+- Schema rollback to `0195` is blocked once group sources exist. Disable those sources and roll back compatible application code while retaining registry/history.
 
 ### Remaining release work
 
