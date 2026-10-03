@@ -9,8 +9,10 @@ from types import SimpleNamespace
 from typing import cast
 from uuid import UUID, uuid4
 
+import httpx
 import pytest
 
+from events_concierge.adapters.livewhale.source import LiveWhaleCatalogFetcher, LiveWhaleFetchError
 from events_concierge.adapters.mock.discovery_policy import MockDiscoveryPolicyReader
 from events_concierge.adapters.mock.policy import MockSourceQuarantineRepository
 from events_concierge.adapters.policy.discovery import StoreBackedDiscoveryPolicyGate
@@ -1073,6 +1075,54 @@ async def test_refresh_failure_is_recorded_then_the_same_run_can_retry() -> None
     assert repository.failed == ["fixture fetch failed"]
     assert result.outcome is CatalogRefreshOutcome.SUCCEEDED
     assert len(recovered_fetcher.calls) == 1
+
+
+async def test_incomplete_livewhale_feed_preserves_the_previous_publication() -> None:
+    """A page cap failure must not replace already published records with a partial feed."""
+    now = datetime(2026, 7, 16, 12, 0, tzinfo=UTC)
+    source = replace(_source(now), mode=CatalogSourceMode.LIVEWHALE_JSON, page_limit=1)
+    repository = _MemorySourceRepository(source)
+    catalog = _Catalog()
+    observations = _Observations()
+    previous = [_candidate(now)]
+    catalog.batches.append(previous)
+    committer = _Committer(repository, catalog, observations)
+    fetcher = LiveWhaleCatalogFetcher(
+        user_agent="test",
+        now=lambda: now,
+        transport=httpx.MockTransport(
+            lambda _: httpx.Response(
+                200,
+                json={
+                    "meta": {"page": 1, "per_page": 1, "total_results": 2, "total_pages": 2},
+                    "data": [
+                        {
+                            "id": 1,
+                            "title": "Partial feed",
+                            "url": "/event/1",
+                            "date_iso": "2026-07-20T18:00:00-07:00",
+                        }
+                    ],
+                    "links": {"next": "?page=2"},
+                },
+            )
+        ),
+    )
+    service = CatalogRefreshService(
+        repository,
+        committer,
+        {CatalogSourceMode.LIVEWHALE_JSON: fetcher},
+        _RecordingPacer(),
+        _MutableDiscoveryPolicyGate(),
+        now=lambda: now,
+    )
+    with pytest.raises(LiveWhaleFetchError, match="1-page cap"):
+        await service.refresh(source.source_key, "manual:incomplete-livewhale")
+    assert catalog.batches == [previous]
+    assert committer.calls == []
+    assert observations.records == []
+    assert repository.completed == set()
+    assert len(repository.failed) == 1
 
 
 async def test_transient_source_failure_is_recorded_as_deferred_retry_work() -> None:

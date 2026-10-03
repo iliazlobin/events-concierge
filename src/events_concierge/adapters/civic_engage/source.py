@@ -11,7 +11,7 @@ from __future__ import annotations
 import asyncio
 import re
 from collections.abc import Awaitable, Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 from time import monotonic
 from urllib.parse import parse_qsl, urlsplit, urlunsplit
@@ -63,6 +63,7 @@ class _CivicEngagePublisher:
     page_limit: int
     allows_city_only: bool
     strips_repeated_locality: bool
+    path_event_ids: bool = False
 
 
 _PUBLISHERS = {
@@ -114,6 +115,16 @@ _PUBLISHERS = {
         strips_repeated_locality=True,
     ),
 }
+
+# The city-wide feed uses CivicPlus's current calendar namespace and path-based handoffs.
+# Keep the existing category profile until its reviewed registry seed has been migrated.
+_CAMPBELL_CITY_CALENDAR = replace(
+    _PUBLISHERS["campbell-events"],
+    fixed_query=(("CID", "All-calendar.xml"), ("ModID", "58")),
+    handoff_path="/m/calendar/event/detail/",
+    calendar_namespace="https://www.campbellca.gov/m/calendar",
+    path_event_ids=True,
+)
 
 
 class CivicEngageRssCatalogFetcher:
@@ -237,6 +248,10 @@ def _publisher_for_source(source: CatalogSource) -> _CivicEngagePublisher | None
     if publisher is None:
         return None
     parsed = urlsplit(source.seed_url)
+    if source.source_key == "campbell-events" and parse_qsl(
+        parsed.query, keep_blank_values=True
+    ) == list(_CAMPBELL_CITY_CALENDAR.fixed_query):
+        publisher = _CAMPBELL_CITY_CALENDAR
     return (
         publisher
         if (
@@ -336,10 +351,12 @@ def _handoff_reference(
         or port not in (None, 443)
         or parsed.username is not None
         or parsed.password is not None
-        or parsed.path != publisher.handoff_path
+        or (not publisher.path_event_ids and parsed.path != publisher.handoff_path)
         or parsed.fragment
     ):
         return None
+    if publisher.path_event_ids:
+        return _path_handoff_reference(parsed.path, parsed.query, publisher)
     parameters = parse_qsl(parsed.query, keep_blank_values=True)
     if (
         len(parameters) != 1
@@ -352,6 +369,19 @@ def _handoff_reference(
         ("https", publisher.api_host, publisher.handoff_path, f"EID={event_id}", "")
     )
     return event_id, handoff_url
+
+
+def _path_handoff_reference(
+    path: str,
+    query: str,
+    publisher: _CivicEngagePublisher,
+) -> tuple[str, str] | None:
+    event_id = path.removeprefix(publisher.handoff_path)
+    if query or _POSITIVE_ID.fullmatch(event_id) is None:
+        return None
+    return event_id, urlunsplit(
+        ("https", publisher.api_host, f"{publisher.handoff_path}{event_id}", "", "")
+    )
 
 
 def _candidate_from_item(

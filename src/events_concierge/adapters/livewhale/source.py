@@ -11,25 +11,37 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import json
 import re
 from collections.abc import Awaitable, Callable
-from datetime import UTC, datetime
+from dataclasses import dataclass
+from datetime import UTC, datetime, timedelta
 from time import monotonic
-from urllib.parse import urljoin, urlsplit
+from urllib.parse import parse_qsl, urljoin, urlsplit, urlunsplit
+from zoneinfo import ZoneInfo
 
 import httpx
 from selectolax.parser import HTMLParser
 
 from ...domain.catalog_sources import CatalogSource
-from ...domain.catalog_window import collection_reference_time
+from ...domain.catalog_window import (
+    collection_end_at,
+    collection_end_day,
+    collection_reference_time,
+)
 from ...domain.enums import CatalogSourceMode, PriceStatus, Source
 from ...domain.events import CandidateEvent, GeoPoint, aggregate_price_status
 from ...infra.logging import get_logger
+from ...ports.sources import SourceTransientError
 
 _log = get_logger("livewhale.source")
 
 _FETCH_TIMEOUT_S = 15.0
+_FETCH_RETRY_SECONDS = 30.0
+_SERVER_ERROR_STATUS = 500
 _MAX_REDIRECTS = 5
+_MAX_RESPONSE_BYTES = 2_000_000
+_LOCAL_TIME_ZONE = ZoneInfo("America/Los_Angeles")
 _FREE_TEXT = re.compile(r"\b(?:free|complimentary|no\s+charge)\b", re.IGNORECASE)
 _CURRENCY_AMOUNT = re.compile(
     r"(?:[$€£]\s*|\b(?:usd|dollars?)\s*)(\d+(?:\.\d+)?)"
@@ -37,6 +49,17 @@ _CURRENCY_AMOUNT = re.compile(
     re.IGNORECASE,
 )
 _EXACT_NUMBER = re.compile(r"^(\d+(?:\.\d+)?)$")
+
+
+class LiveWhaleFetchError(RuntimeError):
+    """A feed could not be read completely; preserve the last successful catalog."""
+
+
+@dataclass(frozen=True, slots=True)
+class _PageTotals:
+    results: int
+    per_page: int
+    pages: int
 
 
 class LiveWhaleCatalogFetcher:
@@ -66,14 +89,22 @@ class LiveWhaleCatalogFetcher:
         if not source.handoff_only:
             raise ValueError("LiveWhale catalog sources must remain handoff-only")
 
-        candidates = await self._fetch_pages(source)
         now = collection_reference_time(source, self._now())
-        return [candidate for candidate in _deduplicate(candidates) if candidate.start_at >= now]
+        end_at = collection_end_at(source, now + timedelta(days=source.collection_horizon_days))
+        first_url = _window_url(source, now, end_at)
+        candidates = await self._fetch_pages(source, first_url)
+        return [
+            candidate
+            for candidate in _deduplicate(candidates)
+            if now <= candidate.start_at < end_at
+        ]
 
-    async def _fetch_pages(self, source: CatalogSource) -> list[CandidateEvent]:
+    async def _fetch_pages(self, source: CatalogSource, first_url: str) -> list[CandidateEvent]:
         candidates: list[CandidateEvent] = []
-        url = source.seed_url
+        url = first_url
         visited_urls: set[str] = set()
+        page_fingerprints: set[str] = set()
+        expected_totals: _PageTotals | None = None
         headers = {"User-Agent": self._user_agent}
         async with httpx.AsyncClient(
             headers=headers,
@@ -81,54 +112,41 @@ class LiveWhaleCatalogFetcher:
             timeout=_FETCH_TIMEOUT_S,
             transport=self._transport,
         ) as client:
-            for _ in range(source.page_limit):
+            for page_number in range(1, source.page_limit + 1):
                 if url in visited_urls:
-                    _log.warning("livewhale_pagination_loop", source_key=source.source_key, url=url)
-                    break
-                if not source.allows_url(url):
-                    _log.warning("livewhale_page_rejected", source_key=source.source_key, url=url)
-                    break
+                    raise LiveWhaleFetchError("LiveWhale pagination repeated a page URL")
+                _require_page_url(source, first_url, url)
                 visited_urls.add(url)
                 try:
-                    response = await self._get_approved_response(client, source, url)
+                    response = await self._get_approved_response(client, source, url, first_url)
                 except httpx.HTTPError as exc:
-                    _log.warning(
-                        "livewhale_fetch_failed",
-                        source_key=source.source_key,
-                        url=url,
-                        error=str(exc),
+                    if isinstance(exc, httpx.TransportError) or (
+                        isinstance(exc, httpx.HTTPStatusError)
+                        and exc.response.status_code >= _SERVER_ERROR_STATUS
+                    ):
+                        raise SourceTransientError(
+                            f"LiveWhale page {page_number} temporarily unavailable",
+                            retry_after_seconds=_FETCH_RETRY_SECONDS,
+                        ) from exc
+                    raise LiveWhaleFetchError(
+                        f"LiveWhale page {page_number} failed for {source.source_key}"
+                    ) from exc
+                payload, data = _page_from_response(response)
+                totals = _page_totals(payload, page_number, len(data))
+                if expected_totals is not None and totals != expected_totals:
+                    raise LiveWhaleFetchError("LiveWhale page totals changed during collection")
+                expected_totals = totals
+                if totals.pages > source.page_limit:
+                    raise LiveWhaleFetchError(
+                        f"LiveWhale source {source.source_key} exceeds its reviewed "
+                        f"{source.page_limit}-page cap (requires {totals.pages})"
                     )
-                    break
-                if response is None:
-                    break
-                try:
-                    payload = _as_object_dict(response.json())
-                except ValueError as exc:
-                    _log.warning(
-                        "livewhale_json_failed",
-                        source_key=source.source_key,
-                        url=str(response.url),
-                        error=str(exc),
-                    )
-                    break
-                if payload is None:
-                    _log.warning(
-                        "livewhale_payload_invalid",
-                        source_key=source.source_key,
-                        url=str(response.url),
-                    )
-                    break
-                data = payload.get("data")
-                if not isinstance(data, list):
-                    _log.warning(
-                        "livewhale_data_invalid",
-                        source_key=source.source_key,
-                        url=str(response.url),
-                    )
-                    break
-                for raw_event in data:
-                    event = _as_object_dict(raw_event)
-                    if event is None or _as_bool(event.get("is_canceled")):
+                fingerprint = hashlib.sha256(json.dumps(data, sort_keys=True).encode()).hexdigest()
+                if data and fingerprint in page_fingerprints:
+                    raise LiveWhaleFetchError("LiveWhale pagination repeated page contents")
+                page_fingerprints.add(fingerprint)
+                for event in data:
+                    if _as_bool(event.get("is_canceled")):
                         continue
                     # A publisher's remote/streamed record is not physical Bay Area inventory.
                     if _is_online_only(event):
@@ -138,50 +156,43 @@ class LiveWhaleCatalogFetcher:
                         candidates.append(candidate)
 
                 next_url = _next_page_url(payload, response.url)
+                if page_number >= totals.pages:
+                    if next_url is not None:
+                        raise LiveWhaleFetchError(
+                            "LiveWhale final page unexpectedly has a next link"
+                        )
+                    return candidates
                 if next_url is None:
-                    break
-                if not source.allows_url(next_url):
-                    _log.warning(
-                        "livewhale_next_rejected", source_key=source.source_key, url=next_url
+                    raise LiveWhaleFetchError(
+                        "LiveWhale next link is missing before the final page"
                     )
-                    break
+                _require_page_url(source, first_url, next_url)
+                if httpx.URL(next_url).params.get("page") != str(page_number + 1):
+                    raise LiveWhaleFetchError("LiveWhale next link did not advance one page")
                 url = next_url
-        return candidates
+        raise LiveWhaleFetchError("LiveWhale collection exceeded its reviewed page sequence")
 
     async def _get_approved_response(
-        self, client: httpx.AsyncClient, source: CatalogSource, url: str
-    ) -> httpx.Response | None:
+        self, client: httpx.AsyncClient, source: CatalogSource, url: str, first_url: str
+    ) -> httpx.Response:
         """Follow only in-allowlist redirects; make no request after an origin escape (FR-10.3)."""
         current_url = url
         for _ in range(_MAX_REDIRECTS):
-            if not source.allows_url(current_url):
-                _log.warning(
-                    "livewhale_redirect_rejected", source_key=source.source_key, url=current_url
-                )
-                return None
+            _require_page_url(source, first_url, current_url)
             await self._wait_for_host_slot(current_url, source.min_interval_ms)
             response = await client.get(current_url, follow_redirects=False)
             if response.is_redirect:
                 location = response.headers.get("location")
                 next_url = str(response.url.join(location)) if location else ""
-                if not location or not source.allows_url(next_url):
-                    _log.warning(
-                        "livewhale_redirect_rejected", source_key=source.source_key, url=next_url
-                    )
-                    return None
+                if not location:
+                    raise LiveWhaleFetchError("LiveWhale redirect has no destination")
+                _require_page_url(source, first_url, next_url)
                 current_url = next_url
                 continue
-            if not source.allows_url(str(response.url)):
-                _log.warning(
-                    "livewhale_final_url_rejected",
-                    source_key=source.source_key,
-                    url=str(response.url),
-                )
-                return None
+            _require_page_url(source, first_url, str(response.url))
             response.raise_for_status()
             return response
-        _log.warning("livewhale_redirect_limit", source_key=source.source_key, seed_url=url)
-        return None
+        raise LiveWhaleFetchError("LiveWhale exceeded its redirect limit")
 
     async def _wait_for_host_slot(self, url: str, min_interval_ms: int) -> None:
         """Apply the reviewed per-host human-cadence floor before each source API request (FR-10.4)."""
@@ -203,6 +214,97 @@ def _as_object_dict(value: object) -> dict[str, object] | None:
     if not isinstance(value, dict) or not all(isinstance(key, str) for key in value):
         return None
     return {key: item for key, item in value.items() if isinstance(key, str)}
+
+
+def _page_from_response(
+    response: httpx.Response,
+) -> tuple[dict[str, object], list[dict[str, object]]]:
+    if len(response.content) > _MAX_RESPONSE_BYTES:
+        raise LiveWhaleFetchError("LiveWhale page exceeded its response-size limit")
+    try:
+        payload = _as_object_dict(response.json())
+    except ValueError as exc:
+        raise LiveWhaleFetchError("LiveWhale page contained invalid JSON") from exc
+    if payload is None:
+        raise LiveWhaleFetchError("LiveWhale page must be a JSON object")
+    data = payload.get("data")
+    if not isinstance(data, list):
+        raise LiveWhaleFetchError("LiveWhale page must contain an event array")
+    events = [_as_object_dict(row) for row in data]
+    if any(event is None for event in events):
+        raise LiveWhaleFetchError("LiveWhale page must contain an event array")
+    return payload, [event for event in events if event is not None]
+
+
+def _window_url(source: CatalogSource, start_at: datetime, end_at: datetime) -> str:
+    """Use explicit dates instead of the provider's default, cache-dependent six-month feed."""
+    parsed = urlsplit(source.seed_url)
+    if any(f"/{argument}/" in parsed.path for argument in ("start_date", "end_date")):
+        raise LiveWhaleFetchError("LiveWhale seed must not override the collection dates")
+    start_day = start_at.astimezone(_LOCAL_TIME_ZONE).date()
+    # Date predicates collect the final partial day; the exact half-open guard filters it.
+    end_day = collection_end_day(
+        source, end_at.astimezone(_LOCAL_TIME_ZONE).date() + timedelta(days=1), _LOCAL_TIME_ZONE
+    )
+    path = f"{parsed.path.rstrip('/')}/start_date/{start_day}/end_date/{end_day}"
+    return urlunsplit((parsed.scheme, parsed.netloc, path, parsed.query, ""))
+
+
+def _require_page_url(source: CatalogSource, first_url: str, url: str) -> None:
+    """Follow only the same dated resource; links cannot drop dates or add query authority."""
+    first, current = urlsplit(first_url), urlsplit(url)
+    first_query = [
+        (key, value)
+        for key, value in parse_qsl(first.query, keep_blank_values=True)
+        if key != "page"
+    ]
+    current_query = [
+        (key, value)
+        for key, value in parse_qsl(current.query, keep_blank_values=True)
+        if key != "page"
+    ]
+    pages = [
+        value for key, value in parse_qsl(current.query, keep_blank_values=True) if key == "page"
+    ]
+    if (
+        not source.allows_url(url)
+        or current.path.rstrip("/") != first.path.rstrip("/")
+        or current_query != first_query
+        or current.fragment
+        or current.username is not None
+        or len(pages) > 1
+        or any(not page.isdecimal() or int(page) < 1 for page in pages)
+    ):
+        raise LiveWhaleFetchError("LiveWhale page left the approved dated resource")
+
+
+def _page_totals(payload: dict[str, object], page: int, item_count: int) -> _PageTotals:
+    """Require a complete, consistent v2 page before accepting any event observations."""
+    meta = _as_object_dict(payload.get("meta"))
+    if meta is None:
+        raise LiveWhaleFetchError("LiveWhale page is missing pagination metadata")
+    results = _pagination_integer(meta, "total_results")
+    per_page = _pagination_integer(meta, "per_page")
+    pages = _pagination_integer(meta, "total_pages")
+    actual_page = _pagination_integer(meta, "page")
+    if (
+        results < 0
+        or per_page < 1
+        or pages < 0
+        or actual_page != page
+        or pages != (results + per_page - 1) // per_page
+        or item_count != min(per_page, max(0, results - (page - 1) * per_page))
+        or (results > 0 and page > pages)
+    ):
+        raise LiveWhaleFetchError("LiveWhale page does not match its pagination metadata")
+    return _PageTotals(results, per_page, pages)
+
+
+def _pagination_integer(meta: dict[str, object], key: str) -> int:
+    value = meta.get(key)
+    if not isinstance(value, int) or isinstance(value, bool):
+        raise LiveWhaleFetchError("LiveWhale pagination metadata must contain integers")
+    return value
 
 
 def _candidate_from_event(
@@ -386,14 +488,18 @@ def _price_status(value: object) -> PriceStatus:
 def _next_page_url(payload: dict[str, object], response_url: httpx.URL) -> str | None:
     """Resolve a documented ``links.next`` value without trusting a cross-origin target (FR-10.3)."""
     links = _as_object_dict(payload.get("links"))
-    if links is None:
-        return None
+    if links is None or "next" not in links:
+        raise LiveWhaleFetchError("LiveWhale page is missing pagination links")
     raw_next = links.get("next")
+    if raw_next is None:
+        return None
     if isinstance(raw_next, str) and raw_next.strip():
         return str(response_url.join(raw_next.strip()))
     next_object = _as_object_dict(raw_next)
     href = next_object.get("href") if next_object is not None else None
-    return str(response_url.join(href.strip())) if isinstance(href, str) and href.strip() else None
+    if isinstance(href, str) and href.strip():
+        return str(response_url.join(href.strip()))
+    raise LiveWhaleFetchError("LiveWhale next link is malformed")
 
 
 def _deduplicate(candidates: list[CandidateEvent]) -> list[CandidateEvent]:
