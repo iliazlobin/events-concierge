@@ -50,7 +50,7 @@ Keep existing `.env` settings and credentials private. [`.env.example`](.env.exa
 - [Release acceptance](docs/production-operations.md#first-release-acceptance) and [deployment runbook](deploy/development.md) own release operations. CI does not deploy.
 - **Symphony:** [WORKFLOW.md](WORKFLOW.md) defines assignments and handoffs. Workers cannot publish or merge.
 - The host pins a reviewed `base_sha` on `main`; scheduler and publisher must advance together.
-  Preserve holds, budgets and evidence; follow the [host profile procedure](https://github.com/iliazlobin/symphony/blob/main/profiles/events-concierge/README.md#verification-and-recovery).
+  Preserve holds, budgets and evidence; follow the [host profile procedure](https://github.com/iliazlobin/symphony/blob/main/profiles/events-concierge/README.md#change-the-baseline).
 - Automatic merge stays disabled until branch protection, required checks and the explicit low-risk allowlist are verified.
 
 ## Local development
