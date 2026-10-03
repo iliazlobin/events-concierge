@@ -66,6 +66,17 @@ Cadence/operator → durable command → ingestion-command worker
 - Historical catalog records remain retained; repeated publication counts are not new/changed/unchanged event counts.
 - [Command execution](../src/events_concierge/application/ingestion_command_execution.py), [refresh admission](../src/events_concierge/application/catalog_refresh.py) and [publication](../src/events_concierge/adapters/postgres/catalog_refresh_commit.py) own these guarantees.
 
+**University feeds**
+
+- LiveWhale requests explicit collection dates and reads every declared page within the reviewed source cap. Its [public API](https://support.livewhale.com/live/blurbs/json-api) supplies pagination metadata.
+- Transport errors, invalid pages, changing totals, repeated pages and incomplete pagination fail the run; the previous publication stays available. A valid empty feed is a successful zero result.
+- A cap error reports the required pages. Review the source's page budget before increasing it; never treat a truncated feed as complete. [Adapter contract](../src/events_concierge/adapters/livewhale/source.py).
+
+**City calendars**
+
+- Campbell's city-wide RSS profile uses `CID=All-calendar.xml&ModID=58`, the `/m/calendar` namespace and path-based event links. It retains the single-request, 50-item and 1 MB caps. Changing the registry seed requires reviewer acknowledgement.
+- The older recreation-category profile remains supported while registry consumers still use it; remove it after reviewed seed migration. [Closed RSS profiles](../src/events_concierge/adapters/civic_engage/source.py).
+
 ## Investigate work
 
 1. Inspect source admission, last success, next eligibility and current configuration in **Sources**.

@@ -18,6 +18,8 @@ from events_concierge.domain.enums import CatalogSourceMode, PriceStatus
 
 _SEED_URL = "https://www.campbellca.gov/RSSFeed.aspx?CID=Recreation-Community-Services-29&ModID=58"
 _NAMESPACE = "https://www.campbellca.gov/Calendar.aspx"
+_CITY_SEED_URL = "https://www.campbellca.gov/RSSFeed.aspx?CID=All-calendar.xml&ModID=58"
+_CITY_NAMESPACE = "https://www.campbellca.gov/m/calendar"
 
 
 def _source() -> CatalogSource:
@@ -281,3 +283,50 @@ async def test_campbell_rejects_bad_payloads_redirects_and_tampered_profiles() -
     with pytest.raises(ValueError, match="reviewed RSS endpoint"):
         await fetcher.fetch(tampered_cap)
     assert requested == [_SEED_URL]
+
+
+async def test_city_wide_feed_parses_current_calendar_paths_and_occurrence_guids() -> None:
+    """The public city calendar includes other categories and changed its RSS identity shape."""
+    requested: list[str] = []
+    payload = _feed(_item(3970, 639234528270000000, title="Public theatre event"))
+    payload = payload.replace(_NAMESPACE, _CITY_NAMESPACE).replace(
+        "/m/calendar?EID=3970", "/m/calendar/event/detail/3970"
+    )
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requested.append(str(request.url))
+        return httpx.Response(200, text=payload)
+
+    fetcher = CivicEngageRssCatalogFetcher(
+        user_agent="test",
+        now=lambda: datetime(2026, 7, 17, 12, tzinfo=UTC),
+        transport=httpx.MockTransport(handler),
+    )
+    candidates = await fetcher.fetch(replace(_source(), seed_url=_CITY_SEED_URL))
+    assert len(candidates) == 1
+    assert candidates[0].registration_url == (
+        "https://www.campbellca.gov/m/calendar/event/detail/3970"
+    )
+    assert candidates[0].source_event_id == "campbell:campbell-events:3970:639234528270000000"
+    assert candidates[0].city == "Campbell"
+    assert requested == [_CITY_SEED_URL]
+
+
+@pytest.mark.parametrize(
+    "handoff",
+    [
+        "https://unapproved.example.test/m/calendar/event/detail/3970",
+        "https://www.campbellca.gov/m/calendar/event/detail/not-an-id",
+        "https://www.campbellca.gov/m/calendar/event/detail/3970/extra",
+        "https://www.campbellca.gov/m/calendar/event/detail/3970?extra=1",
+    ],
+)
+async def test_city_wide_feed_does_not_widen_handoff_authority(handoff: str) -> None:
+    payload = _feed(_item(3970, 639234528270000000, link=handoff))
+    payload = payload.replace(_NAMESPACE, _CITY_NAMESPACE)
+    fetcher = CivicEngageRssCatalogFetcher(
+        user_agent="test",
+        now=lambda: datetime(2026, 7, 17, 12, tzinfo=UTC),
+        transport=httpx.MockTransport(lambda _: httpx.Response(200, text=payload)),
+    )
+    assert await fetcher.fetch(replace(_source(), seed_url=_CITY_SEED_URL)) == []

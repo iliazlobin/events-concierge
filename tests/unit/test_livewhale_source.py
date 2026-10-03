@@ -2,14 +2,56 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
 from datetime import UTC, datetime
 
 import httpx
+import pytest
 
-from events_concierge.adapters.livewhale.source import LiveWhaleCatalogFetcher
-from events_concierge.domain.catalog_sources import CatalogSource
+from events_concierge.adapters.livewhale.source import LiveWhaleCatalogFetcher, LiveWhaleFetchError
+from events_concierge.domain.catalog_sources import CatalogCollectionWindow, CatalogSource
 from events_concierge.domain.enums import CatalogSourceMode, PriceStatus
 from events_concierge.domain.events import GeoPoint
+from events_concierge.ports.sources import SourceTransientError
+
+_NOW = datetime(2026, 7, 16, 12, 0, tzinfo=UTC)
+_WINDOW_URL = (
+    "https://events.example.test/live/json/events/start_date/2026-07-16/end_date/2026-10-15"
+)
+
+
+async def _no_sleep(_: float) -> None:
+    pass
+
+
+def _event(event_id: int = 201) -> dict[str, object]:
+    return {
+        "id": event_id,
+        "title": "Public campus event",
+        "url": f"/event/{event_id}",
+        "date_iso": "2026-07-20T18:00:00-07:00",
+    }
+
+
+def _page(
+    data: list[dict[str, object]],
+    *,
+    page: int = 1,
+    total: int | None = None,
+    per_page: int = 1,
+    next_link: str | None = None,
+) -> dict[str, object]:
+    total = len(data) if total is None else total
+    return {
+        "meta": {
+            "page": page,
+            "total_results": total,
+            "per_page": per_page,
+            "total_pages": (total + per_page - 1) // per_page,
+        },
+        "data": data,
+        "links": {"next": next_link},
+    }
 
 
 def _source(*, page_limit: int = 2) -> CatalogSource:
@@ -50,6 +92,7 @@ async def test_livewhale_fetches_a_bounded_paced_page_sequence_and_parses_price_
             return httpx.Response(
                 200,
                 json={
+                    "meta": {"page": 2, "total_results": 7, "per_page": 6, "total_pages": 2},
                     "data": [
                         {
                             "id": 104,
@@ -59,13 +102,14 @@ async def test_livewhale_fetches_a_bounded_paced_page_sequence_and_parses_price_
                             "cost": 0,
                         }
                     ],
-                    "links": {"next": "/live/json/events/?page=3"},
+                    "links": {"next": None},
                 },
                 request=request,
             )
         return httpx.Response(
             200,
             json={
+                "meta": {"page": 1, "total_results": 7, "per_page": 6, "total_pages": 2},
                 "data": [
                     {
                         "id": 101,
@@ -122,7 +166,7 @@ async def test_livewhale_fetches_a_bounded_paced_page_sequence_and_parses_price_
                         "cost": "Free",
                     },
                 ],
-                "links": {"next": "/live/json/events/?page=2"},
+                "links": {"next": "?page=2"},
             },
             request=request,
         )
@@ -158,8 +202,8 @@ async def test_livewhale_fetches_a_bounded_paced_page_sequence_and_parses_price_
     assert candidates[0].city == "Berkeley"
     assert candidates[0].geo == GeoPoint(lat=37.87, lon=-122.26)
     assert requested == [
-        "https://events.example.test/live/json/events/",
-        "https://events.example.test/live/json/events/?page=2",
+        _WINDOW_URL,
+        f"{_WINDOW_URL}?page=2",
     ]
     assert slept == [1.5]
 
@@ -178,11 +222,13 @@ async def test_livewhale_rejects_an_unapproved_redirect_before_requesting_it() -
 
     fetcher = LiveWhaleCatalogFetcher(
         user_agent="test",
+        now=lambda: _NOW,
         transport=httpx.MockTransport(handler),
     )
 
-    assert await fetcher.fetch(_source(page_limit=1)) == []
-    assert requested == ["https://events.example.test/live/json/events/"]
+    with pytest.raises(LiveWhaleFetchError, match="approved dated resource"):
+        await fetcher.fetch(_source(page_limit=1))
+    assert requested == [_WINDOW_URL]
 
 
 async def test_livewhale_rejects_an_unapproved_next_page_without_requesting_it() -> None:
@@ -194,6 +240,7 @@ async def test_livewhale_rejects_an_unapproved_next_page_without_requesting_it()
         return httpx.Response(
             200,
             json={
+                "meta": {"page": 1, "total_results": 2, "per_page": 1, "total_pages": 2},
                 "data": [
                     {
                         "id": 201,
@@ -214,7 +261,163 @@ async def test_livewhale_rejects_an_unapproved_next_page_without_requesting_it()
         transport=httpx.MockTransport(handler),
     )
 
-    candidates = await fetcher.fetch(_source())
+    with pytest.raises(LiveWhaleFetchError, match="approved dated resource"):
+        await fetcher.fetch(_source())
+    assert requested == [_WINDOW_URL]
 
-    assert [candidate.title for candidate in candidates] == ["Approved first page"]
-    assert requested == ["https://events.example.test/live/json/events/"]
+
+@pytest.mark.parametrize("failure", ["http", "timeout", "json", "shape", "missing_meta"])
+@pytest.mark.parametrize("failed_page", [1, 2])
+async def test_failed_page_never_returns_an_empty_or_partial_success(
+    failure: str,
+    failed_page: int,
+) -> None:
+    requested: list[int] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        page = int(request.url.params.get("page", "1"))
+        requested.append(page)
+        if page != failed_page:
+            return httpx.Response(200, json=_page([_event()], total=2, next_link="?page=2"))
+        if failure == "timeout":
+            raise httpx.ReadTimeout("source timeout", request=request)
+        if failure == "http":
+            return httpx.Response(503)
+        if failure == "json":
+            return httpx.Response(200, content=b"not json")
+        if failure == "shape":
+            return httpx.Response(200, json={"data": {"unexpected": True}})
+        return httpx.Response(200, json={"data": [], "links": {"next": None}})
+
+    fetcher = LiveWhaleCatalogFetcher(
+        user_agent="test",
+        now=lambda: _NOW,
+        sleep=_no_sleep,
+        transport=httpx.MockTransport(handler),
+    )
+    expected_error = SourceTransientError if failure in {"http", "timeout"} else LiveWhaleFetchError
+    with pytest.raises(expected_error) as raised:
+        await fetcher.fetch(_source())
+    if isinstance(raised.value, SourceTransientError):
+        assert raised.value.retry_after_seconds == 30.0
+    assert requested == list(range(1, failed_page + 1))
+
+
+async def test_declared_page_total_over_cap_fails_before_fetching_extra_pages() -> None:
+    requested: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requested.append(str(request.url))
+        return httpx.Response(200, json=_page([_event()], total=3, next_link="?page=2"))
+
+    fetcher = LiveWhaleCatalogFetcher(
+        user_agent="test",
+        now=lambda: _NOW,
+        transport=httpx.MockTransport(handler),
+    )
+    with pytest.raises(LiveWhaleFetchError, match=r"2-page cap \(requires 3\)"):
+        await fetcher.fetch(_source())
+    assert requested == [_WINDOW_URL]
+
+
+@pytest.mark.parametrize("failure", ["repeat", "wrong_page", "changed_total", "short_page"])
+async def test_inconsistent_pagination_fails_instead_of_deduplicating_a_partial_feed(
+    failure: str,
+) -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.params.get("page") is None:
+            return httpx.Response(200, json=_page([_event()], total=2, next_link="?page=2"))
+        payload = _page([_event(202)], page=2, total=2)
+        if failure == "repeat":
+            payload["data"] = [_event()]
+        elif failure == "wrong_page":
+            payload = _page([_event(202)], page=1, total=2)
+        elif failure == "changed_total":
+            payload = _page([_event(202)], page=2, total=3)
+        else:
+            payload["data"] = []
+        return httpx.Response(200, json=payload)
+
+    fetcher = LiveWhaleCatalogFetcher(
+        user_agent="test",
+        now=lambda: _NOW,
+        sleep=_no_sleep,
+        transport=httpx.MockTransport(handler),
+    )
+    with pytest.raises(LiveWhaleFetchError):
+        await fetcher.fetch(_source())
+
+
+@pytest.mark.parametrize("next_link", [None, "?page=1", "?page=3", "/live/json/events/?page=2"])
+async def test_next_link_cannot_stop_early_repeat_skip_or_drop_the_window(
+    next_link: str | None,
+) -> None:
+    requested: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requested.append(str(request.url))
+        return httpx.Response(200, json=_page([_event()], total=2, next_link=next_link))
+
+    fetcher = LiveWhaleCatalogFetcher(
+        user_agent="test",
+        now=lambda: _NOW,
+        transport=httpx.MockTransport(handler),
+    )
+    with pytest.raises(LiveWhaleFetchError):
+        await fetcher.fetch(_source())
+    assert requested == [_WINDOW_URL]
+
+
+async def test_valid_empty_feed_is_a_success() -> None:
+    fetcher = LiveWhaleCatalogFetcher(
+        user_agent="test",
+        now=lambda: _NOW,
+        transport=httpx.MockTransport(lambda _: httpx.Response(200, json=_page([]))),
+    )
+    assert await fetcher.fetch(_source()) == []
+
+
+async def test_frozen_window_controls_query_and_exact_candidate_bounds() -> None:
+    window = CatalogCollectionWindow(
+        source_revision=1,
+        horizon_days=1,
+        start_at=_NOW,
+        end_at=datetime(2026, 7, 17, 12, 0, tzinfo=UTC),
+        attempt_count=1,
+    )
+    requested: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requested.append(str(request.url))
+        events = [
+            dict(_event(i), date_iso=date)
+            for i, date in enumerate(
+                [
+                    "2026-07-16T11:59:59Z",
+                    "2026-07-16T12:00:00Z",
+                    "2026-07-17T12:00:00Z",
+                ]
+            )
+        ]
+        return httpx.Response(200, json=_page(events, per_page=3))
+
+    fetcher = LiveWhaleCatalogFetcher(
+        user_agent="test",
+        now=lambda: datetime(2026, 8, 1, tzinfo=UTC),
+        transport=httpx.MockTransport(handler),
+    )
+    candidates = await fetcher.fetch(replace(_source(), collection_window=window))
+    assert requested == [
+        "https://events.example.test/live/json/events/start_date/2026-07-16/end_date/2026-07-18"
+    ]
+    assert [candidate.start_at for candidate in candidates] == [_NOW]
+
+
+async def test_response_size_limit_is_a_failure() -> None:
+    fetcher = LiveWhaleCatalogFetcher(
+        user_agent="test",
+        now=lambda: _NOW,
+        transport=httpx.MockTransport(lambda _: httpx.Response(200, content=b" " * 2_000_001)),
+    )
+    with pytest.raises(LiveWhaleFetchError, match="response-size limit"):
+        await fetcher.fetch(_source())
