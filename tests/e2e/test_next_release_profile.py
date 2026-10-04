@@ -61,6 +61,7 @@ class ReleaseApi:
     unexpected: list[str] = field(default_factory=list)
     graph_status: int = 200
     empty_graph: bool = False
+    social_profiles: bool = False
 
     def config(self, route: Route) -> None:
         payload = {
@@ -151,17 +152,41 @@ class ReleaseApi:
                            "summary": None, "website_url": None, "logo_url": None,
                            "city": "Oakland", "country": "US", "event_count": 1,
                            "roles": ["organizer"], "source_count": 1, "research_status": "researchable"},
-                "events": [], "external_sources": [],
+                "events": [], "external_sources": _social_sources() if self.social_profiles else [],
                 "external_facts": [{"provider_key": "website",
                                     "source_url": "https://events.example.test/lakehouse",
                                     "fact_key": "description", "value": "Published profile fixture.",
                                     "value_url": None, "sort_order": 0,
-                                    "observed_at": "2030-06-01T00:00:00Z"}],
+                                    "observed_at": "2030-06-01T00:00:00Z"}] + (_social_facts() if self.social_profiles else []),
                 "refresh_due": True, "insights": None,
             })
         else:
             self.unexpected.append(path)
             self.respond(route, {"detail": "Unknown entity fixture"}, 500)
+
+
+def _social_sources():
+    return [
+        {"provider_key": key, "external_id": "12345", "source_url": url, "display_name": label,
+         "status": status, "fetched_at": "2030-06-01T00:00:00Z",
+         "next_refresh_at": "2030-06-02T00:00:00Z", "error_code": "unavailable" if status=="failed" else None}
+        for key,url,label,status in [
+            ("x_public_api","https://x.com/social_builder","X API","failed"),
+            ("instagram_public_api","https://www.instagram.com/social_builder","Instagram API","fresh")]
+    ]
+
+
+def _social_facts():
+    return [
+        {"provider_key": key,"source_url": "https://x.com/social_builder", "fact_key": fact,
+         "value": value,"value_url": url,"sort_order":0,"observed_at":"2030-06-01T00:00:00Z"}
+        for key,fact,value,url in [
+            ("x_public_api","description","Public AI community",None),
+            ("x_public_api","followers","6412",None),
+            ("x_public_api","avatar","Profile image","https://pbs.twimg.com/avatar.png"),
+            ("instagram_public_api","description","Community gatherings",None),
+            ("instagram_public_api","followers","4300",None)]
+    ]
 
 
 @pytest.fixture
@@ -249,6 +274,42 @@ def test_discovery_entities_empty_state(release_page):
     api.empty_graph = True
     harness.page.goto(f"{BASE}/?view=entities")
     expect(harness.page.get_by_role("heading", name="No entities match", exact=True)).to_be_visible()
+
+
+@pytest.mark.parametrize("avatar_status", [200, 404])
+def test_social_profile_snapshots_are_separate_read_only_and_responsive(
+    release_page, tmp_path, avatar_status
+):
+    harness, api = release_page
+    api.social_profiles = True
+    page = harness.page
+    if avatar_status == 404:
+        harness.allowed_console_error_fragments.append("404")
+    page.route("https://pbs.twimg.com/**", lambda route: route.fulfill(
+        status=avatar_status, content_type="image/png",
+        body=_TRANSPARENT_MAP_TILE if avatar_status == 200 else b""
+    ))
+    page.goto(f"{BASE}/?view=entities&entity={ENTITY_ID}")
+    page.get_by_role("tab",name="Profile & sources",exact=True).click()
+    x = page.get_by_role("region", name="X API", exact=True)
+    expect(x.get_by_text("Public AI community",exact=True)).to_be_visible()
+    expect(x.get_by_text("6,412 followers",exact=True)).to_be_visible()
+    expect(x.get_by_text("Refresh unavailable; saved facts are shown.",exact=True)).to_be_visible()
+    expect(page.get_by_role("region",name="Instagram API").get_by_text("4,300 followers",exact=True)).to_be_visible()
+    if avatar_status == 200:
+        expect(x.locator("img")).to_have_attribute("referrerpolicy", "no-referrer")
+    else:
+        expect(x.locator(".entity-social-profile__avatar svg")).to_be_visible()
+        expect(x.locator("img")).to_have_count(0)
+    expect(page.locator('a[href="https://pbs.twimg.com/avatar.png"]')).to_have_count(0)
+    expect(page.get_by_role("button",name="Refresh",exact=True)).to_have_count(0)
+    assert api.calls.count(("GET",f"/v1/catalog/entities/{ENTITY_ID}"))==1
+    page.screenshot(path=str(tmp_path / "social-profile-desktop.png"))
+    page.set_viewport_size({"width": 390, "height": 844})
+    x.scroll_into_view_if_needed()
+    expect(x.get_by_text("6,412 followers",exact=True)).to_be_visible()
+    assert page.evaluate("document.documentElement.scrollWidth <= window.innerWidth")
+    page.screenshot(path=str(tmp_path / "social-profile-mobile.png"))
 
 
 def test_discovery_entity_graph_retries_a_failed_read(release_page):

@@ -45,6 +45,10 @@ flowchart TB
 
 Discovery reads published data. Background ingestion refreshes reviewed sources independently.
 
+The [entity-intelligence worker](docs/social-profile-enrichment.md) optionally refreshes known
+social profiles through official APIs. Imported links and fetched snapshots are separate;
+discovery reads persisted facts without contacting social providers.
+
 | Component | Owns |
 | --- | --- |
 | PostgreSQL / pgvector | Application state, catalog and durable work |

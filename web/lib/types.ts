@@ -235,7 +235,8 @@ export interface CatalogEntityExternalFact {
     | "organization"
     | "known_for"
     | "public_repositories"
-    | "followers";
+    | "followers"
+    | "avatar";
   value: string;
   value_url: string | null;
   sort_order: number;

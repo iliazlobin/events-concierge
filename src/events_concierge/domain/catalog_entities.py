@@ -32,6 +32,7 @@ CatalogEntityFactKey = Literal[
     "known_for",
     "public_repositories",
     "followers",
+    "avatar",
 ]
 
 

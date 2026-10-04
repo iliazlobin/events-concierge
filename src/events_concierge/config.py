@@ -39,6 +39,12 @@ _SECRET_FILE_FIELDS = (
     ("temporal_api_key", "temporal_api_key_file", "EC_TEMPORAL_API_KEY"),
     ("oidc_client_secret", "oidc_client_secret_file", "EC_OIDC_CLIENT_SECRET"),
     ("cohere_api_key", "cohere_api_key_file", "EC_COHERE_API_KEY"),
+    ("x_profile_bearer_token", "x_profile_bearer_token_file", "EC_X_PROFILE_BEARER_TOKEN"),
+    (
+        "instagram_profile_access_token",
+        "instagram_profile_access_token_file",
+        "EC_INSTAGRAM_PROFILE_ACCESS_TOKEN",
+    ),
 )
 
 
@@ -217,6 +223,16 @@ class Settings(BaseSettings):
     entity_intelligence_enabled: bool = False
     entity_intelligence_batch_size: int = Field(default=2, ge=1, le=10)
     entity_intelligence_poll_seconds: float = Field(default=30.0, ge=5.0, le=3_600.0)
+    x_profile_api_enabled: bool = False
+    x_profile_bearer_token: SecretStr | None = Field(default=None, exclude=True)
+    x_profile_bearer_token_file: str | None = Field(default=None, exclude=True, repr=False)
+    instagram_profile_api_enabled: bool = False
+    instagram_profile_access_token: SecretStr | None = Field(default=None, exclude=True)
+    instagram_profile_access_token_file: str | None = Field(default=None, exclude=True, repr=False)
+    instagram_profile_account_id: str | None = Field(default=None, pattern=r"^[0-9]{1,32}$")
+    instagram_profile_api_version: str = Field(default="v26.0", pattern=r"^v[0-9]{1,2}\.0$")
+    social_profile_daily_limit: int = Field(default=100, ge=1, le=10_000)
+    social_profile_refresh_seconds: int = Field(default=86_400, ge=86_400, le=604_800)
 
     # ``auto`` preserves the pre-P1 deployment behavior (Redis whenever cloud mocks are disabled)
     # while an explicit ``redis`` still lets local/integration tests exercise shared state with all
@@ -370,6 +386,23 @@ class Settings(BaseSettings):
                 raise ValueError(f"configure exactly one of {env_name} and {env_name}_FILE")
             values[target] = read_secret_file(file_value, setting_name=env_name)
         return values
+
+    @model_validator(mode="after")
+    def validate_social_profile_configuration(self) -> Settings:
+        if self.x_profile_api_enabled and (
+            self.x_profile_bearer_token is None
+            or not self.x_profile_bearer_token.get_secret_value().strip()
+        ):
+            raise ValueError("X profile API requires its bearer token")
+        if self.instagram_profile_api_enabled and (
+            self.instagram_profile_access_token is None
+            or not self.instagram_profile_access_token.get_secret_value().strip()
+            or self.instagram_profile_account_id is None
+        ):
+            raise ValueError(
+                "Instagram profile API requires its access token and professional account ID"
+            )
+        return self
 
     @field_validator("ui_auth_start_url")
     @classmethod
