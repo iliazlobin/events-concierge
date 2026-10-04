@@ -8,7 +8,7 @@ Release gates, incident controls and recovery constraints. [Private GKE runbook]
 
 ## First release acceptance
 
-- Use `EC_RELEASE_PROFILE=discovery`. Keep chat, RSVP, handoffs, notifications, Calendar sync, purchases and API-key authentication disabled; retained work must not resume external effects.
+- Use `EC_RELEASE_PROFILE=discovery`. Entity graphs read the published catalog; external profile refresh stays disabled. Keep chat, RSVP, handoffs, notifications, Calendar sync, purchases and API-key authentication disabled; retained work must not resume external effects.
 - `EC_MOCK_CLOUD` controls integrations independently. Mock-backed acceptance does not prove real identity/provider behavior.
 - Deployment requires separate approval. Source activation/crawling also requires source-specific owner/legal approval.
 
@@ -16,7 +16,7 @@ Release gates, incident controls and recovery constraints. [Private GKE runbook]
 | --- | --- |
 | Candidate | Approved revision and immutable Python/Next.js digests; applicable CI, migrations and compatibility checks |
 | Identity | Real login/logout, expiry/revocation, verified subject mapping, CSRF, TLS and cross-tenant denial; explicit Google pilot limitation below |
-| Discovery | Actual Next.js/API filters, Events/Map/Calendar, details/provider links, pagination/history, empty/error/loading states, settings, mobile/keyboard |
+| Discovery | Actual Next.js/API filters, Events/Map/Calendar, entity graphs/profiles without refresh writes, details/provider links, pagination/history, empty/error/loading states, settings, mobile/keyboard |
 | Catalog | Reviewed sources; same-window real counts; last-good preservation; refresh and later scheduled publication; no unexplained loss |
 | Deferred actions | Direct routes rejected; no enqueue/provider effect; workers and credentials disabled |
 | Operations | Private endpoints, isolated process credentials, dependency recovery, monitoring/alerts, current backup and candidate restore evidence |
