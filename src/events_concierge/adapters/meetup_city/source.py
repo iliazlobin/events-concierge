@@ -24,6 +24,7 @@ from collections.abc import Awaitable, Callable, Iterable
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 from decimal import Decimal, InvalidOperation
+from email.utils import parsedate_to_datetime
 from time import monotonic
 from typing import Any
 from urllib.parse import urljoin, urlsplit
@@ -36,11 +37,14 @@ from ...domain.catalog_sources import CatalogSource
 from ...domain.catalog_window import collection_reference_time, filter_collection_window
 from ...domain.enums import CatalogSourceMode, PriceStatus, RegistrationStatus, Source
 from ...domain.events import MAX_PUBLIC_PRICE_CENTS, CandidateEvent, GeoPoint
+from ...domain.policy import SourceQuarantineSignal
+from ...ports.sources import SourceAccessDeniedError, SourceRateLimitedError
 
 _FETCH_TIMEOUT_S = 20.0
 _MAX_RESPONSE_BYTES = 2_000_000
 _REVIEWED_REQUEST_UNIT_CAP = 41
 _MAX_DETAIL_REQUESTS = _REVIEWED_REQUEST_UNIT_CAP - 1
+_MAX_SHARED_DETAIL_REQUESTS = 100
 _MAX_DESCRIPTION_CHARS = 12_000
 _MAX_VISIBLE_DETAILS_NODES = 64
 _MAX_VISIBLE_DETAILS_NODE_CHARS = 2_000
@@ -61,8 +65,11 @@ _LONGITUDE_LIMIT = 180.0
 _CURRENCY_CODE_LENGTH = 3
 _MIN_PRINTABLE_CODEPOINT = 0x20
 _DELETE_CODEPOINT = 0x7F
+# Official exports use numeric IDs or thirteen-letter IDs for dated occurrences.
+PUBLIC_EVENT_ID_PATTERN = r"(?:[1-9][0-9]{0,19}|[a-z]{13})"
 _EVENT_PATH = re.compile(
-    r"^/(?P<group>[a-z0-9][a-z0-9_-]{0,119})/events/(?P<event_id>[1-9][0-9]*)/$"
+    r"^/(?P<group>[a-z0-9][a-z0-9_-]{0,119})/events/"
+    rf"(?P<event_id>{PUBLIC_EVENT_ID_PATTERN})/$"
 )
 _GROUP_PATH = re.compile(r"^/[a-z0-9][a-z0-9_-]{0,119}/$")
 _IMAGE_HOSTS = frozenset(
@@ -226,25 +233,44 @@ class MeetupCityCatalogFetcher:
                 source_key=source.source_key, request_completed=True,
                 page_completed=True, candidate_count=len(candidates),
             )
-            enriched: list[CandidateEvent] = []
-            for detail_number, candidate in enumerate(candidates, start=1):
-                if detail_number > _MAX_DETAIL_REQUESTS:
-                    enriched.append(_with_detail_status(candidate, "request_cap_not_fetched"))
-                    continue
-                try:
-                    detail_html = await self._fetch_detail_html(
-                        client,
-                        source,
-                        candidate.registration_url,
-                    )
-                except _MeetupDetailFetchError as exc:
-                    enriched.append(_with_detail_status(candidate, exc.code))
-                    continue
-                enriched.append(_enrich_from_detail(candidate, detail_html))
-                await record_ingestion_collection_progress(
-                    source_key=source.source_key, request_completed=True,
+            return await self.enrich_public_candidates(client, source, candidates)
+
+    async def enrich_public_candidates(
+        self,
+        client: httpx.AsyncClient,
+        source: CatalogSource,
+        candidates: list[CandidateEvent],
+        *,
+        max_requests: int = _MAX_DETAIL_REQUESTS,
+        strict_boundary_signals: bool = False,
+    ) -> list[CandidateEvent]:
+        """Enrich reviewed public listings through the same closed event-detail contract."""
+        if not 1 <= max_requests <= _MAX_SHARED_DETAIL_REQUESTS:
+            raise ValueError("Meetup detail request budget is invalid")
+        enriched: list[CandidateEvent] = []
+        for detail_number, candidate in enumerate(candidates, start=1):
+            if detail_number > max_requests:
+                enriched.append(_with_detail_status(candidate, "request_cap_not_fetched"))
+                continue
+            try:
+                detail_html = await self._fetch_detail_html(
+                    client, source, candidate.registration_url,
+                    strict_boundary_signals=strict_boundary_signals,
                 )
-            return enriched
+            except _MeetupDetailFetchError as exc:
+                enriched.append(_with_detail_status(candidate, exc.code))
+                continue
+            enriched.append(_enrich_from_detail(candidate, detail_html))
+            await record_ingestion_collection_progress(
+                source_key=source.source_key, request_completed=True,
+            )
+        return enriched
+
+    async def wait_for_public_slot(self, url: str, min_interval_ms: int) -> None:
+        """Share the listing/detail pacing floor with another reviewed Meetup feed."""
+        if urlsplit(url).netloc != "www.meetup.com" or urlsplit(url).scheme != "https":
+            raise ValueError("Meetup public requests must remain on the approved origin")
+        await self._wait_for_host_slot(url, min_interval_ms)
 
     async def _fetch_city_html(
         self,
@@ -277,6 +303,8 @@ class MeetupCityCatalogFetcher:
         client: httpx.AsyncClient,
         source: CatalogSource,
         event_url: str,
+        *,
+        strict_boundary_signals: bool = False,
     ) -> str:
         """Read one already-validated canonical event URL without widening the origin."""
         if not source.allows_url(event_url) or _event_reference(event_url) is None:
@@ -285,13 +313,22 @@ class MeetupCityCatalogFetcher:
             raise _MeetupDetailFetchError("identity_mismatch")
         try:
             await self._wait_for_host_slot(event_url, source.min_interval_ms)
-            async with client.stream(
+            async with asyncio.timeout(_FETCH_TIMEOUT_S), client.stream(
                 "GET",
                 event_url,
                 follow_redirects=False,
             ) as response:
                 if response.is_redirect or str(response.url) != event_url:
                     raise _MeetupDetailFetchError("redirect_refused")
+                if strict_boundary_signals and response.status_code in (401, 403):
+                    raise SourceAccessDeniedError(SourceQuarantineSignal.FORBIDDEN)
+                if strict_boundary_signals and response.status_code == httpx.codes.TOO_MANY_REQUESTS:
+                    raise SourceRateLimitedError(
+                        "Meetup public detail is rate limited",
+                        retry_after_seconds=public_retry_after(
+                            response.headers.get("Retry-After"), self._now(),
+                        ),
+                    )
                 try:
                     response.raise_for_status()
                 except httpx.HTTPError as exc:
@@ -311,7 +348,7 @@ class MeetupCityCatalogFetcher:
                         raise _MeetupDetailFetchError("response_too_large")
         except _MeetupDetailFetchError:
             raise
-        except httpx.HTTPError as exc:
+        except (httpx.HTTPError, TimeoutError) as exc:
             raise _MeetupDetailFetchError("request_failed") from exc
         try:
             return bytes(content).decode("utf-8")
@@ -331,6 +368,23 @@ class MeetupCityCatalogFetcher:
                 if remaining > 0:
                     await self._sleep(remaining)
             self._last_request_at[host] = self._clock()
+
+
+def public_retry_after(value: str | None, now: datetime) -> float:
+    """Honor public HTTP throttles without retaining provider headers or bodies."""
+    if value and value.isdecimal():
+        delay = float(value)
+        if not math.isfinite(delay):
+            raise ValueError("Meetup retry delay is invalid")
+        return max(1.0, delay)
+    try:
+        if value:
+            date = parsedate_to_datetime(value)
+            if date.tzinfo is not None:
+                return max(1.0, (date - now).total_seconds())
+    except (ValueError, TypeError, OverflowError):
+        pass
+    return 60.0
 
 
 def _profile_for_source(source: CatalogSource) -> _MeetupCityProfile:
