@@ -16,11 +16,17 @@ _DISCOVERY_ROUTES = {
     "/v1/me/saved-filters",
     "/v1/me/saved-filters/{saved_filter_id}",
     "/v1/me/saved-filters/{saved_filter_id}/applied",
+}
+
+_DISCOVERY_CATALOG_READS = {
     "/v1/catalog/events",
     "/v1/catalog/events/summary",
     "/v1/catalog/entities",
     "/v1/catalog/entities/{entity_id}",
     "/v1/catalog/entity-resolution",
+    "/v1/catalog/entity-directory",
+    "/v1/catalog/entity-overview-graph",
+    "/v1/catalog/entities/{entity_id}/graph",
 }
 
 
@@ -39,7 +45,11 @@ def apply_release_profile(app: FastAPI, profile: str) -> None:
         if not isinstance(route, APIRoute)
         or (
             route.path not in {"/", "/app"}
-            and (not route.path.startswith("/v1/") or route.path in _DISCOVERY_ROUTES)
+            and (
+                not route.path.startswith("/v1/")
+                or route.path in _DISCOVERY_ROUTES
+                or (route.path in _DISCOVERY_CATALOG_READS and route.methods == {"GET"})
+            )
         )
     ]
     app.openapi_schema = None

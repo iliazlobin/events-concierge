@@ -18,6 +18,42 @@ pytestmark = [
     pytest.mark.skipif(not BASE, reason="EC_CONSUMER_WEB_URL or EC_ADMIN_WEB_URL is not set"),
 ]
 
+_ENTITY_ID = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"
+_PEER_ID = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb"
+_EVENT_ID = _feed()["items"][0]["canonical_event_id"]
+
+
+def _entity_graph(*, overview: bool = False, empty: bool = False) -> dict:
+    nodes = [] if empty else [
+        {"node_id": f"entity:{_ENTITY_ID}", "node_kind": "entity", "ring": 0,
+         "label": "Lakehouse Music", "entity_id": _ENTITY_ID, "entity_kind": "organization",
+         "identity_status": "profile_verified", "profile_url": "https://events.example.test/lakehouse",
+         "degree": 1, "roles": ["organizer"]},
+        {"node_id": f"entity:{_PEER_ID}", "node_kind": "entity", "ring": 0 if overview else 2,
+         "label": "Jazz Quartet", "entity_id": _PEER_ID, "entity_kind": "organization",
+         "identity_status": "source_scoped", "degree": 1, "shared_event_count": 1},
+        {"node_id": f"event:{_EVENT_ID}", "node_kind": "event", "ring": 1,
+         "label": "Friday Night Jazz", "canonical_event_id": _EVENT_ID,
+         "start_at": "2030-06-14T19:30:00-07:00", "is_past": False,
+         "venue_name": "The Lakehouse", "city": "Oakland", "topics": ["jazz"],
+         "ego_roles": ["organizer"], "price_status": "free", "degree": 2,
+         "registration_url": "https://events.example.test/friday-jazz"},
+    ]
+    edges = [] if empty else [
+        {"a": f"entity:{entity_id}", "b": f"event:{_EVENT_ID}", "kind": "mention",
+         "roles": ["organizer"], "source_labels": ["Fixture Jazz"], "observed_at": "2030-06-01T00:00:00Z"}
+        for entity_id in (_ENTITY_ID, _PEER_ID)
+    ]
+    return {
+        "focus_id": "overview" if overview else f"entity:{_ENTITY_ID}",
+        "generated_at": "2030-06-01T00:00:00Z", "nodes": nodes, "edges": edges,
+        "counts": {"events": int(not empty), "events_total": int(not empty),
+                   "peers": int(not empty), "peers_total": int(not empty), "topics": 0,
+                   "edges": len(edges), "mention_edges": len(edges), "edges_total": len(edges)},
+        "truncated": {"events": False, "peers": False, "edges": False},
+        "same_name_candidates": [],
+    }
+
 
 @dataclass
 class ReleaseApi:
@@ -25,6 +61,8 @@ class ReleaseApi:
     local_demo: bool = True
     config_status: int = 200
     hold_config: bool = False
+    graph_status: int = 200
+    graph_empty: bool = False
     held: list[Route] = field(default_factory=list)
     calls: list[tuple[str, str]] = field(default_factory=list)
     unexpected: list[str] = field(default_factory=list)
@@ -82,6 +120,41 @@ class ReleaseApi:
             })
         elif path == "/v1/catalog/events/summary":
             self.respond(route, {"days": [{"start_day": "2030-06-14", "event_count": 1, "topics": [{"topic": "jazz", "label": "Jazz", "event_count": 1}]}], "total_event_count": 1, "time_zone": "America/Los_Angeles"})
+        elif path == "/v1/catalog/entity-directory":
+            self.respond(route, {
+                "generated_at": "2030-06-01T00:00:00Z", "matched": 2, "hubs": [],
+                "totals": {"entity_count": 2, "person_count": 0, "organization_count": 2,
+                           "unknown_count": 0, "verified_count": 1, "scoped_count": 1},
+                "coverage": {"events_with_entities": 1, "events_total": 1, "mention_count": 2},
+            })
+        elif path in {"/v1/catalog/entity-overview-graph", f"/v1/catalog/entities/{_ENTITY_ID}/graph"}:
+            payload = _entity_graph(overview=path.endswith("overview-graph"), empty=self.graph_empty)
+            self.respond(route, payload if self.graph_status == 200 else {"detail": "Graph temporarily unavailable"}, self.graph_status)
+        elif path == "/v1/catalog/entity-resolution":
+            self.respond(route, {"entity_id": _ENTITY_ID})
+        elif path == f"/v1/catalog/entities/{_ENTITY_ID}":
+            self.respond(route, {
+                "entity": {"entity_id": _ENTITY_ID, "display_name": "Lakehouse Music",
+                           "kind": "organization", "identity_status": "profile_verified",
+                           "canonical_profile_url": "https://events.example.test/lakehouse",
+                           "summary": "Public music organizer", "website_url": None, "logo_url": None,
+                           "city": "Oakland", "country": "US", "event_count": 1,
+                           "roles": ["organizer"], "source_count": 1, "research_status": "researchable"},
+                "events": [], "external_sources": [
+                    {"provider_key": provider, "source_url": url, "external_id": url,
+                     "display_name": label, "status": "linked", "fetched_at": None,
+                     "next_refresh_at": "2030-06-01T00:00:00Z", "error_code": None}
+                    for provider, url, label in (
+                        ("instagram_profile", "https://www.instagram.com/lakehousemusic", "Instagram"),
+                        ("x_profile", "https://x.com/lakehousemusic", "X"),
+                    )
+                ], "external_facts": [
+                    {"provider_key": "official_website", "source_url": "https://events.example.test/lakehouse",
+                     "fact_key": "description", "value": "Published music profile", "value_url": None,
+                     "sort_order": 0, "observed_at": "2030-06-01T00:00:00Z"},
+                ],
+                "refresh_due": True, "insights": None,
+            })
         else:
             self.unexpected.append(path)
             self.respond(route, {"detail": f"Unexpected fixture request: {path}"}, 500)
@@ -97,23 +170,23 @@ def release_page(page_factory):
     assert all(method == "GET" for method, _ in api.calls)
 
 
-@pytest.mark.parametrize("view", ["chat", "entities"])
-def test_discovery_rejects_deep_links_and_history_but_keeps_provider_actions(release_page, view):
+def test_discovery_rejects_chat_deep_links_and_history_but_keeps_discovery_actions(release_page):
     harness, api = release_page
     page = harness.page
-    page.goto(f"{BASE}/?view={view}&entity=hidden&release_profile=full")
+    page.goto(f"{BASE}/?view=chat&entity=hidden&release_profile=full")
     expect(page.get_by_role("heading", name="Friday Night Jazz", exact=True)).to_be_visible()
     expect(page.get_by_role("button", name="Chat", exact=True)).to_have_count(0)
-    expect(page.get_by_role("button", name="Entities", exact=True)).to_have_count(0)
+    expect(page.locator(".site-nav").get_by_role("button", name="Entities", exact=True)).to_be_visible()
     assert parse_qs(urlsplit(page.url).query)["view"] == ["events"]
     assert "entity" not in parse_qs(urlsplit(page.url).query)
     page.get_by_role("button", name="Show details for Friday Night Jazz", exact=True).click()
-    expect(page.get_by_role("button", name=re.compile(r"^Explore organizer"))).to_have_count(0)
+    expect(page.get_by_role("button", name="Explore organizer Lakehouse Music", exact=True)).to_be_visible()
     expect(page.locator('a[href="https://events.example.test/friday-jazz"]')).to_be_visible()
     expect(page.get_by_role("link", name=re.compile(r"^Add Friday Night Jazz .* to Google Calendar$"))).to_be_visible()
     page.get_by_role("button", name="Add jazz topic filter", exact=True).click()
     expect(page).to_have_url(re.compile(r"[?&]topic=jazz(?:&|$)"))
-    assert parse_qs(urlsplit(page.url).query)["view"] == ["events"]
+    assert parse_qs(urlsplit(page.url).query)["view"] == ["entities"]
+    expect(page.get_by_role("heading", name="Jazz", exact=True)).to_be_visible()
     page.evaluate("""() => {
         const state = structuredClone(history.state);
         state.eventsConciergeConsumer.view = 'chat';
@@ -126,8 +199,68 @@ def test_discovery_rejects_deep_links_and_history_but_keeps_provider_actions(rel
     page.get_by_role("button", name="Events Concierge", exact=True).click()
     expect(page).to_have_url(re.compile(r"[?&]view=events(?:&|$)"))
     page.set_viewport_size({"width": 390, "height": 844})
-    expect(page.locator(".mobile-nav button")).to_have_count(3)
-    assert all("agent" not in path and "entities" not in path for _, path in api.calls)
+    expect(page.locator(".mobile-nav button")).to_have_count(4)
+    assert all("agent" not in path for _, path in api.calls)
+
+
+@pytest.mark.parametrize("width", [1440, 390])
+def test_discovery_entity_graph_and_due_profile_stay_read_only(release_page, width):
+    harness, api = release_page
+    page = harness.page
+    page.set_viewport_size({"width": width, "height": 1000})
+    page.goto(f"{BASE}/?view=entities")
+    expect(page.get_by_role("heading", name="Entity explorer", exact=True)).to_be_visible()
+    page.locator(f'button[data-node-id="entity:{_ENTITY_ID}"]').click()
+    page.get_by_role("button", name="Open this graph", exact=True).click()
+    expect(page.get_by_role("heading", name="Lakehouse Music", exact=True, level=1)).to_be_visible()
+    assert parse_qs(urlsplit(page.url).query)["entity"] == [_ENTITY_ID]
+    page.get_by_role("button", name="Text", exact=True).click()
+    expect(page.locator(".entity-graph-stage")).to_have_attribute("data-mode", "text")
+    page.get_by_role("tab", name="Profile & sources", exact=True).click()
+    expect(page.get_by_role("heading", name="Connected public sources", exact=True)).to_be_visible()
+    expect(page.get_by_text("Published music profile", exact=True)).to_be_visible()
+    expect(page.locator('.entity-graph-inspector a[href="https://www.instagram.com/lakehousemusic"]').first).to_be_visible()
+    expect(page.locator('.entity-graph-inspector a[href="https://x.com/lakehousemusic"]').first).to_be_visible()
+    expect(page.get_by_role("button", name="Refresh", exact=True)).to_have_count(0)
+    assert ("GET", f"/v1/catalog/entities/{_ENTITY_ID}") in api.calls
+    page.reload()
+    expect(page.get_by_role("heading", name="Lakehouse Music", exact=True, level=1)).to_be_visible()
+    assert parse_qs(urlsplit(page.url).query)["entity"] == [_ENTITY_ID]
+    page.get_by_role("button", name="All entities", exact=True).click()
+    expect(page.get_by_role("heading", name="Entity explorer", exact=True)).to_be_visible()
+    page.go_back()
+    expect(page.get_by_role("heading", name="Lakehouse Music", exact=True, level=1)).to_be_visible()
+
+
+def test_discovery_event_organizer_opens_its_recorded_graph(release_page):
+    harness, _ = release_page
+    page = harness.page
+    page.goto(f"{BASE}/?view=events")
+    page.get_by_role("button", name="Show details for Friday Night Jazz", exact=True).click()
+    page.get_by_role("button", name="Explore organizer Lakehouse Music", exact=True).click()
+    expect(page.get_by_role("heading", name="Lakehouse Music", exact=True, level=1)).to_be_visible()
+    assert parse_qs(urlsplit(page.url).query)["entity"] == [_ENTITY_ID]
+
+
+def test_discovery_empty_entity_graph_is_explicit(release_page):
+    harness, api = release_page
+    api.graph_empty = True
+    harness.page.goto(f"{BASE}/?view=entities")
+    expect(harness.page.get_by_role("heading", name="No entities match", exact=True)).to_be_visible()
+
+
+def test_discovery_graph_error_keeps_entity_navigation(release_page):
+    harness, api = release_page
+    api.graph_status = 503
+    harness.allowed_console_error_fragments.append("503")
+    page = harness.page
+    page.goto(f"{BASE}/?view=entities&entity={_ENTITY_ID}")
+    expect(page.locator(".entity-graph-failure")).to_contain_text("Graph temporarily unavailable")
+    expect(page.get_by_role("button", name="Try again", exact=True)).to_be_visible()
+    expect(page.get_by_role("button", name="All entities", exact=True)).to_be_visible()
+    api.graph_status = 200
+    page.get_by_role("button", name="Try again", exact=True).click()
+    expect(page.get_by_role("heading", name="Lakehouse Music", exact=True, level=1)).to_be_visible()
 
 
 @pytest.mark.parametrize("profile", ["full", None])
@@ -231,10 +364,7 @@ def test_profiles_keep_map_and_calendar_browsing(release_page, profile):
     page.goto(f"{BASE}/?view=map&when=custom&start=2030-06-01&end=2030-06-30")
     expect(page.get_by_role("button", name="Focus Friday Night Jazz on map", exact=True)).to_be_visible()
     graph = page.get_by_role("button", name="View Friday Night Jazz in Lakehouse Music's graph", exact=True)
-    if profile == "discovery":
-        expect(graph).to_have_count(0)
-    else:
-        expect(graph).to_be_visible()
+    expect(graph).to_be_visible()
     expect(page.get_by_role("link", name="View Friday Night Jazz event page (opens in new tab)", exact=True)).to_be_visible()
     page.locator(".site-nav").get_by_role("button", name="Calendar", exact=True).click()
     expect(page.get_by_role("grid", name="June 2030", exact=True)).to_be_visible()

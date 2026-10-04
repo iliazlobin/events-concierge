@@ -83,6 +83,7 @@ const DEFAULT_VIEWPORT = { width: 960, height: 640 };
 
 interface EntitiesViewProps {
   tenantId: string | null;
+  allowRefresh: boolean;
   selectedEntityId: string | null;
   onSelectEntity: (entityId: string | null) => void;
 }
@@ -112,6 +113,7 @@ function longDate(value: string | null): string | null {
 
 export function EntitiesView({
   tenantId,
+  allowRefresh,
   selectedEntityId,
   onSelectEntity,
 }: EntitiesViewProps) {
@@ -123,6 +125,7 @@ export function EntitiesView({
     return (
       <EntityGraphView
         tenantId={tenantId}
+        allowRefresh={allowRefresh}
         entityId={selectedEntityId}
         viewMode={graphViewMode}
         onViewModeChange={setGraphViewMode}

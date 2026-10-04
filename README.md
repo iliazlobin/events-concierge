@@ -1,6 +1,6 @@
 # Events Concierge
 
-Discover events, browse Events/Map/Calendar, and open the provider's registration page.
+Discover events, browse Events/Map/Calendar and Entities/Graph, and open the provider's registration page.
 
 - [Architecture](ARCHITECTURE.md): code map, runtime flows and invariants.
 - [Contributor guidance](AGENTS.md): task boundaries and checks.
@@ -98,6 +98,7 @@ make web-dev
 
 - Next.js in [`web/`](web/) proxies same-origin API requests to FastAPI.
 - Discovery reads the published catalog; browsing never starts provider scraping.
+- Entities connects people and organizations through recorded events and topics. Discovery permits graph/profile reads; external profile refresh remains disabled.
 - Local onboarding uses mock identity. Non-mock mode requires OIDC, secure sessions and CSRF checks.
 - A newly migrated database has a source registry but no events.
 - Compose enables the 300-second enqueue-only cadence by default when unset; `.env.example` disables it.

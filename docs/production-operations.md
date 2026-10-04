@@ -16,12 +16,14 @@ Release gates, incident controls and recovery constraints. [Private GKE runbook]
 | --- | --- |
 | Candidate | Approved revision and immutable Python/Next.js digests; applicable CI, migrations and compatibility checks |
 | Identity | Real login/logout, expiry/revocation, verified subject mapping, CSRF, TLS and cross-tenant denial; explicit Google pilot limitation below |
-| Discovery | Actual Next.js/API filters, Events/Map/Calendar, details/provider links, pagination/history, empty/error/loading states, settings, mobile/keyboard |
+| Discovery | Actual Next.js/API filters, Events/Map/Calendar, read-only Entities/Graph, details/provider links, pagination/history, empty/error/loading states, settings, mobile/keyboard |
 | Catalog | Reviewed sources; same-window real counts; last-good preservation; refresh and later scheduled publication; no unexplained loss |
 | Deferred actions | Direct routes rejected; no enqueue/provider effect; workers and credentials disabled |
 | Operations | Private endpoints, isolated process credentials, dependency recovery, monitoring/alerts, current backup and candidate restore evidence |
 
 Record failed/skipped/unavailable gates. Switch access only after acceptance; preserve recovery copies before retiring infrastructure through its owning state. Apply the [launch gates](#external-launch-gates) for each enabled capability.
+
+Entities/Graph reads admitted catalog relationships and retained profile facts. Discovery rejects external entity refresh, hides its manual control and disables automatic refresh; viewing a graph must not initiate provider work.
 
 <a id="rollback-and-migration-safety"></a>
 

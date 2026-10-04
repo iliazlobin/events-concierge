@@ -3,7 +3,7 @@
 ## Scope and navigation
 
 The current product milestone is private event discovery: search, shared filters,
-Events/Map/Calendar views, event details and provider registration links. Google sign-in
+Events/Map/Calendar views, read-only Entities/Graph, event details and provider registration links. Google sign-in
 is implemented; configuration and deployed identity acceptance remain pending. Chat, automated
 RSVP, managed handoffs, notifications, calendar synchronization, purchases and programmatic
 API keys are deferred unless the assigned task explicitly changes their scope.

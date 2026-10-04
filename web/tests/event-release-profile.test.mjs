@@ -15,7 +15,7 @@ test("only a successful known runtime config enables the full profile", () => {
 });
 
 test("discovery sanitizes deferred URL and history views while preserving catalog filters", () => {
-  for (const view of ["chat", "entities"]) {
+  for (const view of ["chat"]) {
     const raw = consumerHistorySnapshotFromUrl(`https://example.test/?view=${view}&q=music&topic=jazz&entity=hidden&release_profile=full`, initialCatalogFilters());
     const safe = releaseHistorySnapshot(raw, "discovery");
     assert.equal(safe.view, "events");
@@ -29,13 +29,21 @@ test("discovery sanitizes deferred URL and history views while preserving catalo
   }
 });
 
+test("discovery preserves entity deep links and graph history", () => {
+  const raw = consumerHistorySnapshotFromUrl("https://example.test/?view=entities&entity=published-id&entity_mode=text", initialCatalogFilters());
+  assert.deepEqual(releaseHistorySnapshot(raw, "discovery"), raw);
+  const url = new URL(consumerHistoryUrl(raw, "https://example.test/"), "https://example.test");
+  assert.equal(url.searchParams.get("view"), "entities");
+  assert.equal(url.searchParams.get("entity"), "published-id");
+});
+
 test("discovery keeps catalog navigation and calendar state, and hides automated activity", () => {
-  for (const view of ["events", "map", "calendar"]) {
+  for (const view of ["events", "map", "calendar", "entities"]) {
     const snapshot = createConsumerHistorySnapshot(view, initialCatalogFilters(), "event-id", "week");
     assert.deepEqual(releaseHistorySnapshot(snapshot, "discovery"), snapshot);
     assert.equal(releaseViewAllowed(view, "discovery"), true);
   }
-  for (const view of ["chat", "entities"]) assert.equal(releaseViewAllowed(view, "discovery"), false);
+  assert.equal(releaseViewAllowed("chat", "discovery"), false);
   assert.equal(releaseSettingsAllowed("/settings/activity", "discovery"), false);
   assert.equal(releaseSettingsAllowed("/settings/activity", "full"), true);
   assert.equal(releaseSettingsAllowed("/settings/security", "discovery"), false);

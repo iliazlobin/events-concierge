@@ -54,6 +54,29 @@ async def test_discovery_rejects_deferred_routes_before_authentication_or_io(
     assert "/v1/catalog/events/summary" in schema
     assert "/v1/me/erasure-requests" in schema
     assert "/v1/me/saved-filters" in schema
+    for path in (
+        "/v1/catalog/entity-directory",
+        "/v1/catalog/entity-overview-graph",
+        "/v1/catalog/entities/{entity_id}/graph",
+    ):
+        assert set(schema[path]) == {"get"}
+
+
+async def test_discovery_graph_admission_never_admits_mutations() -> None:
+    app = FastAPI()
+
+    @app.get("/v1/catalog/entity-directory")
+    async def read_directory() -> list[str]:
+        return ["published entity"]
+
+    @app.post("/v1/catalog/entity-directory")
+    async def mutate_directory() -> None:
+        raise AssertionError("catalog mutation executed")
+
+    apply_release_profile(app, "discovery")
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        assert (await client.get("/v1/catalog/entity-directory")).json() == ["published entity"]
+        assert (await client.post("/v1/catalog/entity-directory")).status_code == 405
 
 
 async def test_future_consumer_route_requires_explicit_discovery_admission() -> None:

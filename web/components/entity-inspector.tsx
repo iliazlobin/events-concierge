@@ -174,6 +174,7 @@ function observedLabel(value: string | null): string {
 
 export interface EntityInspectorProps {
   tenantId: string | null;
+  allowRefresh: boolean;
   /** The original occurrence scene, retained beneath the canvas session grouping. */
   model: EntityGraphSceneModel;
   textModel: EntityGraphTextModel;
@@ -187,6 +188,7 @@ export interface EntityInspectorProps {
 
 export function EntityInspector({
   tenantId,
+  allowRefresh,
   model,
   textModel,
   selectedNodeId,
@@ -289,7 +291,7 @@ export function EntityInspector({
    * profile, and a name is never turned into a query.
    */
   const refreshSources = async () => {
-    if (!subjectEntityId || refreshing) return;
+    if (!allowRefresh || !subjectEntityId || refreshing) return;
     setRefreshing(true);
     setDetailError(null);
     try {
@@ -309,7 +311,8 @@ export function EntityInspector({
   // Gated on `profile_verified` because a source-scoped record has no exact URL to re-read.
   useEffect(() => {
     if (
-      !subjectEntityId
+      !allowRefresh
+      || !subjectEntityId
       || !detail?.refresh_due
       || detail.entity.identity_status !== "profile_verified"
       || autoRefreshAttempted.current.has(subjectEntityId)
@@ -317,7 +320,7 @@ export function EntityInspector({
     autoRefreshAttempted.current.add(subjectEntityId);
     void refreshSources();
     // eslint-disable-next-line react-hooks/exhaustive-deps -- refreshSources is stable per render
-  }, [detail?.entity.identity_status, detail?.refresh_due, subjectEntityId]);
+  }, [allowRefresh, detail?.entity.identity_status, detail?.refresh_due, subjectEntityId]);
 
   const appearancesByNode = useMemo(() => {
     const index = new Map<string, EntityGraphTextAppearance>();
@@ -855,7 +858,7 @@ export function EntityInspector({
           <section>
             <div className="entity-graph-sources__heading">
               <h3>Connected public sources</h3>
-              {subject.identity_status === "profile_verified" ? (
+              {allowRefresh && subject.identity_status === "profile_verified" ? (
                 <button
                   type="button"
                   className="entity-graph-refresh"

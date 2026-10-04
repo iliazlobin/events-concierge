@@ -10,7 +10,7 @@ Current product scope and delivery priorities. GitHub Issues and PRs own task pr
 
 | Status | Scope |
 | --- | --- |
-| Included | Search, shared filters, Events/Map/Calendar, event details, provider registration links, profiles and saved filters. |
+| Included | Search, shared filters, Events/Map/Calendar, read-only Entities/Graph, event details, provider registration links, profiles and saved filters. |
 | Deferred | Chat, automated RSVP, managed handoffs, notifications, Calendar synchronization, purchases and programmatic API keys. |
 | Implemented; activation pending | Google sign-in for provisioned identities, datastore TLS and self-hosted Temporal mTLS. |
 | Accepted development behavior | Private discovery and recovery using mock external product adapters. |

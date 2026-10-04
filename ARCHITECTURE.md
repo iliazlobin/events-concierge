@@ -1,7 +1,7 @@
 # Architecture
 
 - **Product:** private event discovery and provider registration links.
-- **Current surface:** search, filters, profiles and Events/Map/Calendar.
+- **Current surface:** search, filters, profiles, Events/Map/Calendar and read-only Entities/Graph.
 - **Deferred lifecycle:** registration, notifications and calendar synchronization remain gated.
 - [Current milestone](PROJECT.md#current-milestone-private-discovery-candidate) and [release acceptance](docs/production-operations.md#first-release-acceptance) define scope.
 

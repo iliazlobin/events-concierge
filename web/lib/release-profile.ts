@@ -11,7 +11,7 @@ export function releaseProfile(config: UiConfig | null): ReleaseProfile {
 }
 
 export function releaseViewAllowed(view: ViewName, profile: ReleaseProfile): boolean {
-  return profile === "full" || (view !== "chat" && view !== "entities");
+  return profile === "full" || view !== "chat";
 }
 
 export function releaseHome(profile: ReleaseProfile): ViewName {
@@ -24,10 +24,11 @@ export function releaseHistorySnapshot(
   profile: ReleaseProfile,
 ): ConsumerHistorySnapshot {
   if (profile === "full") return snapshot;
+  const view = releaseViewAllowed(snapshot.view, profile) ? snapshot.view : "events";
   return {
     ...snapshot,
-    view: releaseViewAllowed(snapshot.view, profile) ? snapshot.view : "events",
-    selectedEntityId: null,
+    view,
+    selectedEntityId: view === "entities" ? snapshot.selectedEntityId : null,
   };
 }
 

@@ -236,6 +236,7 @@ export function ConciergeApp() {
   const [config, setConfig] = useState<UiConfig | null>(null);
   const profile = releaseProfile(config);
   const fullRelease = profile === "full";
+  const entityBrowsing = releaseViewAllowed("entities", profile);
   const navItems = NAV_ITEMS.filter(item => releaseViewAllowed(item.value, profile));
   const [tenantId, setTenantId] = useState<string | null>(null);
   const [me, setMe] = useState<Me | null>(null);
@@ -1067,7 +1068,7 @@ export function ConciergeApp() {
     });
   }, [calendarMode, filters, pushConsumerSnapshot]);
   const handleEntitySelect = useCallback(async (reference: EventEntityReference) => {
-    if (!fullRelease) return;
+    if (!entityBrowsing) return;
     try {
       const resolved = await resolveCatalogEventEntity(
         tenantId,
@@ -1092,7 +1093,7 @@ export function ConciergeApp() {
           : readableError(error),
       );
     }
-  }, [calendarMode, filters, fullRelease, pushConsumerSnapshot, tenantId]);
+  }, [calendarMode, entityBrowsing, filters, pushConsumerSnapshot, tenantId]);
   const handleEntityPageSelect = useCallback((entityId: string | null) => {
     pushConsumerSnapshot(createConsumerHistorySnapshot(
       "entities",
@@ -1368,7 +1369,7 @@ export function ConciergeApp() {
             onSourceSelect={handleSourceSelect}
             onLoadMore={handleLoadMore}
             onFacetSelect={handleFacetSelect}
-            onEntitySelect={fullRelease ? handleEntitySelect : undefined}
+            onEntitySelect={entityBrowsing ? handleEntitySelect : undefined}
             onTopicSelect={handleTopicSelect}
           />
         ) : null}
@@ -1384,7 +1385,7 @@ export function ConciergeApp() {
             onLoadMore={handleLoadMore}
             onSourceSelect={handleSourceSelect}
             onFacetSelect={handleFacetSelect}
-            onEntitySelect={fullRelease ? handleEntitySelect : undefined}
+            onEntitySelect={entityBrowsing ? handleEntitySelect : undefined}
             onTopicSelect={handleTopicSelect}
           />
         ) : null}
@@ -1409,19 +1410,20 @@ export function ConciergeApp() {
             activeTopics={filters.topics}
             onSourceSelect={handleSourceSelect}
             onFacetSelect={handleFacetSelect}
-            onEntitySelect={fullRelease ? handleEntitySelect : undefined}
+            onEntitySelect={entityBrowsing ? handleEntitySelect : undefined}
             onTopicSelect={handleTopicFilterSelect}
             onEventTopicSelect={handleTopicSelect}
             onTopicsClear={handleTopicsClear}
           />
         ) : null}
-        {fullRelease && view === "entities" && !selectedEntityId && filters.topics.length === 1 ? (
+        {entityBrowsing && view === "entities" && !selectedEntityId && filters.topics.length === 1 ? (
           <TopicGraphView key={filters.topics[0]} topic={filters.topics[0]} events={events}
             hasMore={Boolean(nextCursor)} loading={catalogLoading || loadingMore} error={catalogError}
             onLoadMore={handleLoadMore} onEntitySelect={handleEntitySelect} onTopicSelect={handleTopicSelect}/>
-        ) : fullRelease && view === "entities" ? (
+        ) : entityBrowsing && view === "entities" ? (
           <EntitiesView
             tenantId={tenantId}
+            allowRefresh={fullRelease}
             selectedEntityId={selectedEntityId}
             onSelectEntity={handleEntityPageSelect}
           />

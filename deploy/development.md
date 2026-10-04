@@ -21,6 +21,7 @@ owns deployed revisions, image digests, backup evidence and open coverage inputs
 | Identity / transport | `not_configured`; demo identity; internal plaintext |
 
 - **Real:** PostgreSQL, Redis, Temporal, GCS, public collection; no real email, booking or Calendar actions.
+- **Discovery:** Events/Map/Calendar and read-only Entities/Graph. Graphs use published relationships; external entity refresh remains disabled.
 - **Pending activation:** Google sign-in, datastore TLS and Temporal mTLS; merged preparation is not encrypted or authenticated runtime acceptance.
 - **Recovery:** manual quiesced backups and disposable restore rehearsals; [freshness alerts](https://github.com/iliazlobin/events-concierge/issues/23) remain open.
 
