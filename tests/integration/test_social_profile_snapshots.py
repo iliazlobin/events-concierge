@@ -34,9 +34,10 @@ async def social_fixture(db):
         await conn.execute(
             text("""
             INSERT INTO public.catalog_entities(entity_id,identity_key,identity_status,kind,display_name,
-                normalized_name,canonical_profile_url,first_seen_at,last_seen_at)
-            VALUES(:id,'profile:'||md5(:url),'profile_verified','person','Social fixture','social fixture',
-                :url,clock_timestamp(),clock_timestamp())
+                normalized_name,canonical_profile_url,profile_key,first_seen_at,last_seen_at)
+            VALUES(:id,'profile:'||md5(public.fn_normalize_profile_url_v1(:url)),
+                'profile_verified','person','Social fixture','social fixture',
+                :url,public.fn_normalize_profile_url_v1(:url),clock_timestamp(),clock_timestamp())
         """),
             {"id": entity, "url": url},
         )
