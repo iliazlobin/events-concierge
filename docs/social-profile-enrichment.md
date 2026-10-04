@@ -40,6 +40,7 @@ with one known professional profile before enabling ordinary batches. No tokens 
   Name-only entities stay source scoped. Links remain assertions from an event source.
 - Imported `x_profile` / `instagram_profile` rows and fetched `*_public_api` snapshots are separate.
   One snapshot per entity and platform; no entity merging or social-account graph nodes.
+- Imports queue refresh rows without changing active leases; migration backfills existing links once.
 - Each request reserves the shared daily allowance before egress, including failed/crashed attempts.
   Claims expire after 60 seconds; API work times out after 25 seconds. Stale or changed-link results
   cannot publish. Provider account IDs must remain stable across successful refreshes.

@@ -20,6 +20,7 @@ from events_concierge.domain.catalog_entities import (
     CatalogEntityExternalFactDraft,
     CatalogEntityExternalSourceSnapshot,
 )
+from events_concierge.infra.db import system_session_scope
 
 pytestmark = pytest.mark.integration
 
@@ -40,13 +41,6 @@ async def social_fixture(db):
                 :url,public.fn_normalize_profile_url_v1(:url),clock_timestamp(),clock_timestamp())
         """),
             {"id": entity, "url": url},
-        )
-        await conn.execute(
-            text("""
-            INSERT INTO public.catalog_social_profile_refreshes(entity_id,provider_key,source_url,next_refresh_at)
-            VALUES(:id,'x_public_api',:url,'2000-01-01')
-        """),
-            {"id": entity, "url": social_url},
         )
     repo = PostgresCatalogEntityRepository()
 
@@ -76,6 +70,7 @@ async def social_fixture(db):
                 {"id": entity},
             )
 
+    await due()
     yield entity, owner, import_link, due
     async with owner.begin() as conn:
         await conn.execute(
@@ -168,6 +163,23 @@ async def test_lease_fence_budget_and_changed_link(social_fixture):
 
 async def test_app_cannot_bypass_fenced_writer(social_fixture):
     entity, _, _, _ = social_fixture
+    async with system_session_scope() as session:
+        for table in ("catalog_social_profile_refreshes", "catalog_social_profile_daily_budget"):
+            assert not (
+                await session.execute(
+                    text(
+                        "SELECT has_table_privilege(current_user,:table,'SELECT,INSERT,UPDATE,DELETE')"
+                    ),
+                    {"table": "public." + table},
+                )
+            ).scalar_one()
+        assert not (
+            await session.execute(
+                text(
+                    "SELECT has_function_privilege(current_user,'public.fn_queue_catalog_social_refresh_v1()','EXECUTE')"
+                )
+            )
+        ).scalar_one()
     with pytest.raises(Exception, match="invalid"):
         await PostgresCatalogEntityRepository().replace_external_source(
             CatalogEntityExternalSourceSnapshot(
@@ -182,3 +194,33 @@ async def test_app_cannot_bypass_fenced_writer(social_fixture):
                 None,
             )
         )
+
+
+async def test_database_rejects_changed_provider_identity(social_fixture):
+    entity, _, _, due = social_fixture
+    refresh = PostgresSocialProfileRefreshRepository()
+    claim = await refresh.claim(("x_public_api",), 10000)
+    assert claim and claim.entity_id == entity
+    collection = CollectedPublicSource(
+        "x_public_api",
+        "12345",
+        claim.source_url,
+        "X API",
+        (CatalogEntityExternalFactDraft("description", "Last successful bio"),),
+    )
+    assert await refresh.finish(claim, collection, error_code=None, refresh_seconds=86400)
+    await due()
+    claim = await refresh.claim(("x_public_api",), 10000)
+    assert claim and claim.previous_id == "12345"
+    with pytest.raises(Exception, match="social account identity changed"):
+        await refresh.finish(
+            claim,
+            CollectedPublicSource("x_public_api", "99999", claim.source_url, "X API", ()),
+            error_code=None,
+            refresh_seconds=86400,
+        )
+    assert await refresh.finish(claim, None, error_code="identity_changed", refresh_seconds=86400)
+    detail = await PostgresCatalogEntityRepository().get(entity)
+    source = next(s for s in detail.external_sources if s.provider_key == "x_public_api")
+    assert source.external_id == "12345" and source.status == "failed"
+    assert detail.external_facts[0].value == "Last successful bio"

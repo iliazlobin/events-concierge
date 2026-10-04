@@ -19,6 +19,7 @@ depends_on: str | Sequence[str] | None = None
 _CLAIM = "public.fn_claim_catalog_social_refresh_v1(text[],integer)"
 _FINISH = "public.fn_finish_catalog_social_refresh_v1(uuid,text,uuid,text,jsonb,text,integer)"
 _FACTS = "public.fn_list_catalog_entity_external_facts_v2(uuid)"
+_QUEUE = "public.fn_queue_catalog_social_refresh_v1()"
 
 
 def upgrade() -> None:
@@ -72,6 +73,7 @@ def upgrade() -> None:
         REVOKE ALL ON public.catalog_social_profile_refreshes,
             public.catalog_social_profile_daily_budget FROM PUBLIC, ec_app;
     """)
+    _queue_imported_links()
     _claim_function()
     _finish_function()
     op.execute("""
@@ -97,6 +99,36 @@ def upgrade() -> None:
         op.execute(f"GRANT EXECUTE ON FUNCTION {signature} TO ec_app")
 
 
+def _queue_imported_links() -> None:
+    # Existing links are backfilled once. Future imports create one row by primary key;
+    # claims never rescan the catalog to discover new work.
+    op.execute("""
+        CREATE FUNCTION public.fn_queue_catalog_social_refresh_v1()
+        RETURNS trigger LANGUAGE plpgsql SECURITY DEFINER SET search_path=pg_catalog,public AS $$
+        BEGIN
+            INSERT INTO public.catalog_social_profile_refreshes(entity_id,provider_key,source_url)
+            VALUES(NEW.entity_id,CASE NEW.provider_key WHEN 'x_profile' THEN 'x_public_api'
+                ELSE 'instagram_public_api' END,NEW.source_url)
+            ON CONFLICT ON CONSTRAINT catalog_social_profile_refreshes_pkey DO NOTHING;
+            -- Do not rewrite an existing lease's URL: finish must check the original claimed link.
+            RETURN NEW;
+        END;
+        $$;
+        REVOKE ALL ON FUNCTION public.fn_queue_catalog_social_refresh_v1() FROM PUBLIC,ec_app;
+        CREATE TRIGGER queue_catalog_social_refresh
+            AFTER INSERT OR UPDATE OF provider_key,source_url
+            ON public.catalog_entity_external_sources FOR EACH ROW
+            WHEN (NEW.provider_key IN ('x_profile','instagram_profile'))
+            EXECUTE FUNCTION public.fn_queue_catalog_social_refresh_v1();
+        INSERT INTO public.catalog_social_profile_refreshes(entity_id,provider_key,source_url)
+        SELECT s.entity_id,CASE s.provider_key WHEN 'x_profile' THEN 'x_public_api'
+            ELSE 'instagram_public_api' END,s.source_url
+        FROM public.catalog_entity_external_sources s
+        WHERE s.provider_key IN ('x_profile','instagram_profile')
+        ON CONFLICT ON CONSTRAINT catalog_social_profile_refreshes_pkey DO NOTHING;
+    """)
+
+
 def _claim_function() -> None:
     op.execute("""
         CREATE FUNCTION public.fn_claim_catalog_social_refresh_v1(p_providers text[], p_daily_limit integer)
@@ -113,15 +145,6 @@ def _claim_function() -> None:
                OR p_daily_limit IS NULL OR p_daily_limit NOT BETWEEN 1 AND 10000 THEN
                 RAISE EXCEPTION USING ERRCODE='22023', MESSAGE='social refresh configuration invalid';
             END IF;
-            INSERT INTO public.catalog_social_profile_refreshes(entity_id,provider_key,source_url)
-            SELECT e.entity_id, p.key, s.source_url
-            FROM public.catalog_entities e
-            CROSS JOIN unnest(p_providers) p(key)
-            JOIN public.catalog_entity_external_sources s ON s.entity_id=e.entity_id
-                AND s.provider_key=CASE p.key WHEN 'x_public_api' THEN 'x_profile' ELSE 'instagram_profile' END
-            WHERE e.identity_status='profile_verified' AND e.canonical_profile_url IS NOT NULL
-            ON CONFLICT ON CONSTRAINT catalog_social_profile_refreshes_pkey DO NOTHING;
-
             FOR v_job IN
                 SELECT j.* FROM public.catalog_social_profile_refreshes j
                 JOIN public.catalog_entities e ON e.entity_id=j.entity_id
@@ -275,6 +298,8 @@ def downgrade() -> None:
         raise RuntimeError("retain social snapshot schema while rolling application code back")
     for signature in (_CLAIM, _FINISH, _FACTS):
         op.execute(f"DROP FUNCTION {signature}")
+    op.execute("DROP TRIGGER queue_catalog_social_refresh ON public.catalog_entity_external_sources")
+    op.execute(f"DROP FUNCTION {_QUEUE}")
     op.execute(
         "DROP TABLE public.catalog_social_profile_refreshes, public.catalog_social_profile_daily_budget"
     )
