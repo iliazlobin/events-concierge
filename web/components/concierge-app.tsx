@@ -1067,7 +1067,6 @@ export function ConciergeApp() {
     });
   }, [calendarMode, filters, pushConsumerSnapshot]);
   const handleEntitySelect = useCallback(async (reference: EventEntityReference) => {
-    if (!fullRelease) return;
     try {
       const resolved = await resolveCatalogEventEntity(
         tenantId,
@@ -1092,7 +1091,7 @@ export function ConciergeApp() {
           : readableError(error),
       );
     }
-  }, [calendarMode, filters, fullRelease, pushConsumerSnapshot, tenantId]);
+  }, [calendarMode, filters, pushConsumerSnapshot, tenantId]);
   const handleEntityPageSelect = useCallback((entityId: string | null) => {
     pushConsumerSnapshot(createConsumerHistorySnapshot(
       "entities",
@@ -1368,7 +1367,7 @@ export function ConciergeApp() {
             onSourceSelect={handleSourceSelect}
             onLoadMore={handleLoadMore}
             onFacetSelect={handleFacetSelect}
-            onEntitySelect={fullRelease ? handleEntitySelect : undefined}
+            onEntitySelect={handleEntitySelect}
             onTopicSelect={handleTopicSelect}
           />
         ) : null}
@@ -1384,7 +1383,7 @@ export function ConciergeApp() {
             onLoadMore={handleLoadMore}
             onSourceSelect={handleSourceSelect}
             onFacetSelect={handleFacetSelect}
-            onEntitySelect={fullRelease ? handleEntitySelect : undefined}
+            onEntitySelect={handleEntitySelect}
             onTopicSelect={handleTopicSelect}
           />
         ) : null}
@@ -1409,19 +1408,20 @@ export function ConciergeApp() {
             activeTopics={filters.topics}
             onSourceSelect={handleSourceSelect}
             onFacetSelect={handleFacetSelect}
-            onEntitySelect={fullRelease ? handleEntitySelect : undefined}
+            onEntitySelect={handleEntitySelect}
             onTopicSelect={handleTopicFilterSelect}
             onEventTopicSelect={handleTopicSelect}
             onTopicsClear={handleTopicsClear}
           />
         ) : null}
-        {fullRelease && view === "entities" && !selectedEntityId && filters.topics.length === 1 ? (
+        {view === "entities" && !selectedEntityId && filters.topics.length === 1 ? (
           <TopicGraphView key={filters.topics[0]} topic={filters.topics[0]} events={events}
             hasMore={Boolean(nextCursor)} loading={catalogLoading || loadingMore} error={catalogError}
             onLoadMore={handleLoadMore} onEntitySelect={handleEntitySelect} onTopicSelect={handleTopicSelect}/>
-        ) : fullRelease && view === "entities" ? (
+        ) : view === "entities" ? (
           <EntitiesView
             tenantId={tenantId}
+            canRefresh={fullRelease}
             selectedEntityId={selectedEntityId}
             onSelectEntity={handleEntityPageSelect}
           />

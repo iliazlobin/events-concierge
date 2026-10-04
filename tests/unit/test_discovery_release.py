@@ -54,6 +54,15 @@ async def test_discovery_rejects_deferred_routes_before_authentication_or_io(
     assert "/v1/catalog/events/summary" in schema
     assert "/v1/me/erasure-requests" in schema
     assert "/v1/me/saved-filters" in schema
+    for path in (
+        "/v1/catalog/entities",
+        "/v1/catalog/entities/{entity_id}",
+        "/v1/catalog/entities/{entity_id}/graph",
+        "/v1/catalog/entity-directory",
+        "/v1/catalog/entity-overview-graph",
+        "/v1/catalog/entity-resolution",
+    ):
+        assert set(schema[path]) == {"get"}
 
 
 async def test_future_consumer_route_requires_explicit_discovery_admission() -> None:

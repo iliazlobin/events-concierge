@@ -1,6 +1,6 @@
 # Events Concierge
 
-Discover events, browse Events/Map/Calendar, and open the provider's registration page.
+Discover events, browse Events/Map/Calendar and entity graphs, and open the provider's registration page.
 
 - [Architecture](ARCHITECTURE.md): code map, runtime flows and invariants.
 - [Contributor guidance](AGENTS.md): task boundaries and checks.

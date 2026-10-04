@@ -20,6 +20,9 @@ _DISCOVERY_ROUTES = {
     "/v1/catalog/events/summary",
     "/v1/catalog/entities",
     "/v1/catalog/entities/{entity_id}",
+    "/v1/catalog/entities/{entity_id}/graph",
+    "/v1/catalog/entity-directory",
+    "/v1/catalog/entity-overview-graph",
     "/v1/catalog/entity-resolution",
 }
 

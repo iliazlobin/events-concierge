@@ -48,6 +48,7 @@ export type EntityViewMode = "graph" | "text";
 
 export interface EntityGraphViewProps {
   tenantId: string | null;
+  canRefresh?: boolean;
   entityId: string;
   viewMode: EntityViewMode;
   onViewModeChange: (mode: EntityViewMode) => void;
@@ -57,6 +58,7 @@ export interface EntityGraphViewProps {
 
 export function EntityGraphView({
   tenantId,
+  canRefresh = false,
   entityId,
   viewMode,
   onViewModeChange,
@@ -354,6 +356,7 @@ export function EntityGraphView({
             )}
           </div>
           <EntityInspector
+            canRefresh={canRefresh}
             eventSessions={sessions?.groups.get(sessions.representative.get(selectedNodeId ?? "") ?? "")}
             tenantId={tenantId}
             model={model}
