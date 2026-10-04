@@ -1,5 +1,7 @@
 # Account & Settings Vertical — Design Proposal
 
+Historical proposal (26 August 2026). Current discovery scope: [PROJECT.md](../PROJECT.md#current-milestone-private-discovery-candidate); identity/erasure gates: [production operations](../docs/production-operations.md#built-in-oidc-bff-activation); UI acceptance: [manual checks](../docs/manual-test-plan.md). The build order below is not the current task queue.
+
 **Status:** DRAFT for owner ruling · **Date:** 2026-08-26 · **Targets:** `web/` (Next.js consumer tree)
 **Verified against:** working tree at `f3c5875` + uncommitted work. Migration head `0154`; `web/components/concierge-app.tsx` is 1202 lines (profile dot at `:1052-1065`). The tree is being edited concurrently — **re-derive line numbers and the Alembic head at implementation time; cite by symbol, not by line.**
 

@@ -36,11 +36,15 @@ owns deployed revisions, image digests, backup evidence and open coverage inputs
 
 ### Remaining release work
 
-1. Add authenticated private Helm composition for in-cluster stores; per-process Secret/IAM and certificate mounts.
-2. Configure separate Google client, verified subject mapping and trusted HTTPS; decide deletion pilot limitation.
-3. Rehearse combined candidate, migration and transport rollback; check capacity; prepare versioned credentials/certificates.
-4. Approve deployment; suspend cadence, drain writers, verify fresh backup; coordinate migration and encrypted rollout.
-5. Verify identity, TLS/mTLS, CSRF, tenant isolation, discovery and worker recovery; complete monitoring and scheduled recovery.
+Symphony owns task stages; GitHub holds the engineering records below. These prerequisites are not deployment approval.
+
+| Prerequisite | Engineering record |
+| --- | --- |
+| In-cluster authenticated composition; per-process Secret/IAM and certificate mounts | [Private runtime](https://github.com/iliazlobin/events-concierge/issues/22) |
+| Health/freshness alerts and scheduled recovery evidence | [Observability](https://github.com/iliazlobin/events-concierge/issues/23) |
+| Combined candidate, migration/transport rollback, capacity and immutable artifacts | [Release rehearsal](https://github.com/iliazlobin/events-concierge/issues/24) |
+
+Configure the separate Google client, verified subject mapping and trusted HTTPS; resolve the deletion-pilot limitation. After deployment approval, suspend cadence, drain writers, verify a fresh backup, coordinate migration/rollout, then verify identity, TLS/mTLS, CSRF, isolation, discovery and worker recovery.
 
 - **Profile gap:** development requires mock/plaintext/OIDC-off; managed requires Cloud SQL Proxy. Neither supports the intended composition.
 - **Erasure worker:** preserve session revocation and cleanup when narrowing its full application/BFF credentials.
@@ -147,7 +151,7 @@ kubectl -n events-concierge-dev exec -i deployment/events-concierge-api -- pytho
 kubectl -n events-concierge-dev exec -i deployment/events-concierge-api -- python - < scripts/development/smoke.py
 ```
 
-- Require six intended Deployments ready; no deferred Deployments; correct revision/digests/schema and restricted-role access.
+- Require six intended Deployments ready; no deferred Deployments; correct revision/digests/schema and restricted-role access. Confirm read-only Entities/Graph and reject external-profile refresh in discovery.
 - Promotion requires candidate catalog pollers. Smoke covers discovery plus Temporal/GCS echo; erasure completes synthetic cleanup.
 - Collection acceptance: real reviewed refresh; command → successful run → publication. Schedule success alone is insufficient.
 - Compare `fn_report_catalog_source_coverage_v1()` at matching times/windows; investigate failures and freshness; exclude fixtures.
@@ -158,7 +162,11 @@ kubectl -n events-concierge-dev exec -i deployment/events-concierge-api -- pytho
 - Migration `0187` has no downgrade. No schema-0180 images after schema-0193 migration; no incompatible Helm-only rollback.
 - Recovery requires verified coordinated backup and compatible images; overwriting new writes needs separate approval.
 
-**Access — one forward per terminal**
+**Access**
+
+The owner's Mac has login-started LaunchAgents for IAP, consumer and admin forwards; they restart after connection loss or pod replacement. Another machine needs its own authenticated platform access. Loopback links work only on the forwarding machine; they do not expose a public service.
+
+Without supervised access, keep IAP running and use one forward per terminal:
 
 ```bash
 kubectl -n events-concierge-dev port-forward --address=127.0.0.1 service/events-concierge-api 14000:8000

@@ -5,7 +5,7 @@ Discover events, browse Events/Map/Calendar and entity graphs, and open the prov
 - [Architecture](ARCHITECTURE.md): code map, runtime flows and invariants.
 - [Contributor guidance](AGENTS.md): task boundaries and checks.
 - [Current milestone](PROJECT.md#current-milestone-private-discovery-candidate): approved product scope.
-- [Design](design/) and [decisions](decisions/): requirements and component detail.
+- [Runtime contracts](design/system-design.md): implementation constraints; [Notion design](https://app.notion.com/p/391d865005a88164a182eabc18fe068f): architecture and rationale.
 
 ## Status
 
@@ -38,7 +38,7 @@ Keep existing `.env` settings and credentials private. [`.env.example`](.env.exa
 
 1. Start from freshly fetched `origin/main` in an isolated worktree or Symphony clone.
 2. Use a short-lived `codex/<issue>-<description>` branch; omit the issue number when absent.
-3. Define scope and acceptance checks in GitHub Issues. Read [AGENTS.md](AGENTS.md) and the affected component.
+3. Define outcome and acceptance in the Symphony task; GitHub retains issue content and PR evidence. Read [AGENTS.md](AGENTS.md) and the affected component.
 4. Open a ready PR against `main`; use draft only when requested. CI and independent review must cover the current head.
 5. Resolve conflicts and rerun affected checks/review after changes. Squash-merge only when authorized.
 6. Verify integration into `main` before deleting the task branch. Preserve active worktrees, dependent PRs and unpublished work.
@@ -50,7 +50,7 @@ Keep existing `.env` settings and credentials private. [`.env.example`](.env.exa
 - [Release acceptance](docs/production-operations.md#first-release-acceptance) and [deployment runbook](deploy/development.md) own release operations. CI does not deploy.
 - **Symphony:** [WORKFLOW.md](WORKFLOW.md) defines assignments and handoffs. Workers cannot publish or merge.
 - The host pins a reviewed `base_sha` on `main`; scheduler and publisher must advance together.
-  Preserve holds, budgets and evidence; follow the [host profile procedure](https://github.com/iliazlobin/symphony/blob/main/profiles/events-concierge/README.md#verification-and-recovery).
+  Preserve holds, budgets and evidence; follow the [host profile procedure](https://github.com/iliazlobin/symphony/blob/main/profiles/events-concierge/README.md#change-the-baseline).
 - Automatic merge stays disabled until branch protection, required checks and the explicit low-risk allowlist are verified.
 
 ## Local development
@@ -111,7 +111,7 @@ make catalog-refresh SOURCE_KEY=luma-sf
 
 - Local admin requires `EC_ADMIN_INGESTION_ENABLED=true` and a loopback bind.
 - [Ingestion admin](docs/ingestion-admin.md): operator controls, source policy and diagnostics.
-- [Catalog semantics](design/catalog-event-semantics.md) and [browse history](design/catalog-browse-history.md): filters, dates and current projections.
+- [Catalog semantics](design/catalog-event-semantics.md), [browse history](design/catalog-browse-history.md) and [entities](design/entity-catalog-and-research.md): facts, filters, dates and read-only graphs.
 - [Meetup ingestion](docs/meetup-ingestion-runbook.md): anonymous catalog collection; OAuth/RSVP data remains tenant-scoped.
 - [Manual acceptance](docs/manual-test-plan.md): discovery checks, identity boundaries and erasure acceptance.
 - [Account settings](design/account-settings-vertical.md): erasure fencing and cleanup. Accepted erasure is not completed erasure.
@@ -160,8 +160,3 @@ make catalog-refresh SOURCE_KEY=luma-sf
 - A working provider factory or healthy endpoint does not prove release acceptance.
 - [Production operations](docs/production-operations.md): release gates, process limits, secret rotation and incidents.
 - [Private deployment and recovery](deploy/development.md): application release, access, backup and restore.
-
-## Architecture
-
-Ports and adapters: domain logic has no external I/O; composition selects implementations.
-See [ARCHITECTURE.md](ARCHITECTURE.md) for the code map, runtime flows and enforced boundaries.
