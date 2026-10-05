@@ -37,7 +37,7 @@ test("the preview rail tracks map bounds and focuses without rebuilding markers"
 });
 
 test("preview cards expose selection, optional imagery, and a direct event link", () => {
-  assert.match(previewRail, /aria-label="Events visible in map"/);
+  assert.match(previewRail, /"Events visible in map"/);
   assert.match(previewRail, /aria-pressed=\{selected\}/);
   assert.match(previewRail, /imageUrl \? \(/);
   assert.match(previewRail, /className="map-preview__title-link" href=\{pageUrl\}/);
@@ -83,11 +83,11 @@ test("map-specific chrome stays compact while the canvas owns the viewport", () 
 });
 
 test("the multi-day UI stays invisible until it has something to say", () => {
-  assert.match(mapView, /const multiDay = dayModel\.cells\.length > 1;/);
+  assert.match(mapView, /const multiDay = !showUnmapped && dayModel\.cells\.length > 1;/);
   assert.match(mapView, /\{multiDay \? \(\s*<MapDayTrack/);
   assert.match(mapView, /\{multiDay \? null : \(\s*<div className="map-watermark">/);
   // The rail and the track mount on the same test, so they can never disagree.
-  assert.match(previewRail, /const grouped = model\.cells\.length > 1;/);
+  assert.match(previewRail, /const grouped = !showUnmapped && model\.cells\.length > 1;/);
 });
 
 test("day emphasis never rebuilds the markers or refits the camera", () => {

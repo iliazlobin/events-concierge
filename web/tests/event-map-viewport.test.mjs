@@ -7,6 +7,7 @@ import {
   eventMapCoordinate,
   eventsInMapBounds,
   mapViewportFor,
+  partitionMapEvents,
 } from "../lib/map-viewport.ts";
 import { CATALOG_CITY_VALUES } from "../lib/presentation.ts";
 
@@ -131,4 +132,22 @@ test("visible map events follow live bounds and discard unmapped records", () =>
     eventsInMapBounds(events, bounds).map((event) => event.id),
     ["inside"],
   );
+});
+
+test("every result stays available whether its map coordinates are valid or absent", () => {
+  const events = [
+    { id: "neighborhood-only", latitude: null, longitude: null },
+    { id: "valid-zeroes", latitude: 0, longitude: 0 },
+    { id: "partial", latitude: 37.78, longitude: null },
+    { id: "invalid", latitude: 91, longitude: -122.42 },
+    { id: "venue", latitude: 37.78, longitude: -122.42 },
+    { id: "non-finite", latitude: Number.NaN, longitude: -122.42 },
+  ];
+  const { mapped, unmapped } = partitionMapEvents(events);
+  assert.deepEqual(mapped.map((event) => event.id), ["valid-zeroes", "venue"]);
+  assert.deepEqual(unmapped.map((event) => event.id), ["neighborhood-only", "partial", "invalid", "non-finite"]);
+  assert.equal(new Set([...mapped, ...unmapped]).size, events.length);
+  assert.deepEqual(events[0], { id: "neighborhood-only", latitude: null, longitude: null });
+  assert.deepEqual(partitionMapEvents(unmapped), { mapped: [], unmapped });
+  assert.deepEqual(partitionMapEvents([]), { mapped: [], unmapped: [] });
 });

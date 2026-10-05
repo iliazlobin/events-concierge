@@ -20,6 +20,7 @@ pytestmark = [
 
 ENTITY_ID = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"
 HOST_ENTITY_ID = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb"
+ISOLATED_ENTITY_ID = "cccccccc-cccc-4ccc-8ccc-cccccccccccc"
 SECOND_EVENT_ID = "33333333-3333-4333-8333-333333333333"
 
 
@@ -75,6 +76,56 @@ def entity_graph(entity_id: str = ENTITY_ID):
     }
 
 
+def multi_hub_overview_graph():
+    """Representative catalog frame: two connected hubs and one isolated hub."""
+    organizer = entity_graph()
+    host = entity_graph(HOST_ENTITY_ID)
+    return organizer | {
+        "focus_id": "catalog:overview",
+        "counts": organizer["counts"] | {
+            "peers": 3, "peers_total": 3, "edges": 2,
+            "mention_edges": 2, "edges_total": 2,
+        },
+        "nodes": [
+            organizer["nodes"][0] | {"degree": 12},
+            host["nodes"][0] | {"degree": 5},
+            {"node_id": f"entity:{ISOLATED_ENTITY_ID}", "node_kind": "entity", "ring": 0,
+             "label": "Quiet Society", "entity_id": ISOLATED_ENTITY_ID,
+             "entity_kind": "organization", "identity_status": "source_scoped",
+             "degree": 3, "roles": ["organizer"]},
+            organizer["nodes"][1] | {"degree": 2, "shared_event_count": 4},
+        ],
+        "edges": [
+            organizer["edges"][0] | {"source_labels": ["Fixture Organizer Calendar"]},
+            host["edges"][0] | {"source_labels": ["Fixture Host Notes"],
+                                "observed_at": "2030-06-02T00:00:00Z"},
+        ],
+    }
+
+
+def connected_entity_graph(entity_id: str):
+    """The same shared event in a bounded entity neighborhood, with role-specific evidence."""
+    graph = entity_graph(entity_id)
+    is_host = entity_id == HOST_ENTITY_ID
+    peer = entity_graph(ENTITY_ID if is_host else HOST_ENTITY_ID)
+    return graph | {
+        "counts": graph["counts"] | {
+            "events_total": 5 if is_host else 12, "peers": 1, "peers_total": 1,
+            "edges": 2, "mention_edges": 2, "edges_total": 2,
+        },
+        "truncated": graph["truncated"] | {"events": True},
+        "nodes": [
+            graph["nodes"][0] | {"degree": 5 if is_host else 12},
+            peer["nodes"][0] | {"ring": 2, "degree": 12 if is_host else 5, "shared_event_count": 4},
+            graph["nodes"][1] | {"degree": 2},
+        ],
+        "edges": [
+            graph["edges"][0] | {"source_labels": ["Fixture Host Notes" if is_host else "Fixture Organizer Calendar"]},
+            peer["edges"][0] | {"source_labels": ["Fixture Organizer Calendar" if is_host else "Fixture Host Notes"]},
+        ],
+    }
+
+
 @dataclass
 class ReleaseApi:
     profile: str | None = "discovery"
@@ -96,6 +147,10 @@ class ReleaseApi:
     recurring: bool = False
     social_links_only: bool = False
     event_url: str | None = "https://events.example.test/friday-jazz"
+    multi_hub_overview: bool = False
+    entity_refresh_due: bool = True
+    hold_entity_details: bool = False
+    held_entity_details: list[tuple[Route, dict]] = field(default_factory=list)
 
     def with_event_url(self, event):
         return event | {"registration_urls": [self.event_url] if self.event_url else [],
@@ -185,36 +240,23 @@ class ReleaseApi:
                 self.respond(route, {"detail": "Entity assertion not found"}, 404)
         elif path in {"/v1/catalog/entity-overview-graph", f"/v1/catalog/entities/{ENTITY_ID}/graph",
                        f"/v1/catalog/entities/{HOST_ENTITY_ID}/graph"}:
-            graph = entity_graph(HOST_ENTITY_ID if HOST_ENTITY_ID in path else ENTITY_ID)
-            if path.endswith("entity-overview-graph"):
-                graph["focus_id"] = "catalog:overview"
-                graph["counts"]["peers"] = 1
-                graph["counts"]["peers_total"] = 1
-            if self.second_event:
-                second = second_catalog_event(self.recurring)
-                node = graph["nodes"][-1] | {"node_id": f"event:{SECOND_EVENT_ID}",
-                        "canonical_event_id": SECOND_EVENT_ID, "label": second["title"],
-                        "start_at": second["start_at"], "end_at": second["end_at"]}
-                graph["nodes"].append(node)
-                graph["edges"].append(graph["edges"][0] | {"b": node["node_id"]})
-                graph["counts"].update(events=2, events_total=2, edges=2, mention_edges=2, edges_total=2)
-            if self.empty_graph:
-                graph["nodes"] = []
-                graph["edges"] = []
-                graph["counts"] = dict.fromkeys(graph["counts"], 0)
-            self.respond(route, graph if self.graph_status == 200 else {"detail": "Graph unavailable"}, self.graph_status)
+            self.handle_entity_graph(route, path)
         elif path == "/v1/catalog/entity-directory":
             self.respond(route, {
-                "generated_at": "2030-06-01T00:00:00Z", "matched": 1, "hubs": [],
-                "totals": {"entity_count": 1, "person_count": 0, "organization_count": 1,
-                           "unknown_count": 0, "verified_count": 1, "scoped_count": 0},
-                "coverage": {"events_with_entities": 1, "events_total": 1, "mention_count": 1},
+                "generated_at": "2030-06-01T00:00:00Z", "matched": 3 if self.multi_hub_overview else 1, "hubs": [],
+                "totals": {"entity_count": 3 if self.multi_hub_overview else 1,
+                           "person_count": int(self.multi_hub_overview),
+                           "organization_count": 2 if self.multi_hub_overview else 1,
+                           "unknown_count": 0, "verified_count": 2 if self.multi_hub_overview else 1,
+                           "scoped_count": int(self.multi_hub_overview)},
+                "coverage": {"events_with_entities": 1, "events_total": 1,
+                             "mention_count": 2 if self.multi_hub_overview else 1},
             })
         elif path in {f"/v1/catalog/entities/{ENTITY_ID}", f"/v1/catalog/entities/{HOST_ENTITY_ID}"}:
             entity_id = HOST_ENTITY_ID if path.endswith(HOST_ENTITY_ID) else ENTITY_ID
             identity = entity_graph(entity_id)["nodes"][0]
             is_host = entity_id == HOST_ENTITY_ID
-            self.respond(route, {
+            payload = {
                 "entity": {"entity_id": entity_id, "display_name": identity["label"],
                            "kind": identity["entity_kind"], "identity_status": "profile_verified",
                            "canonical_profile_url": identity["profile_url"],
@@ -228,11 +270,39 @@ class ReleaseApi:
                                     "fact_key": "description", "value": "Published host profile fixture." if is_host else "Published profile fixture.",
                                     "value_url": None, "sort_order": 0,
                                     "observed_at": "2030-06-01T00:00:00Z"}] + (_social_facts() if self.social_profiles and not is_host else []),
-                "refresh_due": True, "insights": None,
-            })
+                "refresh_due": self.entity_refresh_due, "insights": None,
+            }
+            if self.hold_entity_details:
+                self.held_entity_details.append((route, payload))
+            else:
+                self.respond(route, payload)
         else:
             self.unexpected.append(path)
             self.respond(route, {"detail": "Unknown entity fixture"}, 500)
+
+    def handle_entity_graph(self, route: Route, path: str) -> None:
+        graph = entity_graph(HOST_ENTITY_ID if HOST_ENTITY_ID in path else ENTITY_ID)
+        if path.endswith("entity-overview-graph"):
+            graph["focus_id"] = "catalog:overview"
+            graph["counts"]["peers"] = 1
+            graph["counts"]["peers_total"] = 1
+            if self.multi_hub_overview:
+                graph = multi_hub_overview_graph()
+        elif self.multi_hub_overview:
+            graph = connected_entity_graph(HOST_ENTITY_ID if HOST_ENTITY_ID in path else ENTITY_ID)
+        if self.second_event:
+            second = second_catalog_event(self.recurring)
+            node = graph["nodes"][-1] | {"node_id": f"event:{SECOND_EVENT_ID}",
+                    "canonical_event_id": SECOND_EVENT_ID, "label": second["title"],
+                    "start_at": second["start_at"], "end_at": second["end_at"]}
+            graph["nodes"].append(node)
+            graph["edges"].append(graph["edges"][0] | {"b": node["node_id"]})
+            graph["counts"].update(events=2, events_total=2, edges=2, mention_edges=2, edges_total=2)
+        if self.empty_graph:
+            graph["nodes"] = []
+            graph["edges"] = []
+            graph["counts"] = dict.fromkeys(graph["counts"], 0)
+        self.respond(route, graph if self.graph_status == 200 else {"detail": "Graph unavailable"}, self.graph_status)
 
 
 def _social_sources():
@@ -383,6 +453,33 @@ def test_graph_event_participant_profiles_load_once_without_writes(release_page,
 
 
 @pytest.mark.parametrize("width", [1440, 390])
+def test_graph_topic_inspector_counts_all_drawn_events(release_page, width):
+    harness, api = release_page
+    page = harness.page
+    page.set_viewport_size({"width": width, "height": 900})
+    graph = entity_graph()
+    second = second_catalog_event()
+    graph["nodes"].extend([
+        graph["nodes"][1] | {"node_id": f"event:{SECOND_EVENT_ID}",
+                               "canonical_event_id": SECOND_EVENT_ID,
+                               "label": second["title"], "start_at": second["start_at"]},
+        {"node_id": "topic:jazz", "node_kind": "topic", "ring": 3,
+         "label": "jazz", "degree": 2},
+    ])
+    graph["edges"].append({"a": graph["focus_id"], "b": "topic:jazz", "kind": "topic",
+                           "roles": [], "source_labels": [], "observed_at": None})
+    graph["counts"] |= {"events": 2, "events_total": 2, "topics": 1, "edges": 2}
+    graph["truncated"]["edges"] = True
+    page.route(f"**/v1/catalog/entities/{ENTITY_ID}/graph*",
+               lambda route: api.respond(route, graph))
+    page.goto(f"{BASE}/?view=entities&entity={ENTITY_ID}")
+    page.locator('button[data-node-id="topic:jazz"]').click()
+    inspector = page.get_by_role("complementary", name="Topic detail", exact=True)
+    expect(inspector.get_by_role("heading", name="Jazz", exact=True)).to_be_visible()
+    expect(inspector.get_by_text("2 of the 2 shown events", exact=True)).to_be_visible()
+
+
+@pytest.mark.parametrize("width", [1440, 390])
 def test_graph_workspace_breadcrumbs_and_browser_history(release_page, width):
     harness, _ = release_page
     page = harness.page
@@ -441,6 +538,185 @@ def test_graph_workspace_search_and_optional_filters(release_page, width):
         page.get_by_role("textbox", name="Search people and organizations", exact=True).fill("Lakehouse")
     expect(graph).to_be_visible()
     assert page.evaluate("document.documentElement.scrollWidth <= window.innerWidth")
+
+
+@pytest.mark.parametrize("width", [1440, 390])
+@pytest.mark.parametrize("entity_id,name,provenance", [
+    (ENTITY_ID, "Lakehouse Music", "Organizer · via Fixture Organizer Calendar"),
+    (HOST_ENTITY_ID, "Alex Example", "Host · via Fixture Host Notes"),
+    (ISOLATED_ENTITY_ID, "Quiet Society", None),
+])
+def test_catalog_graph_entity_selection_uses_the_full_inspector(release_page, width, entity_id, name, provenance):
+    harness, api = release_page
+    api.multi_hub_overview = True
+    page = harness.page
+    page.set_viewport_size({"width": width, "height": 900})
+    page.goto(f"{BASE}/?view=entities")
+    expect(page.get_by_role("application")).to_be_visible()
+    expect(page.get_by_role("complementary", name="Entity detail", exact=True)).to_have_count(0)
+    node = page.locator(f'button[data-node-id="entity:{entity_id}"]')
+    if width == 1440:
+        node.press("Enter")
+    else:
+        node.click()
+    inspector = page.get_by_role("complementary", name="Entity detail", exact=True)
+    expect(inspector.get_by_role("heading", name=name, exact=True)).to_be_visible()
+    expect(inspector.get_by_role("tab", name="Overview", exact=True)).to_be_visible()
+    expect(inspector.get_by_role("tab", name="Profile & sources", exact=True)).to_be_visible()
+    expect(page.locator(".entity-overview-selection")).to_have_count(0)
+    expect(page.get_by_role("button", name="Open this graph", exact=True)).to_have_count(0)
+    expect(inspector.get_by_text(re.compile(r"\b\d+ upcoming\b"))).to_have_count(0)
+    inspector.get_by_role("tab", name="Appearances", exact=True).click()
+    expect(inspector.get_by_text(re.compile("representative|sampled", re.I))).to_be_visible()
+    if provenance:
+        appearance = inspector.locator(".entity-graph-inspector__appearances button")
+        expect(appearance).to_have_count(1)
+        expect(appearance).to_contain_text("Friday Night Jazz")
+        expect(appearance.locator("small")).to_have_text(provenance)
+        appearance.click()
+        event = page.get_by_role("complementary", name="Event detail", exact=True)
+        expect(event.locator(".event-card__title")).to_have_text("Friday Night Jazz")
+        expect(inspector).to_have_count(0)
+        event.get_by_role("button", name=re.compile("^(Close details|Back to the graph)$")).click()
+    else:
+        expect(inspector.get_by_text("No appearances in this frame.", exact=True)).to_be_visible()
+        inspector.get_by_role("button", name="Close details", exact=True).click()
+    expect(page.get_by_role("complementary", name=re.compile("^(Entity|Event) detail$"))).to_have_count(0)
+    node.click()
+    expect(inspector.get_by_role("heading", name=name, exact=True)).to_be_visible()
+    page.keyboard.press("Escape")
+    expect(inspector).to_have_count(0)
+    assert parse_qs(urlsplit(page.url).query).get("entity") is None
+    assert not any(path.endswith("/graph") or path in {
+        f"/v1/catalog/entities/{ENTITY_ID}", f"/v1/catalog/entities/{HOST_ENTITY_ID}",
+        f"/v1/catalog/entities/{ISOLATED_ENTITY_ID}",
+    } for _, path in api.calls)
+    assert page.evaluate("document.documentElement.scrollWidth <= window.innerWidth")
+
+
+@pytest.mark.parametrize("width", [1440, 390])
+def test_catalog_graph_first_hub_focus_gestures_use_browser_history(release_page, width):
+    harness, api = release_page
+    api.multi_hub_overview = True
+    page = harness.page
+    page.set_viewport_size({"width": width, "height": 900})
+    page.goto(f"{BASE}/?view=entities")
+    # The first ring-0 hub must not be mistaken for the overview's ego.
+    first = page.locator(f'button[data-node-id="entity:{ENTITY_ID}"]')
+    if width == 1440:
+        first.press("Shift+Enter")
+    else:
+        first.dblclick()
+    expect(page.get_by_role("navigation", name="Graph navigation", exact=True)
+           .get_by_role("heading", name="Lakehouse Music", exact=True)).to_be_visible()
+    assert parse_qs(urlsplit(page.url).query)["entity"] == [ENTITY_ID]
+    assert ("GET", f"/v1/catalog/entities/{ENTITY_ID}/graph") in api.calls
+    page.locator(f'button[data-node-id="entity:{HOST_ENTITY_ID}"]').click()
+    inspector = page.get_by_role("complementary", name="Entity detail", exact=True)
+    expect(inspector.get_by_role("heading", name="Alex Example", exact=True)).to_be_visible()
+    inspector.get_by_role("tab", name="Appearances", exact=True).click()
+    appearance = inspector.locator(".entity-graph-inspector__appearances button")
+    expect(appearance.locator("small")).to_have_text("Host · via Fixture Host Notes")
+    appearance.click()
+    event = page.get_by_role("complementary", name="Event detail", exact=True)
+    expect(event.locator(".event-card__title")).to_have_text("Friday Night Jazz")
+    event.get_by_role("button", name="Back to Lakehouse Music", exact=True).click()
+    expect(inspector.get_by_role("heading", name="Lakehouse Music", exact=True)).to_be_visible()
+    assert parse_qs(urlsplit(page.url).query)["entity"] == [ENTITY_ID]
+    assert ("GET", f"/v1/catalog/entities/{HOST_ENTITY_ID}/graph") not in api.calls
+    assert ("GET", f"/v1/catalog/entities/{HOST_ENTITY_ID}") not in api.calls
+    page.go_back()
+    expect(page.get_by_role("heading", name="Graph", exact=True)).to_be_visible()
+    assert "entity" not in parse_qs(urlsplit(page.url).query)
+    page.go_forward()
+    expect(page.get_by_role("navigation", name="Graph navigation", exact=True)
+           .get_by_role("heading", name="Lakehouse Music", exact=True)).to_be_visible()
+
+
+def test_catalog_graph_profile_reads_follow_the_selected_entity_and_cache_late_results(release_page):
+    harness, api = release_page
+    api.multi_hub_overview = True
+    api.hold_entity_details = True
+    page = harness.page
+    page.goto(f"{BASE}/?view=entities")
+    host = page.locator(f'button[data-node-id="entity:{HOST_ENTITY_ID}"]')
+    organizer = page.locator(f'button[data-node-id="entity:{ENTITY_ID}"]')
+    host.click()
+    inspector = page.get_by_role("complementary", name="Entity detail", exact=True)
+    host_detail = f"/v1/catalog/entities/{HOST_ENTITY_ID}"
+    assert ("GET", host_detail) not in api.calls
+    with page.expect_request(f"**{host_detail}"):
+        inspector.get_by_role("tab", name="Profile & sources", exact=True).click()
+    expect(inspector.get_by_text("Loading profiles", exact=True)).to_be_visible()
+    assert len(api.held_entity_details) == 1
+    organizer.click()
+    expect(inspector.get_by_role("heading", name="Lakehouse Music", exact=True)).to_be_visible()
+    expect(inspector.get_by_role("tab", name="Overview", exact=True)).to_have_attribute("aria-selected", "true")
+    organizer_detail = f"/v1/catalog/entities/{ENTITY_ID}"
+    assert ("GET", organizer_detail) not in api.calls
+    api.hold_entity_details = False
+    inspector.get_by_role("tab", name="Profile & sources", exact=True).click()
+    expect(inspector.get_by_text("Published profile fixture.", exact=True)).to_be_visible()
+    api.respond(*api.held_entity_details[0])
+    expect(inspector.get_by_text("Published host profile fixture.", exact=True)).to_have_count(0)
+    expect(inspector.get_by_role("heading", name="Lakehouse Music", exact=True)).to_be_visible()
+    host.click()
+    inspector.get_by_role("tab", name="Profile & sources", exact=True).click()
+    expect(inspector.get_by_text("Published host profile fixture.", exact=True)).to_be_visible()
+    assert api.calls.count(("GET", host_detail)) == 1
+    assert api.calls.count(("GET", organizer_detail)) == 1
+    assert not any(path.endswith("/refresh") or path.endswith("/graph") for _, path in api.calls)
+
+
+def test_full_catalog_graph_late_refresh_stays_with_its_requested_entity(page_factory):
+    harness = page_factory(authenticated=True)
+    page = harness.page
+    api = ReleaseApi(profile="full", multi_hub_overview=True, entity_refresh_due=False)
+    api.install(page)
+    refresh_calls: list[tuple[str, str]] = []
+    held_refreshes: list[Route] = []
+
+    def hold_refresh(route: Route) -> None:
+        # Every POST remains browser-intercepted; this test never invokes a provider write.
+        refresh_calls.append((route.request.method, urlsplit(route.request.url).path))
+        held_refreshes.append(route)
+
+    page.route("**/v1/catalog/entities/*/refresh", hold_refresh)
+    page.goto(f"{BASE}/?view=entities")
+    host = page.locator(f'button[data-node-id="entity:{HOST_ENTITY_ID}"]')
+    organizer = page.locator(f'button[data-node-id="entity:{ENTITY_ID}"]')
+    host.click()
+    inspector = page.get_by_role("complementary", name="Entity detail", exact=True)
+    with page.expect_response(f"**/v1/catalog/entities/{HOST_ENTITY_ID}") as host_response:
+        inspector.get_by_role("tab", name="Profile & sources", exact=True).click()
+    host_payload = host_response.value.json()
+    expect(inspector.get_by_text("Published host profile fixture.", exact=True)).to_be_visible()
+    inspector.get_by_role("button", name="Refresh", exact=True).click()
+    expect(inspector.get_by_role("button", name="Refreshing", exact=True)).to_be_disabled()
+    assert len(held_refreshes) == 1
+
+    organizer.click()
+    expect(inspector.get_by_role("heading", name="Lakehouse Music", exact=True)).to_be_visible()
+    inspector.get_by_role("tab", name="Profile & sources", exact=True).click()
+    expect(inspector.get_by_text("Published profile fixture.", exact=True)).to_be_visible()
+    expect(inspector.get_by_role("button", name="Refresh", exact=True)).to_be_enabled()
+    refreshed_host = host_payload | {
+        # If A's late result is treated as B's, it could trigger an unauthorized B auto-refresh.
+        "refresh_due": True,
+        "external_facts": [host_payload["external_facts"][0] | {"value": "Refreshed host profile fixture."}],
+    }
+    with page.expect_response(f"**/v1/catalog/entities/{HOST_ENTITY_ID}/refresh") as refresh_response:
+        api.respond(held_refreshes[0], refreshed_host)
+    refresh_response.value.finished()
+    # Allow the resolved fetch and React effects to run before checking for a spurious B POST.
+    page.evaluate("() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))")
+    expect(inspector.get_by_role("heading", name="Lakehouse Music", exact=True)).to_be_visible()
+    expect(inspector.get_by_text("Published profile fixture.", exact=True)).to_be_visible()
+    expect(inspector.get_by_text("Refreshed host profile fixture.", exact=True)).to_have_count(0)
+    expect(inspector.get_by_role("button", name="Refresh", exact=True)).to_be_enabled()
+    assert refresh_calls == [("POST", f"/v1/catalog/entities/{HOST_ENTITY_ID}/refresh")]
+    assert not api.unexpected
+    assert all(method == "GET" for method, _ in api.calls)
 
 
 @pytest.mark.parametrize("width", [1440, 390])
@@ -541,7 +817,11 @@ def test_graph_event_details_match_map_without_prefetch(release_page, tmp_path, 
     expected_links = map_card.get_by_role("link").evaluate_all("links => links.map(a => a.href)")
     graph_query = {"overview": "view=entities", "entity": f"view=entities&entity={ENTITY_ID}",
                    "topic": "view=entities&topic=jazz"}[scope]
-    page.goto(f"{BASE}/?{graph_query}")
+    # Leave Map through its navigation so its effect cleans up outstanding tiles.
+    page.get_by_role("button", name="Entities", exact=True).click()
+    expect(page.get_by_role("application")).to_be_visible()
+    if scope != "overview":
+        page.goto(f"{BASE}/?{graph_query}")
     expect(page.get_by_role("application")).to_be_visible()
     expect(page.get_by_role("button", name="Text", exact=True)).to_have_count(0)
     node_id = f"event:{catalog_event()['canonical_event_id']}"
@@ -943,6 +1223,182 @@ def test_profiles_keep_map_and_calendar_browsing(release_page, tmp_path, profile
     assert page.evaluate("document.documentElement.scrollWidth <= window.innerWidth")
     page.screenshot(path=str(tmp_path / f"calendar-card-{width}.png"), full_page=True)
     assert ("GET", "/v1/catalog/events/summary") in api.calls
+
+
+def _install_map_catalog(page: Page, api: ReleaseApi, pages: list[list[dict]]) -> list[dict[str, list[str]]]:
+    """Serve paged catalog fixtures without a database, geocoder or provider request."""
+    queries: list[dict[str, list[str]]] = []
+
+    def catalog(route: Route) -> None:
+        query = parse_qs(urlsplit(route.request.url).query)
+        queries.append(query)
+        api.calls.append((route.request.method, "/v1/catalog/events"))
+        cursor = query.get("cursor", [None])[0]
+        index = int(cursor.removeprefix("fixture-page-")) if cursor else 0
+        assert index < len(pages), f"Unexpected catalog cursor: {cursor}"
+        api.respond(route, {
+            "items": pages[index],
+            "next_cursor": f"fixture-page-{index + 1}" if index + 1 < len(pages) else None,
+            "providers": [{"source_key": "fixture-techweek", "label": "SF Tech Week 2030",
+                           "display_name": "SF Tech Week 2030", "publisher": "Tech Week",
+                           "provider": "tech_week_mcp", "seed_url": "https://events.example.test",
+                           "event_count": sum(map(len, pages))}],
+            "topic_facets": [], "city_facets": [{"city": "sanfrancisco", "event_count": sum(map(len, pages))}],
+        })
+
+    page.route(re.compile(r"/v1/catalog/events(?:\?.*)?$"), catalog)
+    return queries
+
+
+def _map_catalog_event(event_id: str, title: str, *, mapped: bool = False) -> dict:
+    return catalog_event() | {
+        "canonical_event_id": event_id, "title": title, "city": "sanfrancisco",
+        "venue_name": "SOMA", "latitude": 37.7749 if mapped else None,
+        "longitude": -122.4194 if mapped else None,
+        "description": f"Published details for {title}.",
+        "source_keys": ["fixture-techweek"], "providers": ["Tech Week"],
+        "sources": [{"source_key": "fixture-techweek", "source": "tech_week_mcp",
+                     "label": "SF Tech Week 2030", "registration_url": "https://events.example.test/friday-jazz"}],
+    }
+
+
+@pytest.mark.parametrize("width", [1440, 390])
+@pytest.mark.parametrize("mapped_second", [False, True])
+def test_map_retains_unlocated_events_filters_details_and_pagination(release_page, width, mapped_second):
+    harness, api = release_page
+    page = harness.page
+    page.set_viewport_size({"width": width, "height": 900})
+    page.emulate_media(reduced_motion="reduce")
+    first = _map_catalog_event(catalog_event()["canonical_event_id"], "Venue Pending Mixer")
+    second = _map_catalog_event(SECOND_EVENT_ID, "Another Venue Pending Mixer", mapped=mapped_second)
+    queries = _install_map_catalog(page, api, [[first], [second]])
+    page.goto(f"{BASE}/?view=events&source=fixture-techweek&city=sanfrancisco&when=custom&start=2030-06-01&end=2030-06-30&price=any")
+    expect(page.get_by_role("heading", name=first["title"], exact=True)).to_be_visible()
+    filters = {key: value for key, value in parse_qs(urlsplit(page.url).query).items() if key != "view"}
+    nav = page.locator(".site-nav" if width > 700 else ".mobile-nav")
+    nav.get_by_role("button", name="Map", exact=True).click()
+
+    rail = page.locator(".map-preview-rail")
+    missing_list = rail.get_by_role("button", name=re.compile(r"^Without map locations"))
+    expect(missing_list).to_have_attribute("aria-pressed", "true")
+    expect(rail.get_by_role("button", name=f"Show details for {first['title']}", exact=True)).to_be_visible()
+    expect(page.locator(".map-marker")).to_have_count(0)
+    assert {key: value for key, value in parse_qs(urlsplit(page.url).query).items() if key != "view"} == filters
+    assert parse_qs(urlsplit(page.url).query)["view"] == ["map"]
+
+    rail.get_by_role("button", name=f"Show details for {first['title']}", exact=True).click()
+    selection = page.locator(".map-selection .event-card")
+    expect(selection.get_by_role("region")).to_be_visible()
+    expect(selection).to_contain_text(first["description"])
+    expect(selection.locator('a[href="https://events.example.test/friday-jazz"]')).to_be_visible()
+
+    page.get_by_role("button", name="Load more", exact=True).click()
+    expect(page.get_by_role("button", name="Load more", exact=True)).to_have_count(0)
+    expect(rail.get_by_role("button", name=f"Show details for {first['title']}", exact=True)).to_be_visible()
+    expect(missing_list).to_have_attribute("aria-pressed", "true")
+    expect(selection).to_contain_text(first["description"])
+    expect(page.locator(".map-marker")).to_have_count(int(mapped_second))
+    if mapped_second:
+        rail.get_by_role("button", name=re.compile(r"^In this area")).click()
+        expect(rail.get_by_role("button", name=f"Focus {second['title']} on map", exact=True)).to_be_visible()
+        missing_list.click()
+    else:
+        expect(rail.get_by_role("button", name=f"Show details for {second['title']}", exact=True)).to_be_visible()
+    paged_query = next(query for query in queries if query.get("cursor") == ["fixture-page-1"])
+    assert {key: value for key, value in paged_query.items() if key != "cursor"} == queries[0]
+    assert paged_query["source_key"] == ["fixture-techweek"]
+    assert paged_query["city"] == ["sanfrancisco"]
+    assert {"starts_after", "starts_before"}.issubset(paged_query)
+    assert page.evaluate("document.documentElement.scrollWidth <= window.innerWidth")
+
+    nav.get_by_role("button", name="Events", exact=True).click()
+    expect(page.get_by_role("heading", name=first["title"], exact=True)).to_be_visible()
+    assert {key: value for key, value in parse_qs(urlsplit(page.url).query).items() if key != "view"} == filters
+
+
+@pytest.mark.parametrize("width", [1440, 390])
+def test_map_keeps_mapped_and_unlocated_events_in_separate_accessible_lists(release_page, width):
+    harness, api = release_page
+    page = harness.page
+    page.set_viewport_size({"width": width, "height": 900})
+    page.emulate_media(reduced_motion="reduce")
+    mapped = _map_catalog_event(catalog_event()["canonical_event_id"], "Mapped Builders Meetup", mapped=True)
+    unlocated = _map_catalog_event(SECOND_EVENT_ID, "Venue Pending Mixer")
+    _install_map_catalog(page, api, [[mapped, unlocated]])
+    page.goto(f"{BASE}/?view=map&source=fixture-techweek&city=sanfrancisco&when=custom&start=2030-06-01&end=2030-06-30&price=any")
+
+    rail = page.locator(".map-preview-rail")
+    area_list = rail.get_by_role("button", name=re.compile(r"^In this area"))
+    missing_list = rail.get_by_role("button", name=re.compile(r"^Without map locations"))
+    expect(area_list).to_have_attribute("aria-pressed", "true")
+    expect(rail.get_by_role("button", name=f"Focus {mapped['title']} on map", exact=True)).to_be_visible()
+    expect(rail.get_by_role("button", name=f"Show details for {unlocated['title']}", exact=True)).to_have_count(0)
+    expect(page.locator(".map-marker")).to_have_count(1)
+
+    missing_list.click()
+    expect(missing_list).to_have_attribute("aria-pressed", "true")
+    expect(rail.get_by_role("button", name=f"Focus {mapped['title']} on map", exact=True)).to_have_count(0)
+    rail.get_by_role("button", name=f"Show details for {unlocated['title']}", exact=True).click()
+    expect(page.locator(".map-selection .event-card")).to_contain_text(unlocated["description"])
+    expect(page.locator(".map-marker")).to_have_count(1)
+
+    area_list.click()
+    expect(area_list).to_have_attribute("aria-pressed", "true")
+    rail.get_by_role("button", name=f"Focus {mapped['title']} on map", exact=True).click()
+    expect(page.locator(".map-selection .event-card")).to_contain_text(mapped["description"])
+    expect(page.locator(".map-marker")).to_have_count(1)
+    assert page.evaluate("document.documentElement.scrollWidth <= window.innerWidth")
+
+
+@pytest.mark.parametrize("width", [1440, 390])
+def test_map_resets_unlocated_list_after_a_new_filter_search(release_page, width):
+    harness, api = release_page
+    page = harness.page
+    page.set_viewport_size({"width": width, "height": 900})
+    page.emulate_media(reduced_motion="reduce")
+    unlocated = _map_catalog_event(catalog_event()["canonical_event_id"], "Venue Pending Mixer")
+    mapped = _map_catalog_event(SECOND_EVENT_ID, "Mapped Builders Meetup", mapped=True)
+    _install_map_catalog(page, api, [[unlocated]])
+    page.goto(f"{BASE}/?view=map&source=fixture-techweek&city=sanfrancisco&when=custom&start=2030-06-01&end=2030-06-30&price=any")
+
+    rail = page.locator(".map-preview-rail")
+    missing_list = rail.get_by_role("button", name=re.compile(r"^Without map locations"))
+    expect(missing_list).to_have_attribute("aria-pressed", "true")
+    expect(rail.get_by_role("button", name=f"Show details for {unlocated['title']}", exact=True)).to_be_visible()
+    expect(page.locator(".map-marker")).to_have_count(0)
+
+    # Hold the new search so the regression exercises its loading state, not a remount.
+    held: list[Route] = []
+
+    def hold_search(route: Route) -> None:
+        held.append(route)
+
+    page.route(re.compile(r"/v1/catalog/events(?:\?.*)?$"), hold_search)
+    with page.expect_request(re.compile(r"/v1/catalog/events\?")) as updated:
+        page.get_by_role("button", name="Remove SF Tech Week 2030", exact=True).click()
+    expect(page.get_by_text("Loading locations…", exact=True)).to_be_visible()
+    query = parse_qs(urlsplit(updated.value.url).query)
+    assert "source_key" not in query
+    assert query["city"] == ["sanfrancisco"]
+    assert len(held) == 1
+    api.calls.append((held[0].request.method, "/v1/catalog/events"))
+    api.respond(held.pop(), {
+        "items": [mapped, unlocated], "next_cursor": None,
+        "providers": [], "topic_facets": [], "city_facets": [],
+    })
+
+    area_list = rail.get_by_role("button", name=re.compile(r"^In this area"))
+    expect(area_list).to_have_attribute("aria-pressed", "true")
+    expect(missing_list).to_have_attribute("aria-pressed", "false")
+    expect(rail.get_by_role("button", name=f"Focus {mapped['title']} on map", exact=True)).to_be_visible()
+    expect(page.locator(".map-marker")).to_have_count(1)
+    missing_list.click()
+    expect(rail.get_by_role("button", name=f"Show details for {unlocated['title']}", exact=True)).to_be_visible()
+    params = parse_qs(urlsplit(page.url).query)
+    assert params["view"] == ["map"]
+    assert "source" not in params
+    assert params["start"] == ["2030-06-01"] and params["end"] == ["2030-06-30"]
+    assert page.evaluate("document.documentElement.scrollWidth <= window.innerWidth")
 
 
 @pytest.mark.parametrize("local_demo", [True, False])
