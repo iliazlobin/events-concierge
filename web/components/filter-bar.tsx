@@ -68,7 +68,9 @@ interface FilterBarProps {
   providers: CatalogProvider[];
   topics: CatalogTopic[];
   cities: string[];
-  resultCount: number;
+  resultCount: number | null;
+  countKind: "loaded" | "range";
+  hasMore: boolean;
   loading: boolean;
   savedFilters: SavedFilter[];
   savedFiltersBusy?: boolean;
@@ -328,6 +330,8 @@ export function FilterBar({
   topics,
   cities,
   resultCount,
+  countKind,
+  hasMore,
   loading,
   savedFilters,
   savedFiltersBusy = false,
@@ -1087,7 +1091,9 @@ export function FilterBar({
         </div>
         <div className="filter-bar__actions">
           <span aria-live="polite">
-            {loading ? "Loading" : `${resultCount} match${resultCount === 1 ? "" : "es"}`}
+            {loading ? "Loading count" : resultCount === null ? "Count unavailable" : countKind === "range"
+              ? `${resultCount.toLocaleString()} event${resultCount === 1 ? "" : "s"} in range`
+              : `${resultCount.toLocaleString()} loaded${hasMore ? " · more available" : ""}`}
           </span>
         </div>
       </div>
