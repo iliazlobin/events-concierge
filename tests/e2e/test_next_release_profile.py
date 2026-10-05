@@ -1225,6 +1225,131 @@ def test_profiles_keep_map_and_calendar_browsing(release_page, tmp_path, profile
     assert ("GET", "/v1/catalog/events/summary") in api.calls
 
 
+def _install_map_catalog(page: Page, api: ReleaseApi, pages: list[list[dict]]) -> list[dict[str, list[str]]]:
+    """Serve paged catalog fixtures without a database, geocoder or provider request."""
+    queries: list[dict[str, list[str]]] = []
+
+    def catalog(route: Route) -> None:
+        query = parse_qs(urlsplit(route.request.url).query)
+        queries.append(query)
+        api.calls.append((route.request.method, "/v1/catalog/events"))
+        cursor = query.get("cursor", [None])[0]
+        index = int(cursor.removeprefix("fixture-page-")) if cursor else 0
+        assert index < len(pages), f"Unexpected catalog cursor: {cursor}"
+        api.respond(route, {
+            "items": pages[index],
+            "next_cursor": f"fixture-page-{index + 1}" if index + 1 < len(pages) else None,
+            "providers": [{"source_key": "fixture-techweek", "label": "SF Tech Week 2030",
+                           "display_name": "SF Tech Week 2030", "publisher": "Tech Week",
+                           "provider": "tech_week_mcp", "seed_url": "https://events.example.test",
+                           "event_count": sum(map(len, pages))}],
+            "topic_facets": [], "city_facets": [{"city": "sanfrancisco", "event_count": sum(map(len, pages))}],
+        })
+
+    page.route(re.compile(r"/v1/catalog/events(?:\?.*)?$"), catalog)
+    return queries
+
+
+def _map_catalog_event(event_id: str, title: str, *, mapped: bool = False) -> dict:
+    return catalog_event() | {
+        "canonical_event_id": event_id, "title": title, "city": "sanfrancisco",
+        "venue_name": "SOMA", "latitude": 37.7749 if mapped else None,
+        "longitude": -122.4194 if mapped else None,
+        "description": f"Published details for {title}.",
+        "source_keys": ["fixture-techweek"], "providers": ["Tech Week"],
+        "sources": [{"source_key": "fixture-techweek", "source": "tech_week_mcp",
+                     "label": "SF Tech Week 2030", "registration_url": "https://events.example.test/friday-jazz"}],
+    }
+
+
+@pytest.mark.parametrize("width", [1440, 390])
+@pytest.mark.parametrize("mapped_second", [False, True])
+def test_map_retains_unlocated_events_filters_details_and_pagination(release_page, width, mapped_second):
+    harness, api = release_page
+    page = harness.page
+    page.set_viewport_size({"width": width, "height": 900})
+    page.emulate_media(reduced_motion="reduce")
+    first = _map_catalog_event(catalog_event()["canonical_event_id"], "Venue Pending Mixer")
+    second = _map_catalog_event(SECOND_EVENT_ID, "Another Venue Pending Mixer", mapped=mapped_second)
+    queries = _install_map_catalog(page, api, [[first], [second]])
+    page.goto(f"{BASE}/?view=events&source=fixture-techweek&city=sanfrancisco&when=custom&start=2030-06-01&end=2030-06-30&price=any")
+    expect(page.get_by_role("heading", name=first["title"], exact=True)).to_be_visible()
+    filters = {key: value for key, value in parse_qs(urlsplit(page.url).query).items() if key != "view"}
+    nav = page.locator(".site-nav" if width > 700 else ".mobile-nav")
+    nav.get_by_role("button", name="Map", exact=True).click()
+
+    rail = page.locator(".map-preview-rail")
+    missing_list = rail.get_by_role("button", name=re.compile(r"^Without map locations"))
+    expect(missing_list).to_have_attribute("aria-pressed", "true")
+    expect(rail.get_by_role("button", name=f"Show details for {first['title']}", exact=True)).to_be_visible()
+    expect(page.locator(".map-marker")).to_have_count(0)
+    assert {key: value for key, value in parse_qs(urlsplit(page.url).query).items() if key != "view"} == filters
+    assert parse_qs(urlsplit(page.url).query)["view"] == ["map"]
+
+    rail.get_by_role("button", name=f"Show details for {first['title']}", exact=True).click()
+    selection = page.locator(".map-selection .event-card")
+    expect(selection.get_by_role("region")).to_be_visible()
+    expect(selection).to_contain_text(first["description"])
+    expect(selection.locator('a[href="https://events.example.test/friday-jazz"]')).to_be_visible()
+
+    page.get_by_role("button", name="Load more", exact=True).click()
+    expect(page.get_by_role("button", name="Load more", exact=True)).to_have_count(0)
+    expect(rail.get_by_role("button", name=f"Show details for {first['title']}", exact=True)).to_be_visible()
+    expect(missing_list).to_have_attribute("aria-pressed", "true")
+    expect(selection).to_contain_text(first["description"])
+    expect(page.locator(".map-marker")).to_have_count(int(mapped_second))
+    if mapped_second:
+        rail.get_by_role("button", name=re.compile(r"^In this area")).click()
+        expect(rail.get_by_role("button", name=f"Focus {second['title']} on map", exact=True)).to_be_visible()
+        missing_list.click()
+    else:
+        expect(rail.get_by_role("button", name=f"Show details for {second['title']}", exact=True)).to_be_visible()
+    paged_query = next(query for query in queries if query.get("cursor") == ["fixture-page-1"])
+    assert {key: value for key, value in paged_query.items() if key != "cursor"} == queries[0]
+    assert paged_query["source_key"] == ["fixture-techweek"]
+    assert paged_query["city"] == ["sanfrancisco"]
+    assert {"starts_after", "starts_before"}.issubset(paged_query)
+    assert page.evaluate("document.documentElement.scrollWidth <= window.innerWidth")
+
+    nav.get_by_role("button", name="Events", exact=True).click()
+    expect(page.get_by_role("heading", name=first["title"], exact=True)).to_be_visible()
+    assert {key: value for key, value in parse_qs(urlsplit(page.url).query).items() if key != "view"} == filters
+
+
+@pytest.mark.parametrize("width", [1440, 390])
+def test_map_keeps_mapped_and_unlocated_events_in_separate_accessible_lists(release_page, width):
+    harness, api = release_page
+    page = harness.page
+    page.set_viewport_size({"width": width, "height": 900})
+    page.emulate_media(reduced_motion="reduce")
+    mapped = _map_catalog_event(catalog_event()["canonical_event_id"], "Mapped Builders Meetup", mapped=True)
+    unlocated = _map_catalog_event(SECOND_EVENT_ID, "Venue Pending Mixer")
+    _install_map_catalog(page, api, [[mapped, unlocated]])
+    page.goto(f"{BASE}/?view=map&source=fixture-techweek&city=sanfrancisco&when=custom&start=2030-06-01&end=2030-06-30&price=any")
+
+    rail = page.locator(".map-preview-rail")
+    area_list = rail.get_by_role("button", name=re.compile(r"^In this area"))
+    missing_list = rail.get_by_role("button", name=re.compile(r"^Without map locations"))
+    expect(area_list).to_have_attribute("aria-pressed", "true")
+    expect(rail.get_by_role("button", name=f"Focus {mapped['title']} on map", exact=True)).to_be_visible()
+    expect(rail.get_by_role("button", name=f"Show details for {unlocated['title']}", exact=True)).to_have_count(0)
+    expect(page.locator(".map-marker")).to_have_count(1)
+
+    missing_list.click()
+    expect(missing_list).to_have_attribute("aria-pressed", "true")
+    expect(rail.get_by_role("button", name=f"Focus {mapped['title']} on map", exact=True)).to_have_count(0)
+    rail.get_by_role("button", name=f"Show details for {unlocated['title']}", exact=True).click()
+    expect(page.locator(".map-selection .event-card")).to_contain_text(unlocated["description"])
+    expect(page.locator(".map-marker")).to_have_count(1)
+
+    area_list.click()
+    expect(area_list).to_have_attribute("aria-pressed", "true")
+    rail.get_by_role("button", name=f"Focus {mapped['title']} on map", exact=True).click()
+    expect(page.locator(".map-selection .event-card")).to_contain_text(mapped["description"])
+    expect(page.locator(".map-marker")).to_have_count(1)
+    assert page.evaluate("document.documentElement.scrollWidth <= window.innerWidth")
+
+
 @pytest.mark.parametrize("local_demo", [True, False])
 def test_profile_avatar_reads_use_the_current_auth_contract(release_page, local_demo):
     harness, api = release_page

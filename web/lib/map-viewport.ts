@@ -111,6 +111,17 @@ export function eventsInMapBounds<
   });
 }
 
+export function partitionMapEvents<Event extends Pick<EventItem, "latitude" | "longitude">>(
+  events: Event[],
+): { mapped: Event[]; unmapped: Event[] } {
+  const mapped: Event[] = [];
+  const unmapped: Event[] = [];
+  for (const event of events) {
+    (eventMapCoordinate(event) ? mapped : unmapped).push(event);
+  }
+  return { mapped, unmapped };
+}
+
 export function cityMapViewport(city: string): CenterViewport {
   const center = CITY_CENTERS[cityKey(city)];
   return center
