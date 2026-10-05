@@ -40,6 +40,7 @@ Use `/v1/catalog/events` requests to verify filters and pagination. Browsing mus
 **Graph event details** — [selected-event integration tests](../tests/integration/test_catalog_browse.py), [browser checks](../tests/e2e/test_next_release_profile.py).
 
 - [ ] Overview, entity and topic graphs stay graphical on desktop and mobile. Check node selection and keyboard navigation.
+- [ ] The overview opens with compact search and optional Filters. Entity/topic focus shows `Graph › Name`; Graph clears entity/topic focus. Browser Back/Forward restores the previous focus. Participant Profile & sources loads the selected identity without refreshing providers.
 - [ ] Selecting an event in any graph shows the shared map card's source, linked title, date/time, venue links, availability, price, participants, topics and description. Overview/entity selections read `/v1/catalog/events/{canonical_event_id}`; topic graphs reuse loaded events. Initial graph load and hover do not read event details.
 - [ ] Host, organizer and other entity chips resolve the selected event's exact ID, role and name, then open that entity's graph. Topic chips open the topic graph. Check overview/entity/topic graphs on desktop and mobile; profile icons still open external profiles.
 - [ ] Explore connections retains source assertions and entity navigation; recurring dates select their own occurrence.
