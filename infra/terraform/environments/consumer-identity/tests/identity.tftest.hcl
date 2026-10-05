@@ -26,7 +26,7 @@ run "closed_by_default" {
 run "explicit_activation_and_owner_edge" {
   command = plan
   variables {
-    signup_enabled          = true
+    signup_enabled           = true
     operator_backend_service = "operator-backend"
   }
   assert {
