@@ -144,6 +144,15 @@ def test_additive_network_policies_cannot_bypass_connector_isolation(resources):
     assert {port["port"] for rule in policy["egress"] for port in rule["ports"]} == {
         53, 3000, 7844,
     }
+    dns = policy["egress"][0]
+    peer = dns["to"][0]
+    assert peer["namespaceSelector"]["matchLabels"] == {
+        "kubernetes.io/metadata.name": "kube-system",
+    }
+    assert matches(peer["podSelector"], {"k8s-app": "kube-dns"})
+    assert matches(peer["podSelector"], {"k8s-app": "node-local-dns"})
+    assert not matches(peer["podSelector"], {"k8s-app": "unrelated"})
+    assert dns["ports"] == [{"port": 53, "protocol": "TCP"}, {"port": 53, "protocol": "UDP"}]
     internet = policy["egress"][-1]
     assert {peer["ipBlock"]["cidr"] for peer in internet["to"]} == {
         "198.41.192.0/24", "198.41.200.0/24",
