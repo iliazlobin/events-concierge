@@ -15,6 +15,27 @@ from tests.e2e.test_admin_operations import OperationsApi
 pytestmark = pytest.mark.browser_e2e
 
 
+@pytest.mark.parametrize(
+    "path",
+    [
+        "/admin",
+        "/admin/v1/models/usage",
+        "/admin/v1/models/budget",
+        "/admin/v1/models/key",
+        "/admin/v1/models/unknown",
+    ],
+)
+def test_model_admin_http_responses_disallow_storage(page_factory, path: str) -> None:
+    base = os.environ.get("EC_ADMIN_WEB_URL")
+    if not base:
+        pytest.skip("EC_ADMIN_WEB_URL is not set")
+    harness = page_factory()
+    # Real HTTP catches Next header overrides that route-level fixtures bypass.
+    response = harness.context.request.get(f"{base}{path}")
+    directives = {value.strip().lower() for value in response.headers["cache-control"].split(",")}
+    assert "no-store" in directives
+
+
 def budget() -> dict[str, object]:
     now = datetime.now(UTC).isoformat()
     return {
