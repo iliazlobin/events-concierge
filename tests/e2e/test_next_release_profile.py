@@ -453,6 +453,33 @@ def test_graph_event_participant_profiles_load_once_without_writes(release_page,
 
 
 @pytest.mark.parametrize("width", [1440, 390])
+def test_graph_topic_inspector_counts_all_drawn_events(release_page, width):
+    harness, api = release_page
+    page = harness.page
+    page.set_viewport_size({"width": width, "height": 900})
+    graph = entity_graph()
+    second = second_catalog_event()
+    graph["nodes"].extend([
+        graph["nodes"][1] | {"node_id": f"event:{SECOND_EVENT_ID}",
+                               "canonical_event_id": SECOND_EVENT_ID,
+                               "label": second["title"], "start_at": second["start_at"]},
+        {"node_id": "topic:jazz", "node_kind": "topic", "ring": 3,
+         "label": "jazz", "degree": 2},
+    ])
+    graph["edges"].append({"a": graph["focus_id"], "b": "topic:jazz", "kind": "topic",
+                           "roles": [], "source_labels": [], "observed_at": None})
+    graph["counts"] |= {"events": 2, "events_total": 2, "topics": 1, "edges": 2}
+    graph["truncated"]["edges"] = True
+    page.route(f"**/v1/catalog/entities/{ENTITY_ID}/graph*",
+               lambda route: api.respond(route, graph))
+    page.goto(f"{BASE}/?view=entities&entity={ENTITY_ID}")
+    page.locator('button[data-node-id="topic:jazz"]').click()
+    inspector = page.get_by_role("complementary", name="Topic detail", exact=True)
+    expect(inspector.get_by_role("heading", name="Jazz", exact=True)).to_be_visible()
+    expect(inspector.get_by_text("2 of the 2 shown events", exact=True)).to_be_visible()
+
+
+@pytest.mark.parametrize("width", [1440, 390])
 def test_graph_workspace_breadcrumbs_and_browser_history(release_page, width):
     harness, _ = release_page
     page = harness.page

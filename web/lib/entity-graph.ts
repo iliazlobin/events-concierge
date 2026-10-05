@@ -544,10 +544,25 @@ export interface EntityGraphDetailModel {
   counts: CatalogEntityGraphCounts;
 }
 
-/**
- * Inspector facts derived from the original occurrence scene. Canvas aggregation
- * must preserve each date, role and source assertion here.
- */
+function graphAppearance(
+  node: CatalogEntityGraphNode,
+  evidence?: CatalogEntityGraphEdge,
+): EntityGraphAppearance {
+  return {
+    node_id: node.node_id,
+    title: node.label,
+    start_at: node.start_at,
+    is_past: isPastEvent(node),
+    venue_name: node.venue_name,
+    city: node.city,
+    roles: evidence?.kind === "mention" ? evidence.roles : [],
+    source_labels: evidence?.source_labels ?? [],
+    observed_at: evidence?.observed_at ?? null,
+    registration_url: node.registration_url,
+    entity_count: node.degree,
+  };
+}
+
 /** Appearance evidence belongs to the inspected entity, even in a sampled catalog graph. */
 export function deriveEntityAppearances(
   scene: EntityGraphSceneModel,
@@ -560,24 +575,16 @@ export function deriveEntityAppearances(
   return scene.events.flatMap((node) => {
     const edge = mentions.get(node.node_id);
     if (!edge) return [];
-    return [{
-      node_id: node.node_id,
-      title: node.label,
-      start_at: node.start_at,
-      is_past: isPastEvent(node),
-      venue_name: node.venue_name,
-      city: node.city,
-      roles: edge.roles,
-      source_labels: edge.source_labels,
-      observed_at: edge.observed_at,
-      registration_url: node.registration_url,
-      entity_count: node.degree,
-    }];
+    return [graphAppearance(node, edge)];
   });
 }
 
 export function deriveEntityGraphDetails(scene: EntityGraphSceneModel): EntityGraphDetailModel {
-  const appearances = deriveEntityAppearances(scene, scene.focusId);
+  // Topic/catalog frames retain every occurrence, without borrowing entity assertions.
+  const appearances = scene.ego?.node_kind === "entity"
+    ? deriveEntityAppearances(scene, scene.focusId)
+    : scene.events.map((node) => graphAppearance(node, scene.edges.find((edge) =>
+      edge.kind === "topic" && edge.a === scene.focusId && edge.b === node.node_id)));
 
   return {
     focus_id: scene.focusId,

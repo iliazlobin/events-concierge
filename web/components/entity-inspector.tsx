@@ -375,7 +375,7 @@ export function EntityInspector({
   }
 
   if (subject.node_kind === "topic") {
-    const eventTotal = detailModel.upcoming.length + detailModel.past.length;
+    const eventTotal = model.events.length;
     return (
       <aside className="entity-graph-inspector" aria-label="Topic detail">
         <header className="entity-graph-inspector__head">

@@ -790,7 +790,12 @@ test("the overview has no ego and retains every hub's appearance adjacency", () 
   const secondEvent = `event:${uuid("ffffffff", 2)}`;
 
   assert.equal(scene.ego, null, "the first ring-0 hub is not an implicit focus");
-  assert.equal(deriveEntityGraphDetails(scene).ego, null);
+  const details = deriveEntityGraphDetails(scene);
+  assert.equal(details.ego, null);
+  assert.equal(details.upcoming.length + details.past.length, 2);
+  assert.ok([...details.upcoming, ...details.past].every((row) =>
+    row.roles.length === 0 && row.source_labels.length === 0 && row.observed_at === null),
+  "a catalog frame does not borrow any hub's assertions");
   assert.deepEqual(new Set(scene.peers.map((node) => node.node_id)),
     new Set([firstHub, secondHub, thirdHub, isolatedHub]));
   assert.deepEqual(scene.peerEvents.get(firstHub), [firstEvent]);
