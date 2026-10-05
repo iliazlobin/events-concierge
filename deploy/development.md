@@ -293,7 +293,7 @@ kubectl -n events-concierge-dev patch cronjob events-concierge-ingestion-cadence
 - Replace `SET_ID` with exact completed prefix printed by backup.
 - **Normal backup:** stop app writers then Temporal; retain PostgreSQL/Redis; save three databases, payloads and image/schema metadata.
 - `recovery.json`: saved/read back before stopping writers; completion marker last; normal backup restores original replicas.
-- Verification: disposable Docker restore and checksums; only completed sets qualify.
+- Verification: disposable Docker restore and checksums; only completed sets qualify. Recreate schema-required password-free roles only in the disposable container; preserve owners/ACLs and verify privilege and tenant isolation.
 - Retain at least three successful sets; no automatic deletion; same project boundary, no independent project-loss protection.
 - Excludes Redis/private avatars. Never restore over running stores.
 - Restore prior cadence state after readiness/verification; `resume` restores no CronJob schedules.

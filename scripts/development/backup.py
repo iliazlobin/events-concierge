@@ -42,6 +42,7 @@ WRITERS = {
 } | {"ec-dev-temporal-" + name for name in ("frontend", "history", "matching", "worker")}
 RESUME_RETRY_DELAYS = (2, 4, 8)
 OPERATOR_ROLE_SCHEMA = 182
+MODEL_USAGE_ROLE_SCHEMA = 201
 SNAPSHOT_SQL = "SELECT json_build_object('tenants',(SELECT count(*) FROM tenants),'requests',(SELECT count(*) FROM event_requests),'schema',(SELECT version_num FROM alembic_version))::text"
 
 
@@ -594,6 +595,11 @@ def restore_role_sql(schema):
                 "GRANT ec_ingestion_executor TO ec_dev_ingestion",
             ]
         )
+    if int(schema) >= MODEL_USAGE_ROLE_SCHEMA:
+        statements.append(
+            "CREATE ROLE ec_model_usage_definer NOLOGIN NOSUPERUSER NOCREATEDB "
+            "NOCREATEROLE NOREPLICATION NOBYPASSRLS"
+        )
     return "; ".join(statements) + ";"
 
 
@@ -609,6 +615,25 @@ def verify_operator_roles(sql, schema):
             )
             == "0"
         ), "Restored operator roles bypass consumer isolation"
+
+
+def verify_model_usage_role(sql, schema):
+    if int(schema) >= MODEL_USAGE_ROLE_SCHEMA:
+        assert (
+            sql(
+                "SELECT count(*) FROM pg_roles r WHERE rolname='ec_model_usage_definer' "
+                "AND NOT (rolcanlogin OR rolsuper OR rolbypassrls OR rolcreaterole "
+                "OR rolcreatedb OR rolreplication) "
+                "AND NOT EXISTS (SELECT 1 FROM pg_auth_members m "
+                "WHERE m.member=r.oid OR m.roleid=r.oid)"
+            )
+            == "1"
+        ), "Restored model usage definer is missing or has unsafe privileges/memberships"
+
+
+def verify_restored_roles(sql, schema):
+    verify_operator_roles(sql, schema)
+    verify_model_usage_role(sql, schema)
 
 
 def verify(uri):
@@ -730,7 +755,7 @@ def verify(uri):
                         )
                         == "0"
                     )
-                    verify_operator_roles(sql, manifest["schema"])
+                    verify_restored_roles(sql, manifest["schema"])
                     assert (
                         sql(
                             "SELECT count(*) FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname='public' AND c.relrowsecurity AND NOT c.relforcerowsecurity"
