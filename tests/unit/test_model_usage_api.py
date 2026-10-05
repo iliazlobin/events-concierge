@@ -153,6 +153,41 @@ async def test_bounded_aware_windows_and_missing_auth_are_rejected_before_store(
     assert response.headers["cache-control"].startswith("no-store")
 
 
+@pytest.mark.parametrize(("bucket_hours", "days"), [("1", 1), ("24", 7)])
+async def test_usage_accepts_explicit_http_bucket_values(bucket_hours: str, days: int) -> None:
+    app, _ = _app("viewer")
+    store = Store()
+    app.state.model_usage = store
+    now = datetime.now(UTC)
+    params = {
+        "start_at": (now - timedelta(days=days)).isoformat(),
+        "end_at": now.isoformat(),
+        "bucket_hours": bucket_hours,
+    }
+    async with AsyncClient(transport=ASGITransport(app=app), base_url=_ORIGIN) as client:
+        response = await client.get("/admin/v1/models/usage", params=params, headers=_headers())
+    assert response.status_code == 200
+    assert response.json()["bucket_hours"] == int(bucket_hours)
+    assert store.calls == 1
+
+
+@pytest.mark.parametrize("bucket_hours", ["0", "2", "25", "daily"])
+async def test_usage_rejects_unsupported_http_bucket_values_before_store(bucket_hours: str) -> None:
+    app, _ = _app("viewer")
+    store = Store()
+    app.state.model_usage = store
+    now = datetime.now(UTC)
+    params = {
+        "start_at": (now - timedelta(days=1)).isoformat(),
+        "end_at": now.isoformat(),
+        "bucket_hours": bucket_hours,
+    }
+    async with AsyncClient(transport=ASGITransport(app=app), base_url=_ORIGIN) as client:
+        response = await client.get("/admin/v1/models/usage", params=params, headers=_headers())
+    assert response.status_code == 422
+    assert store.calls == 0
+
+
 @pytest.mark.parametrize("host", ["attacker.test", "127.0.0.1:8000"])
 async def test_local_boundary_requires_loopback(host: str) -> None:
     app = FastAPI()

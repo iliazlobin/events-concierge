@@ -29,6 +29,12 @@ const nextConfig: NextConfig = {
         ],
       },
       {
+        source: "/admin/:path*",
+        headers: [
+          { key: "Cache-Control", value: "no-store, max-age=0" },
+        ],
+      },
+      {
         source: "/sign-in",
         headers: [
           { key: "Cache-Control", value: "no-store, max-age=0" },

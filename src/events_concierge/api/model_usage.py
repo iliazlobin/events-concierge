@@ -144,14 +144,15 @@ def install_model_usage_routes(app: FastAPI) -> None:
         admin: LocalIngestionAdmin,
         start_at: AwareDatetime,
         end_at: AwareDatetime,
-        bucket_hours: Literal[1, 24] = 24,
+        bucket_hours: int = 24,
         model: Annotated[str | None, Query(max_length=200, pattern=r"^[!-~]{1,200}$")] = None,
     ) -> dict[str, Any]:
         del admin
         _no_store(response)
         span = end_at - start_at
         if (
-            span <= timedelta(0)
+            bucket_hours not in (1, 24)
+            or span <= timedelta(0)
             or span > timedelta(days=90)
             or end_at > datetime.now(UTC) + timedelta(days=1)
             or span.total_seconds() > bucket_hours * 3600 * 120
