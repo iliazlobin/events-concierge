@@ -560,8 +560,8 @@ export function MapView({
           unmappedEvents={unmapped}
           mappedCount={mapped.length}
           showUnmapped={showUnmapped}
-          onListChange={(unmapped) => {
-            setUnmappedList(unmapped);
+          onListChange={(showUnmappedList) => {
+            setUnmappedList(showUnmappedList);
             setSelectedId(null);
             setActiveDay(null);
             setPeekDay(null);
