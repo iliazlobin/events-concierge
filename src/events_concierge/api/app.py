@@ -93,6 +93,7 @@ from ..ports.workflows import RegistrationLifecycleSignaler
 from ..workflows.temporal_client import connect_temporal, validate_temporal_settings
 from .admin import install_ingestion_admin_routes
 from .command_investigation import install_command_investigation_routes
+from .model_usage import install_model_usage_routes
 from .operator import build_operator_services, install_operator_session_routes
 from .operator_operations import install_operator_operations_routes
 
@@ -3812,6 +3813,7 @@ def create_app() -> FastAPI:
     install_command_investigation_routes(app)
     install_operator_operations_routes(app)
     install_operator_session_routes(app)
+    install_model_usage_routes(app)
     _install_agent_chat(app, settings)
     apply_release_profile(app, settings.release_profile)
     return app
@@ -3828,6 +3830,7 @@ def _install_agent_chat(app: FastAPI, settings: Settings) -> None:
     import os
 
     from ..adapters.agent_runtime.openrouter import OpenRouterAgentRuntime
+    from ..adapters.postgres.model_usage import PostgresModelUsageStore
     from ..agent.routes import install_agent_routes
     from ..agent.toolset import ConciergeToolsetImpl
 
@@ -3851,6 +3854,7 @@ def _install_agent_chat(app: FastAPI, settings: Settings) -> None:
             api_key=api_key,
             model=os.environ.get("EC_AGENT_MODEL", "deepseek/deepseek-v4-flash"),
             fallback_model=os.environ.get("EC_AGENT_MODEL_FALLBACK") or None,
+            usage_ledger=PostgresModelUsageStore(),
         ),
         toolset_factory=build_toolset,
         tenant_resolver=_authenticated_tenant,

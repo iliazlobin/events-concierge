@@ -34,6 +34,7 @@ _ROLE_CAPABILITIES: dict[OperatorRole, frozenset[str]] = {
             "ingestion.refresh",
             "ingestion.sources.enable",
             "ingestion.sources.configure",
+            "models.budget.configure",
         }
     ),
 }
@@ -122,6 +123,8 @@ def required_capability(request: Request) -> str:
     if request.method in {"GET", "HEAD"}:
         return "ingestion.read"
     path = request.url.path
+    if request.method == "PATCH" and path == "/admin/v1/models/budget":
+        return "models.budget.configure"
     if request.method == "POST" and path == "/admin/v1/ingestion/commands":
         return "ingestion.refresh"
     if request.method == "PATCH" and path == "/admin/v1/ingestion/sources/bulk/enabled":

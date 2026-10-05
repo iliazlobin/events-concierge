@@ -13,6 +13,7 @@ ChevronsUpDown,
 CircleAlert,
 Command as CommandIcon,
 Database,
+Coins,
 FileClock,
 Filter,
 Layers3,
@@ -27,6 +28,7 @@ X
 import { Fragment,useCallback,useEffect,useMemo,useRef,useState } from "react";
 
 import { CommandsView } from "@/components/admin/commands-view";
+import { ModelsView } from "@/components/admin/models-view";
 import { PipelineView } from "@/components/admin/pipeline-view";
 import { RunsView } from "@/components/admin/runs-view";
 import { RunStatisticsView } from "@/components/admin/run-statistics-view";
@@ -126,6 +128,7 @@ const TABS: Array<{
   { value: "catalog", label: "Catalog", icon: Database },
   { value: "run-stats", label: "Runs", icon: FileClock },
   { value: "commands", label: "Commands", icon: CommandIcon },
+  { value: "models", label: "Models", icon: Coins },
 ];
 
 const CONTEXTUAL_VIEWS: Partial<Record<AdminTab, {
@@ -791,6 +794,7 @@ export function AdminConsole() {
   const canRefresh = operator?.capabilities.includes("ingestion.refresh") ?? false;
   const canEnable = operator?.capabilities.includes("ingestion.sources.enable") ?? false;
   const canConfigure = operator?.capabilities.includes("ingestion.sources.configure") ?? false;
+  const canConfigureBudget = operator?.capabilities.includes("models.budget.configure") ?? false;
   const [submitting, setSubmitting] = useState(false);
   const [sourceMutatingKey, setSourceMutatingKey] = useState<string | null>(null);
   const [sourceBulkMutation, setSourceBulkMutation] = useState<{
@@ -1232,6 +1236,7 @@ export function AdminConsole() {
             {tab === "run-stats" ? (
               <RunStatisticsView refreshVersion={reloadNonce} onOpenSource={openSource} onOpenCatalog={openRegistryCatalog} />
             ) : null}
+            {tab === "models" ? <ModelsView refreshVersion={reloadNonce} canConfigureBudget={canConfigureBudget} /> : null}
             {tab === "catalog" ? (
               <CatalogView
                 onOpenRuns={openPipelineRuns}

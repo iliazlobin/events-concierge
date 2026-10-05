@@ -1,4 +1,4 @@
-export type AdminTab = "overview" | "pipeline" | "sources" | "catalog" | "run-stats" | "runs" | "commands";
+export type AdminTab = "overview" | "pipeline" | "sources" | "catalog" | "run-stats" | "runs" | "commands" | "models";
 export type SourceState = "all" | "active" | "due" | "blocked" | "failed";
 export type SourceStatus =
   | "active"

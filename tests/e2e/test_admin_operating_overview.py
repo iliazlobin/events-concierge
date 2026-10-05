@@ -335,7 +335,7 @@ def _background_page_status(page: Page):
     )
 
 
-def test_overview_landing_has_visual_summary_bounded_previews_and_five_destinations(
+def test_overview_landing_has_visual_summary_bounded_previews_and_six_destinations(
     operating_page,
 ) -> None:
     page, scenario, base = operating_page
@@ -350,7 +350,7 @@ def test_overview_landing_has_visual_summary_bounded_previews_and_five_destinati
     expect(page.get_by_role("group", name="Operational perspective", exact=True)).to_have_count(0)
     navigation = page.get_by_role("navigation", name="Administration navigation", exact=True)
     expect(navigation.get_by_role("button")).to_have_text(
-        ["Overview", "Sources", "Catalog", "Runs", "Commands"]
+        ["Overview", "Sources", "Catalog", "Runs", "Commands", "Models"]
     )
     original = page.url
     summary.get_by_text("Fresh sources", exact=True).click()
@@ -902,7 +902,7 @@ def test_legacy_secondary_route_has_contextual_navigation_and_back(
     expect(page.get_by_role("heading", name=title, exact=True, level=1)).to_be_visible()
     navigation = page.get_by_role("navigation", name="Administration navigation", exact=True)
     expect(navigation.get_by_role("button")).to_have_text(
-        ["Overview", "Sources", "Catalog", "Runs", "Commands"]
+        ["Overview", "Sources", "Catalog", "Runs", "Commands", "Models"]
     )
     context = page.get_by_role("navigation", name="Administration breadcrumb", exact=True)
     expect(context.get_by_text(breadcrumb, exact=True)).to_be_visible()
@@ -933,7 +933,7 @@ def test_commands_tab_preserves_registry_filter_on_browser_back(operating_page, 
     navigation.get_by_role("button", name="Commands", exact=True).click()
     expect(page.get_by_role("heading", name="Commands", exact=True, level=1)).to_be_visible()
     expect(navigation.get_by_role("button")).to_have_text(
-        ["Overview", "Sources", "Catalog", "Runs", "Commands"]
+        ["Overview", "Sources", "Catalog", "Runs", "Commands", "Models"]
     )
     command_tab = navigation.get_by_role("button", name="Commands", exact=True)
     expect(command_tab).to_have_attribute("aria-current", "page")

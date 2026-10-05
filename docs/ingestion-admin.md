@@ -14,7 +14,7 @@ Inspect catalog collection, investigate failures and submit reviewed commands. U
 | --- | --- |
 | Viewer | Read safe catalog, source, run, command and background-work projections. |
 | Operator | Queue refresh; pause/resume reviewed sources using exact revisions. |
-| Reviewer | Edit reviewed source configuration with explicit acknowledgement and revision checks. |
+| Reviewer | Edit reviewed source configuration and model budgets with revision checks. |
 
 - Bulk pause/resume is atomic, audited and limited to 100 sources; incomplete roster reads disable bulk changes.
 - Reviewer fields: seed URL, approved HTTPS origins, enabled state, cadence, pacing, page limit, collection horizon and review expiry.
@@ -112,6 +112,16 @@ Cadence/operator → durable command → ingestion-command worker
 - Admission and collection have timers; collection includes extraction/enrichment. Publication timing includes normalization/deduplication.
 - Shared Temporal activities report wall time only. Direct-worker CPU/RSS samples describe process boundaries, not host utilization or continuous peaks.
 - Use container/host telemetry for capacity. Provider bodies, secrets, arbitrary exceptions and tenant data stay outside admin projections.
+
+## Models
+
+- Open `/admin?tab=models` for OpenRouter spend, tokens, latency and outcomes. Choose 24 hours, 7/30/90 days, custom UTC dates or an actual model; bookmarks retain these filters.
+- Application history starts when [model accounting](../src/events_concierge/adapters/agent_runtime/openrouter/runtime.py) is activated. Chat and the development CLI record each physical request, including tool-loop calls and fallback models. Missing costs remain unknown; totals include only provider-reported USD. No prompts, answers or keys are retained.
+- Reviewer budget edits are audited and revision checked. Daily/monthly USD limits start unset; zero stops new calls in enforcement mode. Warning mode only shows alerts.
+- Limits use all application calls, independent of chart filters, and reset at midnight UTC. Enforcement stops new calls after recorded spend reaches a limit or a completed/stale pending charge is unknown in the active budget period. Calls already admitted can exceed the limit.
+- OpenRouter key totals are separate and may include other applications. The operator service needs its own approved `EC_OPENROUTER_API_KEY` configuration for the read-only [current-key API](https://openrouter.ai/docs/api/api-reference/api-keys/get-current-key); management keys and account-credit access are unnecessary.
+- Before activation, migrate through `0201` and release compatible API/web artifacts using the deployment runbook. Rollback retains ledger/audit tables; downgrade refuses to discard recorded history. Database unavailability denies model egress.
+- Unknown charges: review [OpenRouter activity](https://openrouter.ai/activity) before changing the budget mode or waiting for the affected UTC period to reset. Historical reconciliation is not automated.
 
 ## Diagnostics and commands
 

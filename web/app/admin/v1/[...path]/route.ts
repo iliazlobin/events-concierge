@@ -80,6 +80,10 @@ function sameOrigin(request: NextRequest, authority: URL): boolean {
 type AdminMethod = "GET" | "POST" | "PATCH";
 
 function allowedPath(path: string[], method: AdminMethod): boolean {
+  if (path[0] === "models" && path.length === 2) {
+    return (method === "GET" && ["usage", "budget", "key"].includes(path[1]))
+      || (method === "PATCH" && path[1] === "budget");
+  }
   if (method === "GET" && path.length === 2 && (
     (path[0] === "operations" && (path[1] === "overview" || path[1] === "errors" || path[1] === "records"))
     || (path[0] === "operator" && path[1] === "session")

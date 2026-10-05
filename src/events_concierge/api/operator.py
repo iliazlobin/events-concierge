@@ -7,6 +7,7 @@ forwards the original signed IAP assertion; this API validates it on every reque
 from __future__ import annotations
 
 import asyncio
+import os
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from typing import Annotated
@@ -15,9 +16,11 @@ from fastapi import Depends, FastAPI, HTTPException, Request, Response
 from starlette.responses import JSONResponse
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
+from ..adapters.agent_runtime.openrouter.key_usage import OpenRouterKeyUsage
 from ..adapters.postgres.catalog import PostgresCatalogRepository
 from ..adapters.postgres.command_investigation import CommandInvestigationStore
 from ..adapters.postgres.ingestion_admin import PostgresIngestionAdminRepository
+from ..adapters.postgres.model_usage import PostgresModelUsageStore
 from ..adapters.postgres.operator_operations import PostgresOperatorOperationsRepository
 from ..adapters.ranking.embedding import DeterministicEmbedding
 from ..application.catalog_execution_descriptors import CatalogExecutionDescriptorRegistry
@@ -27,6 +30,7 @@ from ..deployment.startup import preflight_operator_runtime
 from ..infra.operator_database import OperatorDatabase
 from .admin import _local_ingestion_admin, install_ingestion_admin_routes
 from .command_investigation import install_command_investigation_routes
+from .model_usage import install_model_usage_routes
 from .operator_auth import IapOperatorIdentityVerifier, OperatorPrincipal
 from .operator_operations import install_operator_operations_routes
 
@@ -104,6 +108,7 @@ def install_operator_session_routes(app: FastAPI) -> None:
                 "ingestion.refresh",
                 "ingestion.sources.enable",
                 "ingestion.sources.configure",
+                "models.budget.configure",
             ],
             "environment": request.app.state.settings.env,
             "authentication": "local",
@@ -129,6 +134,10 @@ def build_operator_services(app: FastAPI, settings: Settings) -> OperatorDatabas
     )
     app.state.operator_operations = PostgresOperatorOperationsRepository(database.session_scope)
     app.state.operator_database = database
+    app.state.model_usage = PostgresModelUsageStore(session_scope=database.session_scope)
+    app.state.openrouter_key_usage = OpenRouterKeyUsage(
+        os.environ.get("EC_OPENROUTER_API_KEY", "").strip()
+    )
     app.state.command_investigation = CommandInvestigationStore(
         session_scope=database.session_scope,
         task_queue=settings.temporal_catalog_queue,
@@ -185,6 +194,7 @@ def create_operator_app(settings: Settings | None = None) -> FastAPI:
     install_command_investigation_routes(app)
     install_operator_operations_routes(app)
     install_operator_session_routes(app)
+    install_model_usage_routes(app)
 
     @app.get("/healthz")
     async def health() -> dict[str, str]:

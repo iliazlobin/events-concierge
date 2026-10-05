@@ -16,15 +16,19 @@ Two guards matter more than they look:
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import time
 from collections.abc import AsyncIterator, Mapping, Sequence
+from dataclasses import replace
 from typing import Any
+from uuid import UUID, uuid4
 
 import httpx
 
 from ....agent.blocks import blocks_for_tool_result, dedupe_blocks
+from ....domain.model_usage import ModelCallUsage, ModelUsageError, response_usage
 from ....ports.agent import (
     AgentBlock,
     AgentTurnEvent,
@@ -37,10 +41,12 @@ from ....ports.agent import (
     TurnToolEnd,
     TurnToolStart,
 )
+from ....ports.model_usage import ModelUsageLedger
 
 _log = logging.getLogger(__name__)
 
 DEFAULT_BASE_URL = "https://openrouter.ai/api/v1"
+_USAGE_RECEIPT_TIMEOUT_SECONDS = 10.0
 
 
 class OpenRouterAgentRuntime:
@@ -58,6 +64,7 @@ class OpenRouterAgentRuntime:
         timeout_seconds: float = 60.0,
         client: httpx.AsyncClient | None = None,
         app_title: str = "events-concierge",
+        usage_ledger: ModelUsageLedger,
     ) -> None:
         if not api_key.strip():
             raise ValueError("OpenRouter API key must not be empty")
@@ -72,6 +79,7 @@ class OpenRouterAgentRuntime:
         self._timeout = timeout_seconds
         self._client = client
         self._app_title = app_title
+        self._usage_ledger = usage_ledger
 
     def _tool_schemas(self, toolset: ConciergeToolset) -> list[dict[str, Any]]:
         return [
@@ -97,6 +105,7 @@ class OpenRouterAgentRuntime:
             "messages": messages,
             "tools": tools,
             "temperature": 0,
+            "usage": {"include": True},
             # Pin routing and forbid training/logging collection. OpenRouter is a router: without
             # this the request may land with whichever upstream is cheapest, including tiers whose
             # policy permits retaining prompts.
@@ -104,18 +113,85 @@ class OpenRouterAgentRuntime:
         }
         if self._fallback_model:
             body["models"] = [self._model, self._fallback_model]
-        response = await client.post(
-            f"{self._base_url}/chat/completions",
-            json=body,
-            headers={
-                "Authorization": f"Bearer {self._api_key}",
-                "X-Title": self._app_title,
-            },
-            timeout=self._timeout,
-        )
-        response.raise_for_status()
-        payload: dict[str, Any] = response.json()
+        call_id = uuid4()
+        try:
+            admission = await self._usage_ledger.begin_call(call_id, self._model)
+        except Exception as error:
+            raise ModelUsageError("model_accounting_unavailable") from error
+        if admission != "allowed":
+            raise ModelUsageError(admission)
+        try:
+            response = await client.post(
+                f"{self._base_url}/chat/completions",
+                json=body,
+                headers={"Authorization": f"Bearer {self._api_key}", "X-Title": self._app_title},
+                timeout=self._timeout,
+            )
+            response.raise_for_status()
+            payload: dict[str, Any] = response.json()
+            if not isinstance(payload, dict):
+                raise ValueError("invalid model response")
+            measured = response_usage(payload)
+        except asyncio.CancelledError:
+            try:
+                await self._finish_usage(
+                    call_id, ModelCallUsage(status="interrupted", error_code="cancelled")
+                )
+            except Exception:
+                _log.warning("agent_cancelled_usage_pending")
+            raise
+        except (httpx.HTTPError, ValueError) as error:
+            code = (
+                f"http_{error.response.status_code}"
+                if isinstance(error, httpx.HTTPStatusError)
+                else "request_failed"
+            )
+            measured = ModelCallUsage(status="failed", error_code=code)
+            if isinstance(error, httpx.HTTPStatusError):
+                try:
+                    error_payload = error.response.json()
+                    if isinstance(error_payload, dict):
+                        measured = replace(
+                            response_usage(error_payload), status="failed", error_code=code
+                        )
+                except ValueError:
+                    pass
+            await self._finish_usage(call_id, measured)
+            if isinstance(error, ValueError):
+                raise ModelUsageError("model_response_invalid") from error
+            raise
+        await self._finish_usage(call_id, measured)
+        if measured.status == "failed":
+            raise ModelUsageError("model_response_error")
         return payload
+
+    async def _finish_usage(self, call_id: UUID, measured: ModelCallUsage) -> None:
+        async def persist() -> None:
+            async with asyncio.timeout(_USAGE_RECEIPT_TIMEOUT_SECONDS):
+                await self._usage_ledger.finish_call(call_id, measured)
+
+        # A disconnected client must not roll back a known provider charge. Retain
+        # and await the receipt task, including repeated cancellation, until its
+        # bounded write finishes; then restore the caller's cancellation.
+        receipt = asyncio.create_task(persist())
+        cancellation: asyncio.CancelledError | None = None
+        while not receipt.done():
+            try:
+                await asyncio.shield(receipt)
+            except asyncio.CancelledError as error:
+                cancellation = cancellation or error
+            except Exception:
+                break
+        if cancellation is not None:
+            try:
+                receipt.result()
+            except (Exception, asyncio.CancelledError):
+                _log.warning("agent_cancelled_usage_pending")
+            raise cancellation
+        try:
+            receipt.result()
+        except Exception as error:
+            raise ModelUsageError("model_accounting_unavailable") from error
 
     async def run_turn(
         self,
@@ -143,6 +219,19 @@ class OpenRouterAgentRuntime:
             while model_calls < self._max_model_calls:
                 try:
                     payload = await self._complete(client, messages, tools)
+                except ModelUsageError as exc:
+                    messages_by_code = {
+                        "budget_exhausted": "The application's model budget is exhausted. Review budgets in admin.",
+                        "cost_unknown": "A previous model charge is unknown. Review usage in admin before continuing.",
+                    }
+                    yield TurnError(
+                        code=exc.code,
+                        message=messages_by_code.get(
+                            exc.code,
+                            "Model accounting or the provider response is unavailable. No further model calls were made.",
+                        ),
+                    )
+                    return
                 except httpx.HTTPStatusError as exc:
                     detail = exc.response.text[:200]
                     _log.warning(
@@ -155,9 +244,9 @@ class OpenRouterAgentRuntime:
                     return
 
                 model_calls += 1
-                usage = payload.get("usage") or {}
-                input_tokens += int(usage.get("prompt_tokens") or 0)
-                output_tokens += int(usage.get("completion_tokens") or 0)
+                measured = response_usage(payload)
+                input_tokens += measured.input_tokens or 0
+                output_tokens += measured.output_tokens or 0
 
                 choices = payload.get("choices") or []
                 if not choices:
@@ -241,7 +330,9 @@ class OpenRouterAgentRuntime:
                         duration_ms=elapsed_ms,
                         summary=_summarize(result.as_model_json()),
                     )
-                    pending.extend(blocks_for_tool_result(name, result.status, result.payload, result.render))
+                    pending.extend(
+                        blocks_for_tool_result(name, result.status, result.payload, result.render)
+                    )
 
             yield TurnError(
                 code="model_call_budget_exhausted",

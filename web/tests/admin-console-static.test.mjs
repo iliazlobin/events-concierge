@@ -13,7 +13,7 @@ const investigation = read("../components/admin/command-investigation.tsx");
 test("primary navigation includes Commands and contextual run views remain reachable", () => {
   const primaryNav = adminConsole.slice(adminConsole.indexOf("const TABS:"), adminConsole.indexOf("const CONTEXTUAL_VIEWS:"));
   assert.deepEqual([...primaryNav.matchAll(/value: "([a-z-]+)", label: "([^"]+)"/g)].map((match) => [match[1], match[2]]), [
-    ["overview", "Overview"], ["sources", "Sources"], ["catalog", "Catalog"], ["run-stats", "Runs"], ["commands", "Commands"],
+    ["overview", "Overview"], ["sources", "Sources"], ["catalog", "Catalog"], ["run-stats", "Runs"], ["commands", "Commands"], ["models", "Models"],
   ]);
   assert.match(adminConsole, /aria-label="Administration breadcrumb"/);
   assert.match(adminConsole, /runs: \{ title: "Run history", parent: "run-stats", backLabel: "Back to Runs" \}/);
