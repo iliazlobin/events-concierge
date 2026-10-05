@@ -1096,7 +1096,7 @@ export function ConciergeApp() {
   const handleEntityPageSelect = useCallback((entityId: string | null) => {
     pushConsumerSnapshot(createConsumerHistorySnapshot(
       "entities",
-      filters,
+      entityId ? filters : { ...filters, topics: [] },
       null,
       calendarMode,
       entityId,
@@ -1418,6 +1418,7 @@ export function ConciergeApp() {
         {view === "entities" && !selectedEntityId && filters.topics.length === 1 ? (
           <TopicGraphView key={filters.topics[0]} topic={filters.topics[0]} events={events}
             hasMore={Boolean(nextCursor)} loading={catalogLoading || loadingMore} error={catalogError}
+            onOverview={() => handleEntityPageSelect(null)}
             onLoadMore={handleLoadMore} onEntitySelect={handleEntitySelect} onTopicSelect={handleTopicSelect}/>
         ) : view === "entities" ? (
           <>

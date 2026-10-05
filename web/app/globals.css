@@ -5227,14 +5227,6 @@ textarea:focus-visible {
   margin: 14px 0 0;
 }
 
-.entities-view {
-  padding-top: 68px;
-}
-
-.entities-heading {
-  align-items: end;
-}
-
 .entity-search {
   align-items: center;
   background: var(--panel);
@@ -5362,27 +5354,6 @@ textarea:focus-visible {
 .entity-directory-card__metrics strong {
   color: var(--accent);
   font-size: 24px;
-}
-
-.entity-back {
-  align-items: center;
-  background: transparent;
-  border: 0;
-  color: var(--muted);
-  cursor: pointer;
-  display: inline-flex;
-  gap: 8px;
-  margin-bottom: 28px;
-  padding: 0;
-}
-
-.entity-back:hover {
-  color: var(--ink);
-}
-
-.entity-back svg {
-  height: 17px;
-  width: 17px;
 }
 
 .entity-loading {

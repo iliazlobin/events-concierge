@@ -1,12 +1,13 @@
 "use client";
 
-import { Building2, Hash, LoaderCircle, UserRound, UsersRound } from "lucide-react";
+import { Building2, Hash, LoaderCircle, SlidersHorizontal, UserRound, UsersRound } from "lucide-react";
 import type { ReactNode } from "react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { EntityGraphCanvas } from "@/components/entity-graph-canvas";
 import { EntityGraphView } from "@/components/entity-graph-view";
 import { GraphEventInspector } from "@/components/graph-event-inspector";
+import { GraphWorkspaceHeading } from "@/components/graph-workspace-heading";
 import {
   ENTITY_SEARCH_DEBOUNCE_MS,
   EntityFilterChips,
@@ -348,43 +349,24 @@ function EntityOverviewGraph({ tenantId, onSelectEntity, onEntitySelect, onTopic
 
   return (
     <section className="workspace entities-view">
-      <header className="workspace-heading entities-heading">
-        <div>
-          <p>PEOPLE &amp; ORGANIZATIONS</p>
-          <h1>Entity explorer</h1>
-        </div>
-      </header>
-
       <div className="entity-overview">
-        <EntitySearchBox
-          query={query}
-          onQueryChange={setQuery}
-          loading={loading}
-          placeholder="Search organizers, hosts, speakers, companies…"
-        />
+        <GraphWorkspaceHeading>
+          <div className="graph-workspace-tools">
+            <EntitySearchBox query={query} onQueryChange={setQuery} loading={loading}
+              placeholder="Search people and organizations…" />
+            <details className="graph-workspace-filters">
+              <summary><SlidersHorizontal aria-hidden="true" />Filters
+                {kinds.length || identity !== "all" ? <span>{kinds.length + Number(identity !== "all")}</span> : null}
+              </summary>
+              <EntityFilterChips kinds={kinds} onKindsChange={setKinds} kindCounts={kindCounts}
+                identity={identity} onIdentityChange={setIdentity} identityCounts={identityCounts}
+                identityScope="In the whole catalog" label="Narrow the graph" />
+            </details>
+          </div>
+        </GraphWorkspaceHeading>
 
         {error ? <p className="workspace-error" role="alert">{error}</p> : null}
 
-        <EntityFilterChips
-          kinds={kinds}
-          onKindsChange={setKinds}
-          kindCounts={kindCounts}
-          identity={identity}
-          onIdentityChange={setIdentity}
-          identityCounts={identityCounts}
-          identityScope="In the whole catalog"
-          label="Narrow the graph"
-        />
-
-        {/*
-          * The counts a reader needs at a glance, and the two disclosures they need once.
-          *
-          * Both disclosures are load-bearing — the graph is drawn from 5% of the catalog, and each
-          * line stands for a pair's whole shared history rather than a single meeting — so neither
-          * can be dropped. But three stacked paragraphs of prose ahead of the picture is a wall,
-          * and a wall is read once and then skipped forever, which is the same as not being there.
-          * Folded away they are one click from anyone who wants them and silent for everyone else.
-          */}
         {graph ? (
           <div className="entity-overview-meta">
             <p className="entity-directory-matched">
