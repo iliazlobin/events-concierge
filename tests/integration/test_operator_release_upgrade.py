@@ -28,6 +28,7 @@ def test_upgrade_from_published_head_preserves_measured_usage_and_budget_audit(
     root = Path(__file__).resolve().parents[2]
     config = Config(str(root / "alembic.ini"))
     config.set_main_option("script_location", str(root / "migrations"))
+    expected_head = ScriptDirectory.from_config(config).get_current_head()
     created = False
     engine = create_engine(url, hide_parameters=True)
     try:
@@ -66,7 +67,7 @@ def test_upgrade_from_published_head_preserves_measured_usage_and_budget_audit(
         with engine.connect() as connection:
             assert (
                 connection.execute(text("SELECT version_num FROM alembic_version")).scalar_one()
-                == ScriptDirectory.from_config(config).get_current_head()
+                == expected_head
             )
             assert _accounting_snapshot(connection) == before
             assert (
