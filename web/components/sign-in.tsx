@@ -28,6 +28,8 @@ export function SignIn({ reason, returnTo = "/", reauthenticationState }: {
     let cancelled = false;
     setLoading(true);
     setFailed(false);
+    // A retry may load revised legal documents; previous consent cannot approve them.
+    setAccepted(false);
     void getUiConfig().then(async (next) => {
       if (cancelled) return;
       setConfig(next);
