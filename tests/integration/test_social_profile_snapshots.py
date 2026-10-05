@@ -25,6 +25,24 @@ from events_concierge.infra.db import system_session_scope
 pytestmark = pytest.mark.integration
 
 
+async def _saved_profile(entity):
+    """Read with ec_app capabilities; this isolated identity has no public event appearances."""
+    async with system_session_scope() as session:
+        sources = (
+            await session.execute(
+                text("SELECT * FROM public.fn_list_catalog_entity_external_sources_v1(:id)"),
+                {"id": entity},
+            )
+        ).all()
+        facts = (
+            await session.execute(
+                text("SELECT * FROM public.fn_list_catalog_entity_external_facts_v2(:id)"),
+                {"id": entity},
+            )
+        ).all()
+    return sources, facts
+
+
 @pytest.fixture
 async def social_fixture(db):
     owner = create_async_engine(os.environ["EC_MIGRATION_URL"])
@@ -99,22 +117,22 @@ async def test_snapshot_survives_ingestion_and_provider_failure(social_fixture):
     )
     assert await refresh.finish(claim, collection, error_code=None, refresh_seconds=86400)
     await import_link()
-    detail = await PostgresCatalogEntityRepository().get(entity)
-    source = next(s for s in detail.external_sources if s.provider_key == "x_public_api")
+    sources, facts = await _saved_profile(entity)
+    source = next(s for s in sources if s.provider_key == "x_public_api")
     saved_time = source.fetched_at
     assert source.status == "fresh"
-    assert len(detail.external_facts) == 3
+    assert len(facts) == 3
     await due()
     claim = await refresh.claim(("x_public_api",), 10000)
     assert claim.previous_id == "12345"
     assert await refresh.finish(
         claim, None, error_code="credentials_rejected", refresh_seconds=86400
     )
-    detail = await PostgresCatalogEntityRepository().get(entity)
-    source = next(s for s in detail.external_sources if s.provider_key == "x_public_api")
+    sources, facts = await _saved_profile(entity)
+    source = next(s for s in sources if s.provider_key == "x_public_api")
     assert source.status == "failed" and source.fetched_at == saved_time
-    assert len(detail.external_facts) == 3
-    assert all(f.observed_at == saved_time for f in detail.external_facts)
+    assert len(facts) == 3
+    assert all(f.observed_at == saved_time for f in facts)
 
 
 async def test_lease_fence_budget_and_changed_link(social_fixture):
@@ -157,8 +175,9 @@ async def test_lease_fence_budget_and_changed_link(social_fixture):
         error_code=None,
         refresh_seconds=86400,
     )
-    detail = await PostgresCatalogEntityRepository().get(entity)
-    assert not any(s.provider_key == "x_public_api" for s in detail.external_sources)
+    sources, facts = await _saved_profile(entity)
+    assert not any(s.provider_key == "x_public_api" for s in sources)
+    assert not facts
 
 
 async def test_app_cannot_bypass_fenced_writer(social_fixture):
@@ -220,7 +239,7 @@ async def test_database_rejects_changed_provider_identity(social_fixture):
             refresh_seconds=86400,
         )
     assert await refresh.finish(claim, None, error_code="identity_changed", refresh_seconds=86400)
-    detail = await PostgresCatalogEntityRepository().get(entity)
-    source = next(s for s in detail.external_sources if s.provider_key == "x_public_api")
+    sources, facts = await _saved_profile(entity)
+    source = next(s for s in sources if s.provider_key == "x_public_api")
     assert source.external_id == "12345" and source.status == "failed"
-    assert detail.external_facts[0].value == "Last successful bio"
+    assert facts[0].fact_value == "Last successful bio"
