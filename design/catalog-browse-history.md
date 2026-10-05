@@ -2,7 +2,9 @@
 
 **Status:** implemented · **Date:** 2026-07-31
 
-## Decision
+<a id="decision"></a>
+
+## Read behavior
 
 `GET /v1/catalog/events` has two date modes:
 

@@ -43,7 +43,7 @@ flowchart TB
   N --> P
 ```
 
-Discovery reads published data. Background ingestion refreshes reviewed sources independently.
+Discovery and entity graphs read published data. Background ingestion refreshes reviewed sources independently; graph browsing never fetches external profiles.
 
 The [entity-intelligence worker](docs/social-profile-enrichment.md) optionally refreshes known
 social profiles through official APIs. Imported links and fetched snapshots are separate;
@@ -81,4 +81,4 @@ discovery reads persisted facts without contacting social providers.
 - **Agent work:** isolated source, dependencies and outputs; initial Symphony service-backed checks run in CI.
 - **Integration tests:** `tests/support/run_isolated_integration.py` creates/removes disposable databases; never use the retained application database.
 - **Evidence limits:** mocks and browser fixtures do not prove deployed authentication or real provider behavior.
-- [AGENTS.md](AGENTS.md): checks and task boundaries. [Design](design/) and [decisions](decisions/): component detail and accepted decisions.
+- [AGENTS.md](AGENTS.md): checks and task boundaries. [Runtime contracts](design/system-design.md): implementation constraints. [Notion design](https://app.notion.com/p/391d865005a88164a182eabc18fe068f): architecture and rationale.
