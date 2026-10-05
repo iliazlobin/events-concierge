@@ -21,8 +21,18 @@ from __future__ import annotations
 
 import asyncio
 
+from ..adapters.entity_intelligence.social_api import (
+    InstagramPublicProfileSource,
+    SocialApiClient,
+    XPublicProfileSource,
+)
+from ..adapters.postgres.social_profile_refresh import PostgresSocialProfileRefreshRepository
+from ..application.social_profile_enrichment import (
+    SocialProfileEnrichmentService,
+    SocialProfileSource,
+)
 from ..composition import build_container
-from ..config import get_settings
+from ..config import Settings, get_settings
 from ..deployment.startup import preflight_application_runtime
 from ..infra.logging import configure_logging, get_logger
 
@@ -44,6 +54,37 @@ def _diagnostic(error: Exception) -> str:
     return str(error).split("\n", 1)[0].strip()[:_MAX_DIAGNOSTIC_CHARS]
 
 
+def build_social_enrichment(settings: Settings) -> SocialProfileEnrichmentService:
+    # Only this background entrypoint constructs credential-bearing social clients.
+    sources: list[SocialProfileSource] = []
+    if settings.x_profile_api_enabled and settings.x_profile_bearer_token is not None:
+        sources.append(
+            XPublicProfileSource(
+                SocialApiClient("https://api.x.com", settings.x_profile_bearer_token)
+            )
+        )
+    if (
+        settings.instagram_profile_api_enabled
+        and settings.instagram_profile_access_token is not None
+    ):
+        assert settings.instagram_profile_account_id is not None
+        sources.append(
+            InstagramPublicProfileSource(
+                SocialApiClient(
+                    "https://graph.facebook.com", settings.instagram_profile_access_token
+                ),
+                account_id=settings.instagram_profile_account_id,
+                version=settings.instagram_profile_api_version,
+            )
+        )
+    return SocialProfileEnrichmentService(
+        PostgresSocialProfileRefreshRepository(),
+        tuple(sources),
+        daily_limit=settings.social_profile_daily_limit,
+        refresh_seconds=settings.social_profile_refresh_seconds,
+    )
+
+
 async def run_entity_intelligence() -> None:
     settings = get_settings()
     configure_logging(settings.log_level, local=settings.env == "local")
@@ -51,6 +92,7 @@ async def run_entity_intelligence() -> None:
         _log.info("entity intelligence worker disabled")
         return
     container = build_container(settings, runtime_ports=preflight_application_runtime(settings))
+    social_profiles = build_social_enrichment(settings)
     _log.info(
         "entity intelligence worker started",
         batch_size=settings.entity_intelligence_batch_size,
@@ -61,6 +103,9 @@ async def run_entity_intelligence() -> None:
         try:
             refreshed = await container.entity_intelligence.refresh_due(
                 settings.entity_intelligence_batch_size
+            )
+            refreshed.extend(
+                await social_profiles.refresh_due(settings.entity_intelligence_batch_size)
             )
         except Exception as error:
             consecutive_failures += 1

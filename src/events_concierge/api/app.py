@@ -587,6 +587,7 @@ class CatalogEntityExternalFactOut(BaseModel):
         "known_for",
         "public_repositories",
         "followers",
+        "avatar",
     ]
     value: str
     value_url: str | None

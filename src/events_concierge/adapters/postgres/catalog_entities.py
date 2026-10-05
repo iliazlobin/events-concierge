@@ -145,7 +145,7 @@ class PostgresCatalogEntityRepository:
             fact_rows = (
                 await session.execute(
                     text(
-                        "SELECT * FROM public.fn_list_catalog_entity_external_facts_v1(:entity_id)"
+                        "SELECT * FROM public.fn_list_catalog_entity_external_facts_v2(:entity_id)"
                     ),
                     {"entity_id": entity_id},
                 )

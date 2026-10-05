@@ -32,6 +32,7 @@ import type {
   EntityGraphTextModel,
 } from "@/lib/entity-graph";
 import { readEntityDetail, writeEntityDetail } from "@/lib/entity-graph-cache";
+import { SOCIAL_API_PROVIDERS, socialProfileCards } from "@/lib/entity-social-profiles";
 import type {
   EntitySourceGlyph,
   EntitySourcePresentation,
@@ -96,7 +97,7 @@ function firstFact(
   detail: CatalogEntityDetail | null,
   key: CatalogEntityExternalFact["fact_key"],
 ): CatalogEntityExternalFact | null {
-  return detail?.external_facts.find((fact) => fact.fact_key === key) ?? null;
+  return detail?.external_facts.find((fact) => fact.fact_key === key && !SOCIAL_API_PROVIDERS.has(fact.provider_key)) ?? null;
 }
 
 /**
@@ -170,6 +171,19 @@ function observedLabel(value: string | null): string {
     day: "numeric",
     year: "numeric",
   }).format(parsed);
+}
+
+function SocialAvatar({ url }: { url: string | null }) {
+  const [failedUrl, setFailedUrl] = useState<string | null>(null);
+  return (
+    <span className="entity-social-profile__avatar">
+      {url && failedUrl !== url ? (
+        // eslint-disable-next-line @next/next/no-img-element
+        <img src={url} alt="" width={40} height={40} loading="lazy" referrerPolicy="no-referrer"
+          onError={() => setFailedUrl(url)} />
+      ) : <UserRound aria-hidden="true" />}
+    </span>
+  );
 }
 
 export interface EntityInspectorProps {
@@ -369,7 +383,7 @@ export function EntityInspector({
     if (!subject || subject.node_kind !== "entity") return [];
     return identityLinks(
       subject.profile_url,
-      (detail?.external_facts ?? []).map((fact) => fact.value_url),
+      (detail?.external_facts ?? []).filter((fact) => fact.fact_key !== "avatar").map((fact) => fact.value_url),
       (detail?.external_sources ?? []).map((source) => source.source_url),
     );
   }, [detail, subject]);
@@ -546,7 +560,7 @@ export function EntityInspector({
   const overviewLines = entityOverviewLines(detail?.insights ?? null, frameActivity);
   const appearanceGroups = groupEntityAppearances(appearances);
   const sourceGroups = groupEntitySources<CatalogEntityExternalSource>(
-    detail?.external_sources ?? [],
+    (detail?.external_sources ?? []).filter((source) => !SOCIAL_API_PROVIDERS.has(source.provider_key)),
   );
   /** Catalog-wide top topics when known; the drawn frame's topics are an ego-only fallback. */
   const topicLabels = detail?.insights?.top_topics?.length
@@ -854,6 +868,21 @@ export function EntityInspector({
               </section>
             );
           })()}
+
+          {socialProfileCards(detail).map(({ source, description, followers, avatar }) => (
+            <section className="entity-social-profile" key={source.provider_key} aria-label={source.display_name}>
+              <header>
+                <SocialAvatar url={avatar} />
+                <div>
+                  <h3><a href={source.source_url} target="_blank" rel="noopener noreferrer">{source.display_name}</a></h3>
+                  <small>Updated {observedLabel(source.fetched_at!)}{source.status !== "fresh" ? " · Last successful snapshot" : ""}</small>
+                </div>
+              </header>
+              {description ? <p>{description}</p> : null}
+              {followers !== null ? <p>{followers} followers</p> : null}
+              {source.status !== "fresh" ? <small>Refresh unavailable; saved facts are shown.</small> : null}
+            </section>
+          ))}
 
           <section>
             <div className="entity-graph-sources__heading">
