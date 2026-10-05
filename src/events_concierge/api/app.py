@@ -1909,7 +1909,7 @@ async def _authenticated_tenant(request: Request) -> UUID:
     """Resolve one edge-authenticated tenant; caller JSON can never select an RLS context.
 
     The local header adapter is deliberately an injected test seam only.  Production composition
-    refuses that adapter and must supply the signed OIDC BFF/session implementation (FR-1.1/1.3).
+    refuses that adapter and requires one verified browser-session authority (FR-1.1/1.3).
     """
     container: Container = request.app.state.container
     try:

@@ -146,12 +146,12 @@ def test_discovery_rejects_enabled_runtime_provider_overrides_before_database_in
         build_container(settings, runtime_ports=runtime, **{argument: override})
 
 
-def test_discovery_requires_oidc_instead_of_injected_header_identity(
+def test_discovery_requires_browser_session_instead_of_injected_header_identity(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     settings = _production_settings(release_profile="discovery", oidc_bff_enabled=False)
     runtime = build_runtime_ports(settings, storage_client=_StorageClient())
-    with pytest.raises(ValueError, match="OIDC BFF as sole identity"):
+    with pytest.raises(ValueError, match="browser session as sole identity"):
         build_container(settings, runtime_ports=runtime, auth_context=_surface("resolve_tenant_id"))
 
 

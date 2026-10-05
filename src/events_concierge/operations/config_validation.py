@@ -177,10 +177,15 @@ def validate_production_config(
                     "and /auth/logout routes"
                 )
                 if settings.oidc_bff_enabled
-                else "deployment provider owns the configured login entrypoint"
+                else (
+                    "Identity Platform owns /sign-in, /auth/reauth and /auth/logout"
+                    if settings.identity_platform_enabled
+                    else "deployment provider owns the configured login entrypoint"
+                )
             ),
             (
-                "built-in OIDC BFF requires EC_UI_AUTH_START_URL=/auth/login and its fixed "
+                "built-in browser sessions require EC_UI_AUTH_START_URL=/sign-in (Identity "
+                "Platform) or /auth/login (legacy OIDC) and their fixed "
                 "reauthentication/logout routes"
             ),
         ),

@@ -322,7 +322,7 @@ def build_container(
             boundary is not None for boundary in (auth_context, csrf_protection, browser_session)
         ):
             raise ValueError(
-                "non-mock discovery requires the repository OIDC BFF as sole identity authority"
+                "non-mock discovery requires the configured browser session as sole identity authority"
             )
         if not discovery_effects_disabled(
             RuntimePorts(
