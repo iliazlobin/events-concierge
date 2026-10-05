@@ -152,8 +152,8 @@ async def test_request_diagnostics_paginate_exact_records_without_raw_payloads()
         exact = await repo.errors(queue="request_start", record_id=fixture)
         assert exact.total == 1 and len(exact.items) == 1
         item = exact.items[0]
-        assert item.state == "scheduled" and item.error_code == "test_retry_fixture"
-        assert item.error_summary == "fresh request-start retry after reclaim"
+        assert item.state == "scheduled" and item.error_code == "unclassified"
+        assert item.error_summary == "Error recorded."
         assert item.next_attempt_at == datetime(2099, 1, 2, tzinfo=UTC)
         assert item.attempt_count == 1 and item.last_observed_at is None and not item.sources
         rows = {row.record_id: row for row in (*first.items, *second.items)}

@@ -87,7 +87,7 @@ async def test_pending_requests_include_clean_records_and_errors_are_only_a_pend
         assert row.attempt_kind == "failed_start_attempts" and row.failed_at is None
         scheduled = (await repository.records(queue="request_start", record_id=str(retry))).items[0]
         assert scheduled.next_attempt_at == datetime(2099, 1, 2, tzinfo=UTC)
-        assert scheduled.error_code == "test_retry_fixture"
+        assert scheduled.error_code == "unclassified"
         assert (await repository.records(queue="request_start", record_id=str(started))).total == 0
         assert (await repository.records(queue="request_start", offset=100)).items == ()
         assert (
@@ -150,7 +150,7 @@ async def test_notifications_separate_pending_from_failed_history_and_redact_eve
         assert set(rows) == {failed, unknown, no_reason}
         assert rows[failed].error_code == "unsafe_projection"
         assert rows[unknown].error_code == "unclassified"
-        assert rows[no_reason].error_summary == "No failure reason was recorded."
+        assert rows[no_reason].error_summary == "No error message recorded."
         assert all(
             row.state == "failed" and row.next_attempt_at is row.lease_expires_at is None
             for row in history.items

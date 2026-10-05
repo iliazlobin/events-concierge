@@ -56,6 +56,7 @@ make staging-canary BASE_URL="$BASE_URL" \
 
 **Migration constraints**
 
+- `0202` joins the retained operator branch (`0198`) and published application branch (`0201`). Upgrade normally from either head; preserve applied IDs and rehearse on a restore. Never substitute a schema stamp for the missing branch.
 - [Migration sources](../migrations/versions/) own version-specific reconciliation. Drain cadence/source/command workers before legacy `0128`–`0130` lease changes; reconciliation is irreversible.
 - Rebuild `0152` indexes if older writers ran during migration. `0181`/`0182` require distinct operator/executor roles and matching images; no consumer-admin rollback.
 - Verify renewal, expiry and one guarded reclaim before resuming cadence.
