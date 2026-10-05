@@ -116,7 +116,7 @@ kubectl get nodes
 
 - One reviewed commit; all CI/deployment checks passing; immutable backend/frontend digests.
 - Registry: `us-west1-docker.pkg.dev/iz27-platform-dev/ec-dev/`.
-- Optional CI archive: `candidate-images-COMMIT`, retained three days; verify `SOURCE_REVISION`, `SHA256SUMS` and both revision labels.
+- Optional public CI archive: `candidate-images-COMMIT`, retained three days; verify `SOURCE_REVISION`, `SHA256SUMS` and both revision labels.
 - Push those same images; use registry digests. Archive is neither backup nor deployment.
 - `APP_IMAGE` / `WEB_IMAGE`: `repository@sha256:...`; `BACKEND_REVISION`: full source commit.
 
