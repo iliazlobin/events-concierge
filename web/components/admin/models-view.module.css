@@ -20,13 +20,35 @@
 .form { display: grid; gap: 14px; padding-top: 18px; border-top: 1px solid var(--kit-line, #303636); margin-top: 14px; }
 .formActions { display: flex; flex-wrap: wrap; gap: 8px; }
 .chart { display: grid; gap: 14px; }
-.plot { display: flex; align-items: end; gap: 3px; height: 200px; border-bottom: 1px solid var(--kit-line, #303636); }
-.bar { flex: 1 1 0; min-width: 0; height: 100%; padding: 0; border: 0; display: flex; align-items: end; background: transparent; cursor: pointer; }
-.bar span { display: block; width: 100%; min-height: 2px; background: #b3ef6577; border-radius: 3px 3px 0 0; }
-.bar:hover span, .bar:focus-visible span, .bar[aria-pressed="true"] span { background: #b3ef65; }
-.bar:focus-visible { outline: 2px solid #efffc8; outline-offset: 1px; }
+.chartGrid { display: grid; grid-template-columns: 78px minmax(0, 1fr); gap: 12px 10px; }
+.plot { position: relative; height: 240px; min-width: 0; }
+.lines { position: absolute; width: 100%; height: 100%; overflow: visible; }
+.gridLine { stroke: var(--kit-line, #303636); stroke-dasharray: 3 5; stroke-width: 1; vector-effect: non-scaling-stroke; }
+.total { color: #b3ef65; stroke: currentColor; }
+.input { color: #6eb8ff; stroke: currentColor; }
+.output { color: #f6b86c; stroke: currentColor; }
+.failed { color: #fb8e8e; stroke: currentColor; }
+.point { position: absolute; top: 0; height: 100%; padding: 0; border: 0; background: transparent; cursor: crosshair; }
+.point::before { content: ""; position: absolute; left: 50%; top: 0; height: 100%; border-left: 1px dashed var(--kit-muted, #a4ada6); opacity: 0; }
+.point:hover::before, .point:focus-visible::before, .point[aria-pressed="true"]::before { opacity: .45; }
+.marker { position: absolute; left: 50%; width: 6px; height: 6px; border-radius: 50%; background: currentColor; transform: translate(-50%, 50%); }
+.point:hover .marker, .point[aria-pressed="true"] .marker { width: 9px; height: 9px; box-shadow: 0 0 0 2px #101212; }
+.point:focus-visible { outline: none; }
+.point:focus-visible::before { border-left: 2px solid #efffc8; opacity: 1; }
+.point:focus-visible .marker { box-shadow: 0 0 0 3px #efffc8; }
+.yAxis { display: flex; flex-direction: column; justify-content: space-between; align-items: end; color: var(--kit-muted, #a4ada6); font-size: 11px; font-variant-numeric: tabular-nums; }
+.yAxis span { line-height: 0; }
+.timeAxis { grid-column: 2; display: flex; justify-content: space-between; gap: 4px; color: var(--kit-muted, #a4ada6); font-size: 11px; }
+.legend { display: flex; flex-wrap: wrap; gap: 18px; color: var(--kit-muted, #a4ada6); font-size: 12px; }
+.legend span { display: flex; align-items: center; gap: 7px; }
+.legend i { width: 16px; height: 2px; background: currentColor; }
 .axis { display: flex; justify-content: space-between; gap: 16px; color: var(--kit-muted, #a4ada6); font-size: 11px; }
-.selection { font-size: 13px; min-height: 24px; }
+.selection { font-size: 13px; min-height: 112px; }
+.selection strong { font-size: 12px; font-weight: 500; }
+.intervalFacts { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; margin: 12px 0 0; }
+.intervalFacts dt, .intervalFacts small { color: var(--kit-muted, #a4ada6); font-size: 11px; }
+.intervalFacts dd { margin: 6px 0 0; font-size: 16px; font-variant-numeric: tabular-nums; }
+.intervalFacts small { display: block; margin-top: 4px; }
 .table { overflow: auto; }
 .table table { width: 100%; border-collapse: collapse; text-align: left; font-size: 12px; }
 .table th { color: var(--kit-muted, #a4ada6); font-weight: 500; padding: 12px; border-bottom: 1px solid var(--kit-line, #303636); white-space: nowrap; }
@@ -35,4 +57,4 @@
 .recent summary { cursor: pointer; font-size: 15px; padding: 4px 0 16px; }
 .recent .table { max-height: 450px; }
 @media (max-width: 950px) { .split { grid-template-columns: minmax(0, 1fr); } }
-@media (max-width: 600px) { .section { padding: 16px 12px; } .controls label { flex: 1 1 130px; min-width: 0; } .controls select { width: 100%; } .facts dd { font-size: 19px; } }
+@media (max-width: 600px) { .section { padding: 16px 12px; } .controls label { flex: 1 1 130px; min-width: 0; } .controls select { width: 100%; } .facts dd { font-size: 19px; } .sectionHead { flex-wrap: wrap; } .chartGrid { grid-template-columns: 62px minmax(0, 1fr); } .plot { height: 180px; } .timeAxis span:nth-child(2), .timeAxis span:nth-child(4) { display: none; } .intervalFacts { grid-template-columns: repeat(2, minmax(0, 1fr)); } .selection { min-height: 180px; } }

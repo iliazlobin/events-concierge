@@ -112,6 +112,50 @@ export function usageValue(row: UsageTotals, metric: UsageMetric): number | null
   return row.calls;
 }
 
+export function usageChart(report: UsageReport, metric: UsageMetric) {
+  const series = metric === "tokens"
+    ? [{ key: "total", label: "Total", value: (row: UsageBucket) => usageValue(row, metric) },
+      { key: "input", label: "Input", value: (row: UsageBucket) => row.input_tokens },
+      { key: "output", label: "Output", value: (row: UsageBucket) => row.output_tokens }]
+    : metric === "calls"
+      ? [{ key: "total", label: "Calls", value: (row: UsageBucket) => row.calls },
+        { key: "failed", label: "Failed", value: (row: UsageBucket) => row.failed }]
+      : [{ key: "total", label: metric === "cost" ? "Reported spend" : "Mean latency", value: (row: UsageBucket) => usageValue(row, metric) }];
+  const start = Date.parse(report.start_at);
+  const duration = Math.max(1, Date.parse(report.end_at) - start);
+  const tracked = report.tracked_since ? Date.parse(report.tracked_since) : null;
+  const lines = series.map((series) => ({ ...series, points: report.series.map((bucket) => {
+    const at = Date.parse(bucket.at);
+    const until = Date.parse(bucket.until);
+    const value = tracked !== null && until <= tracked ? null : series.value(bucket);
+    return {
+      x: Math.max(0, Math.min(100, ((at + until) / 2 - start) / duration * 100)),
+      left: Math.max(0, (at - start) / duration * 100),
+      width: Math.max(0, (until - at) / duration * 100),
+      value: value !== null && Number.isFinite(value) ? value : null,
+    };
+  }) }));
+  const peak = Math.max(0, ...lines.flatMap((line) => line.points.map((point) => point.value ?? 0)));
+  const rawStep = peak / 4 || 1;
+  const power = 10 ** Math.floor(Math.log10(rawStep));
+  const step = Math.max(metric === "calls" || metric === "tokens" ? 1 : 0,
+    [1, 2, 5, 10].find((multiple) => multiple * power >= rawStep)! * power);
+  const top = step * 4;
+  return {
+    peak, top, ticks: [4, 3, 2, 1, 0].map((index) => index * step),
+    lines: lines.map((line) => {
+      let connected = false;
+      const path = line.points.map((point) => {
+        if (point.value === null) { connected = false; return ""; }
+        const command = connected ? "L" : "M";
+        connected = true;
+        return `${command}${point.x * 10},${240 * (1 - point.value / top)}`;
+      }).join(" ");
+      return { ...line, path };
+    }),
+  };
+}
+
 export function budgetAmount(value: string): string | null {
   const trimmed = value.trim();
   if (!trimmed) return null;
