@@ -56,7 +56,7 @@ const adminConsole = readFileSync(
 );
 
 test("admin history URLs round-trip every workspace and source investigation", () => {
-  for (const tab of ["overview", "pipeline", "sources", "catalog", "run-stats", "runs", "commands"]) {
+  for (const tab of ["overview", "pipeline", "sources", "catalog", "run-stats", "runs", "commands", "models"]) {
     const url = adminHistoryUrl(
       { tab, sourceKey: null },
       "https://events.test/admin?campaign=ops#workspace",

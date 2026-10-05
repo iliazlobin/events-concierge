@@ -89,6 +89,26 @@ test("hosted proxy rejects unsigned and cross-origin mutations before backend co
   assert.equal(upstream.received.length, 0);
 });
 
+test("model usage proxy allows only named reads and an origin-checked budget edit", async (t) => {
+  const upstream = await backend(t);
+  const api = await route(t, { EC_OPERATOR_API_ENABLED: "true", EC_OPERATOR_API_ORIGIN: upstream.origin,
+    EC_OPERATOR_PUBLIC_ORIGIN: "https://ops.example.test" });
+  const headers = { "X-Goog-IAP-JWT-Assertion": "signed.jwt.bytes", Origin: "https://ops.example.test" };
+  for (const path of ["usage", "budget", "key"]) {
+    assert.equal((await api.GET(...request(["models", path], "GET", headers))).status, 200);
+  }
+  assert.equal((await api.PATCH(...request(["models", "budget"], "PATCH", {
+    ...headers, "Content-Type": "application/json",
+  }, '{"expected_revision":1,"mode":"warn"}'))).status, 200);
+  assert.equal((await api.PATCH(...request(["models", "budget"], "PATCH", {
+    ...headers, Origin: "https://attacker.test", "Content-Type": "application/json",
+  }, "{}"))).status, 403);
+  for (const path of [["models", "credits"], ["models", "keys", "new"], ["models", "usage", "raw"]]) {
+    assert.equal((await api.GET(...request(path, "GET", headers))).status, 404);
+  }
+  assert.equal(upstream.received.length, 4);
+});
+
 test("source registration history is an aggregate-only named read path", async (t) => {
   const upstream = await backend(t);
   const api = await route(t, { EC_OPERATOR_API_ENABLED: "true", EC_OPERATOR_API_ORIGIN: upstream.origin,
