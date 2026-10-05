@@ -1067,6 +1067,7 @@ export function ConciergeApp() {
     });
   }, [calendarMode, filters, pushConsumerSnapshot]);
   const handleEntitySelect = useCallback(async (reference: EventEntityReference) => {
+    setCatalogError(null);
     try {
       const resolved = await resolveCatalogEventEntity(
         tenantId,
@@ -1419,12 +1420,17 @@ export function ConciergeApp() {
             hasMore={Boolean(nextCursor)} loading={catalogLoading || loadingMore} error={catalogError}
             onLoadMore={handleLoadMore} onEntitySelect={handleEntitySelect} onTopicSelect={handleTopicSelect}/>
         ) : view === "entities" ? (
+          <>
+          {catalogError ? <p className="workspace-error" role="alert">{catalogError}</p> : null}
           <EntitiesView
             tenantId={tenantId}
             canRefresh={fullRelease}
             selectedEntityId={selectedEntityId}
             onSelectEntity={handleEntityPageSelect}
+            onEntitySelect={handleEntitySelect}
+            onTopicSelect={handleTopicSelect}
           />
+          </>
         ) : null}
       </main>
 

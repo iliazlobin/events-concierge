@@ -11,7 +11,7 @@ import { getCatalogGraphEvent } from "@/lib/entity-graph-api";
 import { readGraphEvent, writeGraphEvent } from "@/lib/entity-graph-cache";
 import { roleLabel } from "@/lib/entity-inspector-model";
 import { formatCity } from "@/lib/presentation";
-import type { EventItem } from "@/lib/types";
+import type { EventEntityReference, EventItem } from "@/lib/types";
 
 interface GraphEventInspectorProps {
   tenantId: string | null;
@@ -22,6 +22,8 @@ interface GraphEventInspectorProps {
   onSelectNode: (nodeId: string | null) => void;
   onHoverNode: (nodeId: string | null) => void;
   onFocusEntity: (entityId: string) => void;
+  onEntitySelect: (reference: EventEntityReference) => void;
+  onTopicSelect: (topic: string) => void;
 }
 
 function edgeProvenance(edge: CatalogEntityGraphEdge): string {
@@ -47,6 +49,7 @@ function publicEventUrl(value: string | null): string | null {
 /** Mounted only for the selected occurrence; the graph itself stays a bounded projection. */
 export function GraphEventInspector({
   tenantId, subject, model, eventSessions, contextNote, onSelectNode, onHoverNode, onFocusEntity,
+  onEntitySelect, onTopicSelect,
 }: GraphEventInspectorProps) {
   const eventId = subject.canonical_event_id;
   const [event, setEvent] = useState<EventItem | null>(() => (
@@ -114,6 +117,7 @@ export function GraphEventInspector({
 
   return (
     <GraphEventCard event={event} onClose={() => onSelectNode(null)}
+      onEntitySelect={onEntitySelect} onTopicSelect={onTopicSelect}
       closeLabel={`Back to ${model.byId.get(model.focusId)?.label ?? "the graph"}`} loading={!event && !error}
       connections={connections} beforeDetails={<>
       {contextNote ? <p className="graph-event-context">{contextNote}</p> : null}

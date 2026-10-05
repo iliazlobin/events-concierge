@@ -54,6 +54,7 @@ import type {
   CatalogEntityDetail,
   CatalogEntityExternalFact,
   CatalogEntityExternalSource,
+  EventEntityReference,
 } from "@/lib/types";
 
 /**
@@ -179,6 +180,8 @@ export interface EntityInspectorProps {
   onSelectNode: (nodeId: string | null) => void;
   onFocusEntity: (entityId: string) => void;
   onHoverNode: (nodeId: string | null) => void;
+  onEntitySelect: (reference: EventEntityReference) => void;
+  onTopicSelect: (topic: string) => void;
 }
 
 export function EntityInspector({
@@ -191,6 +194,8 @@ export function EntityInspector({
   onSelectNode,
   onFocusEntity,
   onHoverNode,
+  onEntitySelect,
+  onTopicSelect,
 }: EntityInspectorProps) {
   const subject = (selectedNodeId ? model.byId.get(selectedNodeId) : undefined)
     ?? model.ego
@@ -360,6 +365,8 @@ export function EntityInspector({
       onSelectNode={onSelectNode}
       onHoverNode={onHoverNode}
       onFocusEntity={onFocusEntity}
+      onEntitySelect={onEntitySelect}
+      onTopicSelect={onTopicSelect}
     />;
   }
 

@@ -12,6 +12,7 @@ import { deriveEntityGraphScene, deriveEntityGraphDetails } from "@/lib/entity-g
 import { readableGraphError } from "@/lib/entity-graph-errors";
 import { readEntityGraph, writeEntityGraph } from "@/lib/entity-graph-cache";
 import { layoutEgoRings } from "@/lib/entity-graph-layout";
+import type { EventEntityReference } from "@/lib/types";
 
 import "@/app/entity-graph.css";
 
@@ -33,6 +34,8 @@ export interface EntityGraphViewProps {
   entityId: string;
   /** `null` returns to the ranked directory. */
   onSelectEntity: (entityId: string | null) => void;
+  onEntitySelect: (reference: EventEntityReference) => void;
+  onTopicSelect: (topic: string) => void;
 }
 
 export function EntityGraphView({
@@ -40,6 +43,8 @@ export function EntityGraphView({
   canRefresh = false,
   entityId,
   onSelectEntity,
+  onEntitySelect,
+  onTopicSelect,
 }: EntityGraphViewProps) {
   const observerRef = useRef<ResizeObserver | null>(null);
   const abortRef = useRef<AbortController | null>(null);
@@ -290,6 +295,8 @@ export function EntityGraphView({
             onSelectNode={setSelectedNodeId}
             onFocusEntity={focusEntity}
             onHoverNode={setHoveredNodeId}
+            onEntitySelect={onEntitySelect}
+            onTopicSelect={onTopicSelect}
           />
         </div>
       ) : null}

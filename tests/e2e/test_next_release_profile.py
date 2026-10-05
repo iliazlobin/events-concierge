@@ -19,6 +19,7 @@ pytestmark = [
 ]
 
 ENTITY_ID = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"
+HOST_ENTITY_ID = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb"
 SECOND_EVENT_ID = "33333333-3333-4333-8333-333333333333"
 
 
@@ -43,9 +44,11 @@ def second_catalog_event(recurring: bool = False):
     }
 
 
-def entity_graph():
+def entity_graph(entity_id: str = ENTITY_ID):
     event = _feed()["items"][0]
-    entity_node = f"entity:{ENTITY_ID}"
+    is_host = entity_id == HOST_ENTITY_ID
+    role = "host" if is_host else "organizer"
+    entity_node = f"entity:{entity_id}"
     event_node = f"event:{event['canonical_event_id']}"
     return {
         "focus_id": entity_node, "generated_at": "2030-06-01T00:00:00Z",
@@ -55,19 +58,19 @@ def entity_graph():
         "same_name_candidates": [],
         "nodes": [
             {"node_id": entity_node, "node_kind": "entity", "ring": 0,
-             "label": "Lakehouse Music", "entity_id": ENTITY_ID,
-             "entity_kind": "organization", "identity_status": "profile_verified",
-             "profile_url": "https://events.example.test/lakehouse", "degree": 1,
-             "roles": ["organizer"]},
+             "label": "Alex Example" if is_host else "Lakehouse Music", "entity_id": entity_id,
+             "entity_kind": "person" if is_host else "organization", "identity_status": "profile_verified",
+             "profile_url": "https://www.linkedin.com/in/alex-example" if is_host else "https://events.example.test/lakehouse", "degree": 1,
+             "roles": [role]},
             {"node_id": event_node, "node_kind": "event", "ring": 1,
              "label": event["title"], "canonical_event_id": event["canonical_event_id"],
              "start_at": event["start_at"], "end_at": event["end_at"], "is_past": False,
              "venue_name": "Lakehouse", "city": "Oakland", "price_status": "free",
-             "topics": ["jazz"], "ego_roles": ["organizer"], "degree": 1,
+             "topics": ["jazz"], "ego_roles": [role], "degree": 1,
              "registration_url": event["registration_urls"][0]},
         ],
         "edges": [{"a": entity_node, "b": event_node, "kind": "mention",
-                   "roles": ["organizer"], "source_labels": ["Fixture Jazz"],
+                   "roles": [role], "source_labels": ["Fixture Jazz"],
                    "observed_at": "2030-06-01T00:00:00Z"}],
     }
 
@@ -80,6 +83,8 @@ class ReleaseApi:
     hold_config: bool = False
     held: list[Route] = field(default_factory=list)
     calls: list[tuple[str, str]] = field(default_factory=list)
+    entity_resolutions: list[dict[str, list[str]]] = field(default_factory=list)
+    resolution_status: int = 200
     unexpected: list[str] = field(default_factory=list)
     graph_status: int = 200
     empty_graph: bool = False
@@ -160,9 +165,22 @@ class ReleaseApi:
 
     def handle_entity(self, route: Route, path: str) -> None:
         if path == "/v1/catalog/entity-resolution":
-            self.respond(route, {"entity_id": ENTITY_ID})
-        elif path in {"/v1/catalog/entity-overview-graph", f"/v1/catalog/entities/{ENTITY_ID}/graph"}:
-            graph = entity_graph()
+            query = parse_qs(urlsplit(route.request.url).query)
+            self.entity_resolutions.append(query)
+            if self.resolution_status != 200:
+                self.respond(route, {"detail": "Entity resolution unavailable"}, self.resolution_status)
+                return
+            identities = {("host", "Alex Example"): HOST_ENTITY_ID,
+                          ("organizer", "Lakehouse Music"): ENTITY_ID}
+            entity_id = identities.get((query.get("role", [None])[0], query.get("name", [None])[0]))
+            event_id = query.get("canonical_event_id", [None])[0]
+            if entity_id and event_id in {catalog_event()["canonical_event_id"], SECOND_EVENT_ID}:
+                self.respond(route, {"entity_id": entity_id})
+            else:
+                self.respond(route, {"detail": "Entity assertion not found"}, 404)
+        elif path in {"/v1/catalog/entity-overview-graph", f"/v1/catalog/entities/{ENTITY_ID}/graph",
+                       f"/v1/catalog/entities/{HOST_ENTITY_ID}/graph"}:
+            graph = entity_graph(HOST_ENTITY_ID if HOST_ENTITY_ID in path else ENTITY_ID)
             if path.endswith("entity-overview-graph"):
                 graph["focus_id"] = "catalog:overview"
                 graph["counts"]["peers"] = 1
@@ -388,6 +406,78 @@ def test_graph_event_details_match_map_without_prefetch(release_page, tmp_path, 
     inspector.screenshot(path=str(tmp_path / f"graph-event-detail-{scope}-{width}.png"))
 
 
+@pytest.mark.parametrize("width", [1440, 390])
+@pytest.mark.parametrize("scope", ["overview", "entity", "topic"])
+@pytest.mark.parametrize("role,name,target_id", [
+    ("host", "Alex Example", HOST_ENTITY_ID),
+    ("organizer", "Lakehouse Music", ENTITY_ID),
+])
+def test_graph_event_entities_resolve_the_selected_assertion(release_page, width, scope, role, name, target_id):
+    harness, api = release_page
+    page = harness.page
+    page.set_viewport_size({"width": width, "height": 900})
+    source_id = ENTITY_ID if role == "host" else HOST_ENTITY_ID
+    query = {"overview": "view=entities", "entity": f"view=entities&entity={source_id}",
+             "topic": "view=entities&topic=jazz"}[scope]
+    page.goto(f"{BASE}/?{query}")
+    event_id = catalog_event()["canonical_event_id"]
+    page.locator(f'button[data-node-id="event:{event_id}"]').click()
+    inspector = page.get_by_role("complementary", name="Event detail", exact=True)
+    inspector.get_by_role("button", name=f"Explore {role} {name}", exact=True).click()
+    expect(page.get_by_role("heading", name=name, exact=True).first).to_be_visible()
+    assert api.entity_resolutions == [{"canonical_event_id": [event_id], "role": [role], "name": [name]}]
+    assert parse_qs(urlsplit(page.url).query)["entity"] == [target_id]
+    assert ("GET", f"/v1/catalog/entities/{target_id}/graph") in api.calls
+    expect(page.get_by_role("application")).to_be_visible()
+    expect(page.get_by_role("button", name="Text", exact=True)).to_have_count(0)
+    expect(inspector).to_have_count(0)
+
+
+@pytest.mark.parametrize("width", [1440, 390])
+@pytest.mark.parametrize("scope", ["overview", "entity", "topic"])
+def test_graph_event_topic_opens_topic_graph(release_page, width, scope):
+    harness, api = release_page
+    page = harness.page
+    page.set_viewport_size({"width": width, "height": 900})
+    query = {"overview": "view=entities", "entity": f"view=entities&entity={ENTITY_ID}",
+             "topic": "view=entities&topic=jazz"}[scope]
+    page.goto(f"{BASE}/?{query}")
+    page.locator(f'button[data-node-id="event:{catalog_event()["canonical_event_id"]}"]').click()
+    inspector = page.get_by_role("complementary", name="Event detail", exact=True)
+    inspector.get_by_role("button", name="Add jazz topic filter", exact=True).click()
+    expect(page.get_by_role("heading", name="Jazz", exact=True)).to_be_visible()
+    expect(page.get_by_role("application")).to_be_visible()
+    params = parse_qs(urlsplit(page.url).query)
+    assert params["view"] == ["entities"] and params["topic"] == ["jazz"]
+    assert "entity" not in params
+    assert not api.entity_resolutions
+    expect(page.get_by_role("button", name="Text", exact=True)).to_have_count(0)
+
+
+@pytest.mark.parametrize("scope", ["overview", "entity", "topic"])
+@pytest.mark.parametrize("status", [404, 503])
+def test_graph_entity_resolution_failure_is_visible_and_retryable(release_page, scope, status):
+    harness, api = release_page
+    harness.allowed_console_error_fragments.append(f"status of {status}")
+    api.resolution_status = status
+    page = harness.page
+    query = {"overview": "view=entities", "entity": f"view=entities&entity={ENTITY_ID}",
+             "topic": "view=entities&topic=jazz"}[scope]
+    page.goto(f"{BASE}/?{query}")
+    page.locator(f'button[data-node-id="event:{catalog_event()["canonical_event_id"]}"]').click()
+    inspector = page.get_by_role("complementary", name="Event detail", exact=True)
+    chip = inspector.get_by_role("button", name="Explore host Alex Example", exact=True)
+    chip.click()
+    message = "Alex Example is not indexed as an entity yet." if status == 404 else "Entity resolution unavailable"
+    expect(page.get_by_role("main").get_by_role("alert")).to_contain_text(message)
+    expect(inspector.locator(".event-card__title")).to_have_text("Friday Night Jazz")
+    assert parse_qs(urlsplit(page.url).query).get("entity") != [HOST_ENTITY_ID]
+    api.resolution_status = 200
+    chip.click()
+    expect(page.get_by_role("heading", name="Alex Example", exact=True).first).to_be_visible()
+    expect(page.get_by_role("main").get_by_role("alert")).to_have_count(0)
+
+
 @pytest.mark.parametrize("status", [404, 503])
 def test_graph_event_details_retry_without_inventing_facts(release_page, status):
     harness, api = release_page
@@ -452,6 +542,11 @@ def test_graph_recurring_dates_load_their_own_event_facts(release_page):
     expect(inspector.locator(".event-card__date strong")).to_have_text("14")
     expect(inspector.locator(".event-card__description")).to_have_text(catalog_event()["description"])
     assert api.calls.count(("GET", f"/v1/catalog/events/{first_id}")) == 1
+    dates.get_by_role("button", name=re.compile("Jun 15")).click()
+    inspector.get_by_role("button", name="Explore host Alex Example", exact=True).click()
+    expect(page.get_by_role("heading", name="Alex Example", exact=True).first).to_be_visible()
+    assert api.entity_resolutions == [{"canonical_event_id": [SECOND_EVENT_ID],
+                                       "role": ["host"], "name": ["Alex Example"]}]
 
 
 def test_discovery_entities_empty_state(release_page):

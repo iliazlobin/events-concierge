@@ -30,7 +30,7 @@ import {
   writeEntityOverview,
 } from "@/lib/entity-graph-cache";
 import { layoutEntityOverview } from "@/lib/entity-graph-layout";
-import type { CatalogEntityKind } from "@/lib/types";
+import type { CatalogEntityKind, EventEntityReference } from "@/lib/types";
 
 import "@/app/entity-graph.css";
 
@@ -86,6 +86,8 @@ interface EntitiesViewProps {
   canRefresh?: boolean;
   selectedEntityId: string | null;
   onSelectEntity: (entityId: string | null) => void;
+  onEntitySelect: (reference: EventEntityReference) => void;
+  onTopicSelect: (topic: string) => void;
 }
 
 function count(value: number): string {
@@ -104,6 +106,8 @@ export function EntitiesView({
   canRefresh = false,
   selectedEntityId,
   onSelectEntity,
+  onEntitySelect,
+  onTopicSelect,
 }: EntitiesViewProps) {
   if (selectedEntityId) {
     return (
@@ -112,19 +116,24 @@ export function EntitiesView({
         canRefresh={canRefresh}
         entityId={selectedEntityId}
         onSelectEntity={onSelectEntity}
+        onEntitySelect={onEntitySelect}
+        onTopicSelect={onTopicSelect}
       />
     );
   }
 
-  return <EntityOverviewGraph tenantId={tenantId} onSelectEntity={onSelectEntity} />;
+  return <EntityOverviewGraph tenantId={tenantId} onSelectEntity={onSelectEntity}
+    onEntitySelect={onEntitySelect} onTopicSelect={onTopicSelect} />;
 }
 
 interface EntityOverviewGraphProps {
   tenantId: string | null;
   onSelectEntity: (entityId: string) => void;
+  onEntitySelect: (reference: EventEntityReference) => void;
+  onTopicSelect: (topic: string) => void;
 }
 
-function EntityOverviewGraph({ tenantId, onSelectEntity }: EntityOverviewGraphProps) {
+function EntityOverviewGraph({ tenantId, onSelectEntity, onEntitySelect, onTopicSelect }: EntityOverviewGraphProps) {
   const observerRef = useRef<ResizeObserver | null>(null);
   const abortRef = useRef<AbortController | null>(null);
   const [query, setQuery] = useState("");
@@ -452,6 +461,8 @@ function EntityOverviewGraph({ tenantId, onSelectEntity }: EntityOverviewGraphPr
                 onSelectNode={setSelectedNodeId}
                 onHoverNode={setHoveredNodeId}
                 onFocusEntity={onSelectEntity}
+                onEntitySelect={onEntitySelect}
+                onTopicSelect={onTopicSelect}
               />
             ) : null}
           </div>
