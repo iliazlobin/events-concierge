@@ -117,9 +117,48 @@ kubectl get nodes
 
 - One reviewed commit; all CI/deployment checks passing; immutable backend/frontend digests.
 - Registry: `us-west1-docker.pkg.dev/iz27-platform-dev/ec-dev/`.
-- Optional public CI archive: `candidate-images-COMMIT`, retained three days; verify `SOURCE_REVISION`, `SHA256SUMS` and both revision labels.
-- Push those same images; use registry digests. Archive is neither backup nor deployment.
+- Successful `main` push or explicit `main` CI dispatch retains the public `candidate-images-COMMIT` for three days after all five CI jobs pass: tested images, `SOURCE_REVISION` and `SHA256SUMS`; no deployment credentials. PR and task-branch builds retain no archive.
+- CI stops at this handoff; Workload Identity Federation (WIF) publication and private rollout automation remain pending. An archive is neither backup nor deployment.
 - `APP_IMAGE` / `WEB_IMAGE`: `repository@sha256:...`; `BACKEND_REVISION`: full source commit.
+
+**Verify and publish the tested package — after publication authorization**
+
+Set `CI_RUN` and `BACKEND_REVISION` to the successful CI run and its full `main` commit. Download into a new directory:
+
+```bash
+set -euo pipefail
+test "$(gh api "repos/iliazlobin/events-concierge/actions/runs/$CI_RUN" --jq '.conclusion')" = success
+test "$(gh api "repos/iliazlobin/events-concierge/actions/runs/$CI_RUN" --jq '.head_sha')" = "$BACKEND_REVISION"
+test "$(gh api "repos/iliazlobin/events-concierge/actions/runs/$CI_RUN" --jq '.head_branch')" = main
+test ! -e ".local/candidate-$BACKEND_REVISION"
+mkdir -p ".local/candidate-$BACKEND_REVISION"
+gh run download "$CI_RUN" --repo iliazlobin/events-concierge --name "candidate-images-$BACKEND_REVISION" --dir ".local/candidate-$BACKEND_REVISION"
+(
+  cd ".local/candidate-$BACKEND_REVISION"
+  test "$(cat SOURCE_REVISION)" = "$BACKEND_REVISION"
+  shasum -a 256 -c SHA256SUMS
+  docker load --input images.tar.gz
+)
+test "$(docker inspect --format '{{ index .Config.Labels "org.opencontainers.image.revision" }}' events-concierge:ci)" = "$BACKEND_REVISION"
+test "$(docker inspect --format '{{ index .Config.Labels "org.opencontainers.image.revision" }}' events-concierge-web:ci)" = "$BACKEND_REVISION"
+```
+
+Publish the loaded images without rebuilding. The host's existing `gcloud` Docker credential helper for `us-west1-docker.pkg.dev` uses the active account checked below. Wrong identity/project or missing write access blocks publication; do not switch accounts or broaden IAM.
+
+```bash
+set -euo pipefail
+test "$(gcloud auth list --filter='status:ACTIVE' --format='value(account)')" = iliazlobin27@gmail.com
+test "$(gcloud config get-value project)" = iz27-platform-dev
+REGISTRY=us-west1-docker.pkg.dev/iz27-platform-dev/ec-dev
+docker tag events-concierge:ci "$REGISTRY/events-concierge:$BACKEND_REVISION"
+docker tag events-concierge-web:ci "$REGISTRY/events-concierge-web:$BACKEND_REVISION"
+docker push "$REGISTRY/events-concierge:$BACKEND_REVISION"
+docker push "$REGISTRY/events-concierge-web:$BACKEND_REVISION"
+APP_IMAGE=$(gcloud artifacts docker images describe "$REGISTRY/events-concierge:$BACKEND_REVISION" --project=iz27-platform-dev --account=iliazlobin27@gmail.com --format='value(image_summary.fully_qualified_digest)')
+WEB_IMAGE=$(gcloud artifacts docker images describe "$REGISTRY/events-concierge-web:$BACKEND_REVISION" --project=iz27-platform-dev --account=iliazlobin27@gmail.com --format='value(image_summary.fully_qualified_digest)')
+```
+
+Record both digests, source revision and CI run in the existing [release record](https://github.com/iliazlobin/events-concierge/issues/26), then generate values below. Private rollout requires [IAP access](#shared-release-and-access) and the **Release** procedure; preserve prior digests/configuration and a compatible backup for [rollback](../docs/production-operations.md#release-and-rollback). Verify serving identity, required processes, discovery and collection after rollout.
 
 ```bash
 mkdir -p .local

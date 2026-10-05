@@ -192,6 +192,8 @@ jobs:
 
   container:
     name: Container build
+    # Keep an image package only after every test gate has passed.
+    needs: [static-and-unit, web, integration-and-quality, browser-e2e]
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
@@ -258,7 +260,9 @@ jobs:
         run: docker compose --profile app logs --no-color
 
       - name: Export the tested candidate images
-        if: success() && github.event_name == 'workflow_dispatch'
+        if: >-
+          success() && github.ref == 'refs/heads/main' &&
+          (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
         run: |
           set -euo pipefail
           mkdir -p "${RUNNER_TEMP}/candidate-images"
@@ -268,7 +272,9 @@ jobs:
           printf '%s\n' "${GITHUB_SHA}" > SOURCE_REVISION
 
       - name: Retain candidate image package
-        if: success() && github.event_name == 'workflow_dispatch'
+        if: >-
+          success() && github.ref == 'refs/heads/main' &&
+          (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: candidate-images-${{ github.sha }}
