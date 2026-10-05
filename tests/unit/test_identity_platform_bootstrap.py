@@ -1,10 +1,17 @@
 """Provider provisioning stays read-only by default and never reports provider credentials."""
 
+import importlib.util
 import json
+from pathlib import Path
 from typing import Any
 
 import pytest
-from scripts import identity_platform as bootstrap
+
+_PATH = Path(__file__).parents[2] / "scripts" / "identity_platform.py"
+_SPEC = importlib.util.spec_from_file_location("identity_platform_bootstrap", _PATH)
+assert _SPEC is not None and _SPEC.loader is not None
+bootstrap = importlib.util.module_from_spec(_SPEC)
+_SPEC.loader.exec_module(bootstrap)
 
 _GOOGLE = {"client_id": "reviewed-google-client", "client_secret": "private-google-secret"}
 _APPLE = {
