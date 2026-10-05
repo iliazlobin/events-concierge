@@ -9,6 +9,7 @@ publication establishes a new due slot without deleting failure or budget histor
 
 from __future__ import annotations
 
+import re
 from collections.abc import Sequence
 
 from alembic import op
@@ -41,9 +42,19 @@ def _replace_gate(before: str, after: str) -> None:
         )
         .scalar_one()
     )
-    if definition.count(before) != 1 or after in definition.replace(before, "", 1):
+    # Ignore whitespace without accepting a different expression or multiple gates.
+    before_pattern = re.compile(r"\s+".join(re.escape(token) for token in before.split()))
+    after_pattern = re.compile(r"\s+".join(re.escape(token) for token in after.split()))
+    matches = tuple(before_pattern.finditer(definition))
+    if len(matches) != 1:
         raise RuntimeError("cadence failure gate changed; review success-recovery migration")
-    op.execute(definition.replace(before, after, 1))
+    match = matches[0]
+    if any(
+        existing.start() < match.start() or existing.end() > match.end()
+        for existing in after_pattern.finditer(definition)
+    ):
+        raise RuntimeError("cadence failure gate changed; review success-recovery migration")
+    op.execute(definition[: match.start()] + after + definition[match.end() :])
 
 
 def upgrade() -> None:

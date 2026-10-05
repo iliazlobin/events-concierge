@@ -158,7 +158,23 @@ class CommunicoCatalogFetcher:
                         content.extend(chunk)
                     # aiter_bytes has already decoded any Content-Encoding.
                     decoded_headers = response.headers.copy()
-                    decoded_headers.pop("content-encoding", None)
+                    connection_headers = {
+                        name.strip().lower()
+                        for name in response.headers.get("connection", "").split(",")
+                        if name.strip()
+                    }
+                    for name in connection_headers | {
+                        "connection",
+                        "content-encoding",
+                        "keep-alive",
+                        "proxy-authenticate",
+                        "proxy-authorization",
+                        "te",
+                        "trailer",
+                        "transfer-encoding",
+                        "upgrade",
+                    }:
+                        decoded_headers.pop(name, None)
                     decoded_headers["content-length"] = str(len(content))
                     return httpx.Response(
                         response.status_code,
