@@ -68,7 +68,7 @@ python scripts/identity_platform.py --project iz27-platform-dev --provider apple
 
 ## Release and verification
 
-1. Back up the database; apply migration `0204` through the existing release migration process. Do not migrate the retained database as a test.
+1. Back up the database; apply consent migration `0207` after cadence recovery `0206` through the existing release migration process. Do not migrate the retained database as a test.
 2. Layer [consumer identity values](../deploy/helm/events-concierge/values-consumer-identity.example.yaml) over the reviewed non-mock release. Set project, restricted key, exact auth domain, both providers, approved legal versions/URLs and the stable owner IAP subject. Disable the legacy OIDC BFF. Runtime mounts exclude its client secret.
 3. Run [production validation/canary](../docs/production-operations.md#first-release-acceptance), then explicitly enable signup for a bounded pilot. Keep general access restricted until acceptance succeeds.
 4. In Google Chrome and Safari, verify Google and Apple signup/cancellation, unchecked consent, reload/logout, expiry, disabled/revoked users, changed terms, saved filters/preferences, two-account isolation and same-account erasure. Verify guests can browse and cannot save; another verified Google email must receive admin `403`.
@@ -76,5 +76,5 @@ python scripts/identity_platform.py --project iz27-platform-dev --provider apple
 
 - [Unit checks](../tests/unit/test_consumer_identity.py), [PostgreSQL checks](../tests/integration/test_consumer_identity.py) and [browser fixtures](../tests/e2e/test_next_consumer_identity.py) establish implementation behavior. Fixtures do not prove real Google/Apple configuration or deployed acceptance.
 - Keep sign-in responses uncached. The sign-in document sends only the origin on cross-site requests so [browser-key restrictions](https://docs.cloud.google.com/docs/authentication/api-keys#websites) work; auth API errors send no referrer. Validate edge security headers and SDK/iframe connectivity on the served origin.
-- Rollback: disable new signup, retain Identity Platform/users and migration `0204`, and restore a tested compatible image/configuration. Reverting to legacy OIDC does not migrate account identities; managed sessions must fail closed under a different authority. Never destroy the identity state or weaken tenant isolation to restore access.
+- Rollback: disable new signup, retain Identity Platform/users and migration `0207`, and restore a tested compatible image/configuration. Reverting to legacy OIDC does not migrate account identities; managed sessions must fail closed under a different authority. Never destroy the identity state or weaken tenant isolation to restore access.
 - Monitor signup failures, identity-service availability, erasure failures and Identity Platform quotas/costs through the existing operations/billing workflow.

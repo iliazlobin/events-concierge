@@ -5,35 +5,7 @@ import { LoaderCircle, Search } from "lucide-react";
 import type { CatalogEntityIdentityFilter } from "@/lib/entity-graph-api";
 import type { CatalogEntityKind } from "@/lib/types";
 
-/**
- * The front door's search box and filter chips, in one place.
- *
- * They were written for the ranked directory and are now the controls on the
- * landing graph as well. Lifting them here rather than copying the markup is
- * the point: the chips carry `entity-filter-chip` and the row carries
- * `entity-directory-filters`, both styled once in `app/entity-graph.css`, and a
- * second copy of that markup would drift from the stylesheet the first time
- * either was touched.
- *
- * Two components rather than one, because the two consumers put something
- * different between them — the directory puts the coverage line there, the
- * landing graph puts the coverage line and the sampling disclosure — and a
- * combined fragment would have dictated that order to both.
- *
- * Everything here is controlled and stateless. The consumers debounce and fetch
- * differently: the graph sends every filter to the server, the directory
- * narrows an already-ranked slice in the browser. What this component does
- * insist on is that the identity counts are *labelled* — `identityScope` is
- * required, because a number beside a chip is a claim about a population, and
- * the two consumers count different populations.
- */
-
-/**
- * The one debounce in the feature.
- *
- * Imported by both consumers rather than restated, so the box on the landing
- * graph and the box on the directory cannot come to feel different.
- */
+/** Controlled graph filters; counts must name the population they describe. */
 export const ENTITY_SEARCH_DEBOUNCE_MS = 180;
 
 export const ENTITY_KIND_CHIPS: ReadonlyArray<{ value: CatalogEntityKind; label: string }> = [

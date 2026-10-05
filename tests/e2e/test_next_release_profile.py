@@ -210,21 +210,24 @@ class ReleaseApi:
                            "unknown_count": 0, "verified_count": 1, "scoped_count": 0},
                 "coverage": {"events_with_entities": 1, "events_total": 1, "mention_count": 1},
             })
-        elif path == f"/v1/catalog/entities/{ENTITY_ID}":
+        elif path in {f"/v1/catalog/entities/{ENTITY_ID}", f"/v1/catalog/entities/{HOST_ENTITY_ID}"}:
+            entity_id = HOST_ENTITY_ID if path.endswith(HOST_ENTITY_ID) else ENTITY_ID
+            identity = entity_graph(entity_id)["nodes"][0]
+            is_host = entity_id == HOST_ENTITY_ID
             self.respond(route, {
-                "entity": {"entity_id": ENTITY_ID, "display_name": "Lakehouse Music",
-                           "kind": "organization", "identity_status": "profile_verified",
-                           "canonical_profile_url": "https://events.example.test/lakehouse",
+                "entity": {"entity_id": entity_id, "display_name": identity["label"],
+                           "kind": identity["entity_kind"], "identity_status": "profile_verified",
+                           "canonical_profile_url": identity["profile_url"],
                            "summary": None, "website_url": None, "logo_url": None,
                            "city": "Oakland", "country": "US", "event_count": 1,
-                           "roles": ["organizer"], "source_count": 1, "research_status": "researchable"},
-                "events": [], "external_sources": (_social_sources() if self.social_profiles else [])
-                + (_linked_social_sources() if self.social_profiles or self.social_links_only else []),
+                           "roles": identity["roles"], "source_count": 1, "research_status": "researchable"},
+                "events": [], "external_sources": (_social_sources() if self.social_profiles and not is_host else [])
+                + (_linked_social_sources() if (self.social_profiles or self.social_links_only) and not is_host else []),
                 "external_facts": [{"provider_key": "website",
-                                    "source_url": "https://events.example.test/lakehouse",
-                                    "fact_key": "description", "value": "Published profile fixture.",
+                                    "source_url": identity["profile_url"],
+                                    "fact_key": "description", "value": "Published host profile fixture." if is_host else "Published profile fixture.",
                                     "value_url": None, "sort_order": 0,
-                                    "observed_at": "2030-06-01T00:00:00Z"}] + (_social_facts() if self.social_profiles else []),
+                                    "observed_at": "2030-06-01T00:00:00Z"}] + (_social_facts() if self.social_profiles and not is_host else []),
                 "refresh_due": True, "insights": None,
             })
         else:
@@ -340,7 +343,7 @@ def test_discovery_entities_overview_resolves_an_event_organizer(release_page):
     harness, api = release_page
     page = harness.page
     page.goto(f"{BASE}/?view=entities")
-    expect(page.get_by_role("heading", name="Entity explorer", exact=True)).to_be_visible()
+    expect(page.get_by_role("heading", name="Graph", exact=True)).to_be_visible()
     expect(page.locator(f'button[data-node-id="entity:{ENTITY_ID}"]')).to_be_visible()
     assert ("GET", "/v1/catalog/entity-overview-graph") in api.calls
     assert ("GET", "/v1/catalog/entity-directory") in api.calls
@@ -349,6 +352,95 @@ def test_discovery_entities_overview_resolves_an_event_organizer(release_page):
     page.get_by_role("button", name="Explore organizer Lakehouse Music", exact=True).click()
     expect(page.get_by_role("heading", name="Lakehouse Music", exact=True).first).to_be_visible()
     assert ("GET", "/v1/catalog/entity-resolution") in api.calls
+
+
+@pytest.mark.parametrize("width", [1440, 390])
+@pytest.mark.parametrize("role,entity_id,name,profile,description", [
+    ("host", HOST_ENTITY_ID, "Alex Example", "https://www.linkedin.com/in/alex-example", "Published host profile fixture."),
+    ("organizer", ENTITY_ID, "Lakehouse Music", "https://events.example.test/lakehouse", "Published profile fixture."),
+])
+def test_graph_event_participant_profiles_load_once_without_writes(release_page, width, role, entity_id, name, profile, description):
+    harness, api = release_page
+    page = harness.page
+    page.set_viewport_size({"width": width, "height": 900})
+    page.goto(f"{BASE}/?view=entities")
+    page.locator(f'button[data-node-id="event:{catalog_event()["canonical_event_id"]}"]').click()
+    page.get_by_role("button", name=f"Explore {role} {name}", exact=True).click()
+    expect(page.get_by_role("heading", name=name, exact=True).first).to_be_visible()
+    assert parse_qs(urlsplit(page.url).query)["entity"] == [entity_id]
+    detail_path = f"/v1/catalog/entities/{entity_id}"
+    assert ("GET", detail_path) not in api.calls
+    page.get_by_role("tab", name="Profile & sources", exact=True).click()
+    expect(page.get_by_text(description, exact=True)).to_be_visible()
+    expect(page.get_by_role("heading", name="Profiles", exact=True)).to_be_visible()
+    expect(page.locator(f'.entity-graph-inspector a[href="{profile}"]').first).to_be_visible()
+    expect(page.locator("main").get_by_role("alert")).to_have_count(0)
+    page.get_by_role("tab", name="Overview", exact=True).click()
+    page.get_by_role("tab", name="Profile & sources", exact=True).click()
+    expect(page.get_by_text(description, exact=True)).to_be_visible()
+    assert api.calls.count(("GET", detail_path)) == 1
+    assert not any(path.endswith("/refresh") for _, path in api.calls)
+
+
+@pytest.mark.parametrize("width", [1440, 390])
+def test_graph_workspace_breadcrumbs_and_browser_history(release_page, width):
+    harness, _ = release_page
+    page = harness.page
+    page.set_viewport_size({"width": width, "height": 900})
+    page.goto(f"{BASE}/?view=entities&topic=jazz")
+    path = page.get_by_role("navigation", name="Graph navigation", exact=True)
+    expect(path.get_by_role("heading", name="Jazz", exact=True)).to_be_visible()
+    page.locator(f'button[data-node-id="event:{catalog_event()["canonical_event_id"]}"]').click()
+    page.get_by_role("button", name="Explore organizer Lakehouse Music", exact=True).click()
+    expect(path.get_by_role("heading", name="Lakehouse Music", exact=True)).to_be_visible()
+    expect(page.get_by_role("button", name="Back", exact=True)).to_have_count(0)
+    expect(page.get_by_role("button", name="All entities", exact=True)).to_have_count(0)
+    page.locator(f'button[data-node-id="event:{catalog_event()["canonical_event_id"]}"]').click()
+    page.get_by_role("button", name="Explore host Alex Example", exact=True).click()
+    expect(path.get_by_role("heading", name="Alex Example", exact=True)).to_be_visible()
+    page.go_back()
+    expect(path.get_by_role("heading", name="Lakehouse Music", exact=True)).to_be_visible()
+    page.go_forward()
+    expect(path.get_by_role("heading", name="Alex Example", exact=True)).to_be_visible()
+    path.get_by_role("button", name="Graph", exact=True).press("Enter")
+    expect(page.get_by_role("heading", name="Graph", exact=True)).to_be_visible()
+    assert not {"entity", "topic"}.intersection(parse_qs(urlsplit(page.url).query))
+    expect(page.get_by_role("navigation", name="Graph navigation", exact=True)).to_have_count(0)
+    page.go_back()
+    expect(path.get_by_role("heading", name="Alex Example", exact=True)).to_be_visible()
+    page.go_back()
+    expect(path.get_by_role("heading", name="Lakehouse Music", exact=True)).to_be_visible()
+    page.go_back()
+    expect(path.get_by_role("heading", name="Jazz", exact=True)).to_be_visible()
+    path.get_by_role("button", name="Graph", exact=True).click()
+    expect(page.get_by_role("heading", name="Graph", exact=True)).to_be_visible()
+    assert not {"entity", "topic"}.intersection(parse_qs(urlsplit(page.url).query))
+
+
+@pytest.mark.parametrize("width", [1440, 390])
+def test_graph_workspace_search_and_optional_filters(release_page, width):
+    harness, _ = release_page
+    page = harness.page
+    page.set_viewport_size({"width": width, "height": 900})
+    page.goto(f"{BASE}/?view=entities")
+    expect(page.get_by_role("heading", name="Graph", exact=True)).to_be_visible()
+    graph = page.get_by_role("application")
+    expect(graph).to_be_visible()
+    expect(page.get_by_role("heading", name="Entity explorer", exact=True)).to_have_count(0)
+    assert graph.bounding_box()["y"] < 260
+    expect(page.get_by_role("button", name=re.compile(r"^Organizations"))).not_to_be_visible()
+    page.locator(".graph-workspace-filters summary").press("Enter")
+    expect(page.get_by_text("In the whole catalog", exact=True)).to_be_visible()
+    with page.expect_request(re.compile(r"entity-overview-graph.*kind=organization")):
+        page.get_by_role("button", name=re.compile(r"^Organizations")).click()
+    with page.expect_request(re.compile(r"entity-overview-graph.*identity=source_scoped")):
+        page.get_by_role("button", name=re.compile(r"^Source-scoped")).click()
+    expect(page.locator(".graph-workspace-filters summary")).to_have_text("Filters2")
+    page.locator(".graph-workspace-filters summary").press("Enter")
+    with page.expect_request(re.compile(r"entity-overview-graph.*q=Lakehouse")):
+        page.get_by_role("textbox", name="Search people and organizations", exact=True).fill("Lakehouse")
+    expect(graph).to_be_visible()
+    assert page.evaluate("document.documentElement.scrollWidth <= window.innerWidth")
 
 
 @pytest.mark.parametrize("width", [1440, 390])

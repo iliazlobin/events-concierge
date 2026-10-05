@@ -26,6 +26,9 @@ owns deployed revisions, image digests, backup evidence and open coverage inputs
 
 ### Public collection
 
+- **Tech Week 2026:** [official SF](https://www.tech-week.com/calendar/sf) October 5–11 and [LA](https://www.tech-week.com/calendar/la) October 12–18. `tech_week_mcp` reads only the anonymous [official calendar search](https://www.tech-week.com/mcp), at most 40 × 75 events per city, 2 MB and 20 seconds per page, paced at 1.5 seconds. Totals, dates and unique IDs must reconcile before atomic publication; a changed or incomplete calendar retains the prior catalog.
+- Migration `0205` registers two official sources (`tech-week-sf-2026`, `tech-week-la-2026`) and two [Luma SF](https://luma.com/sftw) / [LA](https://luma.com/latw) community calendars, all disabled and unreviewed. Owner activation uses the audited source-configuration API: 180-minute refresh, 15-day horizon, review expiry October 20, 07:00 UTC. Only the official profiles freeze October 5–19 inclusive, preserving earlier starts; Luma uses its reviewed public future cursor, identity-checked details and 30-page cap. Other sources keep rolling windows. Source admission/pacing/publication and handoff-only authority still apply.
+- Review through the Sources filter and custom dates October 5–19 with **Any price**. Missing prices, end times and coordinates stay unknown; closed/invite-only registration retains its provider state and never becomes open. Official city scope is not an exact street address; events without public coordinates do not appear on the map. Distinct official event IDs remain separate; cross-publisher merging requires exact title, time and known venue agreement. Keep compatible code/schema after registration; downgrade does not delete source history.
 - The five-minute cadence CronJob queues only due, reviewed sources. Luma and Meetup sources use a six-hour refresh interval; other admitted sources refresh at least daily.
 - Luma Discover supplies a city listing; separately reviewed organizer calendars walk their future-event cursor. Discover alone does not contain each organizer's full program.
 - Meetup city JSON-LD supplies a limited public listing. `meetup_group_ics` adds the [official public group calendar export](https://help.meetup.com/hc/en-us/articles/39237118960013-Exporting-an-event-to-your-calendar), plus identity-checked public event details. Export coverage is provider-limited; neither feed proves complete city/platform search.
@@ -36,11 +39,15 @@ owns deployed revisions, image digests, backup evidence and open coverage inputs
 
 ### Remaining release work
 
-1. Add authenticated private Helm composition for in-cluster stores; per-process Secret/IAM and certificate mounts.
-2. Configure Google/Apple Identity Platform, approved versioned legal pages and trusted HTTPS. [Consumer accounts](../deployment/consumer-identity.md).
-3. Rehearse combined candidate, migration and transport rollback; check capacity; prepare versioned credentials/certificates.
-4. Approve deployment; suspend cadence, drain writers, verify fresh backup; coordinate migration and encrypted rollout.
-5. Verify identity, TLS/mTLS, CSRF, tenant isolation, discovery and worker recovery; complete monitoring and scheduled recovery.
+Symphony owns task stages; GitHub holds the engineering records below. These prerequisites are not deployment approval.
+
+| Prerequisite | Engineering record |
+| --- | --- |
+| In-cluster authenticated composition; per-process Secret/IAM and certificate mounts | [Private runtime](https://github.com/iliazlobin/events-concierge/issues/22) |
+| Health/freshness alerts and scheduled recovery evidence | [Observability](https://github.com/iliazlobin/events-concierge/issues/23) |
+| Combined candidate, migration/transport rollback, capacity and immutable artifacts | [Release rehearsal](https://github.com/iliazlobin/events-concierge/issues/24) |
+
+Configure Google/Apple Identity Platform, approved versioned legal pages and trusted HTTPS. [Consumer accounts](../deployment/consumer-identity.md) defines signup, reauthentication and erasure checks. After deployment approval, suspend cadence, drain writers, verify a fresh backup, coordinate migration/rollout, then verify identity, TLS/mTLS, CSRF, isolation, discovery and worker recovery.
 
 - **Profile gap:** development requires mock/plaintext/OIDC-off; managed requires Cloud SQL Proxy. Neither supports the intended composition.
 - **Erasure worker:** preserve session revocation and cleanup when narrowing its full application/BFF credentials.
@@ -146,7 +153,7 @@ kubectl -n events-concierge-dev exec -i deployment/events-concierge-api -- pytho
 kubectl -n events-concierge-dev exec -i deployment/events-concierge-api -- python - < scripts/development/smoke.py
 ```
 
-- Require six intended Deployments ready; no deferred Deployments; correct revision/digests/schema and restricted-role access.
+- Require six intended Deployments ready; no deferred Deployments; correct revision/digests/schema and restricted-role access. Confirm read-only Entities/Graph and reject external-profile refresh in discovery.
 - Promotion requires candidate catalog pollers. Smoke covers discovery plus Temporal/GCS echo; erasure completes synthetic cleanup.
 - Collection acceptance: real reviewed refresh; command → successful run → publication. Schedule success alone is insufficient.
 - Compare `fn_report_catalog_source_coverage_v1()` at matching times/windows; investigate failures and freshness; exclude fixtures.
@@ -157,7 +164,11 @@ kubectl -n events-concierge-dev exec -i deployment/events-concierge-api -- pytho
 - Migration `0187` has no downgrade. No schema-0180 images after schema-0193 migration; no incompatible Helm-only rollback.
 - Recovery requires verified coordinated backup and compatible images; overwriting new writes needs separate approval.
 
-**Access — one forward per terminal**
+**Access**
+
+The owner's Mac has login-started LaunchAgents for IAP, consumer and admin forwards; they restart after connection loss or pod replacement. Another machine needs its own authenticated platform access. Loopback links work only on the forwarding machine; they do not expose a public service.
+
+Without supervised access, keep IAP running and use one forward per terminal:
 
 ```bash
 kubectl -n events-concierge-dev port-forward --address=127.0.0.1 service/events-concierge-api 14000:8000

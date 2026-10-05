@@ -1107,6 +1107,7 @@ def build_catalog_fetchers(
         from .adapters.midpen.source import MidpenCatalogFetcher
         from .adapters.oakland.source import OaklandCatalogFetcher
         from .adapters.sf_gov.source import SfGovCatalogFetcher
+        from .adapters.tech_week.source import TechWeekCatalogFetcher
         from .adapters.tribe.source import TribeEventsCatalogFetcher
 
         configured_public_crawler = PublicJsonLdSource(
@@ -1169,6 +1170,9 @@ def build_catalog_fetchers(
                     user_agent=settings.crawl_user_agent,
                 ),
                 CatalogSourceMode.MEETUP_GROUP_ICS: MeetupGroupCalendarCatalogFetcher(
+                    user_agent=settings.crawl_user_agent,
+                ),
+                CatalogSourceMode.TECH_WEEK_MCP: TechWeekCatalogFetcher(
                     user_agent=settings.crawl_user_agent,
                 ),
             }

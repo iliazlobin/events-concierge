@@ -1,5 +1,7 @@
 # Research Brief — Events Concierge (multi-tenant, autonomous)
 
+Research snapshot from the original full-concierge design. Preserve its source dates and evidence; [PROJECT.md](../PROJECT.md#current-milestone-private-discovery-candidate) defines current scope, and [release gates](../docs/production-operations.md#first-release-acceptance) define activation.
+
 > Synthesis of the nine research dossiers (`01`–`09`) into the load-bearing evidence for the design
 > phase. Every claim cites the dossier it comes from. The 2026 Claude-stack "thesis" is validated
 > where the evidence supports it and explicitly corrected where it does not.

@@ -1,10 +1,11 @@
 "use client";
 
-import { ArrowLeft, ChevronLeft, LoaderCircle } from "lucide-react";
+import { LoaderCircle } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { EntityGraphCanvas } from "@/components/entity-graph-canvas";
 import { EntityInspector } from "@/components/entity-inspector";
+import { GraphWorkspaceHeading } from "@/components/graph-workspace-heading";
 import { getCatalogEntityGraph } from "@/lib/entity-graph-api";
 import type { CatalogEntityGraph } from "@/lib/entity-graph";
 import { aggregateGraphSessions } from "@/lib/entity-graph-sessions";
@@ -32,7 +33,7 @@ export interface EntityGraphViewProps {
   tenantId: string | null;
   canRefresh?: boolean;
   entityId: string;
-  /** `null` returns to the ranked directory. */
+  /** `null` returns to the graph overview. */
   onSelectEntity: (entityId: string | null) => void;
   onEntitySelect: (reference: EventEntityReference) => void;
   onTopicSelect: (topic: string) => void;
@@ -55,38 +56,8 @@ export function EntityGraphView({
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
   const [hoveredNodeId, setHoveredNodeId] = useState<string | null>(null);
   const [announcement, setAnnouncement] = useState("");
-  const [canGoBack, setCanGoBack] = useState(false);
-  /**
-   * Bumped by Retry, and depended on by the fetch effect.
-   *
-   * A failed graph left the reader on a dead screen whose only exits were Back and All entities —
-   * so a dropped connection or a server restart mid-click cost them the entity they had just
-   * chosen. Nothing about that failure is permanent, and re-running the same request is the whole
-   * remedy, so it is worth a button.
-   */
+  /** Retry the current focus without leaving its graph. */
   const [reloadToken, setReloadToken] = useState(0);
-
-  /**
-   * How deep into this view the reader has walked.
-   *
-   * Browser Back already worked — every refocus pushes a history entry through
-   * `pushConsumerSnapshot` — so what was missing was only a visible control, and the control
-   * therefore calls `window.history.back()` rather than keeping a second stack of its own. Two
-   * stacks would disagree the first time a reader mixed the button with the browser's own gesture,
-   * or with a swipe, or with a deep link pasted mid-walk.
-   *
-   * This trail is not that second stack: it decides only whether the button is live. It follows the
-   * focus rather than the clicks, so a Back taken with the browser's own control pops it too — the
-   * new entity is the one below the top — and a Forward pushes it again.
-   */
-  const trailRef = useRef<string[]>([]);
-
-  useEffect(() => {
-    const trail = trailRef.current;
-    if (trail.length >= 2 && trail[trail.length - 2] === entityId) trail.pop();
-    else if (trail[trail.length - 1] !== entityId) trail.push(entityId);
-    setCanGoBack(trail.length > 1);
-  }, [entityId]);
 
   /**
    * Measure the drawing column, not the stage.
@@ -221,44 +192,20 @@ export function EntityGraphView({
 
   return (
     <div className="entity-graph-shell">
-      <header className="entity-graph-heading">
-        <div className="entity-graph-nav">
-          <button
-            className="entity-back"
-            type="button"
-            onClick={() => window.history.back()}
-            disabled={!canGoBack}
-            aria-disabled={!canGoBack}
-            title={canGoBack ? "Back to the previous entity" : "No previous entity in this view"}
-          >
-            <ChevronLeft aria-hidden="true" />
-            Back
-          </button>
-          <button className="entity-back" type="button" onClick={() => onSelectEntity(null)}>
-            <ArrowLeft aria-hidden="true" />
-            All entities
-          </button>
-        </div>
-        <div>
-          <p>ENTITY GRAPH</p>
-          {/*
-            * A failed load is not a loading one. This said "Loading entity" for as long as the
-            * reader stared at the failure, which is the page telling them to keep waiting for
-            * something that has already stopped.
-            */}
-          <h1>{ego?.label ?? (error ? "Entity graph" : "Loading entity")}</h1>
-          {graph ? (
-            <span>
+      <GraphWorkspaceHeading
+        current={ego?.label ?? (error ? "Entity unavailable" : "Loading entity")}
+        onRoot={() => onSelectEntity(null)}
+        summary={graph ? (
+            <>
               {graph.counts.events} {graph.counts.events === 1 ? "event" : "events"}
               {graph.truncated.events ? ` of ${graph.counts.events_total}` : ""}
               {" · "}
               {graph.counts.peers} connected
               {graph.truncated.peers ? ` of ${graph.counts.peers_total}` : ""}
               {graph.counts.topics ? ` · ${graph.counts.topics} topics` : ""}
-            </span>
+            </>
           ) : null}
-        </div>
-      </header>
+      />
 
       {error ? (
         <div className="entity-graph-failure" role="alert">

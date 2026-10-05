@@ -16,7 +16,7 @@ Attach sanitized acceptance evidence to the release PR. Source tests and mock ru
 - Keep DevTools Network open. Record failing requests, correlation IDs and screenshots; exclude cookies, CSRF values, credentials and capability URLs.
 - Run destructive account erasure last, only with explicit authority for that disposable account.
 
-### Current unresolved persistent-data invariant
+### Retained local-data defect
 
 **Legacy observation; revalidation pending.** The retained local database reported these lifecycle counts at `2026-07-23T04:10:01Z`:
 
@@ -30,8 +30,7 @@ Attach sanitized acceptance evidence to the release PR. Source tests and mock ru
 
 - Root cause remains unresolved; these are not current measurements.
 - Keep this defect separate from new tenant failures.
-- Do not call the affected retained database invariant-clean or grant overall release acceptance until revalidated and resolved.
-  A UI-only pass may be recorded separately.
+- Do not accept the affected retained database until revalidated and resolved. These local counts are not measurements of the GKE candidate; record each environment's acceptance separately.
 
 ## Discovery checks
 
@@ -40,6 +39,7 @@ Use `/v1/catalog/events` requests to verify filters and pagination. Browsing mus
 **Graph event details** — [selected-event integration tests](../tests/integration/test_catalog_browse.py), [browser checks](../tests/e2e/test_next_release_profile.py).
 
 - [ ] Overview, entity and topic graphs stay graphical on desktop and mobile. Check node selection and keyboard navigation.
+- [ ] The overview opens with compact search and optional Filters. Entity/topic focus shows `Graph › Name`; Graph clears entity/topic focus. Browser Back/Forward restores the previous focus. Participant Profile & sources loads the selected identity without refreshing providers.
 - [ ] Selecting an event in any graph shows the shared map card's source, linked title, date/time, venue links, availability, price, participants, topics and description. Overview/entity selections read `/v1/catalog/events/{canonical_event_id}`; topic graphs reuse loaded events. Initial graph load and hover do not read event details.
 - [ ] Host, organizer and other entity chips resolve the selected event's exact ID, role and name, then open that entity's graph. Topic chips open the topic graph. Check overview/entity/topic graphs on desktop and mobile; profile icons still open external profiles.
 - [ ] Explore connections retains source assertions and entity navigation; recurring dates select their own occurrence.
@@ -79,6 +79,14 @@ Mark checks requiring unavailable catalog data **NOT EXERCISED**.
 - [ ] For an already populated, reviewed Meetup source: public event links and source labels work; zero-event success remains distinct from transport failure.
   [Meetup ingestion](meetup-ingestion-runbook.md) owns refresh setup and provider limits.
 
+**Entities and Graph** — [release-profile browser tests](../tests/e2e/test_next_release_profile.py), [entity contract](../design/entity-catalog-and-research.md).
+
+- [ ] Open Entities, select a person/organization and follow an event organizer into its graph. Back/Forward retains the selected view.
+- [ ] Graph edges correspond to recorded event-role evidence. Shared-event counts and truncation remain visible; name matches do not imply merged identities or attendance.
+- [ ] Profile & sources distinguishes imported links from stored, dated profile facts. Missing fields remain unknown; an external link alone is not a fetched snapshot.
+- [ ] Empty/error/loading states are distinct. Retry repeats a read; keyboard and narrow-screen navigation remain usable.
+- [ ] Discovery shows no external-profile Refresh control and rejects its POST route. Browsing queues no collection or enrichment work.
+
 ## Accounts and usability
 
 **Identity and product scope** — [sign-in browser tests](../tests/e2e/test_next_sign_in.py), [release-profile browser tests](../tests/e2e/test_next_release_profile.py).
@@ -101,7 +109,7 @@ Mark checks requiring unavailable catalog data **NOT EXERCISED**.
 
 **Usability and recovery**
 
-- [ ] At `390 × 844`, Events/Map/Calendar and settings remain usable without overlapping controls or horizontal page overflow.
+- [ ] At `390 × 844`, Events/Map/Calendar, Entities/Graph and settings remain usable without overlapping controls or horizontal page overflow.
 - [ ] Keyboard focus is visible; filters, details and settings actions work without a mouse. Dismissible overlays close and return focus sensibly.
 - [ ] Reduced motion remains usable. Loading, empty and error states stay distinct; retry preserves intended filters.
 - [ ] Reload preserves supported session/filter state. Record browser storage restrictions instead of claiming persistence passed.

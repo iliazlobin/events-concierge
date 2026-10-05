@@ -1,15 +1,15 @@
 """Atomic self-service consumer accounts and immutable, tenant-scoped legal receipts.
 
-Revision ID: 0204
-Revises: 0203
+Revision ID: 0207
+Revises: 0206
 """
 
 from collections.abc import Sequence
 
 from alembic import op
 
-revision: str = "0204"
-down_revision: str | None = "0203"
+revision: str = "0207"
+down_revision: str | None = "0206"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 
@@ -21,7 +21,7 @@ def upgrade() -> None:
         DO $$ BEGIN
             IF NOT EXISTS (SELECT 1 FROM pg_catalog.pg_roles
                 WHERE rolname = current_user AND (rolsuper OR rolbypassrls)) THEN
-                RAISE EXCEPTION '0204 signup requires a BYPASSRLS migration owner';
+                RAISE EXCEPTION '0207 signup requires a BYPASSRLS migration owner';
             END IF;
         END $$;
         CREATE TABLE public.consumer_account_consents (
