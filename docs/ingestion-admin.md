@@ -54,6 +54,7 @@ Cadence/operator → durable command → ingestion-command worker
 - Command leases default to 300 seconds, renewed every `min(60 seconds, lease / 3)`.
 - Failed renewal cancels work and forbids terminal command writes. Expiry and guarded reclaim select the next owner.
 - Source publication has its own lease fence; failed refreshes preserve the last successful catalog.
+- A successful manual refresh newer than a parked cadence failure restores the next scheduled slot. Failed manual retries leave the cadence backoff and attempt history intact.
 - Catalog Temporal workers use the executor role, catalog queue and catalog payload namespace; transactional workers cannot substitute.
 - Drain old catalog workflows before queue/converter changes. [Migration sequence](production-operations.md#entity-profile-pacer-and-command-lease-migration-rollout).
 
@@ -76,6 +77,11 @@ Cadence/operator → durable command → ingestion-command worker
 
 - Campbell's city-wide RSS profile uses `CID=All-calendar.xml&ModID=58`, the `/m/calendar` namespace and path-based event links. It retains the single-request, 50-item and 1 MB caps. Changing the registry seed requires reviewer acknowledgement.
 - The older recreation-category profile remains supported while registry consumers still use it; remove it after reviewed seed migration. [Closed RSS profiles](../src/events_concierge/adapters/civic_engage/source.py).
+
+**Library feeds**
+
+- Berkeley's [Communico collector](../src/events_concierge/adapters/communico/source.py) reads one approved public endpoint over the configured horizon, stopping streamed responses above 3 MB. Arrays at the 600-item ceiling fail instead of publishing an incomplete calendar.
+- Transport and HTTP 5xx failures use the existing bounded retry budget. Invalid feeds, redirects and other HTTP errors fail while retaining the last publication.
 
 ## Investigate work
 

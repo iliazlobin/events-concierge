@@ -987,6 +987,7 @@ class PostgresIngestionAdminRepository:
         The projection withholds a slot whose latest run failed until its backoff elapses, and
         withdraws one entirely on a configuration defect or a runaway attempt count, so a source
         that cannot succeed stops displacing healthy sources from the single fleet pass (0155).
+        A successful publication newer than that failure restores ordinary cadence (0203).
         """
         _validate_due_limit(limit)
         async with self._session_scope() as session:

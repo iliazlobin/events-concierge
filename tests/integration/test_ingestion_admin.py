@@ -740,6 +740,108 @@ async def test_default_projections_hide_all_fixture_signals_before_due_limit(db:
         assert [item.source.source_key for item in due] == [fixture.live_source]
 
 
+@pytest.mark.parametrize(
+    ("manual_status", "completion_offset_seconds", "recovers"),
+    [
+        ("succeeded", -60, False),
+        ("succeeded", 0, False),
+        ("failed", 60, False),
+        ("succeeded", 60, True),
+    ],
+)
+async def test_cadence_recovery_requires_a_newer_successful_publication(
+    db: None, manual_status: str, completion_offset_seconds: int, recovers: bool
+) -> None:
+    """Recovery resumes the next due slot while retaining exhausted runs and failed retries."""
+    repository = PostgresIngestionAdminRepository()
+    # Future timestamps keep the fixture's registry creation from masquerading as a later edit.
+    failed_at = datetime(2099, 1, 1, tzinfo=UTC)
+    manual_completed_at = failed_at + timedelta(seconds=completion_offset_seconds)
+    due_at = manual_completed_at + timedelta(hours=1)
+    async with _ingestion_fixture() as fixture:
+        failed_key = f"cadence:{fixture.live_source}:old"
+        manual_key = f"admin:{uuid4()}"
+        async with fixture.owner.begin() as connection:
+            await connection.execute(
+                text("""
+                INSERT INTO public.catalog_refresh_runs (
+                    source_key, run_key, status, started_at, completed_at,
+                    candidate_count, canonical_count, error, attempt_count
+                ) VALUES (
+                    :source_key, :run_key, :status, :started_at, :completed_at,
+                    :candidate_count, :canonical_count, :error, :attempt_count
+                )
+                """),
+                [
+                    {
+                        "source_key": fixture.live_source,
+                        "run_key": failed_key,
+                        "status": "failed",
+                        "started_at": failed_at - timedelta(minutes=5),
+                        "completed_at": failed_at,
+                        "candidate_count": None,
+                        "canonical_count": None,
+                        "error": "source refresh failed",
+                        "attempt_count": 50,
+                    },
+                    {
+                        "source_key": fixture.live_source,
+                        "run_key": manual_key,
+                        "status": manual_status,
+                        "started_at": manual_completed_at - timedelta(seconds=1),
+                        "completed_at": manual_completed_at,
+                        "candidate_count": 1 if manual_status == "succeeded" else None,
+                        "canonical_count": 1 if manual_status == "succeeded" else None,
+                        "error": None if manual_status == "succeeded" else "source refresh failed",
+                        "attempt_count": 1,
+                    },
+                ],
+            )
+
+        before_due = await repository.list_due_refreshes(due_at - timedelta(seconds=1), limit=500)
+        assert fixture.live_source not in {item.source.source_key for item in before_due}
+        after_due = await repository.list_due_refreshes(due_at, limit=500)
+        recovered = [item for item in after_due if item.source.source_key == fixture.live_source]
+        assert bool(recovered) is recovers
+        if recovers:
+            assert recovered[0].due_at == due_at
+        assert not {item.source.source_key for item in after_due}.intersection(
+            fixture.fixture_sources
+        )
+
+        async with fixture.owner.begin() as connection:
+            retained = (
+                await connection.execute(
+                    text("""SELECT status, attempt_count FROM public.catalog_refresh_runs
+                     WHERE source_key=:source_key AND run_key=:run_key"""),
+                    {"source_key": fixture.live_source, "run_key": failed_key},
+                )
+            ).one()
+            assert retained == ("failed", 50)
+
+            if recovers:
+                # A later exhausted cadence slot must still trip its own circuit breaker.
+                await connection.execute(
+                    text("""
+                    INSERT INTO public.catalog_refresh_runs (
+                        source_key, run_key, status, started_at, completed_at, error, attempt_count
+                    ) VALUES (:source_key, :run_key, 'failed', :started_at, :completed_at,
+                              'source refresh failed', 50)
+                    """),
+                    {
+                        "source_key": fixture.live_source,
+                        "run_key": f"cadence:{fixture.live_source}:new",
+                        "started_at": due_at,
+                        "completed_at": due_at + timedelta(seconds=1),
+                    },
+                )
+        if recovers:
+            after_new_failure = await repository.list_due_refreshes(
+                due_at + timedelta(days=3), limit=500
+            )
+            assert fixture.live_source not in {item.source.source_key for item in after_new_failure}
+
+
 async def test_source_registry_sort_is_global_stable_and_nulls_last(db: None) -> None:
     repository = PostgresIngestionAdminRepository()
 

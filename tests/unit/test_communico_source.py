@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import gzip
 import json
+from collections.abc import AsyncIterator
 from datetime import UTC, datetime
 
 import httpx
@@ -11,6 +13,7 @@ import pytest
 from events_concierge.adapters.communico.source import CommunicoCatalogFetcher, CommunicoFetchError
 from events_concierge.domain.catalog_sources import CatalogSource
 from events_concierge.domain.enums import CatalogSourceMode, PriceStatus
+from events_concierge.ports.sources import SourceTransientError
 
 
 def _source() -> CatalogSource:
@@ -166,3 +169,104 @@ async def test_communico_refuses_an_unreviewed_source_key_before_requesting() ->
     with pytest.raises(ValueError, match="reviewed public events"):
         await fetcher.fetch(source)
     assert requested == []
+
+
+async def test_communico_accepts_a_complete_calendar_above_the_old_byte_limit() -> None:
+    """A large description must not discard an otherwise complete, bounded public calendar."""
+    payload = json.dumps([_event(1001, description="x" * 2_016_138)]).encode()
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, content=payload, request=request)
+
+    fetcher = CommunicoCatalogFetcher(
+        user_agent="test",
+        now=lambda: datetime(2026, 7, 17, 19, 0, tzinfo=UTC),
+        transport=httpx.MockTransport(handler),
+    )
+
+    assert len(await fetcher.fetch(_source())) == 1
+
+
+async def test_communico_decodes_compressed_calendar_only_once() -> None:
+    compressed = gzip.compress(json.dumps([_event(1001)]).encode())
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200, content=compressed, headers={"Content-Encoding": "gzip"}, request=request
+        )
+
+    fetcher = CommunicoCatalogFetcher(
+        user_agent="test",
+        now=lambda: datetime(2026, 7, 17, 19, 0, tzinfo=UTC),
+        transport=httpx.MockTransport(handler),
+    )
+
+    assert len(await fetcher.fetch(_source())) == 1
+
+
+async def test_communico_stops_streaming_an_oversized_response_and_closes_it() -> None:
+    """Do not read an unbounded payload merely to reject it after downloading."""
+    read_chunks: list[int] = []
+    closed: list[bool] = []
+
+    class OversizedStream(httpx.AsyncByteStream):
+        async def __aiter__(self) -> AsyncIterator[bytes]:
+            for index in range(100):
+                read_chunks.append(index)
+                yield b" " * 64_000
+
+        async def aclose(self) -> None:
+            closed.append(True)
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, stream=OversizedStream(), request=request)
+
+    fetcher = CommunicoCatalogFetcher(user_agent="test", transport=httpx.MockTransport(handler))
+
+    with pytest.raises(CommunicoFetchError, match="response-size limit"):
+        await fetcher.fetch(_source())
+    assert sum(64_000 for _ in read_chunks) <= 3_000_000 + 64_000
+    assert closed == [True]
+
+
+@pytest.mark.parametrize("failure", [httpx.ConnectError, httpx.ReadTimeout])
+async def test_communico_transport_outage_uses_bounded_retry(
+    failure: type[httpx.TransportError],
+) -> None:
+    async def handler(request: httpx.Request) -> httpx.Response:
+        raise failure("Name or service not known", request=request)
+
+    fetcher = CommunicoCatalogFetcher(user_agent="test", transport=httpx.MockTransport(handler))
+
+    with pytest.raises(SourceTransientError) as raised:
+        await fetcher.fetch(_source())
+    assert raised.value.retry_after_seconds == 15.0
+
+
+@pytest.mark.parametrize("status", [500, 503, 504])
+async def test_communico_server_outage_uses_bounded_retry(status: int) -> None:
+    async def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(status, request=request)
+
+    fetcher = CommunicoCatalogFetcher(user_agent="test", transport=httpx.MockTransport(handler))
+
+    with pytest.raises(SourceTransientError) as raised:
+        await fetcher.fetch(_source())
+    assert raised.value.retry_after_seconds == 15.0
+
+
+@pytest.mark.parametrize("status", [302, 403, 404])
+async def test_communico_does_not_retry_or_follow_rejected_responses(status: int) -> None:
+    requested: list[str] = []
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        requested.append(str(request.url))
+        return httpx.Response(
+            status, headers={"Location": "https://unreviewed.example/events"}, request=request
+        )
+
+    fetcher = CommunicoCatalogFetcher(user_agent="test", transport=httpx.MockTransport(handler))
+
+    with pytest.raises(CommunicoFetchError):
+        await fetcher.fetch(_source())
+    assert len(requested) == 1
