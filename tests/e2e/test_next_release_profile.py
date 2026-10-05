@@ -1350,6 +1350,57 @@ def test_map_keeps_mapped_and_unlocated_events_in_separate_accessible_lists(rele
     assert page.evaluate("document.documentElement.scrollWidth <= window.innerWidth")
 
 
+@pytest.mark.parametrize("width", [1440, 390])
+def test_map_resets_unlocated_list_after_a_new_filter_search(release_page, width):
+    harness, api = release_page
+    page = harness.page
+    page.set_viewport_size({"width": width, "height": 900})
+    page.emulate_media(reduced_motion="reduce")
+    unlocated = _map_catalog_event(catalog_event()["canonical_event_id"], "Venue Pending Mixer")
+    mapped = _map_catalog_event(SECOND_EVENT_ID, "Mapped Builders Meetup", mapped=True)
+    _install_map_catalog(page, api, [[unlocated]])
+    page.goto(f"{BASE}/?view=map&source=fixture-techweek&city=sanfrancisco&when=custom&start=2030-06-01&end=2030-06-30&price=any")
+
+    rail = page.locator(".map-preview-rail")
+    missing_list = rail.get_by_role("button", name=re.compile(r"^Without map locations"))
+    expect(missing_list).to_have_attribute("aria-pressed", "true")
+    expect(rail.get_by_role("button", name=f"Show details for {unlocated['title']}", exact=True)).to_be_visible()
+    expect(page.locator(".map-marker")).to_have_count(0)
+
+    # Hold the new search so the regression exercises its loading state, not a remount.
+    held: list[Route] = []
+
+    def hold_search(route: Route) -> None:
+        held.append(route)
+
+    page.route(re.compile(r"/v1/catalog/events(?:\?.*)?$"), hold_search)
+    with page.expect_request(re.compile(r"/v1/catalog/events\?")) as updated:
+        page.get_by_role("button", name="Remove SF Tech Week 2030", exact=True).click()
+    expect(page.get_by_text("Loading locations…", exact=True)).to_be_visible()
+    query = parse_qs(urlsplit(updated.value.url).query)
+    assert "source_key" not in query
+    assert query["city"] == ["sanfrancisco"]
+    assert len(held) == 1
+    api.calls.append((held[0].request.method, "/v1/catalog/events"))
+    api.respond(held.pop(), {
+        "items": [mapped, unlocated], "next_cursor": None,
+        "providers": [], "topic_facets": [], "city_facets": [],
+    })
+
+    area_list = rail.get_by_role("button", name=re.compile(r"^In this area"))
+    expect(area_list).to_have_attribute("aria-pressed", "true")
+    expect(missing_list).to_have_attribute("aria-pressed", "false")
+    expect(rail.get_by_role("button", name=f"Focus {mapped['title']} on map", exact=True)).to_be_visible()
+    expect(page.locator(".map-marker")).to_have_count(1)
+    missing_list.click()
+    expect(rail.get_by_role("button", name=f"Show details for {unlocated['title']}", exact=True)).to_be_visible()
+    params = parse_qs(urlsplit(page.url).query)
+    assert params["view"] == ["map"]
+    assert "source" not in params
+    assert params["start"] == ["2030-06-01"] and params["end"] == ["2030-06-30"]
+    assert page.evaluate("document.documentElement.scrollWidth <= window.innerWidth")
+
+
 @pytest.mark.parametrize("local_demo", [True, False])
 def test_profile_avatar_reads_use_the_current_auth_contract(release_page, local_demo):
     harness, api = release_page

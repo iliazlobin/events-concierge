@@ -86,9 +86,14 @@ export function MapView({
   const [unmappedList, setUnmappedList] = useState(false);
   const showUnmapped = unmapped.length > 0 && (unmappedList || !mapped.length);
   useEffect(() => {
+    // A new search resets the list; pagination uses loadingMore instead.
+    if (loading) {
+      setUnmappedList(false);
+      return;
+    }
     // Keep the fallback list selected when a later page introduces map locations.
     if (unmapped.length && !mapped.length) setUnmappedList(true);
-  }, [mapped.length, unmapped.length]);
+  }, [loading, mapped.length, unmapped.length]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const selectedIdRef = useRef<string | null>(selectedId);
   selectedIdRef.current = selectedId;
