@@ -1,11 +1,12 @@
 "use client";
 
-import { Building2, CalendarDays, Hash, LoaderCircle, UserRound, UsersRound } from "lucide-react";
+import { Building2, Hash, LoaderCircle, UserRound, UsersRound } from "lucide-react";
 import type { ReactNode } from "react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { EntityGraphCanvas } from "@/components/entity-graph-canvas";
-import { EntityGraphView, type EntityViewMode } from "@/components/entity-graph-view";
+import { EntityGraphView } from "@/components/entity-graph-view";
+import { GraphEventInspector } from "@/components/graph-event-inspector";
 import {
   ENTITY_SEARCH_DEBOUNCE_MS,
   EntityFilterChips,
@@ -29,7 +30,6 @@ import {
   writeEntityOverview,
 } from "@/lib/entity-graph-cache";
 import { layoutEntityOverview } from "@/lib/entity-graph-layout";
-import { formatCity } from "@/lib/presentation";
 import type { CatalogEntityKind } from "@/lib/types";
 
 import "@/app/entity-graph.css";
@@ -93,22 +93,10 @@ function count(value: number): string {
 }
 
 function nodeGlyph(node: CatalogEntityGraphNode): ReactNode {
-  if (node.node_kind === "event") return <CalendarDays aria-hidden="true" />;
   if (node.node_kind === "topic") return <Hash aria-hidden="true" />;
   if (node.entity_kind === "organization") return <Building2 aria-hidden="true" />;
   if (node.entity_kind === "person") return <UserRound aria-hidden="true" />;
   return <UsersRound aria-hidden="true" />;
-}
-
-function longDate(value: string | null): string | null {
-  if (!value) return null;
-  const parsed = new Date(value);
-  if (Number.isNaN(parsed.getTime())) return null;
-  return new Intl.DateTimeFormat(undefined, {
-    month: "short",
-    day: "numeric",
-    year: "numeric",
-  }).format(parsed);
 }
 
 export function EntitiesView({
@@ -117,18 +105,12 @@ export function EntitiesView({
   selectedEntityId,
   onSelectEntity,
 }: EntitiesViewProps) {
-  // Held here rather than inside the graph view so that walking out to the overview and back into
-  // another entity does not silently flip a reader who chose Text back to Graph.
-  const [graphViewMode, setGraphViewMode] = useState<EntityViewMode>("graph");
-
   if (selectedEntityId) {
     return (
       <EntityGraphView
         tenantId={tenantId}
         canRefresh={canRefresh}
         entityId={selectedEntityId}
-        viewMode={graphViewMode}
-        onViewModeChange={setGraphViewMode}
         onSelectEntity={onSelectEntity}
       />
     );
@@ -154,6 +136,7 @@ function EntityOverviewGraph({ tenantId, onSelectEntity }: EntityOverviewGraphPr
   const [error, setError] = useState<string | null>(null);
   const [viewport, setViewport] = useState(DEFAULT_VIEWPORT);
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
+  const [hoveredNodeId, setHoveredNodeId] = useState<string | null>(null);
   const [announcement, setAnnouncement] = useState("");
 
   /**
@@ -222,6 +205,7 @@ function EntityOverviewGraph({ tenantId, onSelectEntity }: EntityOverviewGraphPr
   /** One request per filter state, always. A new filter cancels the one before it. */
   useEffect(() => {
     setSelectedNodeId(null);
+    setHoveredNodeId(null);
     const request = { tenantId, query, kinds, identity, ...OVERVIEW_LIMITS };
     const cached = readEntityOverview(request);
     if (cached) {
@@ -446,14 +430,30 @@ function EntityOverviewGraph({ tenantId, onSelectEntity }: EntityOverviewGraphPr
         ) : null}
 
         {scene && scene.placements.length > 0 ? (
-          <div className="entity-graph-column" ref={measureColumn}>
-            <EntityGraphCanvas
-              scene={scene}
-              selectedNodeId={selectedNodeId}
-              hoveredNodeId={null}
-              onSelect={setSelectedNodeId}
-              onFocus={focusNodeId}
-            />
+          <div className="entity-graph-stage" data-selection={selectedNode?.node_kind === "event" ? "event" : "none"}>
+            <div className="entity-graph-column" ref={measureColumn}>
+              <EntityGraphCanvas
+                scene={scene}
+                selectedNodeId={selectedNodeId}
+                hoveredNodeId={hoveredNodeId}
+                onSelect={setSelectedNodeId}
+                onFocus={focusNodeId}
+              />
+            </div>
+            {selectedNode?.node_kind === "event" && model ? (
+              <GraphEventInspector
+                key={`${tenantId ?? "anonymous"}:${selectedNode.canonical_event_id ?? selectedNode.node_id}`}
+                tenantId={tenantId}
+                subject={selectedNode}
+                model={model}
+                contextNote={selectedNode.shared_event_count !== null
+                  ? `Representative of ${count(selectedNode.shared_event_count)} shared ${selectedNode.shared_event_count === 1 ? "event" : "events"}.`
+                  : undefined}
+                onSelectNode={setSelectedNodeId}
+                onHoverNode={setHoveredNodeId}
+                onFocusEntity={onSelectEntity}
+              />
+            ) : null}
           </div>
         ) : null}
 
@@ -465,14 +465,14 @@ function EntityOverviewGraph({ tenantId, onSelectEntity }: EntityOverviewGraphPr
           </div>
         ) : null}
 
-        {selectedNode ? (
+        {selectedNode && selectedNode.node_kind !== "event" ? (
           <OverviewSelection node={selectedNode} onOpen={onSelectEntity} />
-        ) : (
+        ) : !selectedNode ? (
           <p className="entity-overview-hint">
             Click a node to read it. Double-click a hub to open its own graph; double-click an event
             to bring it to the centre.
           </p>
-        )}
+        ) : null}
 
         <ul className="entity-graph-legend">
           <li data-kind="person">Person</li>
@@ -490,11 +490,7 @@ function EntityOverviewGraph({ tenantId, onSelectEntity }: EntityOverviewGraphPr
 }
 
 /**
- * What one selected node says, without a second request.
- *
- * Everything here is already in the payload the graph was drawn from. The landing view deliberately
- * does not mount the ego inspector: that panel's whole vocabulary — shared with the focus,
- * appearances, peers — is relative to an ego, and there is no ego on this screen.
+ * Entity and topic summaries use the graph payload; event selections use the shared event card.
  */
 function OverviewSelection({
   node,
@@ -503,7 +499,6 @@ function OverviewSelection({
   node: CatalogEntityGraphNode;
   onOpen: (entityId: string) => void;
 }) {
-  const when = longDate(node.start_at);
   const facts: string[] = [];
   if (node.node_kind === "entity") {
     facts.push(`${count(node.degree)} ${node.degree === 1 ? "event" : "events"}`);
@@ -517,11 +512,6 @@ function OverviewSelection({
         role.replace(/^./, (value) => value.toUpperCase())
       )).join(" · "));
     }
-  } else if (node.node_kind === "event") {
-    if (when) facts.push(node.is_past ? `Past · ${when}` : `Upcoming · ${when}`);
-    if (node.venue_name) facts.push(node.venue_name);
-    if (node.city) facts.push(formatCity(node.city));
-    facts.push(`${count(node.degree)} ${node.degree === 1 ? "entity" : "entities"} named`);
   } else {
     facts.push(`${count(node.degree)} of the drawn events`);
   }
@@ -536,12 +526,6 @@ function OverviewSelection({
       <span className="entity-overview-selection__copy">
         <strong>{node.label}</strong>
         <span>{facts.join(" · ")}</span>
-        {node.node_kind === "event" && node.shared_event_count !== null ? (
-          <small>
-            Standing in for {count(node.shared_event_count)}{" "}
-            {node.shared_event_count === 1 ? "event" : "events"} this pair shares.
-          </small>
-        ) : null}
       </span>
       {node.node_kind === "entity" && node.entity_id ? (
         <button
@@ -551,16 +535,6 @@ function OverviewSelection({
         >
           Open this graph
         </button>
-      ) : null}
-      {node.node_kind === "event" && node.registration_url ? (
-        <a
-          className="entity-overview-selection__open"
-          href={node.registration_url}
-          target="_blank"
-          rel="noreferrer noopener"
-        >
-          Event page
-        </a>
       ) : null}
     </div>
   );

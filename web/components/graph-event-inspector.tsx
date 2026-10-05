@@ -1,9 +1,9 @@
 "use client";
 
-import { ArrowUpRight, LoaderCircle, X } from "lucide-react";
+import { ArrowUpRight, LoaderCircle } from "lucide-react";
 import { useEffect, useState } from "react";
 
-import { EventCard } from "@/components/event-card";
+import { GraphEventCard } from "@/components/graph-event-card";
 import { ApiError } from "@/lib/api";
 import { formatEventDate, formatEventTime } from "@/lib/date";
 import type { CatalogEntityGraphEdge, CatalogEntityGraphNode, EntityGraphSceneModel } from "@/lib/entity-graph";
@@ -18,6 +18,7 @@ interface GraphEventInspectorProps {
   subject: CatalogEntityGraphNode;
   model: EntityGraphSceneModel;
   eventSessions?: CatalogEntityGraphNode[];
+  contextNote?: string;
   onSelectNode: (nodeId: string | null) => void;
   onHoverNode: (nodeId: string | null) => void;
   onFocusEntity: (entityId: string) => void;
@@ -45,7 +46,7 @@ function publicEventUrl(value: string | null): string | null {
 
 /** Mounted only for the selected occurrence; the graph itself stays a bounded projection. */
 export function GraphEventInspector({
-  tenantId, subject, model, eventSessions, onSelectNode, onHoverNode, onFocusEntity,
+  tenantId, subject, model, eventSessions, contextNote, onSelectNode, onHoverNode, onFocusEntity,
 }: GraphEventInspectorProps) {
   const eventId = subject.canonical_event_id;
   const [event, setEvent] = useState<EventItem | null>(() => (
@@ -112,13 +113,10 @@ export function GraphEventInspector({
   const fallbackUrl = publicEventUrl(subject.registration_url);
 
   return (
-    <aside className="entity-graph-inspector entity-graph-inspector--event" aria-label="Event detail" aria-busy={!event && !error}>
-      <header className="graph-event-toolbar">
-        <span>Event</span>
-        <button type="button" className="entity-graph-inspector__close" onClick={() => onSelectNode(null)}>
-          <X aria-hidden="true" /><span className="sr-only">Back to {model.ego?.label ?? "the graph"}</span>
-        </button>
-      </header>
+    <GraphEventCard event={event} onClose={() => onSelectNode(null)}
+      closeLabel={`Back to ${model.byId.get(model.focusId)?.label ?? "the graph"}`} loading={!event && !error}
+      connections={connections} beforeDetails={<>
+      {contextNote ? <p className="graph-event-context">{contextNote}</p> : null}
       {eventSessions && eventSessions.length > 1 ? (
         <section className="graph-event-dates" aria-label="Event dates">
           <h3>{eventSessions.length} dates in this graph</h3>
@@ -134,7 +132,7 @@ export function GraphEventInspector({
           </ul>
         </section>
       ) : null}
-      {event ? <EventCard event={event} expanded compact entityDetails={connections} /> : (
+      </>}>
         <div className="graph-event-fallback">
           <h2>{subject.label}</h2>
           <p>{[
@@ -149,7 +147,6 @@ export function GraphEventInspector({
           {connections}
           {fallbackUrl ? <a className="event-action" href={fallbackUrl} target="_blank" rel="noopener noreferrer">View event <ArrowUpRight aria-hidden="true" /></a> : null}
         </div>
-      )}
-    </aside>
+    </GraphEventCard>
   );
 }

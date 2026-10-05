@@ -39,9 +39,11 @@ Use `/v1/catalog/events` requests to verify filters and pagination. Browsing mus
 
 **Graph event details** — [selected-event integration tests](../tests/integration/test_catalog_browse.py), [browser checks](../tests/e2e/test_next_release_profile.py).
 
-- [ ] Selecting a graph event reads `/v1/catalog/events/{canonical_event_id}` and shows the shared map card's source, date/time, venue links, availability, price, participants, topics, description and provider action. Initial graph load and hover do not read event details.
+- [ ] Overview, entity and topic graphs stay graphical on desktop and mobile. Check node selection and keyboard navigation.
+- [ ] Selecting an event in any graph shows the shared map card's source, date/time, venue links, availability, price, participants, topics, description and provider action. Overview/entity selections read `/v1/catalog/events/{canonical_event_id}`; topic graphs reuse loaded events. Initial graph load and hover do not read event details.
 - [ ] Explore connections retains source assertions and entity navigation; recurring dates select their own occurrence.
 - [ ] Missing/error responses show the graph summary and a retry. Quick selection changes never display another event's details. Check desktop and mobile.
+
 Mark checks requiring unavailable catalog data **NOT EXERCISED**.
 
 **Filters and navigation** — [filter tests](../web/tests/event-catalog-filter-controls.test.mjs), [browser history tests](../web/tests/event-browser-history.test.mjs).

@@ -26,8 +26,8 @@ import { getCatalogEntity, refreshCatalogEntity } from "@/lib/api";
 import type {
   CatalogEntityGraphNode,
   EntityGraphSceneModel,
-  EntityGraphTextAppearance,
-  EntityGraphTextModel,
+  EntityGraphAppearance,
+  EntityGraphDetailModel,
 } from "@/lib/entity-graph";
 import { readEntityDetail, writeEntityDetail } from "@/lib/entity-graph-cache";
 import { SOCIAL_API_PROVIDERS, socialProfileCards } from "@/lib/entity-social-profiles";
@@ -172,7 +172,7 @@ export interface EntityInspectorProps {
   canRefresh?: boolean;
   /** The original occurrence scene, retained beneath the canvas session grouping. */
   model: EntityGraphSceneModel;
-  textModel: EntityGraphTextModel;
+  detailModel: EntityGraphDetailModel;
   /** The node under inspection; `null` reads the ego. */
   eventSessions?: CatalogEntityGraphNode[];
   selectedNodeId: string | null;
@@ -185,7 +185,7 @@ export function EntityInspector({
   tenantId,
   canRefresh = false,
   model,
-  textModel,
+  detailModel,
   selectedNodeId,
   eventSessions,
   onSelectNode,
@@ -318,10 +318,10 @@ export function EntityInspector({
   }, [canRefresh, detail?.entity.identity_status, detail?.refresh_due, subjectEntityId]);
 
   const appearancesByNode = useMemo(() => {
-    const index = new Map<string, EntityGraphTextAppearance>();
-    for (const item of [...textModel.upcoming, ...textModel.past]) index.set(item.node_id, item);
+    const index = new Map<string, EntityGraphAppearance>();
+    for (const item of [...detailModel.upcoming, ...detailModel.past]) index.set(item.node_id, item);
     return index;
-  }, [textModel]);
+  }, [detailModel]);
 
   /** Appearances for whichever node is under inspection: all of the ego's, or a peer's shared set. */
   const appearances = useMemo(() => {
@@ -331,7 +331,7 @@ export function EntityInspector({
       : model.peerEvents.get(subject.node_id) ?? [];
     return nodeIds
       .map((nodeId) => appearancesByNode.get(nodeId))
-      .filter((item): item is EntityGraphTextAppearance => item !== undefined);
+      .filter((item): item is EntityGraphAppearance => item !== undefined);
   }, [appearancesByNode, model, subject]);
 
   const egoLabel = model.ego?.label ?? "the focus";
@@ -364,7 +364,7 @@ export function EntityInspector({
   }
 
   if (subject.node_kind === "topic") {
-    const eventTotal = textModel.upcoming.length + textModel.past.length;
+    const eventTotal = detailModel.upcoming.length + detailModel.past.length;
     return (
       <aside className="entity-graph-inspector" aria-label="Topic detail">
         <header className="entity-graph-inspector__head">
@@ -407,7 +407,7 @@ export function EntityInspector({
    * excluded here.
    */
   const frameActivity = isEgo
-    ? entityFrameActivity(appearances, textModel.truncated.events)
+    ? entityFrameActivity(appearances, detailModel.truncated.events)
     : null;
   /** Catalog-wide insights when the detail payload is in hand, the frame otherwise, nothing if neither. */
   const overviewLines = entityOverviewLines(detail?.insights ?? null, frameActivity);
@@ -419,7 +419,7 @@ export function EntityInspector({
   const topicLabels = detail?.insights?.top_topics?.length
     ? detail.insights.top_topics
     : isEgo
-      ? textModel.topics.map((topic) => topic.label)
+      ? detailModel.topics.map((topic) => topic.label)
       : [];
   const snapshots = socialProfileCards(detail);
   const snapshotKeys = new Set(identityLinks(null, [], snapshots.map(({ source }) => source.source_url))
@@ -549,9 +549,9 @@ export function EntityInspector({
                 event, and a panel headed "Recurring" filled with single-event pairs would be false.
               */}
               <h3>Shares events with</h3>
-              {textModel.peers.length ? (
+              {detailModel.peers.length ? (
                 <ul>
-                  {textModel.peers.map((peer) => (
+                  {detailModel.peers.map((peer) => (
                     <li key={peer.node_id}>
                       <button
                         type="button"

@@ -38,8 +38,8 @@ export type CatalogEntityIdentityStatus = "profile_verified" | "source_scoped";
 /**
  * One drawn node.
  *
- * The three node kinds share one flat record because the canvas, the inspector,
- * and the text equivalent all walk a single list; the fields a kind does not
+ * The three node kinds share one flat record because the canvas and inspector
+ * walk a single list; the fields a kind does not
  * carry are null (entity nodes have no `start_at`, event nodes have no
  * `entity_id`). {@link normalizeGraphNode} is what guarantees that, because the
  * server omits absent keys entirely rather than emitting nulls — see
@@ -348,8 +348,8 @@ export const RING_TOPICS = 3;
 /**
  * The indexed, ordered form of one graph payload.
  *
- * Everything the canvas, the inspector and the text equivalent need is derived
- * once, here, so those three renderings cannot disagree about what the frame
+ * Everything the canvas and inspector need is derived
+ * once, here, so their renderings cannot disagree about what the frame
  * contains. Ordering is fixed and total, which is what lets the layout be
  * byte-identical across runs and screenshot evidence be meaningful at all.
  */
@@ -462,7 +462,7 @@ export function deriveEntityGraphScene(
 
   // A peer's shared events are the ring-1 events it is itself joined to. Kept in
   // ring-1 order so the layout can anchor a peer beside its evidence without
-  // re-sorting, and so the text view lists them the same way the ring reads.
+  // re-sorting, and so the inspector follows the same order as the ring.
   const eventRank = new Map<string, number>();
   events.forEach((node, index) => eventRank.set(node.node_id, index));
   const peerEvents = new Map<string, string[]>();
@@ -495,10 +495,10 @@ export function deriveEntityGraphScene(
 }
 
 /* ------------------------------------------------------------------ *
- * Text equivalent.
+ * Inspector details.
  * ------------------------------------------------------------------ */
 
-export interface EntityGraphTextAppearance {
+export interface EntityGraphAppearance {
   node_id: string;
   title: string;
   start_at: string | null;
@@ -513,19 +513,19 @@ export interface EntityGraphTextAppearance {
   entity_count: number;
 }
 
-export interface EntityGraphTextPeer {
+export interface EntityGraphPeer {
   node_id: string;
   entity_id: string | null;
   display_name: string;
   kind: CatalogEntityKind | null;
   identity_status: CatalogEntityIdentityStatus | null;
   shared_event_count: number;
-  /** Titles of the shared events, so provenance is readable without the canvas. */
+  /** Titles of the shared events for the inspector's connection list. */
   shared_event_titles: string[];
   degree: number;
 }
 
-export interface EntityGraphTextModel {
+export interface EntityGraphDetailModel {
   focus_id: string;
   generated_at: string;
   ego: {
@@ -537,9 +537,9 @@ export interface EntityGraphTextModel {
     roles: EventEntityRole[];
     degree: number;
   } | null;
-  upcoming: EntityGraphTextAppearance[];
-  past: EntityGraphTextAppearance[];
-  peers: EntityGraphTextPeer[];
+  upcoming: EntityGraphAppearance[];
+  past: EntityGraphAppearance[];
+  peers: EntityGraphPeer[];
   topics: Array<{ node_id: string; label: string; event_count: number }>;
   same_name_candidates: CatalogEntitySameNameCandidate[];
   truncated: CatalogEntityGraphTruncation;
@@ -547,21 +547,17 @@ export interface EntityGraphTextModel {
 }
 
 /**
- * The complete text equivalent of a scene: the a11y form, the print form, and
- * the narrow-viewport default.
- *
- * Derived from the same model the canvas draws, by construction: every node
- * appears exactly once and every mention edge is accounted for, so the two
- * renderings cannot drift.
+ * Inspector facts derived from the original occurrence scene. Canvas aggregation
+ * must preserve each date, role and source assertion here.
  */
-export function sceneToTextModel(scene: EntityGraphSceneModel): EntityGraphTextModel {
+export function deriveEntityGraphDetails(scene: EntityGraphSceneModel): EntityGraphDetailModel {
   const egoEdges = new Map<string, CatalogEntityGraphEdge>();
   for (const edge of scene.edges) {
     if (edge.kind !== "mention") continue;
     if (edge.a === scene.focusId) egoEdges.set(edge.b, edge);
   }
 
-  const appearance = (node: CatalogEntityGraphNode): EntityGraphTextAppearance => {
+  const appearance = (node: CatalogEntityGraphNode): EntityGraphAppearance => {
     const edge = egoEdges.get(node.node_id);
     return {
       node_id: node.node_id,

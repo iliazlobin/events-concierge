@@ -8,8 +8,8 @@
  * hide a dozen perfectly legible names on a sparse ring, and still let a packed overview print its
  * names on top of one another.
  *
- * A held-back label is never lost. It returns on hover, focus or selection, and the text view
- * lists every name in full.
+ * A held-back label returns on hover, focus or selection. Every node retains its full accessible
+ * name for keyboard and screen-reader navigation.
  */
 
 /** A node never shrinks below this, however far out the camera is pulled. */

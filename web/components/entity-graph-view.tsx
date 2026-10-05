@@ -1,30 +1,21 @@
 "use client";
 
-import { ArrowLeft, ChevronLeft, LoaderCircle, Network, TextQuote } from "lucide-react";
+import { ArrowLeft, ChevronLeft, LoaderCircle } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { EntityGraphCanvas } from "@/components/entity-graph-canvas";
-import { EntityGraphText } from "@/components/entity-graph-text";
 import { EntityInspector } from "@/components/entity-inspector";
 import { getCatalogEntityGraph } from "@/lib/entity-graph-api";
 import type { CatalogEntityGraph } from "@/lib/entity-graph";
 import { aggregateGraphSessions } from "@/lib/entity-graph-sessions";
-import { deriveEntityGraphScene, sceneToTextModel } from "@/lib/entity-graph";
+import { deriveEntityGraphScene, deriveEntityGraphDetails } from "@/lib/entity-graph";
 import { readableGraphError } from "@/lib/entity-graph-errors";
 import { readEntityGraph, writeEntityGraph } from "@/lib/entity-graph-cache";
 import { layoutEgoRings } from "@/lib/entity-graph-layout";
 
 import "@/app/entity-graph.css";
 
-/**
- * The one component in this feature that fetches.
- *
- * `EntityGraphCanvas` takes a finished scene plus callbacks and nothing else, the way `MapView`
- * takes `events` plus callbacks — so the drawing surface can be unit-tested, screenshotted and
- * re-rendered without a network at all.  Exactly one graph request is in flight at any moment: a
- * new focus aborts the previous one, and there is no hover prefetch, because speculative fetching
- * across a 32-peer ring is precisely the pressure a five-connection pool cannot absorb.
- */
+/** Fetch one bounded graph per focus; drawing and selected-event reads stay separate. */
 
 /**
  * The caps this view asks for, well inside the capability's own 24 / 48 / 6.
@@ -36,22 +27,10 @@ const GRAPH_LIMITS = { events: 18, peers: 32, topics: 4 } as const;
 
 const DEFAULT_VIEWPORT = { width: 960, height: 640 };
 
-/**
- * "graph" | "text".
- *
- * Declared here rather than imported so this view compiles standalone; `consumer-history.ts` and
- * `concierge-app.tsx` carry the same union, and a union of string literals is mutually assignable
- * across modules, so the orchestrator may re-point this import at `@/lib/types` without touching
- * anything else in the file.
- */
-export type EntityViewMode = "graph" | "text";
-
 export interface EntityGraphViewProps {
   tenantId: string | null;
   canRefresh?: boolean;
   entityId: string;
-  viewMode: EntityViewMode;
-  onViewModeChange: (mode: EntityViewMode) => void;
   /** `null` returns to the ranked directory. */
   onSelectEntity: (entityId: string | null) => void;
 }
@@ -60,8 +39,6 @@ export function EntityGraphView({
   tenantId,
   canRefresh = false,
   entityId,
-  viewMode,
-  onViewModeChange,
   onSelectEntity,
 }: EntityGraphViewProps) {
   const observerRef = useRef<ResizeObserver | null>(null);
@@ -73,8 +50,6 @@ export function EntityGraphView({
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
   const [hoveredNodeId, setHoveredNodeId] = useState<string | null>(null);
   const [announcement, setAnnouncement] = useState("");
-  const [narrow, setNarrow] = useState(false);
-  const [forceGraph, setForceGraph] = useState(false);
   const [canGoBack, setCanGoBack] = useState(false);
   /**
    * Bumped by Retry, and depended on by the fetch effect.
@@ -107,14 +82,6 @@ export function EntityGraphView({
     else if (trail[trail.length - 1] !== entityId) trail.push(entityId);
     setCanGoBack(trail.length > 1);
   }, [entityId]);
-
-  useEffect(() => {
-    const preference = window.matchMedia("(max-width: 700px)");
-    const sync = () => setNarrow(preference.matches);
-    sync();
-    preference.addEventListener("change", sync);
-    return () => preference.removeEventListener("change", sync);
-  }, []);
 
   /**
    * Measure the drawing column, not the stage.
@@ -192,7 +159,7 @@ export function EntityGraphView({
   useEffect(() => () => abortRef.current?.abort(), []);
 
   /**
-   * Keep original occurrence evidence for the inspector/text view. Only the canvas folds
+   * Keep original occurrence evidence for the inspector. Only the canvas folds
    * matching sessions into one visual node; selecting a date resolves its original node ID.
    * Resizing changes layout without changing membership.
    */
@@ -203,7 +170,7 @@ export function EntityGraphView({
     () => (canvasModel ? layoutEgoRings(canvasModel, viewport) : null),
     [canvasModel, viewport],
   );
-  const textModel = useMemo(() => (model ? sceneToTextModel(model) : null), [model]);
+  const detailModel = useMemo(() => (model ? deriveEntityGraphDetails(model) : null), [model]);
 
   const ego = model?.ego ?? null;
 
@@ -229,8 +196,6 @@ export function EntityGraphView({
     else setSelectedNodeId(nodeId);
   }, [focusEntity, model]);
 
-  const showText = viewMode === "text" || (narrow && !forceGraph);
-
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
       if (event.metaKey || event.ctrlKey || event.altKey) return;
@@ -239,12 +204,6 @@ export function EntityGraphView({
         target instanceof Element
         && target.closest("input, textarea, select, [contenteditable]")
       ) return;
-      if (event.key === "t" || event.key === "T") {
-        event.preventDefault();
-        setForceGraph(false);
-        onViewModeChange(viewMode === "text" ? "graph" : "text");
-        return;
-      }
       if (event.key === "Escape") {
         // A strict ladder, so one press never does two things.
         if (selectedNodeId) setSelectedNodeId(null);
@@ -253,7 +212,7 @@ export function EntityGraphView({
     };
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [onSelectEntity, onViewModeChange, selectedNodeId, viewMode]);
+  }, [onSelectEntity, selectedNodeId]);
 
   return (
     <div className="entity-graph-shell">
@@ -294,32 +253,6 @@ export function EntityGraphView({
             </span>
           ) : null}
         </div>
-        <div className="entity-graph-modes" role="group" aria-label="Graph or text">
-          <button
-            type="button"
-            data-state={showText ? "idle" : "active"}
-            aria-pressed={!showText}
-            onClick={() => {
-              setForceGraph(true);
-              onViewModeChange("graph");
-            }}
-          >
-            <Network aria-hidden="true" />
-            Graph
-          </button>
-          <button
-            type="button"
-            data-state={showText ? "active" : "idle"}
-            aria-pressed={showText}
-            onClick={() => {
-              setForceGraph(false);
-              onViewModeChange("text");
-            }}
-          >
-            <TextQuote aria-hidden="true" />
-            Text
-          </button>
-        </div>
       </header>
 
       {error ? (
@@ -336,31 +269,23 @@ export function EntityGraphView({
 
       <p className="sr-only" role="status" aria-live="polite">{announcement}</p>
 
-      {scene && model && textModel ? (
-        <div className="entity-graph-stage" data-mode={showText ? "text" : "graph"}>
+      {scene && model && detailModel ? (
+        <div className="entity-graph-stage">
           <div className="entity-graph-column" ref={measureColumn}>
-            {showText ? (
-              <EntityGraphText
-                model={textModel}
-                onSelectNode={setSelectedNodeId}
-                onFocusEntity={focusEntity}
-              />
-            ) : (
-              <EntityGraphCanvas
-                scene={scene}
-                selectedNodeId={selectedNodeId ? sessions?.representative.get(selectedNodeId) ?? selectedNodeId : null}
-                hoveredNodeId={hoveredNodeId ? sessions?.representative.get(hoveredNodeId) ?? hoveredNodeId : null}
-                onSelect={setSelectedNodeId}
-                onFocus={focusNodeId}
-              />
-            )}
+            <EntityGraphCanvas
+              scene={scene}
+              selectedNodeId={selectedNodeId ? sessions?.representative.get(selectedNodeId) ?? selectedNodeId : null}
+              hoveredNodeId={hoveredNodeId ? sessions?.representative.get(hoveredNodeId) ?? hoveredNodeId : null}
+              onSelect={setSelectedNodeId}
+              onFocus={focusNodeId}
+            />
           </div>
           <EntityInspector
             canRefresh={canRefresh}
             eventSessions={sessions?.groups.get(sessions.representative.get(selectedNodeId ?? "") ?? "")}
             tenantId={tenantId}
             model={model}
-            textModel={textModel}
+            detailModel={detailModel}
             selectedNodeId={selectedNodeId}
             onSelectNode={setSelectedNodeId}
             onFocusEntity={focusEntity}
@@ -371,19 +296,6 @@ export function EntityGraphView({
 
       {sessions && [...sessions.groups.values()].some((group) => group.length > 1) ? (
         <p className="entity-graph-inspector__provenance">Matching sessions share a graph node. Select one to browse its dates in the detail panel. Counts refer to individual events in the loaded graph.</p>
-      ) : null}
-
-      {scene && narrow && showText ? (
-        <button
-          type="button"
-          className="entity-graph-show-graph"
-          onClick={() => {
-            setForceGraph(true);
-            onViewModeChange("graph");
-          }}
-        >
-          Show graph
-        </button>
       ) : null}
 
       {scene ? (

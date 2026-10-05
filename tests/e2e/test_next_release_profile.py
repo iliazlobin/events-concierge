@@ -298,8 +298,9 @@ def test_discovery_entity_graph_and_profile_are_read_only(release_page):
     assert ("GET", f"/v1/catalog/entities/{ENTITY_ID}") in api.calls
     expect(page.get_by_role("button", name="Refresh", exact=True)).to_have_count(0)
     assert not any(path.endswith("/refresh") for _, path in api.calls)
-    page.get_by_role("button", name="Text", exact=True).click()
-    expect(page.get_by_role("button", name="Text", exact=True)).to_have_attribute("aria-pressed", "true")
+    expect(page.get_by_role("application")).to_be_visible()
+    expect(page.get_by_role("group", name="Graph or text", exact=True)).to_have_count(0)
+    expect(page.get_by_role("button", name="Text", exact=True)).to_have_count(0)
     page.locator(".site-nav").get_by_role("button", name="Events", exact=True).click()
     expect(page.get_by_role("heading", name="Friday Night Jazz", exact=True)).to_be_visible()
     page.go_back()
@@ -308,6 +309,8 @@ def test_discovery_entity_graph_and_profile_are_read_only(release_page):
     page.set_viewport_size({"width": 390, "height": 844})
     expect(page.locator(".mobile-nav button")).to_have_count(4)
     expect(page.get_by_role("button", name="Refresh", exact=True)).to_have_count(0)
+    expect(page.get_by_role("application")).to_be_visible()
+    expect(page.get_by_role("button", name="Show graph", exact=True)).to_have_count(0)
 
 
 def test_discovery_entities_overview_resolves_an_event_organizer(release_page):
@@ -326,7 +329,8 @@ def test_discovery_entities_overview_resolves_an_event_organizer(release_page):
 
 
 @pytest.mark.parametrize("width", [1440, 390])
-def test_graph_event_details_match_map_without_prefetch(release_page, tmp_path, width):
+@pytest.mark.parametrize("scope", ["overview", "entity", "topic"])
+def test_graph_event_details_match_map_without_prefetch(release_page, tmp_path, width, scope):
     harness, api = release_page
     page = harness.page
     page.set_viewport_size({"width": width, "height": 900})
@@ -340,13 +344,18 @@ def test_graph_event_details_match_map_without_prefetch(release_page, tmp_path, 
                     ".event-card__description", ".event-card__actions"]
     expected = {part: map_card.locator(part).inner_text() for part in shared_parts}
     expected_links = map_card.get_by_role("link").evaluate_all("links => links.map(a => a.href)")
-    page.goto(f"{BASE}/?view=entities&entity={ENTITY_ID}")
-    page.get_by_role("button", name="Graph", exact=True).click()
+    graph_query = {"overview": "view=entities", "entity": f"view=entities&entity={ENTITY_ID}",
+                   "topic": "view=entities&topic=jazz"}[scope]
+    page.goto(f"{BASE}/?{graph_query}")
+    expect(page.get_by_role("application")).to_be_visible()
+    expect(page.get_by_role("button", name="Text", exact=True)).to_have_count(0)
     node_id = f"event:{catalog_event()['canonical_event_id']}"
     node = page.locator(f'button[data-node-id="{node_id}"]')
     expect(node).to_be_visible()
     assert not any(path.startswith("/v1/catalog/events/") for _, path in api.calls)
-    node.click()
+    node.focus()
+    expect(node).to_be_focused()
+    node.press("Enter")
     inspector = page.get_by_role("complementary", name="Event detail", exact=True)
     card = inspector.locator(".event-card")
     expect(card.get_by_role("region")).to_be_visible()
@@ -355,15 +364,17 @@ def test_graph_event_details_match_map_without_prefetch(release_page, tmp_path, 
     expect(card.get_by_role("button", name="Hide details for Friday Night Jazz", exact=True)).to_have_count(0)
     # The complete host facts remain even when this bounded graph drew only the organizer.
     expect(card.get_by_text("Alex Example", exact=True)).to_be_visible()
-    card.get_by_text("Explore connections (1)", exact=True).click()
-    expect(card.get_by_role("button", name=re.compile("Lakehouse Music.*Organizer"))).to_be_visible()
-    expect(card.get_by_text(re.compile("asserted by Fixture Jazz"))).to_be_visible()
-    card.get_by_text("Explore connections (1)", exact=True).click()
-    inspector.get_by_role("button", name="Back to Lakehouse Music", exact=True).click()
+    if scope != "topic":
+        card.get_by_text("Explore connections (1)", exact=True).click()
+        expect(card.get_by_role("button", name=re.compile("Lakehouse Music.*Organizer"))).to_be_visible()
+        expect(card.get_by_text(re.compile("asserted by Fixture Jazz"))).to_be_visible()
+        card.get_by_text("Explore connections (1)", exact=True).click()
+    close_label = "Back to Lakehouse Music" if scope == "entity" else "Back to the graph"
+    inspector.get_by_role("button", name=close_label, exact=True).click()
     node.click()
     expect(inspector.locator(".event-card")).to_be_visible()
     detail_path = f"/v1/catalog/events/{catalog_event()['canonical_event_id']}"
-    assert api.calls.count(("GET", detail_path)) == 1
+    assert api.calls.count(("GET", detail_path)) == (0 if scope == "topic" else 1)
     assert ("GET", f"/v1/catalog/entities/{ENTITY_ID}") not in api.calls
     assert page.evaluate("document.documentElement.scrollWidth <= window.innerWidth")
     action = card.locator(".event-action")
@@ -373,8 +384,8 @@ def test_graph_event_details_match_map_without_prefetch(release_page, tmp_path, 
         return document.elementFromPoint(bounds.x + bounds.width / 2,
             bounds.y + bounds.height / 2)?.closest('a') === link;
     }""")
-    page.screenshot(path=str(tmp_path / f"graph-event-card-{width}.png"), full_page=True)
-    inspector.screenshot(path=str(tmp_path / f"graph-event-detail-{width}.png"))
+    page.screenshot(path=str(tmp_path / f"graph-event-card-{scope}-{width}.png"), full_page=True)
+    inspector.screenshot(path=str(tmp_path / f"graph-event-detail-{scope}-{width}.png"))
 
 
 @pytest.mark.parametrize("status", [404, 503])
