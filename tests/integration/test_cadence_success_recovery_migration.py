@@ -18,7 +18,7 @@ _SIGNATURE = "public.fn_list_ingestion_admin_due_sources_v3(timestamptz,integer)
 
 
 def _roundtrip(connection: Connection) -> None:
-    path = Path(__file__).parents[2] / "migrations/versions/0203_cadence_success_recovery.py"
+    path = Path(__file__).parents[2] / "migrations/versions/0206_cadence_success_recovery.py"
     spec = importlib.util.spec_from_file_location("cadence_recovery_migration", path)
     assert spec is not None and spec.loader is not None
     migration = importlib.util.module_from_spec(spec)

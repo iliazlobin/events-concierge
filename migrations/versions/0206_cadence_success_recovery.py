@@ -1,7 +1,7 @@
 """Resume daily cadence after a successful publication newer than a parked failure.
 
-Revision ID: 0203
-Revises: 0202
+Revision ID: 0206
+Revises: 0205
 
 Failed manual attempts retain the cadence circuit break. A newer successful
 publication establishes a new due slot without deleting failure or budget history.
@@ -14,8 +14,8 @@ from collections.abc import Sequence
 from alembic import op
 from sqlalchemy import text
 
-revision: str = "0203"
-down_revision: str | None = "0202"
+revision: str = "0206"
+down_revision: str | None = "0205"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 
