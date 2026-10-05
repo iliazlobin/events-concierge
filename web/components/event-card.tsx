@@ -16,7 +16,6 @@ import { discoveryLabels } from "@/lib/event-discovery";
 import { formatEventDate, formatEventTime } from "@/lib/date";
 import {
   eventFormatLabel,
-  eventRegistrationCtaLabel,
   eventRegistrationLabel,
   safeEntityProfile,
 } from "@/lib/event-facets";
@@ -181,7 +180,6 @@ export function EventCard({
   const price = formatEventPrice(event);
   const registration = eventRegistrationLabel(event);
   const format = eventFormatLabel(event);
-  const actionLabel = eventRegistrationCtaLabel(event);
   const topics = [...new Set(event.topics ?? [])];
   const description = descriptionPreview(event.description);
   const hosts = event.host_names ?? [];
@@ -217,7 +215,9 @@ export function EventCard({
     <article
       className={`event-card${expanded ? " is-open" : ""}${compact ? " is-compact" : ""}${!onToggle ? " is-static" : ""}`}
     >
-      <div className="event-card__summary">
+      <div className="event-card__summary" onClick={onToggle ? (interaction) => {
+        if (interaction.target instanceof Element && !interaction.target.closest("a, button")) onToggle();
+      } : undefined}>
         {onToggle ? <button
           className="event-card__summary-trigger"
           type="button"
@@ -299,7 +299,12 @@ export function EventCard({
               </>
             ) : null}
           </span>
-          <h2 className="event-card__title" id={titleId}>{event.title}</h2>
+          <h2 className="event-card__title" id={titleId}>
+            {url ? <a className="event-card__title-link" href={url} target="_blank"
+              rel="noopener noreferrer" title="Open provider event page (opens in new tab)">
+              {event.title}
+            </a> : event.title}
+          </h2>
           <div className="event-card__meta">
             {calendarUrl ? (
               <a
@@ -489,20 +494,6 @@ export function EventCard({
             {description || "The organizer has not added a description yet."}
           </p>
           {entityDetails}
-
-          <div className="event-card__actions">
-            {url ? (
-              <a
-                className="event-action"
-                href={url}
-                target="_blank"
-                rel="noopener noreferrer"
-              >
-                {actionLabel}
-                <ArrowUpRight aria-hidden="true" />
-              </a>
-            ) : null}
-          </div>
         </div>
       </div>
     </article>

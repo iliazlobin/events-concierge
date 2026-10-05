@@ -1,6 +1,6 @@
 "use client";
 
-import { ArrowUpRight, Network, CalendarDays, MapPin, X } from "lucide-react";
+import { Network, CalendarDays, MapPin, X } from "lucide-react";
 import type { RefObject } from "react";
 
 import { formatEventDate, formatEventTime } from "@/lib/date";
@@ -50,13 +50,16 @@ function MapPreviewCard({ event, selected, muted, onSelect, onEntitySelect }: Ma
       className={`map-preview${selected ? " is-selected" : ""}${muted ? " is-muted" : ""}`}
       role="listitem"
     >
-      <button
-        className="map-preview__select"
-        type="button"
-        aria-label={`Focus ${event.title} on map`}
-        aria-pressed={selected}
-        onClick={() => onSelect(event)}
-      >
+      <div className="map-preview__summary" onClick={(interaction) => {
+        if (interaction.target instanceof Element && !interaction.target.closest("a, button")) onSelect(event);
+      }}>
+        <button
+          className="map-preview__select"
+          type="button"
+          aria-label={`Focus ${event.title} on map`}
+          aria-pressed={selected}
+          onClick={() => onSelect(event)}
+        >
         {imageUrl ? (
           <img
             className="map-preview__image"
@@ -75,6 +78,7 @@ function MapPreviewCard({ event, selected, muted, onSelect, onEntitySelect }: Ma
             <strong>{date.day}</strong>
           </time>
         )}
+        </button>
         <span className="map-preview__copy">
           {sourceLabel ? (
             <small className="map-preview__source">{sourceLabel}</small>
@@ -83,33 +87,24 @@ function MapPreviewCard({ event, selected, muted, onSelect, onEntitySelect }: Ma
             <CalendarDays aria-hidden="true" />
             {date.weekday} · {formatEventTime(event.start_at, event.end_at)}
           </small>
-          <strong>{event.title}</strong>
+          <strong>{pageUrl ? <a className="map-preview__title-link" href={pageUrl}
+            target="_blank" rel="noopener noreferrer" title="Open provider event page (opens in new tab)">
+            {event.title}
+          </a> : event.title}</strong>
           <span>
             <MapPin aria-hidden="true" />
             {eventLocationLabel(event)}
           </span>
         </span>
-      </button>
+      </div>
 
-      <div className="map-preview__actions">
-        {graphEntity && onEntitySelect ? <button type="button" className="map-preview__link"
+      {graphEntity && onEntitySelect ? <div className="map-preview__actions">
+        <button type="button" className="map-preview__link"
           aria-label={`View ${event.title} in ${graphEntity.name}'s graph`}
           onClick={() => onEntitySelect(graphEntity)}>
           <Network aria-hidden="true" /> View in graph
-        </button> : null}
-      {pageUrl ? (
-        <a
-          className="map-preview__link"
-          href={pageUrl}
-          target="_blank"
-          rel="noopener noreferrer"
-          aria-label={`View ${event.title} event page (opens in new tab)`}
-        >
-          View event
-          <ArrowUpRight aria-hidden="true" />
-        </a>
-      ) : null}
-      </div>
+        </button>
+      </div> : null}
     </article>
   );
 }

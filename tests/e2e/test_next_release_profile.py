@@ -95,6 +95,11 @@ class ReleaseApi:
     second_event: bool = False
     recurring: bool = False
     social_links_only: bool = False
+    event_url: str | None = "https://events.example.test/friday-jazz"
+
+    def with_event_url(self, event):
+        return event | {"registration_urls": [self.event_url] if self.event_url else [],
+                        "sources": [source | {"registration_url": self.event_url} for source in event["sources"]]}
 
     def config(self, route: Route) -> None:
         payload = {
@@ -136,7 +141,7 @@ class ReleaseApi:
         elif path in {"/v1/me/saved-filters", "/v1/me/api-keys"}:
             self.respond(route, [])
         elif path == "/v1/catalog/events":
-            event = catalog_event()
+            event = self.with_event_url(catalog_event())
             self.respond(route, {
                 "items": [event], "next_cursor": None,
                 "providers": [{"source_key": "fixture-jazz", "label": "Fixture Jazz", "display_name": "Fixture Jazz", "publisher": "Fixture Jazz", "provider": "public_jsonld", "seed_url": "https://events.example.test", "event_count": 1}],
@@ -161,7 +166,7 @@ class ReleaseApi:
         event = catalog_event()
         if path.endswith(SECOND_EVENT_ID):
             event = second_catalog_event(self.recurring)
-        self.respond(route, event if self.event_status == 200 else {"detail": "Event unavailable"}, self.event_status)
+        self.respond(route, self.with_event_url(event) if self.event_status == 200 else {"detail": "Event unavailable"}, self.event_status)
 
     def handle_entity(self, route: Route, path: str) -> None:
         if path == "/v1/catalog/entity-resolution":
@@ -347,6 +352,86 @@ def test_discovery_entities_overview_resolves_an_event_organizer(release_page):
 
 
 @pytest.mark.parametrize("width", [1440, 390])
+@pytest.mark.parametrize("scope", ["events", "map", "calendar", "overview", "entity", "topic"])
+def test_event_titles_open_provider_without_changing_selection(release_page, width, scope):
+    harness, _ = release_page
+    page = harness.page
+    page.set_viewport_size({"width": width, "height": 900})
+    provider_url = "https://events.example.test/friday-jazz"
+    page.context.route(provider_url, lambda route: route.fulfill(content_type="text/html", body="Provider event fixture"))
+
+    def open_title(link):
+        expect(link).to_have_attribute("href", provider_url)
+        expect(link).to_have_attribute("target", "_blank")
+        expect(link).to_have_attribute("rel", "noopener noreferrer")
+        before = page.url
+        with page.expect_popup() as opened:
+            if width == 1440:
+                link.press("Enter")
+            else:
+                link.click()
+        popup = opened.value
+        expect(popup).to_have_url(provider_url)
+        popup.close()
+        assert page.url == before
+
+    query = {"events": "view=events", "map": "view=map", "calendar": "view=calendar",
+             "overview": "view=entities", "entity": f"view=entities&entity={ENTITY_ID}",
+             "topic": "view=entities&topic=jazz"}[scope]
+    page.goto(f"{BASE}/?{query}&when=custom&start=2030-06-01&end=2030-06-30")
+    if scope == "events":
+        card = page.locator(".event-list .event-card").first
+        open_title(card.get_by_role("link", name="Friday Night Jazz", exact=True))
+        expect(card.get_by_role("button", name="Show details for Friday Night Jazz", exact=True)).to_have_attribute("aria-expanded", "false")
+        # The non-link summary and the explicit disclosure control still expand/collapse once.
+        card.locator(".event-card__date").click()
+        expect(card.get_by_role("region")).to_be_visible()
+        card.get_by_role("button", name="Hide details for Friday Night Jazz", exact=True).click()
+        card.get_by_role("button", name="Show details for Friday Night Jazz", exact=True).click()
+    elif scope == "map":
+        focus = page.get_by_role("button", name="Focus Friday Night Jazz on map", exact=True)
+        open_title(page.locator(".map-preview-rail").get_by_role("link", name="Friday Night Jazz", exact=True))
+        expect(focus).to_have_attribute("aria-pressed", "false")
+        focus.click()
+        expect(focus).to_have_attribute("aria-pressed", "true")
+        card = page.locator(".map-selection .event-card")
+    elif scope == "calendar":
+        page.get_by_role("gridcell", name=re.compile(r"June 14.*1 event")).click()
+        card = page.locator(".calendar-agenda .event-card")
+        card.get_by_role("button", name="Show details for Friday Night Jazz", exact=True).click()
+    else:
+        page.locator(f'button[data-node-id="event:{catalog_event()["canonical_event_id"]}"]').click()
+        card = page.get_by_role("complementary", name="Event detail", exact=True).locator(".event-card")
+    expect(card.get_by_role("region")).to_be_visible()
+    expect(card.get_by_role("link", name=re.compile(r"^(Sign up|Join waitlist|View details|View event)$"))).to_have_count(0)
+    open_title(card.get_by_role("link", name="Friday Night Jazz", exact=True))
+    expect(card.get_by_role("region")).to_be_visible()
+
+
+@pytest.mark.parametrize("scope", ["events", "map", "entity"])
+@pytest.mark.parametrize("event_url", [None, "javascript:alert(1)"])
+def test_event_titles_without_safe_provider_urls_remain_text(release_page, scope, event_url):
+    harness, api = release_page
+    api.event_url = event_url
+    page = harness.page
+    query = {"events": "view=events", "map": "view=map", "entity": f"view=entities&entity={ENTITY_ID}"}[scope]
+    page.goto(f"{BASE}/?{query}")
+    if scope == "map":
+        expect(page.locator(".map-preview__copy strong")).to_have_text("Friday Night Jazz")
+        expect(page.locator(".map-preview__copy strong a")).to_have_count(0)
+        page.get_by_role("button", name="Focus Friday Night Jazz on map", exact=True).click()
+        card = page.locator(".map-selection .event-card")
+    elif scope == "entity":
+        page.locator(f'button[data-node-id="event:{catalog_event()["canonical_event_id"]}"]').click()
+        card = page.get_by_role("complementary", name="Event detail", exact=True).locator(".event-card")
+    else:
+        card = page.locator(".event-list .event-card").first
+    expect(card.get_by_role("heading", name="Friday Night Jazz", exact=True)).to_be_visible()
+    expect(card.get_by_role("link", name="Friday Night Jazz", exact=True)).to_have_count(0)
+    expect(page.locator('a[href^="javascript:"]')).to_have_count(0)
+
+
+@pytest.mark.parametrize("width", [1440, 390])
 @pytest.mark.parametrize("scope", ["overview", "entity", "topic"])
 def test_graph_event_details_match_map_without_prefetch(release_page, tmp_path, width, scope):
     harness, api = release_page
@@ -359,7 +444,7 @@ def test_graph_event_details_match_map_without_prefetch(release_page, tmp_path, 
     expect(map_card.get_by_role("region")).to_be_visible()
     shared_parts = [".event-card__eyebrow", ".event-card__title", ".event-card__date",
                     ".event-card__meta", ".event-card__decision-strip", ".event-card__facts",
-                    ".event-card__description", ".event-card__actions"]
+                    ".event-card__description"]
     expected = {part: map_card.locator(part).inner_text() for part in shared_parts}
     expected_links = map_card.get_by_role("link").evaluate_all("links => links.map(a => a.href)")
     graph_query = {"overview": "view=entities", "entity": f"view=entities&entity={ENTITY_ID}",
@@ -395,7 +480,7 @@ def test_graph_event_details_match_map_without_prefetch(release_page, tmp_path, 
     assert api.calls.count(("GET", detail_path)) == (0 if scope == "topic" else 1)
     assert ("GET", f"/v1/catalog/entities/{ENTITY_ID}") not in api.calls
     assert page.evaluate("document.documentElement.scrollWidth <= window.innerWidth")
-    action = card.locator(".event-action")
+    action = card.get_by_role("link", name="Friday Night Jazz", exact=True)
     action.scroll_into_view_if_needed()
     assert action.evaluate("""link => {
         const bounds = link.getBoundingClientRect();
@@ -490,7 +575,8 @@ def test_graph_event_details_retry_without_inventing_facts(release_page, status)
     expect(inspector.get_by_role("alert")).to_be_visible()
     expect(inspector.get_by_role("heading", name="Friday Night Jazz", exact=True)).to_be_visible()
     expect(inspector.locator(".event-card__decision-strip")).to_have_count(0)
-    expect(inspector.get_by_role("link", name="View event", exact=True)).to_be_visible()
+    expect(inspector.get_by_role("link", name="Friday Night Jazz", exact=True)).to_have_attribute(
+        "href", "https://events.example.test/friday-jazz")
     api.event_status = 200
     inspector.get_by_role("button", name="Retry event details", exact=True).click()
     expect(inspector.locator(".event-card__description")).to_contain_text(catalog_event()["description"])
@@ -738,7 +824,7 @@ def test_profiles_keep_map_and_calendar_browsing(release_page, tmp_path, profile
     expect(page.get_by_role("button", name="Focus Friday Night Jazz on map", exact=True)).to_be_visible()
     graph = page.get_by_role("button", name="View Friday Night Jazz in Lakehouse Music's graph", exact=True)
     expect(graph).to_be_visible()
-    expect(page.get_by_role("link", name="View Friday Night Jazz event page (opens in new tab)", exact=True)).to_be_visible()
+    expect(page.locator(".map-preview-rail").get_by_role("link", name="Friday Night Jazz", exact=True)).to_be_visible()
     page.get_by_role("button", name="Focus Friday Night Jazz on map", exact=True).click()
     map_card = page.locator(".map-selection .event-card")
     expect(map_card.get_by_role("region")).to_be_visible()

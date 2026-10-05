@@ -19,16 +19,12 @@ const styles = readFileSync(
   "utf8",
 );
 
-test("the full event summary is a native disclosure target", () => {
+test("event details retain a native disclosure control", () => {
   assert.match(
     card,
     /className="event-card__summary-trigger"\s+type="button"\s+aria-expanded=\{expanded\}\s+aria-controls=\{regionId\}/s,
   );
   assert.match(card, /className="event-card__disclosure-cue"/);
-  assert.match(
-    styles,
-    /\.event-card__summary-trigger\s*\{[^}]*inset: 0;[^}]*position: absolute;[^}]*z-index: 1;/s,
-  );
   assert.match(styles, /\.event-card__summary-trigger:focus-visible/);
   assert.doesNotMatch(card, /event-card__reveal/);
   assert.doesNotMatch(styles, /event-card__reveal/);
@@ -44,7 +40,6 @@ test("calendar and map links remain independent controls above the summary targe
     /\.event-card__meta-link\s*\{[^}]*position: relative;[^}]*z-index: 2;/s,
   );
   assert.match(styles, /\.event-card__meta-link:focus-visible/);
-  assert.doesNotMatch(card, /event-card__summary"[^>]*onClick/);
   assert.doesNotMatch(card, /<article[^>]*onClick/);
 });
 

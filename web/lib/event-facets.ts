@@ -120,15 +120,6 @@ export function eventRegistrationLabel(
   return null;
 }
 
-export function eventRegistrationCtaLabel(
-  event: RegistrationEvent,
-): "Sign up" | "Join waitlist" | "View details" | "View event" {
-  if (event.registration_status === "open") return "Sign up";
-  if (event.registration_status === "waitlist") return "Join waitlist";
-  if (event.registration_status === "sold_out") return "View details";
-  return "View event";
-}
-
 export function eventFacetSignals(event: DescribedEvent): EventFacetSignal[] {
   const title = compactText(event.title);
   const description = compactText(event.description);

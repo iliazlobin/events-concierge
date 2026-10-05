@@ -1,6 +1,6 @@
 "use client";
 
-import { ArrowUpRight, LoaderCircle } from "lucide-react";
+import { LoaderCircle } from "lucide-react";
 import { useEffect, useState } from "react";
 
 import { GraphEventCard } from "@/components/graph-event-card";
@@ -138,7 +138,10 @@ export function GraphEventInspector({
       ) : null}
       </>}>
         <div className="graph-event-fallback">
-          <h2>{subject.label}</h2>
+          <h2>{fallbackUrl ? <a className="event-card__title-link" href={fallbackUrl}
+            target="_blank" rel="noopener noreferrer" title="Open provider event page (opens in new tab)">
+            {subject.label}
+          </a> : subject.label}</h2>
           <p>{[
             date ? `${date.weekday} ${date.month} ${date.day}` : null,
             subject.start_at ? formatEventTime(subject.start_at, subject.end_at) : null,
@@ -149,7 +152,6 @@ export function GraphEventInspector({
             {eventId ? <button type="button" className="entity-graph-inspector__retry" onClick={() => setAttempt((value) => value + 1)}>Retry event details</button> : null}
           </div> : <p role="status"><LoaderCircle className="is-spinning" aria-hidden="true" /> Loading event details…</p>}
           {connections}
-          {fallbackUrl ? <a className="event-action" href={fallbackUrl} target="_blank" rel="noopener noreferrer">View event <ArrowUpRight aria-hidden="true" /></a> : null}
         </div>
     </GraphEventCard>
   );

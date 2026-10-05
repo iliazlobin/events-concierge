@@ -2359,6 +2359,30 @@ textarea:focus-visible {
   -webkit-line-clamp: 2;
 }
 
+.event-card__title-link,
+.map-preview__title-link {
+  color: inherit;
+  position: relative;
+  text-decoration: none;
+  z-index: 2;
+}
+
+.event-card__title-link:hover,
+.map-preview__title-link:hover,
+.event-card__title-link:focus-visible,
+.map-preview__title-link:focus-visible {
+  color: var(--accent);
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
+.event-card__title-link:focus-visible,
+.map-preview__title-link:focus-visible {
+  border-radius: 2px;
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+
 .event-card__meta {
   align-items: center;
   color: var(--muted);
@@ -2409,11 +2433,15 @@ textarea:focus-visible {
 .event-card__summary-trigger {
   background: transparent;
   border: 0;
-  border-radius: inherit;
+  border-radius: 50%;
   cursor: pointer;
-  inset: 0;
+  height: 34px;
   padding: 0;
   position: absolute;
+  right: 16px;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 34px;
   z-index: 1;
 }
 
@@ -2434,10 +2462,6 @@ textarea:focus-visible {
   justify-content: center;
   padding: 0;
   pointer-events: none;
-  position: absolute;
-  right: 16px;
-  top: 50%;
-  transform: translateY(-50%);
   transition:
     background 200ms ease,
     color 200ms ease,
@@ -2759,40 +2783,6 @@ textarea:focus-visible {
 .event-card__signals li[data-topic-tone] button:focus-visible {
   background: color-mix(in srgb, var(--topic-color) 20%, transparent);
   color: var(--topic-color);
-}
-
-.event-card__actions {
-  align-items: center;
-  display: flex;
-  flex-wrap: wrap;
-  gap: 9px;
-  margin-top: 14px;
-}
-
-.event-action {
-  align-items: center;
-  background: transparent;
-  color: var(--accent);
-  display: inline-flex;
-  font-size: 11px;
-  font-weight: 700;
-  gap: 5px;
-  letter-spacing: 0.02em;
-  min-height: 24px;
-  padding: 0;
-  text-decoration: none;
-  transition:
-    color 180ms ease,
-    opacity 180ms ease;
-}
-
-.event-action:hover {
-  color: var(--ink);
-}
-
-.event-action svg {
-  height: 14px;
-  width: 14px;
 }
 
 .event-card.is-compact {
@@ -3895,7 +3885,7 @@ textarea:focus-visible {
   color: var(--black);
 }
 
-.map-preview__select {
+.map-preview__summary {
   align-items: center;
   background: transparent;
   color: inherit;
@@ -3903,8 +3893,22 @@ textarea:focus-visible {
   gap: 10px;
   grid-template-columns: 54px minmax(0, 1fr);
   padding: 8px;
+  position: relative;
   text-align: left;
   width: 100%;
+}
+
+.map-preview__select {
+  align-items: center;
+  background: transparent;
+  border: 0;
+  border-radius: 9px;
+  color: inherit;
+  cursor: pointer;
+  display: flex;
+  height: 54px;
+  padding: 0;
+  width: 54px;
 }
 
 .map-preview__select:focus-visible {
@@ -7760,7 +7764,6 @@ textarea:focus-visible {
   background: transparent;
   cursor: pointer;
 }
-.map-preview__actions > a:last-child { margin-left: auto; }
 
 /* Expanded details use the full card width in narrow map/calendar panels. */
 @container event-card (max-width: 520px) {
