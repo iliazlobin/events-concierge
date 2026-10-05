@@ -261,14 +261,13 @@ jobs:
         if: success() && github.event_name == 'workflow_dispatch'
         run: |
           set -euo pipefail
-          test "${{ github.event.repository.private }}" = "true"
           mkdir -p "${RUNNER_TEMP}/candidate-images"
           docker save events-concierge:ci events-concierge-web:ci | gzip -1 > "${RUNNER_TEMP}/candidate-images/images.tar.gz"
           cd "${RUNNER_TEMP}/candidate-images"
           sha256sum images.tar.gz > SHA256SUMS
           printf '%s\n' "${GITHUB_SHA}" > SOURCE_REVISION
 
-      - name: Retain private candidate image package
+      - name: Retain candidate image package
         if: success() && github.event_name == 'workflow_dispatch'
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
