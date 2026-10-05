@@ -539,6 +539,55 @@ def test_restored_operator_identities_are_separate_from_consumer():
     assert "CREATE ROLE ec_app LOGIN NOSUPERUSER" in current
 
 
+@pytest.mark.parametrize("schema", ["0180", "0193", "0200"])
+def test_old_schema_restore_does_not_require_model_usage_definer(schema):
+    assert "ec_model_usage_definer" not in backup.restore_role_sql(schema)
+    with patch.object(backup, "run") as sql:
+        backup.verify_model_usage_role(sql, schema)
+    sql.assert_not_called()
+
+
+@pytest.mark.parametrize("schema", ["0201", "0205"])
+def test_model_usage_definer_restore_has_no_login_elevation_or_membership(schema):
+    statements = backup.restore_role_sql(schema).split("; ")
+    model_roles = [s for s in statements if "ec_model_usage_definer" in s]
+    assert model_roles == [
+        "CREATE ROLE ec_model_usage_definer NOLOGIN NOSUPERUSER NOCREATEDB "
+        "NOCREATEROLE NOREPLICATION NOBYPASSRLS;"
+    ]
+    with patch.object(backup, "run", return_value="1") as sql:
+        backup.verify_model_usage_role(sql, schema)
+    sql.assert_called_once()
+    query = sql.call_args.args[0]
+    for flag in (
+        "rolcanlogin",
+        "rolsuper",
+        "rolbypassrls",
+        "rolcreaterole",
+        "rolcreatedb",
+        "rolreplication",
+    ):
+        assert flag in query
+    assert "m.member=r.oid OR m.roleid=r.oid" in query
+
+
+def test_model_usage_definer_restore_rejects_missing_or_unsafe_role():
+    with (
+        patch.object(backup, "run", return_value="0") as sql,
+        pytest.raises(AssertionError, match="model usage definer"),
+    ):
+        backup.verify_model_usage_role(sql, "0205")
+
+
+def test_restored_role_verification_keeps_operator_isolation_failure_fatal():
+    with (
+        patch.object(backup, "run", return_value="1") as sql,
+        pytest.raises(AssertionError, match="operator roles bypass consumer isolation"),
+    ):
+        backup.verify_restored_roles(sql, "0205")
+    sql.assert_called_once()
+
+
 def test_restore_waits_for_final_tcp_server_before_bootstrap():
     dump = b"isolated temporal dump"
     name = "temporal-temporal.dump"

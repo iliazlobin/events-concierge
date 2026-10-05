@@ -17,8 +17,8 @@ pytestmark = pytest.mark.integration
 _SIGNATURE = "public.fn_list_ingestion_admin_due_sources_v3(timestamptz,integer)"
 
 
-def _roundtrip(connection: Connection) -> None:
-    path = Path(__file__).parents[2] / "migrations/versions/0203_cadence_success_recovery.py"
+def _roundtrip(connection: Connection, *, spacing_variation: bool) -> None:
+    path = Path(__file__).parents[2] / "migrations/versions/0206_cadence_success_recovery.py"
     spec = importlib.util.spec_from_file_location("cadence_recovery_migration", path)
     assert spec is not None and spec.loader is not None
     migration = importlib.util.module_from_spec(spec)
@@ -35,15 +35,77 @@ def _roundtrip(connection: Connection) -> None:
         migration.downgrade()
         assert connection.execute(definition_query, parameters).scalar_one() != definition
         assert connection.execute(security_query, parameters).one() == security
+        if spacing_variation:
+            original = connection.execute(definition_query, parameters).scalar_one()
+            assert original.count(migration._FAILED_GATE) == 1
+            connection.exec_driver_sql(
+                original.replace(
+                    migration._FAILED_GATE, "OR\n\tlatest.attempt_status\t<>   'failed'"
+                ),
+                execution_options={"no_parameters": True},
+            )
         migration.upgrade()
     assert connection.execute(definition_query, parameters).scalar_one() == definition
     assert connection.execute(security_query, parameters).one() == security
 
 
-async def test_recovery_migration_roundtrip_preserves_owner_acl_and_contract(db: None) -> None:
+@pytest.mark.parametrize("spacing_variation", [False, True])
+async def test_recovery_migration_roundtrip_preserves_owner_acl_and_contract(
+    db: None, spacing_variation: bool
+) -> None:
     engine = create_async_engine(os.environ["EC_MIGRATION_URL"])
     try:
         async with engine.begin() as connection:
-            await connection.run_sync(_roundtrip)
+            await connection.run_sync(
+                lambda sync_connection: _roundtrip(
+                    sync_connection, spacing_variation=spacing_variation
+                )
+            )
+    finally:
+        await engine.dispose()
+
+
+def _reject_changed_gate(connection: Connection, gate: str | None) -> None:
+    path = Path(__file__).parents[2] / "migrations/versions/0206_cadence_success_recovery.py"
+    spec = importlib.util.spec_from_file_location("cadence_recovery_migration", path)
+    assert spec is not None and spec.loader is not None
+    migration = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(migration)
+    query = text("SELECT pg_get_functiondef(CAST(:signature AS regprocedure))")
+    parameters = {"signature": _SIGNATURE}
+    original = connection.execute(query, parameters).scalar_one()
+    with Operations.context(MigrationContext.configure(connection)):
+        if gate is not None:
+            migration.downgrade()
+            definition = connection.execute(query, parameters).scalar_one()
+            connection.exec_driver_sql(
+                definition.replace(migration._FAILED_GATE, gate),
+                execution_options={"no_parameters": True},
+            )
+        before = connection.execute(query, parameters).scalar_one()
+        with pytest.raises(RuntimeError, match="cadence failure gate changed"):
+            migration.upgrade()
+        assert connection.execute(query, parameters).scalar_one() == before
+    connection.exec_driver_sql(original, execution_options={"no_parameters": True})
+
+
+@pytest.mark.parametrize(
+    "gate",
+    [
+        "OR latest.attempt_status = 'failed'",
+        "OR latest.attempt_status <> 'failed' OR latest.attempt_status <> 'failed'",
+        None,
+    ],
+    ids=["different-expression", "duplicate-gate", "already-recovered"],
+)
+async def test_recovery_migration_refuses_unrecognized_or_duplicate_gates(
+    db: None, gate: str | None
+) -> None:
+    engine = create_async_engine(os.environ["EC_MIGRATION_URL"])
+    try:
+        async with engine.begin() as connection:
+            await connection.run_sync(
+                lambda sync_connection: _reject_changed_gate(sync_connection, gate)
+            )
     finally:
         await engine.dispose()

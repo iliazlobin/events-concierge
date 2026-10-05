@@ -19,6 +19,7 @@ import {
   eventMapCoordinate,
   eventsInMapBounds,
   mapViewportFor,
+  partitionMapEvents,
 } from "@/lib/map-viewport";
 import type { EventEntityReference, EventItem } from "@/lib/types";
 import type { LocationScope } from "@/lib/types";
@@ -78,10 +79,21 @@ export function MapView({
   const trackRef = useRef<HTMLDivElement>(null);
   const mapRef = useRef<MapLibreMap | null>(null);
   const markersRef = useRef<EventMarker[]>([]);
-  const mapped = useMemo(
-    () => events.filter((event) => eventMapCoordinate(event) !== null),
+  const { mapped, unmapped } = useMemo(
+    () => partitionMapEvents(events),
     [events],
   );
+  const [unmappedList, setUnmappedList] = useState(false);
+  const showUnmapped = unmapped.length > 0 && (unmappedList || !mapped.length);
+  useEffect(() => {
+    // A new search resets the list; pagination uses loadingMore instead.
+    if (loading) {
+      setUnmappedList(false);
+      return;
+    }
+    // Keep the fallback list selected when a later page introduces map locations.
+    if (unmapped.length && !mapped.length) setUnmappedList(true);
+  }, [loading, mapped.length, unmapped.length]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const selectedIdRef = useRef<string | null>(selectedId);
   selectedIdRef.current = selectedId;
@@ -132,7 +144,7 @@ export function MapView({
     () => groupVisibleEventsByDay(visibleEvents),
     [visibleEvents],
   );
-  const multiDay = dayModel.cells.length > 1;
+  const multiDay = !showUnmapped && dayModel.cells.length > 1;
   const dayModelRef = useRef(dayModel);
   dayModelRef.current = dayModel;
 
@@ -481,7 +493,7 @@ export function MapView({
           <p>
             {loading && !events.length
               ? "Loading locations…"
-              : `${mapped.length} mapped · ${events.length - mapped.length} list only${hasMore ? " · more available" : ""}`}
+              : `${mapped.length} mapped · ${unmapped.length} without map locations${hasMore ? " · more available" : ""}`}
           </p>
           {hasMore ? (
             <button type="button" disabled={loadingMore} onClick={onLoadMore}>
@@ -540,7 +552,9 @@ export function MapView({
           {!mapped.length ? (
             <div className="map-empty">
               <MapPin aria-hidden="true" />
-              <p>No locations in this result set</p>
+              <p>{unmapped.length
+                ? "Map locations unavailable. Matching events are in the list."
+                : "No locations in this result set"}</p>
             </div>
           ) : null}
         </div>
@@ -548,6 +562,15 @@ export function MapView({
         <MapPreviewRail
           onEntitySelect={onEntitySelect}
           events={visibleEvents}
+          unmappedEvents={unmapped}
+          mappedCount={mapped.length}
+          showUnmapped={showUnmapped}
+          onListChange={(showUnmappedList) => {
+            setUnmappedList(showUnmappedList);
+            setSelectedId(null);
+            setActiveDay(null);
+            setPeekDay(null);
+          }}
           selectedId={selectedId}
           onSelect={selectEvent}
           groups={dayGroups}

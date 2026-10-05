@@ -10,6 +10,7 @@ from datetime import UTC, datetime
 import httpx
 import pytest
 
+from events_concierge.adapters.communico import source as communico_source
 from events_concierge.adapters.communico.source import CommunicoCatalogFetcher, CommunicoFetchError
 from events_concierge.domain.catalog_sources import CatalogSource
 from events_concierge.domain.enums import CatalogSourceMode, PriceStatus
@@ -133,7 +134,9 @@ async def test_communico_fails_closed_on_a_capped_unpaged_result() -> None:
 
     async def handler(request: httpx.Request) -> httpx.Response:
         return httpx.Response(
-            200, json=[_event(index + 1) for index in range(600)], request=request
+            200,
+            json=[_event(index + 1) for index in range(communico_source._MAX_ITEMS)],
+            request=request,
         )
 
     fetcher = CommunicoCatalogFetcher(user_agent="test", transport=httpx.MockTransport(handler))
@@ -173,7 +176,9 @@ async def test_communico_refuses_an_unreviewed_source_key_before_requesting() ->
 
 async def test_communico_accepts_a_complete_calendar_above_the_old_byte_limit() -> None:
     """A large description must not discard an otherwise complete, bounded public calendar."""
+    # Preserve the observed regression size, independently of the new reviewed limit.
     payload = json.dumps([_event(1001, description="x" * 2_016_138)]).encode()
+    assert 2_000_000 < len(payload) <= communico_source._MAX_RESPONSE_BYTES
 
     async def handler(request: httpx.Request) -> httpx.Response:
         return httpx.Response(200, content=payload, request=request)
@@ -204,6 +209,48 @@ async def test_communico_decodes_compressed_calendar_only_once() -> None:
     assert len(await fetcher.fetch(_source())) == 1
 
 
+async def test_communico_decoded_response_discards_transport_headers() -> None:
+    payload = json.dumps([_event(1001)]).encode()
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            content=gzip.compress(payload),
+            headers={
+                "Content-Encoding": "gzip",
+                "Content-Type": "application/json",
+                "Transfer-Encoding": "chunked",
+                "Connection": "keep-alive, X-Hop-Only",
+                "Keep-Alive": "timeout=5",
+                "X-Hop-Only": "transport metadata",
+            },
+            request=request,
+        )
+
+    source = _source()
+    publisher = communico_source._publisher_for_source(source)
+    assert publisher is not None
+    fetcher = CommunicoCatalogFetcher(user_agent="test", transport=httpx.MockTransport(handler))
+
+    response = await fetcher._response_or_error(
+        source, publisher, datetime(2026, 7, 17, tzinfo=UTC)
+    )
+
+    assert response.json() == [_event(1001)]
+    assert response.headers["content-length"] == str(len(payload))
+    assert response.headers["content-type"] == "application/json"
+    assert all(
+        name not in response.headers
+        for name in (
+            "content-encoding",
+            "transfer-encoding",
+            "connection",
+            "keep-alive",
+            "x-hop-only",
+        )
+    )
+
+
 async def test_communico_stops_streaming_an_oversized_response_and_closes_it() -> None:
     """Do not read an unbounded payload merely to reject it after downloading."""
     read_chunks: list[int] = []
@@ -211,9 +258,11 @@ async def test_communico_stops_streaming_an_oversized_response_and_closes_it() -
 
     class OversizedStream(httpx.AsyncByteStream):
         async def __aiter__(self) -> AsyncIterator[bytes]:
-            for index in range(100):
+            for index in range(
+                communico_source._MAX_RESPONSE_BYTES // communico_source._RESPONSE_CHUNK_BYTES + 3
+            ):
                 read_chunks.append(index)
-                yield b" " * 64_000
+                yield b" " * communico_source._RESPONSE_CHUNK_BYTES
 
         async def aclose(self) -> None:
             closed.append(True)
@@ -223,9 +272,16 @@ async def test_communico_stops_streaming_an_oversized_response_and_closes_it() -
 
     fetcher = CommunicoCatalogFetcher(user_agent="test", transport=httpx.MockTransport(handler))
 
-    with pytest.raises(CommunicoFetchError, match="response-size limit"):
+    with pytest.raises(CommunicoFetchError, match="response-size limit") as raised:
         await fetcher.fetch(_source())
-    assert sum(64_000 for _ in read_chunks) <= 3_000_000 + 64_000
+    assert _source().source_key in str(raised.value)
+    assert f"{len(read_chunks) * communico_source._RESPONSE_CHUNK_BYTES} decoded bytes" in str(
+        raised.value
+    )
+    assert f"{communico_source._MAX_RESPONSE_BYTES} bytes" in str(raised.value)
+    assert len(read_chunks) * communico_source._RESPONSE_CHUNK_BYTES <= (
+        communico_source._MAX_RESPONSE_BYTES + communico_source._RESPONSE_CHUNK_BYTES
+    )
     assert closed == [True]
 
 
@@ -240,7 +296,7 @@ async def test_communico_transport_outage_uses_bounded_retry(
 
     with pytest.raises(SourceTransientError) as raised:
         await fetcher.fetch(_source())
-    assert raised.value.retry_after_seconds == 15.0
+    assert raised.value.retry_after_seconds == communico_source._TRANSIENT_RETRY_DELAY_S
 
 
 @pytest.mark.parametrize("status", [500, 503, 504])
@@ -252,7 +308,7 @@ async def test_communico_server_outage_uses_bounded_retry(status: int) -> None:
 
     with pytest.raises(SourceTransientError) as raised:
         await fetcher.fetch(_source())
-    assert raised.value.retry_after_seconds == 15.0
+    assert raised.value.retry_after_seconds == communico_source._TRANSIENT_RETRY_DELAY_S
 
 
 @pytest.mark.parametrize("status", [302, 403, 404])

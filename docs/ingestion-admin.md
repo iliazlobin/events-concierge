@@ -33,7 +33,7 @@ uvicorn events_concierge.api.operator:create_operator_app --factory
 - Mutations require JSON and the exact browser Origin. The verified subject supplies the receipt actor.
 - The pool validates `ec_operator_controller` membership and rejects consumer/elevated logins; executor credentials have separate command/publication capabilities.
 - Restricted definer functions expose bounded aggregates and opaque references, never raw queue tables, tenant payloads or lease tokens.
-- Entity refresh remains unleased; overview counts do not establish safe scaling or worker liveness.
+- Full-profile external entity refresh remains unleased; discovery exposes reads only. Overview counts do not establish safe scaling or worker liveness.
 - [Helm operator profile](../deploy/helm/events-concierge/README.md#hosted-operator-profile) owns IAP, identities, mounts and deployment prerequisites. Rendering does not establish activation.
 
 ## Execution model

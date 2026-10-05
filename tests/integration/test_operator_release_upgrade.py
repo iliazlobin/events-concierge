@@ -17,8 +17,10 @@ from tests.support.run_isolated_integration import _create_database, _drop_datab
 pytestmark = pytest.mark.integration
 
 
+@pytest.mark.parametrize("published_revision", ["0201", "0205"])
 def test_upgrade_from_published_head_preserves_measured_usage_and_budget_audit(
     monkeypatch: pytest.MonkeyPatch,
+    published_revision: str,
 ) -> None:
     owner_url = os.environ.get("EC_MIGRATION_URL")
     if not owner_url:
@@ -35,7 +37,7 @@ def test_upgrade_from_published_head_preserves_measured_usage_and_budget_audit(
         _create_database(owner_url, database)
         created = True
         monkeypatch.setenv("EC_MIGRATION_URL", url)
-        command.upgrade(config, "0201")
+        command.upgrade(config, published_revision)
         call_id = uuid4()
         with engine.begin() as connection:
             connection.execute(

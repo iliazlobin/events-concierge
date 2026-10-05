@@ -151,14 +151,33 @@ class CommunicoCatalogFetcher:
                     response.raise_for_status()
                     content = bytearray()
                     async for chunk in response.aiter_bytes(chunk_size=_RESPONSE_CHUNK_BYTES):
-                        if len(content) + len(chunk) > _MAX_RESPONSE_BYTES:
+                        attempted_bytes = len(content) + len(chunk)
+                        if attempted_bytes > _MAX_RESPONSE_BYTES:
                             raise CommunicoFetchError(
-                                "Communico response exceeded its reviewed response-size limit"
+                                f"Communico source {source.source_key} exceeded its reviewed "
+                                f"response-size limit: {attempted_bytes} decoded bytes "
+                                f"exceeded {_MAX_RESPONSE_BYTES} bytes"
                             )
                         content.extend(chunk)
                     # aiter_bytes has already decoded any Content-Encoding.
                     decoded_headers = response.headers.copy()
-                    decoded_headers.pop("content-encoding", None)
+                    connection_headers = {
+                        name.strip().lower()
+                        for name in response.headers.get("connection", "").split(",")
+                        if name.strip()
+                    }
+                    for name in connection_headers | {
+                        "connection",
+                        "content-encoding",
+                        "keep-alive",
+                        "proxy-authenticate",
+                        "proxy-authorization",
+                        "te",
+                        "trailer",
+                        "transfer-encoding",
+                        "upgrade",
+                    }:
+                        decoded_headers.pop(name, None)
                     decoded_headers["content-length"] = str(len(content))
                     return httpx.Response(
                         response.status_code,

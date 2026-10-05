@@ -32,74 +32,112 @@
 
 /* ---------- shell ---------- */
 
+.workspace.entities-view,
 .entity-graph-shell {
   margin: 0 auto;
   max-width: 1600px;
-  padding-bottom: 34px;
+  padding: 24px 28px 88px;
   width: 100%;
 }
 
-.entity-graph-heading {
-  align-items: end;
-  display: grid;
-  gap: 8px 18px;
-  grid-template-columns: minmax(0, 1fr);
-  margin: 0 0 16px;
-}
-
-.entity-graph-heading > .entity-back,
-.entity-graph-heading > .entity-graph-nav {
-  grid-column: 1 / -1;
-  margin-bottom: 8px;
-}
-
-/*
- * Two ways out, side by side, because they answer two different questions.
- *
- * "Back" retraces the walk one entity at a time and "All entities" leaves it entirely; keeping
- * them adjacent is what makes the difference legible without a label explaining it.  Back is
- * disabled rather than removed at the start of a walk so the header does not reflow the moment a
- * reader takes their first hop.
- */
-.entity-graph-nav {
+/* One graph root, with an entity or topic at the same focus level. */
+.graph-workspace-heading {
   align-items: center;
   display: flex;
   flex-wrap: wrap;
-  gap: 8px;
+  gap: 12px 24px;
+  justify-content: space-between;
+  margin: 0 0 14px;
 }
 
-.entity-graph-nav .entity-back[disabled] {
-  cursor: default;
-  opacity: 0.4;
-}
+.graph-workspace-heading > div { min-width: 0; }
 
-.entity-graph-nav .entity-back:focus-visible {
-  outline: 2px solid var(--accent);
-  outline-offset: 3px;
-}
-
-.entity-graph-heading p {
-  color: var(--accent);
-  font-size: 10px;
-  font-weight: 800;
-  letter-spacing: 0.18em;
-  margin: 0;
-  text-transform: uppercase;
-}
-
-.entity-graph-heading h1 {
+.graph-workspace-heading h1 {
   font-size: clamp(22px, 2vw, 28px);
   font-weight: 560;
   letter-spacing: -0.035em;
-  line-height: 1.1;
-  margin: 6px 0 0;
+  line-height: 1.2;
+  margin: 0;
+  overflow-wrap: anywhere;
 }
 
-.entity-graph-heading > div > span {
+.graph-workspace-path {
+  align-items: center;
+  display: flex;
+  gap: 10px;
+}
+
+.graph-workspace-path button {
+  background: transparent;
+  border: 0;
   color: var(--muted);
-  display: block;
+  cursor: pointer;
+  font: inherit;
+  padding: 8px 0;
+}
+
+.graph-workspace-path button:hover { color: var(--accent); }
+.graph-workspace-path > svg { color: var(--quiet); flex: none; height: 16px; width: 16px; }
+.graph-workspace-summary { color: var(--muted); font-size: 12px; margin: 6px 0 0; }
+
+.graph-workspace-tools {
+  align-items: start;
+  display: flex;
+  flex: 0 1 560px;
+  gap: 10px;
+}
+
+.graph-workspace-tools .entity-search {
+  border-radius: 12px;
+  flex: 1;
+  margin: 0;
+  min-height: 44px;
+  min-width: 0;
+  padding: 0 12px;
+}
+
+.graph-workspace-tools .entity-search input { font-size: 13px; height: 42px; min-width: 0; }
+.graph-workspace-tools .entity-search:focus-within { border-color: var(--accent); }
+.graph-workspace-tools .entity-search > svg { height: 17px; width: 17px; }
+.graph-workspace-filters { position: relative; }
+.graph-workspace-filters summary {
+  align-items: center;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  color: var(--muted);
+  cursor: pointer;
+  display: flex;
   font-size: 12px;
-  margin-top: 6px;
+  gap: 7px;
+  list-style: none;
+  min-height: 44px;
+  padding: 0 12px;
+}
+.graph-workspace-filters summary::-webkit-details-marker { display: none; }
+.graph-workspace-filters summary > svg { height: 15px; width: 15px; }
+.graph-workspace-filters summary > span { color: var(--accent); }
+.graph-workspace-filters[open] summary { border-color: var(--accent); color: var(--ink); }
+.graph-workspace-filters .entity-directory-filters {
+  background: var(--panel-raised);
+  border: 1px solid var(--line-strong);
+  border-radius: 14px;
+  box-shadow: 0 12px 32px #0008;
+  margin: 0;
+  max-width: calc(100vw - 48px);
+  padding: 14px;
+  position: absolute;
+  right: 0;
+  top: calc(100% + 8px);
+  width: 520px;
+  z-index: 20;
+}
+.graph-workspace-path button:focus-visible,
+.graph-workspace-filters summary:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+
+@media (max-width: 700px) {
+  .workspace.entities-view, .entity-graph-shell { padding: 18px 16px 88px; }
+  .graph-workspace-tools { flex-basis: 100%; width: 100%; }
 }
 
 .entity-graph-stage {
@@ -893,9 +931,6 @@
     max-height: min(62dvh, calc(100dvh - var(--header-height) - 100px));
   }
 
-  .entity-graph-heading {
-    grid-template-columns: minmax(0, 1fr);
-  }
 
   .entity-hub-row {
     grid-template-columns: 26px minmax(0, 1fr);
@@ -1033,39 +1068,14 @@
 
 /* ---------- the landing graph ---------- */
 
-/*
- * The Entities tab opens here.
- *
- * One column, the same `--content-width` measure the ranked directory used, so the tab's front
- * door did not move when its content changed shape.  Everything above the frame is a control or a
- * disclosure; the frame itself is the same `.entity-graph-frame` the ego view draws in, so the two
- * screens are visibly the same instrument pointed at two different questions.
- */
 .entity-overview {
   display: flex;
   flex-direction: column;
   margin: 0 auto;
-  max-width: var(--content-width);
+  max-width: 1600px;
   width: 100%;
 }
 
-/*
- * Shorter than the ego frame, because this screen carries a search box, two disclosure lines and a
- * chip row above it.  Without the override the frame's own clamp assumes it starts near the top of
- * the page and the graph is pushed below the fold on a laptop.
- */
-.entity-overview .entity-graph-frame {
-  height: clamp(420px, calc(100dvh - var(--header-height) - 430px), 760px);
-}
-
-/*
- * Counts and disclosures on one quiet line above the figure.
- *
- * The two disclosures are not optional — the graph is drawn from 5% of the catalog, and one drawn
- * line stands for a pair's whole shared history — but as stacked prose they were a wall in front
- * of the picture, and a wall gets read once and skipped forever. As a disclosure they stay one
- * click away and cost nothing at rest.
- */
 .entity-overview-meta {
   align-items: baseline;
   display: flex;
@@ -1125,121 +1135,6 @@
 .entity-overview-about strong {
   color: var(--ink);
   font-weight: 600;
-}
-
-.entity-overview-hint {
-  color: var(--quiet);
-  font-size: 11px;
-  margin: 12px 0 0;
-}
-
-/* ---------- the selection strip ---------- */
-
-/*
- * What one clicked node says, answered from the payload already in hand.
- *
- * It replaces the hint line rather than appearing beside it, so the space below the frame holds
- * exactly one thing at a time and the graph never jumps when a node is clicked.
- */
-.entity-overview-selection {
-  align-items: center;
-  background: var(--panel);
-  border: 1px solid var(--line);
-  border-radius: 18px;
-  display: grid;
-  gap: 14px;
-  grid-template-columns: 36px minmax(0, 1fr) auto;
-  margin-top: 12px;
-  padding: 12px 16px;
-}
-
-.entity-overview-selection__glyph {
-  align-items: center;
-  border: 1px solid var(--line);
-  border-radius: 12px;
-  color: var(--ink);
-  display: inline-flex;
-  height: 36px;
-  justify-content: center;
-  width: 36px;
-}
-
-.entity-overview-selection__glyph svg {
-  height: 17px;
-  width: 17px;
-}
-
-.entity-overview-selection__glyph[data-kind="person"] { color: var(--node-person); }
-.entity-overview-selection__glyph[data-kind="organization"] { color: var(--node-org); }
-.entity-overview-selection__glyph[data-kind="unknown"] { color: var(--node-unknown); }
-.entity-overview-selection__glyph[data-kind="topic"] { color: var(--node-topic); }
-
-.entity-overview-selection__copy {
-  display: flex;
-  flex-direction: column;
-  gap: 3px;
-  min-width: 0;
-}
-
-.entity-overview-selection__copy strong {
-  font-size: 14px;
-  font-weight: 560;
-  letter-spacing: -0.01em;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.entity-overview-selection__copy span {
-  color: var(--muted);
-  font-size: 12px;
-}
-
-.entity-overview-selection__copy small {
-  color: var(--quiet);
-  font-size: 11px;
-}
-
-.entity-overview-selection__open {
-  appearance: none;
-  background: var(--accent);
-  border: 0;
-  border-radius: 999px;
-  color: var(--accent-ink);
-  cursor: pointer;
-  font: inherit;
-  font-size: 12px;
-  font-weight: 600;
-  padding: 8px 16px;
-  text-decoration: none;
-  transition: filter 160ms var(--ease);
-  white-space: nowrap;
-}
-
-.entity-overview-selection__open:hover {
-  filter: brightness(1.08);
-}
-
-.entity-overview-selection__open:focus-visible {
-  outline: 2px solid var(--accent);
-  outline-offset: 3px;
-}
-
-@media (max-width: 700px) {
-  .entity-overview-selection {
-    grid-template-columns: 36px minmax(0, 1fr);
-  }
-
-  .entity-overview-selection__open {
-    grid-column: 1 / -1;
-    justify-self: start;
-  }
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .entity-overview-selection__open {
-    transition: none;
-  }
 }
 
 /*

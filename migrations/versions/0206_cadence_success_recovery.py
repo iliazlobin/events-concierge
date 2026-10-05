@@ -1,7 +1,7 @@
 """Resume daily cadence after a successful publication newer than a parked failure.
 
-Revision ID: 0203
-Revises: 0202
+Revision ID: 0206
+Revises: 0205
 
 Failed manual attempts retain the cadence circuit break. A newer successful
 publication establishes a new due slot without deleting failure or budget history.
@@ -9,13 +9,14 @@ publication establishes a new due slot without deleting failure or budget histor
 
 from __future__ import annotations
 
+import re
 from collections.abc import Sequence
 
 from alembic import op
 from sqlalchemy import text
 
-revision: str = "0203"
-down_revision: str | None = "0202"
+revision: str = "0206"
+down_revision: str | None = "0205"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 
@@ -41,9 +42,23 @@ def _replace_gate(before: str, after: str) -> None:
         )
         .scalar_one()
     )
-    if definition.count(before) != 1 or after in definition.replace(before, "", 1):
+    # Ignore whitespace without accepting a different expression or multiple gates.
+    before_pattern = re.compile(r"\s+".join(re.escape(token) for token in before.split()))
+    after_pattern = re.compile(r"\s+".join(re.escape(token) for token in after.split()))
+    matches = tuple(before_pattern.finditer(definition))
+    if len(matches) != 1:
         raise RuntimeError("cadence failure gate changed; review success-recovery migration")
-    op.execute(definition.replace(before, after, 1))
+    match = matches[0]
+    if any(
+        existing.start() < match.start() or existing.end() > match.end()
+        for existing in after_pattern.finditer(definition)
+    ):
+        raise RuntimeError("cadence failure gate changed; review success-recovery migration")
+    # The server-returned body may contain colon names or literal percent signs.
+    op.get_bind().exec_driver_sql(
+        definition[: match.start()] + after + definition[match.end() :],
+        execution_options={"no_parameters": True},
+    )
 
 
 def upgrade() -> None:

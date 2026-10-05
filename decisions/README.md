@@ -1,6 +1,10 @@
 # Events Concierge — Architecture Decision Records
 
-Immutable decision log for the Events Concierge system design; supersede, never edit.
+Retained decision history and unresolved ratification riders. Preserve individual ADRs; supersede rather than rewrite them. [PROJECT.md](../PROJECT.md#current-milestone-private-discovery-candidate) defines current discovery scope; [runtime contracts](../design/system-design.md) and [deployment operations](../deploy/development.md) define selected implementation.
+
+- ADR-010's Temporal Cloud selection and scale describe the full-concierge design; the private deployment uses self-hosted Temporal.
+- ADR-012's static consumer remains a legacy fallback; current discovery uses Next.js. Its same-origin and identity boundaries still apply.
+- Historical launch grids, pricing/capacity assumptions and autonomous-lane gates are not current deployment settings or accepted field results.
 
 | ADR | Title | Status | One-line decision | Owner-ratification riders |
 |---|---|---|---|---|

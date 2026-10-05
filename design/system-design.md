@@ -1,10 +1,10 @@
-# System design
+# Runtime contracts
 
-Accepted design for the private discovery release. [PROJECT.md](../PROJECT.md#current-milestone-private-discovery-candidate) owns product scope; [ARCHITECTURE.md](../ARCHITECTURE.md) maps code and processes.
+Implementation constraints for private discovery. [PROJECT.md](../PROJECT.md#current-milestone-private-discovery-candidate) owns scope; [ARCHITECTURE.md](../ARCHITECTURE.md) maps code. Architecture and rationale live in the [Notion design](https://app.notion.com/p/391d865005a88164a182eabc18fe068f); this contract is self-contained.
 
 ## Product boundary
 
-- Search, shared filters, Events/Map/Calendar, event details and provider registration links.
+- Search, shared filters, Events/Map/Calendar, read-only Entities/Graph, event details and provider registration links.
 - Profiles, interests and saved filters belong to the authenticated tenant.
 - Registration happens on the provider's site; catalog entries do not establish an RSVP.
 - `EC_RELEASE_PROFILE=discovery` removes deferred API routes and selects the discovery interface. [Route contract](../src/events_concierge/api/release_profile.py).
@@ -12,41 +12,9 @@ Accepted design for the private discovery release. [PROJECT.md](../PROJECT.md#cu
 - Chat, autonomous RSVP, managed handoffs, notifications, Calendar synchronization, purchases and programmatic API keys remain deferred.
 - Google sign-in, datastore TLS and self-hosted Temporal mTLS are implemented; deployment acceptance remains pending.
 
-## Components and data flow
+<a id="components-and-data-flow"></a>
 
-| Component | Responsibility |
-| --- | --- |
-| Next.js | Web application; same-origin proxy to internal FastAPI endpoints. |
-| FastAPI | Bounded discovery/account APIs, authentication and commands. |
-| PostgreSQL / pgvector | Published catalog, tenant state, source provenance, durable commands and ownership fences. |
-| Redis | Shared provider pacing and configured opaque-session authority. |
-| Catalog workers | Claim commands, admit sources, fetch bounded data, normalize and publish. |
-| Temporal service | Durable workflow history, timers and task coordination. |
-| Python Temporal workers | Separate catalog and transactional workflow/activity execution. |
-| Object storage | Configured payload/media storage with separate catalog and tenant claim-check namespaces. |
-| Operator API | Separate authenticated operational projections and reviewed catalog controls. |
-
-```mermaid
-flowchart TB
-  subgraph Discovery
-    direction LR
-    U[User] --> W[Web client / Next.js] --> A[FastAPI] --> P[(Published catalog)]
-  end
-  subgraph Collection
-    direction LR
-    C[Cadence / operator] --> Q[(Durable commands)] --> I[Ingestion-command worker]
-    I -->|direct source mode| R[Guarded source refresh]
-    R --> N[Normalize / publish]
-  end
-  subgraph Temporal[Optional catalog workflow execution]
-    direction LR
-    T[Temporal service] <--> K[Catalog Temporal worker]
-  end
-  I -->|workflow source mode| T
-  K --> R
-  R -->|bounded reads| S[Reviewed providers]
-  N --> P
-```
+## Runtime boundary
 
 - Reads use published data. Direct and Temporal refresh share admission and publication controls.
 - Domain logic has no external I/O; application services use typed ports; composition selects adapters.
@@ -74,7 +42,9 @@ flowchart TB
 - Topics are deterministic; provenance identifies the source field and rule. [Event semantics](catalog-event-semantics.md).
 - Tenant-credentialed provider data stays tenant-scoped; it never becomes shared catalog data.
 - Entity mentions retain their asserting event, source and role.
+- Graphs read bounded stored mentions and disclose sampled/shared-event counts and truncation. Co-appearance is not attendance or a social relationship.
 - Name-only entities stay source-scoped; names establish neither verified identity nor cross-source equivalence.
+- Imported direct profile links remain distinct from fetched, dated profile facts. Discovery permits entity reads and rejects external-profile refresh.
 - Verified identities support bounded public-source reads. LinkedIn scraping and attendee rosters remain excluded.
 - Credentialed enrichment requires reviewed terms, scoped credentials and operator approval. Workers cannot approve their own evidence.
 - [Entity catalog](entity-catalog-and-research.md) and [enrichment controls](entity-enrichment-control-plane.md) own identity, attribution and provider contracts.
@@ -91,7 +61,7 @@ flowchart TB
 
 - Continuations release leases; database-clock availability lets waiting manual work run between fleet sources.
 - Source policy controls URLs, origins, modes and budgets; commands cannot bypass admission.
-- Anonymous Meetup collection reads one reviewed city page plus at most 40 identity-checked, same-origin event pages.
+- Anonymous Meetup collection uses reviewed city JSON-LD or official public group ICS. City mode permits one listing plus 40 detail requests; group mode permits one feed plus 100 identity-checked details.
 - Meetup collection excludes credentials, redirects, application state, member/RSVP data and arbitrary links. [Meetup contract](meetup-ingestion.md).
 - Local cadence uses a daemon; hosted cadence uses the chart's one-shot CronJob. Temporal Schedule cutover is inactive.
 - [Ingestion administration](../docs/ingestion-admin.md#execution-model) owns retry budgets, queue continuation, stage measurements and provenance interpretation.
