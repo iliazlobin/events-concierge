@@ -8,8 +8,8 @@ variable "project_id" {
 variable "public_origin" {
   type = string
   validation {
-    condition     = can(regex("^https://[a-z0-9]([a-z0-9.-]*[a-z0-9])?$", var.public_origin))
-    error_message = "Use one exact HTTPS production origin without port, path or wildcard."
+    condition     = can(regex("^https://([a-z0-9]([a-z0-9-]*[a-z0-9])?\\.)+[a-z]([a-z0-9-]*[a-z0-9])?$", var.public_origin))
+    error_message = "Use an exact HTTPS domain origin without a port, path, wildcard or IP address."
   }
 }
 variable "api_service_account" { type = string }

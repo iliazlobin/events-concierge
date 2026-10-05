@@ -38,3 +38,28 @@ run "explicit_activation_and_owner_edge" {
     error_message = "The only configured operator edge user is the owner."
   }
 }
+
+run "public_google_origin" {
+  command = plan
+  variables { public_origin = "https://events.iliazlobin.com" }
+  assert {
+    condition     = toset(google_identity_platform_config.consumer.authorized_domains) == toset(["events.iliazlobin.com", "events-identity-test.firebaseapp.com"])
+    error_message = "Only the approved application and project auth hostnames are authorized."
+  }
+  assert {
+    condition     = toset(google_apikeys_key.browser.restrictions[0].browser_key_restrictions[0].allowed_referrers) == toset(["https://events.iliazlobin.com", "https://events.iliazlobin.com/*", "https://events-identity-test.firebaseapp.com", "https://events-identity-test.firebaseapp.com/*"])
+    error_message = "The browser key must exclude wildcard subdomains, other ports and unrelated apps."
+  }
+}
+
+run "loopback_rejected" {
+  command = plan
+  variables { public_origin = "https://localhost:14443" }
+  expect_failures = [var.public_origin]
+}
+
+run "wildcard_rejected" {
+  command = plan
+  variables { public_origin = "https://*.iliazlobin.com" }
+  expect_failures = [var.public_origin]
+}
