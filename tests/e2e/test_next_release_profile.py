@@ -19,6 +19,28 @@ pytestmark = [
 ]
 
 ENTITY_ID = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"
+SECOND_EVENT_ID = "33333333-3333-4333-8333-333333333333"
+
+
+def catalog_event():
+    return _feed()["items"][0] | {
+        "organizer_name": "Lakehouse Music", "topics": ["jazz"],
+        "host_names": ["Alex Example"], "registration_status": "open",
+        "entity_profiles": [{"name": "Alex Example", "role": "host", "kind": "person",
+                             "profile_url": "https://www.linkedin.com/in/alex-example"}],
+        "source_keys": ["fixture-jazz"], "providers": ["Fixture Jazz"],
+        "sources": [{"source_key": "fixture-jazz", "source": "public_jsonld", "label": "Fixture Jazz", "registration_url": "https://events.example.test/friday-jazz"}],
+    }
+
+
+def second_catalog_event(recurring: bool = False):
+    return catalog_event() | {
+        "canonical_event_id": SECOND_EVENT_ID,
+        "title": "Friday Night Jazz" if recurring else "Saturday Night Jazz",
+        "start_at": "2030-06-15T19:00:00-07:00",
+        "end_at": "2030-06-15T21:00:00-07:00",
+        "description": "Saturday's own event details.",
+    }
 
 
 def entity_graph():
@@ -62,6 +84,11 @@ class ReleaseApi:
     graph_status: int = 200
     empty_graph: bool = False
     social_profiles: bool = False
+    event_status: int = 200
+    hold_events: bool = False
+    held_events: list[Route] = field(default_factory=list)
+    second_event: bool = False
+    recurring: bool = False
     social_links_only: bool = False
 
     def config(self, route: Route) -> None:
@@ -104,14 +131,7 @@ class ReleaseApi:
         elif path in {"/v1/me/saved-filters", "/v1/me/api-keys"}:
             self.respond(route, [])
         elif path == "/v1/catalog/events":
-            event = _feed()["items"][0] | {
-                "organizer_name": "Lakehouse Music", "topics": ["jazz"],
-                "host_names": ["Alex Example"], "registration_status": "open",
-                "entity_profiles": [{"name": "Alex Example", "role": "host", "kind": "person",
-                                     "profile_url": "https://www.linkedin.com/in/alex-example"}],
-                "source_keys": ["fixture-jazz"], "providers": ["Fixture Jazz"],
-                "sources": [{"source_key": "fixture-jazz", "source": "public_jsonld", "label": "Fixture Jazz", "registration_url": "https://events.example.test/friday-jazz"}],
-            }
+            event = catalog_event()
             self.respond(route, {
                 "items": [event], "next_cursor": None,
                 "providers": [{"source_key": "fixture-jazz", "label": "Fixture Jazz", "display_name": "Fixture Jazz", "publisher": "Fixture Jazz", "provider": "public_jsonld", "seed_url": "https://events.example.test", "event_count": 1}],
@@ -120,12 +140,23 @@ class ReleaseApi:
             })
         elif path == "/v1/catalog/events/summary":
             self.respond(route, {"days": [{"start_day": "2030-06-14", "event_count": 1, "topics": [{"topic": "jazz", "label": "Jazz", "event_count": 1}]}], "total_event_count": 1, "time_zone": "America/Los_Angeles"})
+        elif path.startswith("/v1/catalog/events/"):
+            self.handle_event(route, path)
         elif path.startswith(("/v1/catalog/entity", "/v1/catalog/entities/")):
             self.handle_entity(route, path)
         else:
             self.unexpected.append(path)
             self.respond(route, {"detail": f"Unexpected fixture request: {path}"}, 500)
 
+
+    def handle_event(self, route: Route, path: str) -> None:
+        if self.hold_events:
+            self.held_events.append(route)
+            return
+        event = catalog_event()
+        if path.endswith(SECOND_EVENT_ID):
+            event = second_catalog_event(self.recurring)
+        self.respond(route, event if self.event_status == 200 else {"detail": "Event unavailable"}, self.event_status)
 
     def handle_entity(self, route: Route, path: str) -> None:
         if path == "/v1/catalog/entity-resolution":
@@ -136,6 +167,14 @@ class ReleaseApi:
                 graph["focus_id"] = "catalog:overview"
                 graph["counts"]["peers"] = 1
                 graph["counts"]["peers_total"] = 1
+            if self.second_event:
+                second = second_catalog_event(self.recurring)
+                node = graph["nodes"][-1] | {"node_id": f"event:{SECOND_EVENT_ID}",
+                        "canonical_event_id": SECOND_EVENT_ID, "label": second["title"],
+                        "start_at": second["start_at"], "end_at": second["end_at"]}
+                graph["nodes"].append(node)
+                graph["edges"].append(graph["edges"][0] | {"b": node["node_id"]})
+                graph["counts"].update(events=2, events_total=2, edges=2, mention_edges=2, edges_total=2)
             if self.empty_graph:
                 graph["nodes"] = []
                 graph["edges"] = []
@@ -284,6 +323,116 @@ def test_discovery_entities_overview_resolves_an_event_organizer(release_page):
     page.get_by_role("button", name="Explore organizer Lakehouse Music", exact=True).click()
     expect(page.get_by_role("heading", name="Lakehouse Music", exact=True).first).to_be_visible()
     assert ("GET", "/v1/catalog/entity-resolution") in api.calls
+
+
+@pytest.mark.parametrize("width", [1440, 390])
+def test_graph_event_details_match_map_without_prefetch(release_page, tmp_path, width):
+    harness, api = release_page
+    page = harness.page
+    page.set_viewport_size({"width": width, "height": 900})
+    page.emulate_media(reduced_motion="reduce")
+    page.goto(f"{BASE}/?view=map&when=custom&start=2030-06-01&end=2030-06-30")
+    page.get_by_role("button", name="Focus Friday Night Jazz on map", exact=True).click()
+    map_card = page.locator(".map-selection .event-card")
+    expect(map_card.get_by_role("region")).to_be_visible()
+    shared_parts = [".event-card__eyebrow", ".event-card__title", ".event-card__date",
+                    ".event-card__meta", ".event-card__decision-strip", ".event-card__facts",
+                    ".event-card__description", ".event-card__actions"]
+    expected = {part: map_card.locator(part).inner_text() for part in shared_parts}
+    expected_links = map_card.get_by_role("link").evaluate_all("links => links.map(a => a.href)")
+    page.goto(f"{BASE}/?view=entities&entity={ENTITY_ID}")
+    page.get_by_role("button", name="Graph", exact=True).click()
+    node_id = f"event:{catalog_event()['canonical_event_id']}"
+    node = page.locator(f'button[data-node-id="{node_id}"]')
+    expect(node).to_be_visible()
+    assert not any(path.startswith("/v1/catalog/events/") for _, path in api.calls)
+    node.click()
+    inspector = page.get_by_role("complementary", name="Event detail", exact=True)
+    card = inspector.locator(".event-card")
+    expect(card.get_by_role("region")).to_be_visible()
+    assert {part: card.locator(part).inner_text() for part in shared_parts} == expected
+    assert card.get_by_role("link").evaluate_all("links => links.map(a => a.href)") == expected_links
+    expect(card.get_by_role("button", name="Hide details for Friday Night Jazz", exact=True)).to_have_count(0)
+    # The complete host facts remain even when this bounded graph drew only the organizer.
+    expect(card.get_by_text("Alex Example", exact=True)).to_be_visible()
+    card.get_by_text("Explore connections (1)", exact=True).click()
+    expect(card.get_by_role("button", name=re.compile("Lakehouse Music.*Organizer"))).to_be_visible()
+    expect(card.get_by_text(re.compile("asserted by Fixture Jazz"))).to_be_visible()
+    card.get_by_text("Explore connections (1)", exact=True).click()
+    inspector.get_by_role("button", name="Back to Lakehouse Music", exact=True).click()
+    node.click()
+    expect(inspector.locator(".event-card")).to_be_visible()
+    detail_path = f"/v1/catalog/events/{catalog_event()['canonical_event_id']}"
+    assert api.calls.count(("GET", detail_path)) == 1
+    assert ("GET", f"/v1/catalog/entities/{ENTITY_ID}") not in api.calls
+    assert page.evaluate("document.documentElement.scrollWidth <= window.innerWidth")
+    page.screenshot(path=str(tmp_path / f"graph-event-card-{width}.png"), full_page=True)
+
+
+@pytest.mark.parametrize("status", [404, 503])
+def test_graph_event_details_retry_without_inventing_facts(release_page, status):
+    harness, api = release_page
+    harness.allowed_console_error_fragments.append(f"status of {status}")
+    api.event_status = status
+    page = harness.page
+    page.goto(f"{BASE}/?view=entities&entity={ENTITY_ID}")
+    page.locator(f'button[data-node-id="event:{catalog_event()["canonical_event_id"]}"]').click()
+    inspector = page.get_by_role("complementary", name="Event detail", exact=True)
+    expect(inspector.get_by_role("alert")).to_be_visible()
+    expect(inspector.get_by_role("heading", name="Friday Night Jazz", exact=True)).to_be_visible()
+    expect(inspector.locator(".event-card__decision-strip")).to_have_count(0)
+    expect(inspector.get_by_role("link", name="View event", exact=True)).to_be_visible()
+    api.event_status = 200
+    inspector.get_by_role("button", name="Retry event details", exact=True).click()
+    expect(inspector.locator(".event-card__description")).to_contain_text(catalog_event()["description"])
+    expect(inspector.get_by_role("alert")).to_have_count(0)
+
+
+def test_graph_event_selection_discards_late_details(release_page):
+    harness, api = release_page
+    api.second_event = True
+    api.hold_events = True
+    page = harness.page
+    page.goto(f"{BASE}/?view=entities&entity={ENTITY_ID}")
+    first_id = catalog_event()["canonical_event_id"]
+    with page.expect_request(f"**/v1/catalog/events/{first_id}"):
+        page.locator(f'button[data-node-id="event:{first_id}"]').click()
+    inspector = page.get_by_role("complementary", name="Event detail", exact=True)
+    expect(inspector.get_by_role("status")).to_contain_text("Loading event details")
+    with page.expect_request(f"**/v1/catalog/events/{SECOND_EVENT_ID}"):
+        page.locator(f'button[data-node-id="event:{SECOND_EVENT_ID}"]').click()
+    expect(inspector.get_by_role("heading", name="Saturday Night Jazz", exact=True)).to_be_visible()
+    assert len(api.held_events) == 2
+    second = api.held_events[1]
+    api.respond(second, second_catalog_event())
+    expect(inspector.locator(".event-card__title")).to_have_text("Saturday Night Jazz")
+    try:
+        api.respond(api.held_events[0], catalog_event())
+    except Exception as error:
+        assert "Target closed" in str(error) or "Invalid InterceptionId" in str(error)
+    expect(inspector.locator(".event-card__title")).to_have_text("Saturday Night Jazz")
+    expect(inspector.get_by_role("heading", name="Friday Night Jazz", exact=True)).to_have_count(0)
+
+
+def test_graph_recurring_dates_load_their_own_event_facts(release_page):
+    harness, api = release_page
+    api.second_event = True
+    api.recurring = True
+    page = harness.page
+    page.goto(f"{BASE}/?view=entities&entity={ENTITY_ID}")
+    first_id = catalog_event()["canonical_event_id"]
+    page.locator(f'button[data-node-id="event:{first_id}"]').click()
+    inspector = page.get_by_role("complementary", name="Event detail", exact=True)
+    expect(inspector.locator(".event-card__description")).to_have_text(catalog_event()["description"])
+    dates = inspector.get_by_role("region", name="Event dates", exact=True)
+    dates.get_by_role("button", name=re.compile("Jun 15")).click()
+    expect(inspector.locator(".event-card__date strong")).to_have_text("15")
+    expect(inspector.locator(".event-card__description")).to_have_text(second_catalog_event()["description"])
+    assert api.calls.count(("GET", f"/v1/catalog/events/{SECOND_EVENT_ID}")) == 1
+    dates.get_by_role("button", name=re.compile("Jun 14")).click()
+    expect(inspector.locator(".event-card__date strong")).to_have_text("14")
+    expect(inspector.locator(".event-card__description")).to_have_text(catalog_event()["description"])
+    assert api.calls.count(("GET", f"/v1/catalog/events/{first_id}")) == 1
 
 
 def test_discovery_entities_empty_state(release_page):

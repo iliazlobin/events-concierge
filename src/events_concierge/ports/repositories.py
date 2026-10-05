@@ -98,6 +98,10 @@ class CatalogRepository(Protocol):
 
     async def get(self, canonical_event_id: UUID) -> CanonicalEvent | None: ...
 
+    async def get_browse_event(self, canonical_event_id: UUID) -> CatalogBrowseEvent | None:
+        """Read one admitted current or retained past event with its published sources."""
+        ...
+
     async def browse_current(
         self,
         *,

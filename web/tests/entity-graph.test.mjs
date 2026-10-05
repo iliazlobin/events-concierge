@@ -10,9 +10,11 @@ import {
   entityOverviewCacheKey,
   readEntityDetail,
   readEntityGraph,
+  readGraphEvent,
   readEntityOverview,
   writeEntityDetail,
   writeEntityGraph,
+  writeGraphEvent,
   writeEntityOverview,
 } from "../lib/entity-graph-cache.ts";
 import {
@@ -664,6 +666,7 @@ test("the graph cache round-trips a bundle and clears on demand", () => {
     directories: 0,
     overviews: 0,
     details: 0,
+    events: 0,
   });
 });
 
@@ -1671,4 +1674,24 @@ test("compact profile handles come from the stored URL", () => {
   const channel = identityLinks(null, ["https://youtube.com/channel/UC123"])[0];
   assert.equal(channel.handle, undefined, "a channel ID is not a handle");
   assert.equal(channel.href, "https://youtube.com/channel/UC123");
+});
+
+
+test("selected event details are bounded, expire and clear across accounts", () => {
+  clearEntityGraphCache();
+  const event = { canonical_event_id: uuid("bbbbbbbb", 1), title: "First occurrence" };
+  writeGraphEvent("tenant-a", event, 0);
+  assert.equal(readGraphEvent("tenant-a", event.canonical_event_id, 10), event);
+  assert.equal(readGraphEvent("tenant-b", event.canonical_event_id, 10), null);
+  assert.equal(readGraphEvent(null, event.canonical_event_id, 10), null);
+  assert.equal(readGraphEvent("tenant-a", event.canonical_event_id, 300_001), null);
+  for (let index = 0; index < 100; index += 1) {
+    writeGraphEvent("tenant-a", { ...event, canonical_event_id: uuid("bbbbbbbb", index) }, index);
+  }
+  assert.equal(entityGraphCacheSizes().events, 48);
+  assert.equal(readGraphEvent("tenant-a", uuid("bbbbbbbb", 0), 110), null);
+  assert.notEqual(readGraphEvent("tenant-a", uuid("bbbbbbbb", 99), 110), null);
+  clearEntityGraphCache();
+  assert.equal(entityGraphCacheSizes().events, 0);
+  assert.equal(readGraphEvent("tenant-a", uuid("bbbbbbbb", 99), 110), null);
 });

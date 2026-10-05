@@ -10,7 +10,7 @@ import {
   Tags,
   UsersRound,
 } from "lucide-react";
-import { useId } from "react";
+import { useId, type ReactNode } from "react";
 
 import { discoveryLabels } from "@/lib/event-discovery";
 import { formatEventDate, formatEventTime } from "@/lib/date";
@@ -39,7 +39,7 @@ import type {
 interface EventCardProps {
   event: EventItem;
   expanded: boolean;
-  onToggle: () => void;
+  onToggle?: () => void;
   onSourceSelect?: (sourceKey: string) => void;
   onFacetSelect?: (value: string) => void;
   /** Optional: makes the eyebrow price a filter control. Omitted, the price stays static text. */
@@ -47,6 +47,8 @@ interface EventCardProps {
   onEntitySelect?: (reference: EventEntityReference) => void;
   onTopicSelect?: (topic: string) => void;
   compact?: boolean;
+  /** Optional graph navigation alongside the complete shared event facts. */
+  entityDetails?: ReactNode;
 }
 
 function providerName(event: EventItem): string {
@@ -170,6 +172,7 @@ export function EventCard({
   onEntitySelect,
   onTopicSelect,
   compact = false,
+  entityDetails,
 }: EventCardProps) {
   const date = formatEventDate(event.start_at);
   const url = eventPageUrl(event);
@@ -212,10 +215,10 @@ export function EventCard({
 
   return (
     <article
-      className={`event-card${expanded ? " is-open" : ""}${compact ? " is-compact" : ""}`}
+      className={`event-card${expanded ? " is-open" : ""}${compact ? " is-compact" : ""}${!onToggle ? " is-static" : ""}`}
     >
       <div className="event-card__summary">
-        <button
+        {onToggle ? <button
           className="event-card__summary-trigger"
           type="button"
           aria-expanded={expanded}
@@ -226,12 +229,12 @@ export function EventCard({
           <span className="event-card__disclosure-cue" aria-hidden="true">
             <ChevronDown />
           </span>
-        </button>
+        </button> : null}
 
         <time
           className="event-card__date"
           dateTime={event.start_at}
-          aria-hidden="true"
+          aria-hidden={onToggle ? true : undefined}
         >
           <span>{date.month}</span>
           <strong>{date.day}</strong>
@@ -485,6 +488,7 @@ export function EventCard({
           <p className="event-card__description">
             {description || "The organizer has not added a description yet."}
           </p>
+          {entityDetails}
 
           <div className="event-card__actions">
             {url ? (

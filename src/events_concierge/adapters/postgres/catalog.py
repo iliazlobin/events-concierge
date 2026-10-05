@@ -976,6 +976,54 @@ class PostgresCatalogRepository:
                 return None
             return await self._load(s, canonical_event_id)
 
+    async def get_browse_event(self, canonical_event_id: UUID) -> CatalogBrowseEvent | None:
+        # Use the same admission/publication rules as browsing. An explicit window around this
+        # occurrence also admits retained past observations, as the entity graph does.
+        async with self._session_scope() as session:
+            rows = (
+                await session.execute(
+                    text(
+                        """
+                        SELECT event.*, observation.source_key, observation.source_label,
+                               observation.publisher, observation.provider, observation.seed_url,
+                               observation.observation_source, observation.source_event_id,
+                               observation.registration_url, observation.last_seen_at,
+                               observation.refresh_run_key
+                        FROM public.canonical_events AS event
+                        CROSS JOIN LATERAL public.fn_list_retained_catalog_browse_observations_v2(
+                            '{}'::text[], event.start_at - interval '1 microsecond',
+                            event.start_at + interval '1 microsecond'
+                        ) AS observation
+                        WHERE event.canonical_event_id = :canonical_event_id
+                          AND observation.canonical_event_id = event.canonical_event_id
+                        ORDER BY observation.source_key, observation.observation_source,
+                                 observation.source_event_id
+                        """
+                    ),
+                    {"canonical_event_id": canonical_event_id},
+                )
+            ).all()
+        if not rows:
+            return None
+        return CatalogBrowseEvent(
+            canonical_event=canonical_from_row(rows[0], []),
+            sources=tuple(
+                CatalogBrowseSource(
+                    source_key=str(row.source_key),
+                    label=str(row.source_label),
+                    publisher=str(row.publisher),
+                    provider=str(row.provider),
+                    seed_url=str(row.seed_url),
+                    source=Source(str(row.observation_source)),
+                    source_event_id=str(row.source_event_id),
+                    registration_url=str(row.registration_url),
+                    last_seen_at=row.last_seen_at,
+                    refresh_run_key=str(row.refresh_run_key),
+                )
+                for row in rows
+            ),
+        )
+
     async def browse_current(
         self,
         *,

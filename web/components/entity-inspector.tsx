@@ -23,9 +23,7 @@ import type { ReactNode } from "react";
 import { useEffect, useMemo, useRef, useState } from "react";
 
 import { getCatalogEntity, refreshCatalogEntity } from "@/lib/api";
-import { formatEventDate, formatEventTime } from "@/lib/date";
 import type {
-  CatalogEntityGraphEdge,
   CatalogEntityGraphNode,
   EntityGraphSceneModel,
   EntityGraphTextAppearance,
@@ -47,6 +45,7 @@ import {
   groupEntitySources,
   roleLabel,
 } from "@/lib/entity-inspector-model";
+import { GraphEventInspector } from "@/components/graph-event-inspector";
 import { EntityIdentityLinks } from "@/components/entity-identity-links";
 import { identityLinkKey, identityLinks } from "@/lib/entity-identity-links";
 import { eventTopicLabel } from "@/lib/event-topics";
@@ -76,23 +75,6 @@ const PROFILE_FACTS: ReadonlyArray<readonly [CatalogEntityExternalFact["fact_key
   ["followers", "Followers"],
 ];
 
-/**
- * The provenance tail for one mention: which source asserted it, and when it was seen.
- *
- * Returned with its leading separator so it can be appended after a role, and stripped when the
- * same sentence is hoisted above the list.
- */
-function edgeProvenance(edge: CatalogEntityGraphEdge): string {
-  return [
-    edge.source_labels.length ? `asserted by ${edge.source_labels.join(", ")}` : "",
-    edge.observed_at ? `seen ${observedLabel(edge.observed_at)}` : "",
-  ]
-    .filter(Boolean)
-    .map((part) => ` · ${part}`)
-    .join("");
-}
-
-/** The first saved value per key, excluding separate social API snapshots. */
 function firstFact(
   detail: CatalogEntityDetail | null,
   key: CatalogEntityExternalFact["fact_key"],
@@ -369,113 +351,16 @@ export function EntityInspector({
   if (!subject) return null;
 
   if (subject.node_kind === "event") {
-    const date = subject.start_at ? formatEventDate(subject.start_at) : null;
-    const named: CatalogEntityGraphEdge[] = model.edges.filter(
-      (edge) => edge.kind === "mention" && edge.b === subject.node_id,
-    );
-    const provenances = new Set(named.map(edgeProvenance));
-    const sharedProvenance = named.length > 1 && provenances.size === 1
-      ? [...provenances][0]?.replace(/^ · /, "") || null
-      : null;
-    return (
-      <aside className="entity-graph-inspector" aria-label="Event detail">
-        <header className="entity-graph-inspector__head">
-          <span className="entity-hero__icon">{nodeGlyph(subject)}</span>
-          <div>
-            <p>{kindLabel(subject)}</p>
-            <h2>{subject.label}</h2>
-            <span>
-              {[
-                date ? `${date.weekday} ${date.month} ${date.day}` : null,
-                subject.start_at ? formatEventTime(subject.start_at, subject.end_at) : null,
-                [subject.venue_name, formatCity(subject.city)].filter(Boolean).join(" · "),
-              ].filter(Boolean).join(" — ")}
-            </span>
-          </div>
-          <button
-            type="button"
-            className="entity-graph-inspector__close"
-            onClick={() => onSelectNode(null)}
-          >
-            <X aria-hidden="true" />
-            <span className="sr-only">Back to {egoLabel}</span>
-          </button>
-        </header>
-
-        {eventSessions && eventSessions.length > 1 ? (
-          <section aria-label="Event dates">
-            <h3>{eventSessions.length} dates in this graph</h3>
-            <p className="entity-graph-inspector__provenance">Matching sessions. Select a date to see its own details and source evidence.</p>
-            <ul className="entity-graph-inspector__mentions">
-              {eventSessions.map((session) => (
-                <li key={session.node_id}>
-                  <button type="button" aria-pressed={session.node_id === subject.node_id}
-                    onClick={() => onSelectNode(session.node_id)}>
-                    <strong>{session.start_at ? new Intl.DateTimeFormat(undefined, {year:"numeric",month:"short",day:"numeric",weekday:"short"}).format(new Date(session.start_at)) : "Date unknown"}</strong>
-                    <small>{session.start_at ? formatEventTime(session.start_at,session.end_at) : ""}{session.is_past ? " · Past event" : ""}{session.node_id === subject.node_id ? " · Selected" : ""}</small>
-                  </button>
-                </li>
-              ))}
-            </ul>
-          </section>
-        ) : null}
-
-        {subject.topics.length ? (
-          <ul className="entity-activity-lines">
-            {subject.topics.map((topic) => <li key={topic}>{eventTopicLabel(topic)}</li>)}
-          </ul>
-        ) : null}
-
-        {/*
-          * The provenance is said once when it is the same for everyone.
-          *
-          * Every row carried "asserted by <source> · seen <date>", and on a single event those are
-          * almost always one source and one date — so a three-name card printed the same sentence
-          * three times, wrapped it onto two lines each, and buried the three names it exists to
-          * show. It is hoisted when it is shared and kept per-row when it genuinely differs, so
-          * nothing is dropped in either case.
-          */}
-        <h3>Who this event names ({named.length})</h3>
-        {sharedProvenance ? (
-          <p className="entity-graph-inspector__provenance">{sharedProvenance}</p>
-        ) : null}
-        <ul className="entity-graph-inspector__mentions">
-          {named.map((edge) => {
-            const entity = model.byId.get(edge.a);
-            const roles = edge.roles.map(roleLabel).join(" · ") || "Named";
-            return (
-              <li key={`${edge.a} ${edge.b}`}>
-                <button
-                  type="button"
-                  onMouseEnter={() => onHoverNode(edge.a)}
-                  onMouseLeave={() => onHoverNode(null)}
-                  onClick={() => (entity?.entity_id
-                    ? onFocusEntity(entity.entity_id)
-                    : onSelectNode(edge.a))}
-                >
-                  <strong>{entity?.label ?? edge.a}</strong>
-                  <small>
-                    {roles}
-                    {sharedProvenance ? "" : edgeProvenance(edge)}
-                  </small>
-                </button>
-              </li>
-            );
-          })}
-        </ul>
-
-        {subject.registration_url ? (
-          <a
-            className="entity-graph-inspector__cta"
-            href={subject.registration_url}
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            View event <ArrowUpRight aria-hidden="true" />
-          </a>
-        ) : null}
-      </aside>
-    );
+    return <GraphEventInspector
+      key={`${tenantId ?? ""}:${subject.canonical_event_id ?? subject.node_id}`}
+      tenantId={tenantId}
+      subject={subject}
+      model={model}
+      eventSessions={eventSessions}
+      onSelectNode={onSelectNode}
+      onHoverNode={onHoverNode}
+      onFocusEntity={onFocusEntity}
+    />;
   }
 
   if (subject.node_kind === "topic") {

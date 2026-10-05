@@ -176,6 +176,99 @@ async def _source_with_current_events(
     return source_key, current, stale, catalog
 
 
+async def test_selected_event_matches_browse_facts_and_requires_authentication(
+    db: None, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("EC_RELEASE_PROFILE", "discovery")
+    source_key, current, stale, catalog = await _source_with_current_events()
+    items, _ = await catalog.browse_current(source_keys=(source_key,), after=None, limit=3)
+    selected = items[0]
+    event_id = selected.canonical_event.canonical_event_id
+    assert await catalog.get_browse_event(event_id) == selected
+    stale_event = (await catalog.upsert_candidates([stale]))[0]
+    unobserved = (await catalog.upsert_candidates([
+        _candidate(f"unobserved-{uuid4().hex}", "Unpublished event", current[0].start_at)
+    ]))[0]
+    assert await catalog.get_browse_event(stale_event.canonical_event_id) is None
+    assert await catalog.get_browse_event(unobserved.canonical_event_id) is None
+
+    app = create_app()
+    async with (
+        app.router.lifespan_context(app),
+        AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client,
+    ):
+        path = f"/v1/catalog/events/{event_id}"
+        assert (await client.get(path)).status_code == 401
+        onboard = await client.post(
+            "/v1/onboard", json={"notify_email": f"selected-{uuid4().hex}@example.com"}
+        )
+        headers = {"X-EC-Tenant-ID": onboard.json()["tenant_id"]}
+        page = await client.get(
+            "/v1/catalog/events", params={"source_key": source_key}, headers=headers
+        )
+        detail = await client.get(path, headers=headers)
+        assert detail.status_code == 200
+        assert detail.json() == next(
+            item for item in page.json()["items"] if item["canonical_event_id"] == str(event_id)
+        )
+        assert detail.json()["description"] == current[0].description
+        assert detail.json()["sources"][0]["source_key"] == source_key
+        for missing_id in (uuid4(), stale_event.canonical_event_id, unobserved.canonical_event_id):
+            assert (
+                await client.get(f"/v1/catalog/events/{missing_id}", headers=headers)
+            ).status_code == 404
+        assert (
+            await client.get("/v1/catalog/events/invalid", headers=headers)
+        ).status_code == 422
+        assert (
+            await client.get(
+                "/v1/catalog/events/summary", params={"time_zone": "UTC"}, headers=headers
+            )
+        ).status_code == 200
+
+
+async def test_selected_event_excludes_fixtures_cancelled_and_revoked_sources(db: None) -> None:
+    fixture_key, _, _, catalog = await _source_with_current_events(fixture=True)
+    owner = create_async_engine(os.environ["EC_MIGRATION_URL"])
+    try:
+        async with owner.connect() as connection:
+            fixture_id = await connection.scalar(text(
+                "SELECT canonical_event_id FROM catalog_event_observations WHERE source_key=:key LIMIT 1"
+            ), {"key": fixture_key})
+        assert fixture_id is not None
+        assert await catalog.get_browse_event(fixture_id) is None
+        source_key, _, _, catalog = await _source_with_current_events()
+        items, _ = await catalog.browse_current(source_keys=(source_key,), after=None, limit=3)
+        event_id = items[0].canonical_event.canonical_event_id
+        async with owner.begin() as connection:
+            await connection.execute(text(
+                "UPDATE canonical_events SET event_status='cancelled' WHERE canonical_event_id=:id"
+            ), {"id": event_id})
+        assert await catalog.get_browse_event(event_id) is None
+        other_id = items[1].canonical_event.canonical_event_id
+        assert await catalog.get_browse_event(other_id) is not None
+        async with owner.begin() as connection:
+            await connection.execute(text(
+                "UPDATE catalog_sources SET enabled=false WHERE source_key=:key"
+            ), {"key": source_key})
+        assert await catalog.get_browse_event(other_id) is None
+    finally:
+        await owner.dispose()
+
+
+async def test_selected_event_reads_retained_past_occurrence_but_not_rolled_future(db: None) -> None:
+    scenario = await _retained_history_scenario()
+    past, future = await scenario.catalog.upsert_candidates([
+        scenario.rolled_past, scenario.rolled_future,
+    ])
+    detail = await scenario.catalog.get_browse_event(past.canonical_event_id)
+    assert detail is not None
+    assert detail.canonical_event.title == scenario.rolled_past.title
+    assert detail.canonical_event.start_at == scenario.rolled_past.start_at
+    assert detail.sources[0].refresh_run_key == scenario.first_run
+    assert await scenario.catalog.get_browse_event(future.canonical_event_id) is None
+
+
 async def test_repository_browses_latest_nonfixture_source_observations_by_keyset(
     db: None,
 ) -> None:

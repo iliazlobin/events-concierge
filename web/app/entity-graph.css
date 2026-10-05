@@ -398,6 +398,103 @@
   padding: 22px;
 }
 
+.entity-graph-inspector--event {
+  gap: 0;
+  padding: 0;
+}
+
+.graph-event-toolbar {
+  align-items: center;
+  display: flex;
+  justify-content: space-between;
+  padding: 12px 18px 0;
+}
+
+.graph-event-toolbar > span {
+  color: var(--accent);
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: .18em;
+  text-transform: uppercase;
+}
+
+.entity-graph-inspector--event .event-card.is-static {
+  background: transparent;
+  border: 0;
+  border-radius: 0;
+}
+
+.entity-graph-inspector--event .event-card.is-static .event-card__summary {
+  grid-template-columns: 46px minmax(0, 1fr);
+  padding: 14px 18px;
+}
+
+.entity-graph-inspector--event .event-card.is-static .event-card__title {
+  font-size: 19px;
+  overflow-wrap: anywhere;
+}
+
+.entity-graph-inspector--event .event-card.is-static .event-card__meta {
+  font-size: 12px;
+}
+
+.entity-graph-inspector--event .event-card.is-static .event-card__expansion-inner {
+  margin: 0;
+  padding: 16px 18px 18px;
+}
+
+.graph-event-connections {
+  margin: 16px 0 20px;
+}
+
+.graph-event-connections summary {
+  color: var(--ink);
+  cursor: pointer;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.graph-event-connections[open] summary {
+  margin-bottom: 12px;
+}
+
+.graph-event-dates h3 {
+  margin: 0 0 10px;
+}
+
+.graph-event-connections .entity-graph-inspector__provenance {
+  margin: 0 0 12px;
+}
+
+.graph-event-dates {
+  padding: 14px 18px 0;
+}
+
+.graph-event-fallback {
+  padding: 14px 18px 18px;
+}
+
+.graph-event-fallback h2 {
+  font-size: 19px;
+  margin-top: 0;
+}
+
+.graph-event-fallback > p {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.graph-event-fallback [role="status"] {
+  align-items: center;
+  display: flex;
+  gap: 8px;
+}
+
+.graph-event-fallback [role="status"] svg {
+  height: 16px;
+  width: 16px;
+}
+
 .entity-graph-inspector__head {
   align-items: start;
   display: grid;

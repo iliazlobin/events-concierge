@@ -4,23 +4,20 @@ import type {
   CatalogEntityGraph,
   CatalogEntityIdentityStatus,
 } from "./entity-graph.ts";
-import type { CatalogEntityKind } from "./types.ts";
+import type { CatalogEntityKind, EventItem } from "./types.ts";
 
-/**
- * The two reads this feature needs, kept out of `lib/api.ts` on purpose.
- *
- * `api.ts` is under concurrent edit, and neither of these functions needs anything from it beyond
- * the exported `api()` helper — the same fetch wrapper, the same tenant header, the same
- * `ApiError`. Living here means the entity explorer compiles and ships without a merge into a file
- * someone else is holding, and a later move into `api.ts` is a cut-and-paste with no call-site
- * change.
- *
- * Both functions take their caps as arguments rather than baking them into the query string. The
- * caps are half the cache key in `entity-graph-cache.ts`; if they were fixed here and variable
- * there, two different server payloads could collide on one key and the second reader would be
- * served the first reader's truncated graph.
- */
+export function getCatalogGraphEvent(
+  tenantId: string | null,
+  canonicalEventId: string,
+  signal?: AbortSignal,
+): Promise<EventItem> {
+  return api<EventItem>(`/v1/catalog/events/${encodeURIComponent(canonicalEventId)}`, {
+    tenantId,
+    signal,
+  });
+}
 
+/** Graph limits are supplied by the caller and included in its cache key. */
 /** The caps the graph capability accepts. The SQL rejects anything outside 1–24 / 1–48 / 0–6. */
 export interface CatalogEntityGraphLimits {
   events: number;
