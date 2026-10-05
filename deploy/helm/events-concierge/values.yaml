@@ -429,6 +429,23 @@ gateway:
   hostname: staging.concierge.example
   tlsSecretName: ""
 
+publicTunnel:
+  enabled: false
+  hostname: events.iliazlobin.com
+  # An externally provisioned, immutable Secret containing one key: token.
+  tokenSecretName: ""
+  replicas: 2
+  cloudflaredImage:
+    repository: cloudflare/cloudflared
+    # Official multi-platform 2026.10.0 image.
+    digest: sha256:9b49eed8f62806d5d45ddf59ecefb5710429598ea6d3fcccd2af938f621b2b07
+    pullPolicy: IfNotPresent
+  proxyImage:
+    repository: caddy
+    # Official multi-platform 2.11.6-alpine image.
+    digest: sha256:d44355d3c2149dc580ce2cac735955d1c08d3d00882c30489c241aa51a5c10d9
+    pullPolicy: IfNotPresent
+
 podMonitoring:
   enabled: true
   interval: 30s

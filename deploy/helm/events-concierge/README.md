@@ -15,6 +15,9 @@ chart's matching overlay consumes the platform-owned `shared-retain` class witho
 The [deployment runbook](../../development.md) owns readiness, state migration, recovery, and
 cutover steps; the overlay alone does not establish production readiness.
 
+[Public consumer access](../../public-access.md) packages the optional Cloudflare connector
+for `events.iliazlobin.com`; admin access remains separate and activation requires a verified release.
+
 Only non-secret identifiers belong in values files. The runtime uses `*_FILE` settings, while the
 migration Job receives only its owner URL and application-role bootstrap password files.
 Secret references must use immutable numeric versions, never `latest`; the version lists are hashed

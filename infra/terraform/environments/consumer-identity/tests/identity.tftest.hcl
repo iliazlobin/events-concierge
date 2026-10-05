@@ -39,48 +39,27 @@ run "explicit_activation_and_owner_edge" {
   }
 }
 
-run "private_google_pilot" {
+run "public_google_origin" {
   command = plan
-  variables {
-    project_id            = "iz27-platform-dev"
-    public_origin         = "https://localhost:14443"
-    public_origin_profile = "private_loopback_https"
+  variables { public_origin = "https://events.iliazlobin.com" }
+  assert {
+    condition     = toset(google_identity_platform_config.consumer.authorized_domains) == toset(["events.iliazlobin.com", "events-identity-test.firebaseapp.com"])
+    error_message = "Only the approved application and project auth hostnames are authorized."
   }
   assert {
-    condition     = toset(google_identity_platform_config.consumer.authorized_domains) == toset(["localhost", "iz27-platform-dev.firebaseapp.com"])
-    error_message = "Identity Platform authorizes the hostname; the browser key retains the exact HTTPS port."
-  }
-  assert {
-    condition     = toset(google_apikeys_key.browser.restrictions[0].browser_key_restrictions[0].allowed_referrers) == toset(["https://localhost:14443", "https://localhost:14443/*", "https://iz27-platform-dev.firebaseapp.com", "https://iz27-platform-dev.firebaseapp.com/*"])
-    error_message = "The development pilot must not grant arbitrary localhost ports or wildcard origins."
-  }
-  assert {
-    condition     = google_identity_platform_config.consumer.client[0].permissions[0].disabled_user_signup
-    error_message = "Creating the private identity configuration must not activate signup."
+    condition     = toset(google_apikeys_key.browser.restrictions[0].browser_key_restrictions[0].allowed_referrers) == toset(["https://events.iliazlobin.com", "https://events.iliazlobin.com/*", "https://events-identity-test.firebaseapp.com", "https://events-identity-test.firebaseapp.com/*"])
+    error_message = "The browser key must exclude wildcard subdomains, other ports and unrelated apps."
   }
 }
 
-run "loopback_rejected_for_remote_profile" {
+run "loopback_rejected" {
   command = plan
   variables { public_origin = "https://localhost:14443" }
   expect_failures = [var.public_origin]
 }
 
-run "loopback_rejected_in_other_projects" {
+run "wildcard_rejected" {
   command = plan
-  variables {
-    public_origin         = "https://localhost:14443"
-    public_origin_profile = "private_loopback_https"
-  }
-  expect_failures = [var.public_origin]
-}
-
-run "private_profile_rejects_other_origins" {
-  command = plan
-  variables {
-    project_id            = "iz27-platform-dev"
-    public_origin         = "https://events.example.test"
-    public_origin_profile = "private_loopback_https"
-  }
+  variables { public_origin = "https://*.iliazlobin.com" }
   expect_failures = [var.public_origin]
 }

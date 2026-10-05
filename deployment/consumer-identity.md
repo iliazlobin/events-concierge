@@ -1,7 +1,8 @@
 # Consumer accounts
 
-Google/Apple signup uses GCP Identity Platform. Browse the published catalog without
-an account; sign in and accept the current legal documents before storing personal data.
+Google signup uses GCP Identity Platform; Apple is available for later activation.
+Browse the published catalog without an account; sign in and accept the current legal
+documents before storing personal data.
 Implementation is available; provider setup and deployed acceptance remain release gates.
 
 ## Access
@@ -35,16 +36,11 @@ the protected application state bucket; never adopt shared foundation/network/cl
 | Provider secrets | `ec-consumer-google`, `ec-consumer-apple`; numbered Secret Manager versions, operator access only. Values never enter Terraform state or containers. |
 | Operator edge | Existing IAP backend; optional owner grant. The API separately enforces the signed owner email and subject. |
 
-1. Confirm the production HTTPS origin and operator host/audience. Consumer ingress supports guests; admin ingress remains IAP-protected. Verify the active CLI account independently of the [Identity console](https://console.cloud.google.com/customer-identity/providers?project=iz27-platform-dev&authuser=4).
+1. Use `https://events.iliazlobin.com` as the consumer origin. Select the identity project and operator host/audience. [Public routing](../deploy/public-access.md) admits guests; admin remains separate and IAP-protected. Verify the active CLI account independently of the [Identity console](https://console.cloud.google.com/customer-identity/providers?project=iz27-platform-dev&authuser=4).
 2. Prepare the [backend example](../infra/terraform/environments/consumer-identity/backend.tf.example) and [variables](../infra/terraform/environments/consumer-identity/identity.tfvars.example). Initialize this new app-owned state, review a saved plan, then apply only after deployment authorization.
 3. Configure provider credentials below and publish approved legal pages. Keep `signup_enabled=false` until the deployed account flow can be tested in a bounded pilot.
 
-**Private Google pilot:** in `iz27-platform-dev`, set `public_origin_profile="private_loopback_https"`
-and `public_origin="https://localhost:14443"`. Identity Platform authorizes `localhost`; the browser
-key permits only that exact HTTPS port and the project auth domain. Use the existing
-[private HTTPS proxy](../deploy/development.md#shared-release-and-access), a browser-trusted
-certificate and `EC_PUBLIC_ORIGIN_PROFILE=private_loopback_https`. Keep public ingress closed.
-Configure `EC_IDENTITY_PLATFORM_PROVIDERS='["google.com"]'`; Apple activation can follow separately.
+Configure `EC_IDENTITY_PLATFORM_PROVIDERS='["google.com"]'` for the initial release.
 Guests see **Sign in**; the same Google flow signs in existing users or creates a new account.
 The selected catalog view and filters survive sign-in. Personal settings require an account.
 
@@ -61,6 +57,8 @@ terraform -chdir=infra/terraform/environments/consumer-identity apply identity.t
 The [OAuth consent brand](https://support.google.com/cloud/answer/15549049) belongs to its
 Google project; a second client does not give it a separate app name. Keep other products'
 existing clients and branding intact when choosing the Events Concierge identity project.
+`events.iliazlobin.com` is the application domain; the SDK auth domain stays
+`<project-id>.firebaseapp.com` unless a separate custom auth-domain setup is completed.
 
 **Apple:** requires Apple Developer membership, a Sign in with Apple-enabled app,
 Services ID, Team ID, Key ID and private key. Register the same auth-domain callback
