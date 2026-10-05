@@ -768,8 +768,8 @@ function EntityGraphCanvasImpl({
        * actually land on screen — see the greedy pass there. It used to be decided here, from a
        * ring-1 node count, which is a proxy for crowding rather than a measurement of it: it could
        * hide a dozen perfectly legible labels on a sparse ring and still let a packed overview
-       * smear its names together. Nothing is lost either way — a held-back name is one hover away,
-       * and the text view lists them all.
+       * smear its names together. Every node keeps its accessible name; hover or keyboard focus
+       * also reveals the visual label.
        */}
       <div className="entity-graph-nodes">
         {ordered.map(({ placement, node }) => {

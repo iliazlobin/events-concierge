@@ -10,9 +10,11 @@ import {
   entityOverviewCacheKey,
   readEntityDetail,
   readEntityGraph,
+  readGraphEvent,
   readEntityOverview,
   writeEntityDetail,
   writeEntityGraph,
+  writeGraphEvent,
   writeEntityOverview,
 } from "../lib/entity-graph-cache.ts";
 import {
@@ -22,7 +24,7 @@ import {
   graphNodeEventId,
   normalizeGraphNode,
   parseGraphNodeId,
-  sceneToTextModel,
+  deriveEntityGraphDetails,
 } from "../lib/entity-graph.ts";
 import {
   layoutCatalogEntityGraph,
@@ -265,7 +267,7 @@ test("no node, edge or scene field is named profile_confidence", () => {
   const scene = deriveEntityGraphScene(graph);
   const serialized = JSON.stringify([
     scene.graph,
-    sceneToTextModel(scene),
+    deriveEntityGraphDetails(scene),
     layoutEgoRings(scene, VIEWPORT),
   ]);
   assert.equal(serialized.includes("profile_confidence"), false);
@@ -312,13 +314,13 @@ test("a peer's shared events are the drawn events it is joined to", () => {
     assert.equal(shared.length, 2);
     assert.ok(shared.every((nodeId) => nodeId.startsWith("event:")));
   }
-  // The text equivalent is derived from the same model, so it lists the same
+  // Inspector details derive from the same model, so they list the same
   // evidence and cannot drift from the canvas.
-  const text = sceneToTextModel(scene);
-  assert.equal(text.upcoming.length + text.past.length, scene.events.length);
-  assert.equal(text.peers.length, scene.peers.length);
-  assert.deepEqual(text.peers[0].shared_event_titles.length, 2);
-  assert.deepEqual(text.upcoming[0].source_labels, ["Meetup San Francisco"]);
+  const details = deriveEntityGraphDetails(scene);
+  assert.equal(details.upcoming.length + details.past.length, scene.events.length);
+  assert.equal(details.peers.length, scene.peers.length);
+  assert.deepEqual(details.peers[0].shared_event_titles.length, 2);
+  assert.deepEqual(details.upcoming[0].source_labels, ["Meetup San Francisco"]);
 });
 
 /* ------------------------------------------------------------------ *
@@ -526,10 +528,10 @@ test("the isolated entity draws its event ring and no peer ring", () => {
   assert.ok(topicRadius > eventRadius);
   assert.ok(topicRadius < eventRadius * 2.2, `topic ring marooned at ${topicRadius}`);
 
-  const text = sceneToTextModel(scene);
-  assert.equal(text.peers.length, 0);
-  assert.equal(text.upcoming.length, 2);
-  assert.equal(text.past.length, 4);
+  const details = deriveEntityGraphDetails(scene);
+  assert.equal(details.peers.length, 0);
+  assert.equal(details.upcoming.length, 2);
+  assert.equal(details.past.length, 4);
 });
 
 test("a one-event, one-peer ego draws a tight figure rather than a void", () => {
@@ -664,6 +666,7 @@ test("the graph cache round-trips a bundle and clears on demand", () => {
     directories: 0,
     overviews: 0,
     details: 0,
+    events: 0,
   });
 });
 
@@ -1133,7 +1136,7 @@ test("anything else still says something a reader can read", () => {
  * what collapses into what, and what happens when the payload has nothing in it.
  * ================================================================== */
 
-/** An appearance in the exact shape `sceneToTextModel` emits. */
+/** An appearance in the exact shape `deriveEntityGraphDetails` emits. */
 function appearance(overrides = {}) {
   return {
     node_id: `event:${uuid("bbbbbbbb", 1)}`,
@@ -1671,4 +1674,24 @@ test("compact profile handles come from the stored URL", () => {
   const channel = identityLinks(null, ["https://youtube.com/channel/UC123"])[0];
   assert.equal(channel.handle, undefined, "a channel ID is not a handle");
   assert.equal(channel.href, "https://youtube.com/channel/UC123");
+});
+
+
+test("selected event details are bounded, expire and clear across accounts", () => {
+  clearEntityGraphCache();
+  const event = { canonical_event_id: uuid("bbbbbbbb", 1), title: "First occurrence" };
+  writeGraphEvent("tenant-a", event, 0);
+  assert.equal(readGraphEvent("tenant-a", event.canonical_event_id, 10), event);
+  assert.equal(readGraphEvent("tenant-b", event.canonical_event_id, 10), null);
+  assert.equal(readGraphEvent(null, event.canonical_event_id, 10), null);
+  assert.equal(readGraphEvent("tenant-a", event.canonical_event_id, 300_001), null);
+  for (let index = 0; index < 100; index += 1) {
+    writeGraphEvent("tenant-a", { ...event, canonical_event_id: uuid("bbbbbbbb", index) }, index);
+  }
+  assert.equal(entityGraphCacheSizes().events, 48);
+  assert.equal(readGraphEvent("tenant-a", uuid("bbbbbbbb", 0), 110), null);
+  assert.notEqual(readGraphEvent("tenant-a", uuid("bbbbbbbb", 99), 110), null);
+  clearEntityGraphCache();
+  assert.equal(entityGraphCacheSizes().events, 0);
+  assert.equal(readGraphEvent("tenant-a", uuid("bbbbbbbb", 99), 110), null);
 });

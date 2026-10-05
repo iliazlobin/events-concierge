@@ -16,7 +16,7 @@
  *    produces no lines at all, and a single observed event never earns a line phrased as a pattern.
  */
 
-import type { EntityGraphTextAppearance } from "./entity-graph.ts";
+import type { EntityGraphAppearance } from "./entity-graph.ts";
 import { formatCity } from "./presentation.ts";
 import type { CatalogEntityInsights, EventEntityRole } from "./types.ts";
 
@@ -77,7 +77,7 @@ function monthYear(value: string): string {
  * `eventsTruncated` is the capability's own flag, so this cannot drift from what was drawn.
  */
 export function entityFrameActivity(
-  appearances: readonly EntityGraphTextAppearance[],
+  appearances: readonly EntityGraphAppearance[],
   eventsTruncated: boolean,
 ): EntityFrameActivity | null {
   if (eventsTruncated || appearances.length === 0) return null;
@@ -298,7 +298,7 @@ function byStart(direction: 1 | -1) {
 }
 
 /** Title, folded the way {@link foldGroup} folds it, so the two cannot key differently. */
-function titleKey(item: EntityGraphTextAppearance): string {
+function titleKey(item: EntityGraphAppearance): string {
   return (item.title.trim() || item.title).toLocaleLowerCase();
 }
 
@@ -311,7 +311,7 @@ function titleKey(item: EntityGraphTextAppearance): string {
  * all. Distinct starts, not raw appearances, so the exact-duplicate fold cannot inflate a series.
  */
 function seriesCounts(
-  appearances: readonly EntityGraphTextAppearance[],
+  appearances: readonly EntityGraphAppearance[],
 ): Map<string, number> {
   const starts = new Map<string, Set<string>>();
   for (const item of appearances) {
@@ -324,7 +324,7 @@ function seriesCounts(
 }
 
 function foldGroup(
-  items: readonly EntityGraphTextAppearance[],
+  items: readonly EntityGraphAppearance[],
   isPast: boolean,
   direction: 1 | -1,
   series: Map<string, number>,
@@ -377,7 +377,7 @@ function foldGroup(
  * Empty groups are omitted rather than rendered as a heading over nothing.
  */
 export function groupEntityAppearances(
-  appearances: readonly EntityGraphTextAppearance[],
+  appearances: readonly EntityGraphAppearance[],
 ): EntityAppearanceGroup[] {
   const series = seriesCounts(appearances);
   const upcoming = foldGroup(appearances.filter((item) => !item.is_past), false, 1, series);

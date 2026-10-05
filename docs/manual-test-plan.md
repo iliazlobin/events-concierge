@@ -36,6 +36,15 @@ Attach sanitized acceptance evidence to the release PR. Source tests and mock ru
 ## Discovery checks
 
 Use `/v1/catalog/events` requests to verify filters and pagination. Browsing must not fetch providers or queue ingestion.
+
+**Graph event details** — [selected-event integration tests](../tests/integration/test_catalog_browse.py), [browser checks](../tests/e2e/test_next_release_profile.py).
+
+- [ ] Overview, entity and topic graphs stay graphical on desktop and mobile. Check node selection and keyboard navigation.
+- [ ] Selecting an event in any graph shows the shared map card's source, linked title, date/time, venue links, availability, price, participants, topics and description. Overview/entity selections read `/v1/catalog/events/{canonical_event_id}`; topic graphs reuse loaded events. Initial graph load and hover do not read event details.
+- [ ] Host, organizer and other entity chips resolve the selected event's exact ID, role and name, then open that entity's graph. Topic chips open the topic graph. Check overview/entity/topic graphs on desktop and mobile; profile icons still open external profiles.
+- [ ] Explore connections retains source assertions and entity navigation; recurring dates select their own occurrence.
+- [ ] Missing/error responses show the graph summary and a retry. Quick selection changes never display another event's details. Check desktop and mobile.
+
 Mark checks requiring unavailable catalog data **NOT EXERCISED**.
 
 **Filters and navigation** — [filter tests](../web/tests/event-catalog-filter-controls.test.mjs), [browser history tests](../web/tests/event-browser-history.test.mjs).
@@ -63,7 +72,8 @@ Mark checks requiring unavailable catalog data **NOT EXERCISED**.
 
 - [ ] One list card expands at a time. Details retain source, price, location and past/ongoing labels without inventing missing facts.
 - [ ] The card's source shortcut opens source history and clears query, custom dates and places.
-- [ ] View event opens the retained provider URL. Calendar opens a draft; venue opens Maps. These actions do not toggle the card or claim registration/synchronization.
+- [ ] Event titles open the retained provider URL in a new tab across Events, Map previews/details, Calendar and Graph (including loading/error summaries). Separate registration actions are absent. Titles without a safe URL remain plain text. Pointer and keyboard title activation never toggle details or select a map marker; disclosure and map-focus controls still work.
+- [ ] Calendar opens a draft; venue opens Maps. These actions do not toggle the card or claim registration/synchronization.
 - [ ] Map markers and preview cards select the same event. The preview rail follows map bounds; place changes fit event points or selected-scope fallback bounds.
 - [ ] External entity links require verified direct HTTPS profiles/sites; no generated LinkedIn search links or named attendee rosters.
 - [ ] For an already populated, reviewed Meetup source: public event links and source labels work; zero-event success remains distinct from transport failure.

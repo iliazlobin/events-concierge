@@ -1,5 +1,5 @@
 import type { CatalogEntityDirectory, CatalogEntityGraph } from "./entity-graph.ts";
-import type { CatalogEntityDetail, CatalogEntityKind } from "./types.ts";
+import type { CatalogEntityDetail, CatalogEntityKind, EventItem } from "./types.ts";
 
 /**
  * A bounded, in-memory cache for the two entity-graph reads.
@@ -203,6 +203,23 @@ const directoryCache = new BoundedLruCache<CatalogEntityDirectory>(MAX_DIRECTORY
  * reader who narrows, widens and narrows again should pay for it once.
  */
 const overviewCache = new BoundedLruCache<CatalogEntityGraph>(MAX_DIRECTORY_ENTRIES);
+const eventCache = new BoundedLruCache<EventItem>(48);
+
+export function readGraphEvent(
+  tenantId: string | null,
+  canonicalEventId: string,
+  now: number = Date.now(),
+): EventItem | null {
+  return eventCache.get(entityDetailKey(tenantId, canonicalEventId), now);
+}
+
+export function writeGraphEvent(
+  tenantId: string | null,
+  event: EventItem,
+  now: number = Date.now(),
+): void {
+  eventCache.set(entityDetailKey(tenantId, event.canonical_event_id), event, now);
+}
 
 export function readEntityGraph(
   request: EntityGraphRequest,
@@ -288,6 +305,7 @@ export function clearEntityGraphCache(): void {
   directoryCache.clear();
   overviewCache.clear();
   detailCache.clear();
+  eventCache.clear();
 }
 
 /** Entry counts, for tests and for the diagnostics panel. */
@@ -296,11 +314,13 @@ export function entityGraphCacheSizes(): {
   directories: number;
   overviews: number;
   details: number;
+  events: number;
 } {
   return {
     graphs: graphCache.size,
     directories: directoryCache.size,
     overviews: overviewCache.size,
     details: detailCache.size,
+    events: eventCache.size,
   };
 }

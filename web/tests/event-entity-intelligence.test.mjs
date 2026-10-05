@@ -10,16 +10,11 @@ const inspector = readFileSync(
   new URL("../components/entity-inspector.tsx", import.meta.url),
   "utf8",
 );
-const textView = readFileSync(
-  new URL("../components/entity-graph-text.tsx", import.meta.url),
-  "utf8",
-);
 const api = readFileSync(new URL("../lib/api.ts", import.meta.url), "utf8");
 
 test("entity detail presents structured public data instead of pipeline evidence", () => {
   assert.match(inspector, /Public data/);
   assert.match(inspector, /Profiles/);
-  assert.match(textView, /Upcoming/);
   assert.match(inspector, /external_facts/);
   assert.match(inspector, /external_sources/);
   assert.doesNotMatch(inspector, /EVENT EVIDENCE|ENTITY RESEARCH|Evidence first/);
@@ -40,8 +35,6 @@ test("refresh is offered only where an exact profile URL exists to re-read", () 
 });
 
 test("nothing in the entity surface turns a name into a profile lookup", () => {
-  for (const source of [inspector, textView]) {
-    assert.doesNotMatch(source, /linkedin\.com\/search/i);
-    assert.doesNotMatch(source, /google\.com\/search/i);
-  }
+  assert.doesNotMatch(inspector, /linkedin\.com\/search/i);
+  assert.doesNotMatch(inspector, /google\.com\/search/i);
 });

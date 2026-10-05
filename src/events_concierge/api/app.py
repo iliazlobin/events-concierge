@@ -3536,6 +3536,18 @@ def create_app() -> FastAPI:
             time_zone=time_zone,
         )
 
+    @app.get("/v1/catalog/events/{canonical_event_id}", response_model=CatalogBrowseItemOut)
+    async def read_catalog_event(
+        canonical_event_id: UUID,
+        tenant_id: AuthenticatedTenant,
+    ) -> CatalogBrowseItemOut:
+        """Read selected event details from the published catalog; never contact providers."""
+        del tenant_id
+        item = await app.state.container.catalog.get_browse_event(canonical_event_id)
+        if item is None:
+            raise HTTPException(status_code=404, detail="event is not in the published catalog")
+        return _catalog_browse_item_out(item)
+
     @app.get("/v1/catalog/entities", response_model=list[CatalogEntityOut])
     async def browse_catalog_entities(
         tenant_id: AuthenticatedTenant,

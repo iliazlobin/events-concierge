@@ -4,7 +4,6 @@ import test from "node:test";
 import {
   eventFacetSignals,
   eventFormatLabel,
-  eventRegistrationCtaLabel,
   eventRegistrationLabel,
   safeEntityProfile,
 } from "../lib/event-facets.ts";
@@ -64,17 +63,16 @@ test("event format rejects placeholder text, partial coordinates, and out-of-ran
   );
 });
 
-test("registration status produces truthful status and action labels", () => {
+test("registration status produces truthful status labels", () => {
   const cases = [
-    ["open", "Registration open", "Sign up"],
-    ["waitlist", "Waitlist", "Join waitlist"],
-    ["sold_out", "Sold out", "View details"],
-    ["unknown", null, "View event"],
+    ["open", "Registration open"],
+    ["waitlist", "Waitlist"],
+    ["sold_out", "Sold out"],
+    ["unknown", null],
   ];
-  for (const [registration_status, status, action] of cases) {
+  for (const [registration_status, status] of cases) {
     const event = { registration_status };
     assert.equal(eventRegistrationLabel(event), status);
-    assert.equal(eventRegistrationCtaLabel(event), action);
   }
 });
 
