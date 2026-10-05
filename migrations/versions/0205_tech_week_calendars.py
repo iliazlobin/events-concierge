@@ -1,9 +1,9 @@
 """Register disabled official SF/LA 2026 Tech Week sources and bounded edition windows.
 
-Revision ID: 0204
+Revision ID: 0205
 Revises: 0202
 
-0203 is reserved by the independent library-recovery task. Owner review/activation is
+0203/0204 belong to independent library-recovery/identity tasks. Owner review/activation is
 separate; the migration neither grants policy admission nor initiates collection.
 """
 
@@ -14,7 +14,7 @@ from collections.abc import Sequence
 from alembic import op
 from sqlalchemy import text
 
-revision: str = "0204"
+revision: str = "0205"
 down_revision: str | None = "0202"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
