@@ -18,7 +18,7 @@ const api = readFileSync(new URL("../lib/api.ts", import.meta.url), "utf8");
 
 test("entity detail presents structured public data instead of pipeline evidence", () => {
   assert.match(inspector, /Public data/);
-  assert.match(inspector, /Connected public sources/);
+  assert.match(inspector, /Profiles/);
   assert.match(textView, /Upcoming/);
   assert.match(inspector, /external_facts/);
   assert.match(inspector, /external_sources/);
@@ -30,7 +30,7 @@ test("entity detail can refresh its exact public sources", () => {
   assert.match(api, /catalog\/entities\/\$\{encodeURIComponent\(entityId\)\}\/refresh/);
   assert.match(inspector, /refreshCatalogEntity/);
   assert.match(inspector, /detail\?\.refresh_due/);
-  assert.match(inspector, /Syncing public data/);
+  assert.match(inspector, /Refreshing/);
 });
 
 test("refresh is offered only where an exact profile URL exists to re-read", () => {

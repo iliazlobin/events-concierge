@@ -2196,6 +2196,7 @@ textarea:focus-visible {
 }
 
 .event-card {
+  container: event-card / inline-size;
   --card-accent: var(--accent);
   background:
     linear-gradient(110deg, rgba(255, 255, 255, 0.018), transparent 52%),
@@ -4075,7 +4076,7 @@ textarea:focus-visible {
   align-items: start;
   display: grid;
   gap: 18px;
-  grid-template-columns: minmax(0, 1.45fr) minmax(330px, 0.85fr);
+  grid-template-columns: minmax(0, 1.15fr) minmax(380px, 1fr);
 }
 
 .calendar-grid-shell,
@@ -7760,3 +7761,12 @@ textarea:focus-visible {
   cursor: pointer;
 }
 .map-preview__actions > a:last-child { margin-left: auto; }
+
+/* Expanded details use the full card width in narrow map/calendar panels. */
+@container event-card (max-width: 520px) {
+  .event-card.is-compact .event-card__expansion-inner {
+    margin: 0;
+    padding-left: 16px;
+    padding-right: 16px;
+  }
+}

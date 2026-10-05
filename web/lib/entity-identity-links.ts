@@ -1,17 +1,4 @@
-/**
- * Every public identity we hold for an entity, as links a reader can follow.
- *
- * The Overview used to say "A direct profile URL is on file." — a sentence about the existence of
- * a link, printed where the link itself would have fitted. It told a reader nothing they could
- * check, and it cost the same room a LinkedIn mark would have taken.
- *
- * What is on file today is still narrow: 1,342 LinkedIn URLs and about fifty websites across the
- * whole catalog. That was a *capture* limit, not a display one — the Luma adapter read
- * `linkedin_handle` and `website` off a host record and dropped `instagram_handle`,
- * `twitter_handle`, `tiktok_handle` and `youtube_handle` on the floor. The capture now carries all
- * of them into the enrichment plane, and this module recognises each network by host rather than by
- * which field it arrived in, so nothing here needs to change again as rows accumulate.
- */
+/** Classify and deduplicate profile URLs supplied by catalog sources. */
 
 export type IdentityNetwork =
   | "linkedin"
@@ -30,6 +17,7 @@ export interface IdentityLink {
   /** What the link is, for a tooltip and for assistive technology. */
   label: string;
   href: string;
+  handle?: string;
 }
 
 /** Host suffixes to network. Order is irrelevant; the longest match is not needed, hosts are exact. */
@@ -93,23 +81,19 @@ function classify(href: string): IdentityLink | null {
       if (host === suffix && url.pathname.replace(/\/+$/, "") === "") {
         return { network: "website", label: url.hostname.replace(/^www\./, ""), href };
       }
-      return { network, label, href };
+      const path = url.pathname.split("/").filter(Boolean);
+      const account = network === "linkedin" ? path[1]
+        : network === "youtube" ? (path[0]?.startsWith("@") ? path[0] : undefined)
+        : ["x", "instagram", "tiktok", "github"].includes(network) ? path[0] : undefined;
+      const handle = account && network !== "website" ? account.replace(/^@/, "") : undefined;
+      return { network, label, href, handle };
     }
   }
   return { network: "website", label: url.hostname.replace(/^www\./, ""), href };
 }
 
-/**
- * Two links are the same identity when they point at the same place.
- *
- * Keyed on the normalised host `classify` already derived rather than on the raw href, because the
- * spellings that differ are exactly the ones the storage layer normalises away and the display
- * layer would otherwise draw twice: 27 entities today hold a `canonical_profile_url` and an
- * `official_website` differing only by `www.`, and a legacy `twitter.com` fact sits beside the
- * `x.com` source URL for the same profile. Two adjacent marks with the identical accessible name
- * and the identical destination are a defect a keyboard or screen-reader user pays for.
- */
-function identityOf(link: IdentityLink): string {
+/** Treat www/mobile aliases, trailing slashes and Twitter/X URLs as one destination. */
+export function identityLinkKey(link: IdentityLink): string {
   let url: URL;
   try {
     url = new URL(link.href);
@@ -137,7 +121,7 @@ export function identityLinks(
     if (!href) continue;
     const link = classify(href);
     if (!link) continue;
-    const key = identityOf(link);
+    const key = identityLinkKey(link);
     if (seen.has(key)) continue;
     seen.add(key);
     links.push(link);

@@ -115,14 +115,6 @@ export function EntityGraphText({ model, onSelectNode, onFocusEntity }: EntityGr
             <dd>{model.ego.kind ?? "unknown"}</dd>
           </div>
           <div>
-            <dt>Identity</dt>
-            <dd>
-              {model.ego.identity_status === "profile_verified"
-                ? "A direct profile URL is on file — that is a link a source gave us, not a verification of the person."
-                : "Scoped to the source that named it. No direct profile URL is on file."}
-            </dd>
-          </div>
-          <div>
             <dt>Connections</dt>
             <dd>
               {model.ego.degree} {model.ego.degree === 1 ? "event" : "events"} in the catalog
@@ -135,16 +127,6 @@ export function EntityGraphText({ model, onSelectNode, onFocusEntity }: EntityGr
             <div>
               <dt>Named as</dt>
               <dd>{model.ego.roles.map(roleLabel).join(" · ")}</dd>
-            </div>
-          ) : null}
-          {model.ego.profile_url ? (
-            <div>
-              <dt>Profile URL</dt>
-              <dd>
-                <a href={model.ego.profile_url} target="_blank" rel="noopener noreferrer">
-                  {model.ego.profile_url} <ArrowUpRight aria-hidden="true" />
-                </a>
-              </dd>
             </div>
           ) : null}
         </dl>
@@ -216,34 +198,6 @@ export function EntityGraphText({ model, onSelectNode, onFocusEntity }: EntityGr
                 <button type="button" onClick={() => onSelectNode(topic.node_id)}>
                   {eventTopicLabel(topic.label)}
                   <small>{topic.event_count} of the {eventTotal} shown events</small>
-                </button>
-              </li>
-            ))}
-          </ul>
-        </section>
-      ) : null}
-
-      {model.same_name_candidates.length ? (
-        <section>
-          <h3>Other rows with this exact name ({model.same_name_candidates.length})</h3>
-          <p className="entity-empty-copy">
-            Same name — not merged. A matching display name is not evidence that these are the same
-            person or organization.
-          </p>
-          <ul className="entity-graph-text__same-name">
-            {model.same_name_candidates.map((candidate) => (
-              <li key={candidate.entity_id}>
-                <button type="button" onClick={() => onFocusEntity(candidate.entity_id)}>
-                  <strong>{candidate.display_name}</strong>
-                  <span>
-                    {candidate.kind}
-                    {" · "}
-                    {candidate.identity_status === "profile_verified"
-                      ? "direct profile on file"
-                      : "source-scoped"}
-                    {" · "}
-                    {candidate.event_count} {candidate.event_count === 1 ? "event" : "events"}
-                  </span>
                 </button>
               </li>
             ))}

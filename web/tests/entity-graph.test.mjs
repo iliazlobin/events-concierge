@@ -1658,3 +1658,17 @@ test("an unknown host is still offered, labelled by its own name", () => {
   assert.deepEqual(links.map((l) => [l.network, l.label]), [["website", "andluo.studio"]]);
 });
 
+
+
+test("compact profile handles come from the stored URL", () => {
+  const links = identityLinks("https://www.linkedin.com/in/gussayer", [], [
+    "https://x.com/augustinsayer", "https://www.instagram.com/itslauradang",
+  ]);
+  assert.deepEqual(links.map(({ label, handle }) => [label, handle]), [
+    ["LinkedIn", "gussayer"], ["X", "augustinsayer"], ["Instagram", "itslauradang"],
+  ]);
+  assert.equal(identityLinks(null, ["https://youtube.com/@someone"])[0].handle, "someone");
+  const channel = identityLinks(null, ["https://youtube.com/channel/UC123"])[0];
+  assert.equal(channel.handle, undefined, "a channel ID is not a handle");
+  assert.equal(channel.href, "https://youtube.com/channel/UC123");
+});
