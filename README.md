@@ -149,6 +149,7 @@ make catalog-refresh SOURCE_KEY=luma-sf
 - Dependency services remain shared. Temporal tests use isolated environments/queues.
 - Browser fixtures do not prove deployed identity, CSRF, provider access or erasure completion.
 - [CI](.github/workflows/ci.yml) and [deployment validation](.github/workflows/deployment-validation.yml) define required jobs.
+- [Private Linux CI](deploy/ci/README.md): isolated GKE runner bootstrap; existing required jobs stay hosted during native validation.
 
 ## Build and deploy the image
 

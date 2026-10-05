@@ -17,6 +17,7 @@ API keys are deferred unless the assigned task explicitly changes their scope.
 - [Symphony workflow](WORKFLOW.md): bounded coding-agent assignment and handoff.
 - [CI](.github/workflows/ci.yml) and [deployment checks](.github/workflows/deployment-validation.yml):
   authoritative check definitions. Read the relevant design and tests before changing a component.
+- [Private Linux CI](deploy/ci/README.md): repository-scoped runner bootstrap and native isolation pilot.
 
 ## Work ownership
 
