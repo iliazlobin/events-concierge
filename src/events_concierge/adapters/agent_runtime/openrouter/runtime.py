@@ -46,6 +46,7 @@ from ....ports.model_usage import ModelUsageLedger
 _log = logging.getLogger(__name__)
 
 DEFAULT_BASE_URL = "https://openrouter.ai/api/v1"
+_USAGE_RECEIPT_TIMEOUT_SECONDS = 10.0
 
 
 class OpenRouterAgentRuntime:
@@ -63,7 +64,7 @@ class OpenRouterAgentRuntime:
         timeout_seconds: float = 60.0,
         client: httpx.AsyncClient | None = None,
         app_title: str = "events-concierge",
-        usage_ledger: ModelUsageLedger | None = None,
+        usage_ledger: ModelUsageLedger,
     ) -> None:
         if not api_key.strip():
             raise ValueError("OpenRouter API key must not be empty")
@@ -113,13 +114,12 @@ class OpenRouterAgentRuntime:
         if self._fallback_model:
             body["models"] = [self._model, self._fallback_model]
         call_id = uuid4()
-        if self._usage_ledger is not None:
-            try:
-                admission = await self._usage_ledger.begin_call(call_id, self._model)
-            except Exception as error:
-                raise ModelUsageError("model_accounting_unavailable") from error
-            if admission != "allowed":
-                raise ModelUsageError(admission)
+        try:
+            admission = await self._usage_ledger.begin_call(call_id, self._model)
+        except Exception as error:
+            raise ModelUsageError("model_accounting_unavailable") from error
+        if admission != "allowed":
+            raise ModelUsageError(admission)
         try:
             response = await client.post(
                 f"{self._base_url}/chat/completions",
@@ -133,47 +133,63 @@ class OpenRouterAgentRuntime:
                 raise ValueError("invalid model response")
             measured = response_usage(payload)
         except asyncio.CancelledError:
-            if self._usage_ledger is not None:
-                try:
-                    await asyncio.shield(
-                        self._usage_ledger.finish_call(
-                            call_id, ModelCallUsage(status="interrupted", error_code="cancelled")
-                        )
-                    )
-                except Exception:
-                    _log.warning("agent_cancelled_usage_pending")
+            try:
+                await self._finish_usage(
+                    call_id, ModelCallUsage(status="interrupted", error_code="cancelled")
+                )
+            except Exception:
+                _log.warning("agent_cancelled_usage_pending")
             raise
         except (httpx.HTTPError, ValueError) as error:
-            if self._usage_ledger is not None:
-                code = (
-                    f"http_{error.response.status_code}"
-                    if isinstance(error, httpx.HTTPStatusError)
-                    else "request_failed"
-                )
-                measured = ModelCallUsage(status="failed", error_code=code)
-                if isinstance(error, httpx.HTTPStatusError):
-                    try:
-                        error_payload = error.response.json()
-                        if isinstance(error_payload, dict):
-                            measured = replace(
-                                response_usage(error_payload), status="failed", error_code=code
-                            )
-                    except ValueError:
-                        pass
-                await self._finish_usage(call_id, measured)
+            code = (
+                f"http_{error.response.status_code}"
+                if isinstance(error, httpx.HTTPStatusError)
+                else "request_failed"
+            )
+            measured = ModelCallUsage(status="failed", error_code=code)
+            if isinstance(error, httpx.HTTPStatusError):
+                try:
+                    error_payload = error.response.json()
+                    if isinstance(error_payload, dict):
+                        measured = replace(
+                            response_usage(error_payload), status="failed", error_code=code
+                        )
+                except ValueError:
+                    pass
+            await self._finish_usage(call_id, measured)
             if isinstance(error, ValueError):
                 raise ModelUsageError("model_response_invalid") from error
             raise
-        if self._usage_ledger is not None:
-            await self._finish_usage(call_id, measured)
+        await self._finish_usage(call_id, measured)
         if measured.status == "failed":
             raise ModelUsageError("model_response_error")
         return payload
 
     async def _finish_usage(self, call_id: UUID, measured: ModelCallUsage) -> None:
-        assert self._usage_ledger is not None
+        async def persist() -> None:
+            async with asyncio.timeout(_USAGE_RECEIPT_TIMEOUT_SECONDS):
+                await self._usage_ledger.finish_call(call_id, measured)
+
+        # A disconnected client must not roll back a known provider charge. Retain
+        # and await the receipt task, including repeated cancellation, until its
+        # bounded write finishes; then restore the caller's cancellation.
+        receipt = asyncio.create_task(persist())
+        cancellation: asyncio.CancelledError | None = None
+        while not receipt.done():
+            try:
+                await asyncio.shield(receipt)
+            except asyncio.CancelledError as error:
+                cancellation = cancellation or error
+            except Exception:
+                break
+        if cancellation is not None:
+            try:
+                receipt.result()
+            except (Exception, asyncio.CancelledError):
+                _log.warning("agent_cancelled_usage_pending")
+            raise cancellation
         try:
-            await self._usage_ledger.finish_call(call_id, measured)
+            receipt.result()
         except Exception as error:
             raise ModelUsageError("model_accounting_unavailable") from error
 

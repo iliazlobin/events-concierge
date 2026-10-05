@@ -11,10 +11,13 @@ from uuid import UUID
 import httpx
 import pytest
 
+from events_concierge.adapters.agent_runtime.openrouter import runtime as runtime_module
 from events_concierge.adapters.agent_runtime.openrouter.key_usage import OpenRouterKeyUsage
 from events_concierge.adapters.agent_runtime.openrouter.runtime import OpenRouterAgentRuntime
+from events_concierge.agent._devkit import repl
 from events_concierge.domain.model_usage import (
     ModelCallUsage,
+    ModelUsageError,
     reported_money,
     response_usage,
 )
@@ -44,6 +47,23 @@ class Tools:
 
     async def invoke(self, name: str, arguments: dict[str, Any]) -> ToolResult:
         return ToolResult(status="empty")
+
+
+class WaitingLedger(Ledger):
+    def __init__(self) -> None:
+        super().__init__()
+        self.writing = asyncio.Event()
+        self.release = asyncio.Event()
+        self.write_cancelled = False
+
+    async def finish_call(self, call_id: UUID, usage: ModelCallUsage) -> None:
+        self.writing.set()
+        try:
+            await self.release.wait()
+        except asyncio.CancelledError:
+            self.write_cancelled = True
+            raise
+        await super().finish_call(call_id, usage)
 
 
 def completion(**overrides: Any) -> dict[str, Any]:
@@ -121,6 +141,19 @@ async def test_accounting_failure_denies_egress_and_hides_internal_details() -> 
         ]
     assert isinstance(events[-1], TurnError) and events[-1].code == "model_accounting_unavailable"
     assert "private" not in events[-1].message
+
+
+async def test_development_cli_uses_the_application_budget(monkeypatch: pytest.MonkeyPatch) -> None:
+    ledger = Ledger("budget_exhausted")
+    monkeypatch.setenv("EC_OPENROUTER_API_KEY", "fixture-key")
+    monkeypatch.setattr(repl, "PostgresModelUsageStore", lambda: ledger)
+    runtime = repl._build_runtime()
+    async with httpx.AsyncClient(
+        transport=httpx.MockTransport(lambda r: pytest.fail("paid egress"))
+    ) as client:
+        with pytest.raises(ModelUsageError, match="budget_exhausted"):
+            await runtime._complete(client, [], [])
+    assert len(ledger.started) == 1 and not ledger.finished
 
 
 async def test_each_physical_call_in_a_tool_turn_is_recorded_and_requests_live_usage() -> None:
@@ -208,6 +241,84 @@ async def test_cancellation_records_interrupted_unknown_cost() -> None:
             await runtime._complete(client, [], [])
     assert ledger.finished[0][1].status == "interrupted"
     assert ledger.finished[0][1].cost_usd is None
+
+
+@pytest.mark.parametrize("status", [200, 503])
+async def test_disconnect_during_receipt_write_preserves_known_charge(status: int) -> None:
+    ledger = WaitingLedger()
+    async with httpx.AsyncClient(
+        transport=httpx.MockTransport(lambda r: httpx.Response(status, json=completion()))
+    ) as client:
+        runtime = OpenRouterAgentRuntime(
+            api_key="fixture-key", model="primary/model", usage_ledger=ledger
+        )
+        task = asyncio.create_task(runtime._complete(client, [], []))
+        await asyncio.wait_for(ledger.writing.wait(), timeout=1)
+        task.cancel("client disconnected")
+        await asyncio.sleep(0)
+        task.cancel("disconnect repeated")
+        await asyncio.sleep(0)
+        assert not task.done() and not ledger.write_cancelled
+        ledger.release.set()
+        with pytest.raises(asyncio.CancelledError):
+            await asyncio.wait_for(task, timeout=1)
+    assert len(ledger.finished) == 1
+    measured = ledger.finished[0][1]
+    assert measured.cost_usd == Decimal(".0025")
+    assert measured.actual_model == "fallback/model"
+    assert measured.status == ("ok" if status == 200 else "failed")
+    assert measured.error_code == (None if status == 200 else "http_503")
+
+
+@pytest.mark.parametrize("disconnect", [False, True])
+async def test_stalled_receipt_write_is_bounded(
+    monkeypatch: pytest.MonkeyPatch, disconnect: bool
+) -> None:
+    ledger = WaitingLedger()
+    monkeypatch.setattr(runtime_module, "_USAGE_RECEIPT_TIMEOUT_SECONDS", 0.02)
+    async with httpx.AsyncClient(
+        transport=httpx.MockTransport(lambda r: httpx.Response(200, json=completion()))
+    ) as client:
+        runtime = OpenRouterAgentRuntime(
+            api_key="fixture-key", model="primary/model", usage_ledger=ledger
+        )
+        task = asyncio.create_task(runtime._complete(client, [], []))
+        await asyncio.wait_for(ledger.writing.wait(), timeout=1)
+        if disconnect:
+            task.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await asyncio.wait_for(task, timeout=1)
+        else:
+            with pytest.raises(ModelUsageError, match="model_accounting_unavailable"):
+                await asyncio.wait_for(task, timeout=1)
+    assert ledger.write_cancelled and not ledger.finished
+
+
+async def test_receipt_failure_stops_the_tool_loop() -> None:
+    class FailingLedger(Ledger):
+        async def finish_call(self, call_id: UUID, usage: ModelCallUsage) -> None:
+            raise RuntimeError("database private details")
+
+    ledger = FailingLedger()
+    requests: list[httpx.Request] = []
+
+    def handle(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        return httpx.Response(200, json=completion())
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handle)) as client:
+        runtime = OpenRouterAgentRuntime(
+            api_key="fixture-key", model="primary/model", usage_ledger=ledger, client=client
+        )
+        events = [
+            event
+            async for event in runtime.run_turn(
+                system_prompt="", history=[], message="hello", toolset=Tools()
+            )
+        ]
+    assert len(requests) == 1
+    assert isinstance(events[-1], TurnError) and events[-1].code == "model_accounting_unavailable"
+    assert "private" not in events[-1].message
 
 
 async def test_provider_key_totals_are_read_only_cached_and_whitelisted() -> None:

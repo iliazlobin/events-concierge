@@ -20,6 +20,7 @@ from typing import Any
 from ...adapters.agent_runtime.openrouter import OpenRouterAgentRuntime
 from ...adapters.postgres.catalog import PostgresCatalogRepository
 from ...adapters.postgres.catalog_entities import PostgresCatalogEntityRepository
+from ...adapters.postgres.model_usage import PostgresModelUsageStore
 from ...adapters.ranking.embedding import DeterministicEmbedding
 from ...config import get_settings
 from ...infra.db import init_engine
@@ -61,6 +62,7 @@ def _build_runtime() -> OpenRouterAgentRuntime:
         fallback_model=_env("EC_AGENT_MODEL_FALLBACK") or None,
         max_model_calls=int(_env("EC_AGENT_MAX_MODEL_CALLS_PER_TURN", "8")),
         max_tool_calls=int(_env("EC_AGENT_MAX_TOOL_CALLS_PER_TURN", "8")),
+        usage_ledger=PostgresModelUsageStore(),
     )
 
 
