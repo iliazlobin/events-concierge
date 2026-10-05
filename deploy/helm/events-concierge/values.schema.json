@@ -182,6 +182,44 @@
           }
         }
       }
+    },
+    "publicTunnel": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "enabled",
+        "hostname",
+        "tokenSecretName",
+        "replicas",
+        "cloudflaredImage",
+        "proxyImage"
+      ],
+      "properties": {
+        "enabled": {
+          "type": "boolean"
+        },
+        "hostname": {
+          "enum": [
+            "events.iliazlobin.com"
+          ]
+        },
+        "tokenSecretName": {
+          "type": "string",
+          "maxLength": 63,
+          "pattern": "^$|^[a-z0-9]([a-z0-9-]*[a-z0-9])?$"
+        },
+        "replicas": {
+          "type": "integer",
+          "minimum": 2,
+          "maximum": 3
+        },
+        "cloudflaredImage": {
+          "$ref": "#/definitions/image"
+        },
+        "proxyImage": {
+          "$ref": "#/definitions/image"
+        }
+      }
     }
   },
   "definitions": {

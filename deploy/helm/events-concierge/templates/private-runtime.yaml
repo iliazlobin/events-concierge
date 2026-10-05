@@ -13,7 +13,9 @@ data:
   EC_IMAGE_DIGEST: {{ $root.Values.global.appImage.digest | quote }}
   {{- if has $name (list "api" "account-erasure") }}
   {{- range $key, $value := $root.Values.applicationConfig }}
+  {{- if or (not (hasSuffix "_FILE" $key)) $value }}
   {{ $key }}: {{ $value | quote }}
+  {{- end }}
   {{- end }}
   {{- else }}
   EC_ENV: staging
@@ -31,7 +33,7 @@ data:
   EC_PACER_BACKEND: redis
   EC_GCS_CLAIM_CHECK_PREFIX: events-concierge/catalog/v1
   {{- range $key, $value := $root.Values.applicationConfig }}
-  {{- if and (ne $key "EC_GCS_CLAIM_CHECK_PREFIX") (or (hasPrefix "EC_TEMPORAL_" $key) (has $key (list "EC_GCP_PROJECT" "EC_GCS_CLAIM_CHECK_BUCKET"))) }}
+  {{- if and $value (ne $key "EC_GCS_CLAIM_CHECK_PREFIX") (or (hasPrefix "EC_TEMPORAL_" $key) (has $key (list "EC_GCP_PROJECT" "EC_GCS_CLAIM_CHECK_BUCKET"))) }}
   {{ $key }}: {{ $value | quote }}
   {{- end }}
   {{- end }}

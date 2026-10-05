@@ -62,6 +62,26 @@ seccompProfile:
 {{- $dev := eq (default "managed" .Values.global.deploymentProfile) "development" -}}
 {{- $private := eq .Values.global.deploymentProfile "private" -}}
 {{- if $private -}}{{- include "events-concierge.validatePrivateRuntime" . -}}{{- end -}}
+{{- if .Values.publicTunnel.enabled -}}
+{{- if or $dev (ne .Values.global.releasePhase "application") (not .Values.global.runtimeProviderReady) (ne (toString .Values.applicationConfig.EC_MOCK_CLOUD) "false") -}}
+{{- fail "publicTunnel requires a verified non-mock application release; private development cannot be published" -}}
+{{- end -}}
+{{- if or (not .Values.networkPolicy.enabled) .Values.gateway.enabled (not .Values.workloads.frontend.enabled) -}}
+{{- fail "publicTunnel requires NetworkPolicy and the consumer frontend, with gateway.enabled=false" -}}
+{{- end -}}
+{{- if or (ne .Values.publicTunnel.hostname "events.iliazlobin.com") (ne .Values.applicationConfig.EC_PUBLIC_BASE_URL "https://events.iliazlobin.com") -}}
+{{- fail "publicTunnel and the application must use the approved origin https://events.iliazlobin.com" -}}
+{{- end -}}
+{{- if or (ne (toString .Values.applicationConfig.EC_IDENTITY_PLATFORM_ENABLED) "true") (ne (toString .Values.applicationConfig.EC_ADMIN_INGESTION_ENABLED) "false") (ne (toString .Values.applicationConfig.EC_OIDC_BFF_ENABLED) "false") -}}
+{{- fail "publicTunnel requires consumer Identity Platform and disabled legacy OIDC/admin ingestion" -}}
+{{- end -}}
+{{- if not .Values.publicTunnel.tokenSecretName -}}{{- fail "publicTunnel.tokenSecretName must reference an externally provisioned tunnel-only Secret" -}}{{- end -}}
+{{- range $image := list .Values.publicTunnel.cloudflaredImage .Values.publicTunnel.proxyImage -}}
+{{- if eq $image.digest "sha256:0000000000000000000000000000000000000000000000000000000000000000" -}}
+{{- fail "publicTunnel images must use verified non-placeholder sha256 digests" -}}
+{{- end -}}
+{{- end -}}
+{{- end -}}
 {{- if and $dev .Values.operator.enabled -}}
 {{- fail "development disables operator.enabled; use the loopback-only development admin" -}}
 {{- end -}}

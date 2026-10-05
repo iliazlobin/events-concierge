@@ -23,13 +23,17 @@ database DSN and CA. Frontend, catalog and controller processes receive no Googl
 The file does not activate the public edge or IAP admin. Follow the runbook's coordinated TLS
 cutover, provider/legal setup and deployed login/logout checks before enabling signup or cadence.
 
+[Public consumer access](../../public-access.md) packages the optional Cloudflare connector
+for `events.iliazlobin.com`; admin access remains separate and activation requires a verified release.
+
 Only non-secret identifiers belong in values files. The runtime uses `*_FILE` settings, while the
 migration Job receives only its owner URL and application-role bootstrap password files.
 Secret references must use immutable numeric versions, never `latest`; the version lists are hashed
 into Pod templates so a reviewed version change produces a rollout.
-The Redis URL secret should reference the mounted CA path
+For the managed profile, the Redis URL secret should reference the mounted CA path
 `/var/run/secrets/events-concierge/REDIS_CA_CERTIFICATE`; Terraform exports the public CA material
-for an audited operator to populate that Secret Manager container.
+for an audited operator to populate that Secret Manager container. The private profile uses
+`/var/run/events-concierge-tls/redis/ca.crt` from its CA-only Kubernetes Secret.
 
 Copy `values-staging.example.yaml` outside version control, replace the example project, identities,
 hostnames, secret IDs, and all three image digests with release evidence, then deploy in two phases:

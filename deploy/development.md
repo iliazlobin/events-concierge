@@ -232,6 +232,7 @@ mkdir -p .local/private-tls
 - API and erasure use the consumer DB role; executor/catalog use the restricted ingestion role; cadence uses the controller role. Pin actual Secret Manager version numbers; the example's `2` is not proof that a matching version exists. Review each process's IAM access and keep Google provider OAuth secrets outside workloads.
 - This profile reuses retained databases and established restricted roles. A fresh installation needs its separately reviewed role bootstrap before migration; the TLS migration Job does not create operator/ingestion credentials.
 - The separate data chart supplies default-deny and explicit Pod-selector routes for stores, Temporal, DNS and metadata access. On Dataplane V2, private IP CIDRs do not admit Pod traffic. Verify both kube-dns and NodeLocal DNSCache connectivity before cutover.
+- Layer the [public connector](public-access.md) only after transport verification. The data chart excludes it from internal/store routes; the application chart grants only frontend ingress. Deploy both policy changes together: Kubernetes allow rules are additive.
 
 **Validate without cluster changes**
 

@@ -22,7 +22,7 @@ applicationConfig:
   EC_SIGNUP_PRIVACY_VERSION: replace-me-approved-version
   EC_SIGNUP_PRIVACY_URL: https://events.iliazlobin.com/privacy
   EC_OIDC_BFF_ENABLED: "false"
-  EC_OIDC_CLIENT_SECRET_FILE: null
+  EC_OIDC_CLIENT_SECRET_FILE: ""
   EC_DATABASE_CONNECTION_MODE: direct_tls
   EC_DATABASE_POOL_SIZE: "2"
   EC_DATABASE_MAX_OVERFLOW: "0"
@@ -30,7 +30,7 @@ applicationConfig:
   EC_TEMPORAL_NAMESPACE: events-development
   EC_TEMPORAL_TLS_ENABLED: "true"
   EC_TEMPORAL_TLS_DOMAIN: ec-dev-temporal-frontend.events-concierge-dev.svc.cluster.local
-  EC_TEMPORAL_API_KEY_FILE: null
+  EC_TEMPORAL_API_KEY_FILE: ""
   EC_TEMPORAL_WORKER_MAX_CONCURRENT_WORKFLOW_TASKS: "2"
   EC_TEMPORAL_WORKER_MAX_CONCURRENT_ACTIVITIES: "1"
   EC_TEMPORAL_WORKER_VERSIONING_ENABLED: "true"

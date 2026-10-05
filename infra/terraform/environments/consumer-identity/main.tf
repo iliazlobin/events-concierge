@@ -11,7 +11,7 @@ provider "google" {
 }
 
 locals {
-  hostname    = split("/", trimprefix(var.public_origin, "https://"))[0]
+  hostname    = split(":", split("/", trimprefix(var.public_origin, "https://"))[0])[0]
   auth_domain = "${var.project_id}.firebaseapp.com"
 }
 

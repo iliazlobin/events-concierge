@@ -1,9 +1,9 @@
 # Apply over the reviewed managed release values. No provider credential enters the chart.
-# These placeholders keep the example unusable until the production domain/legal pages exist.
+# Identity project/key and approved legal pages must be configured before activation.
 applicationConfig:
   EC_RELEASE_PROFILE: discovery
   EC_MOCK_CLOUD: "false"
-  EC_PUBLIC_BASE_URL: https://events.example.com
+  EC_PUBLIC_BASE_URL: https://events.iliazlobin.com
   EC_UI_AUTH_START_URL: /sign-in
   EC_OIDC_BFF_ENABLED: "false"
   EC_OIDC_CLIENT_SECRET_FILE: null
@@ -11,11 +11,11 @@ applicationConfig:
   EC_IDENTITY_PLATFORM_PROJECT_ID: iz27-platform-dev
   EC_IDENTITY_PLATFORM_API_KEY: replace-with-restricted-browser-key
   EC_IDENTITY_PLATFORM_AUTH_DOMAIN: iz27-platform-dev.firebaseapp.com
-  EC_IDENTITY_PLATFORM_PROVIDERS: '["google.com","apple.com"]'
+  EC_IDENTITY_PLATFORM_PROVIDERS: '["google.com"]'
   EC_SIGNUP_TERMS_VERSION: replace-with-approved-version
-  EC_SIGNUP_TERMS_URL: https://events.example.com/terms/approved-version
+  EC_SIGNUP_TERMS_URL: https://events.iliazlobin.com/terms/approved-version
   EC_SIGNUP_PRIVACY_VERSION: replace-with-approved-version
-  EC_SIGNUP_PRIVACY_URL: https://events.example.com/privacy/approved-version
+  EC_SIGNUP_PRIVACY_URL: https://events.iliazlobin.com/privacy/approved-version
   EC_ADMIN_INGESTION_ENABLED: "false"
 
 # Consumer API: exact same-origin browser-session checks. Operator API: independently verified IAP.

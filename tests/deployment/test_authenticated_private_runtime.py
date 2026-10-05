@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import copy
+import ipaddress
 import os
 import shutil
 import subprocess
@@ -355,3 +356,127 @@ def test_cadence_stays_absent_until_explicit_acceptance(helm, tmp_path):
     docs = [doc for doc in yaml.safe_load_all(result.stdout) if doc]
     assert not any(doc["kind"] == "CronJob" for doc in docs)
     assert not any(doc["metadata"]["name"].endswith("private-controller") for doc in docs)
+
+
+def _selects(selector, labels):
+    if any(labels.get(key) != value for key, value in selector.get("matchLabels", {}).items()):
+        return False
+    for expression in selector.get("matchExpressions", []):
+        assert expression["operator"] in {"In", "NotIn"}
+        found = labels.get(expression["key"]) in expression["values"]
+        if found != (expression["operator"] == "In"):
+            return False
+    return True
+
+
+def _allows(
+    policies,
+    labels,
+    direction,
+    port,
+    *,
+    peer_labels=None,
+    namespace="events-concierge-dev",
+    address=None,
+    protocol="TCP",
+):
+    selected = [
+        policy["spec"]
+        for policy in policies
+        if _selects(policy["spec"]["podSelector"], labels)
+        and direction.capitalize() in policy["spec"]["policyTypes"]
+    ]
+    if not selected:
+        return True
+    peers_key = "to" if direction == "egress" else "from"
+    for policy in selected:
+        for rule in policy.get(direction, []):
+            if "ports" in rule and not any(
+                item["port"] == port and item.get("protocol", "TCP") == protocol
+                for item in rule.get("ports", [])
+            ):
+                continue
+            if peers_key not in rule:
+                return True
+            for peer in rule[peers_key]:
+                if "ipBlock" in peer:
+                    # GKE Dataplane V2 never admits Pod traffic through ipBlock rules.
+                    if peer_labels is None and address:
+                        block = peer["ipBlock"]
+                        ip = ipaddress.ip_address(address)
+                        if ip in ipaddress.ip_network(block["cidr"]) and not any(
+                            ip in ipaddress.ip_network(cidr) for cidr in block.get("except", [])
+                        ):
+                            return True
+                elif (
+                    peer_labels is not None
+                    and ("namespaceSelector" in peer or namespace == "events-concierge-dev")
+                    and _selects(peer.get("podSelector", {}), peer_labels)
+                    and _selects(
+                        peer.get("namespaceSelector", {}),
+                        {"kubernetes.io/metadata.name": namespace},
+                    )
+                ):
+                    return True
+    return False
+
+
+def test_combined_chart_policies_isolate_public_connector_from_backend_authority(helm, tmp_path):
+    config = values()
+    config["publicTunnel"] = {"enabled": True, "tokenSecretName": "ec-cloudflare-tunnel-v1"}
+    application = render(helm, tmp_path, config)
+    assert application.returncode == 0, application.stderr
+    data = subprocess.run(
+        [
+            helm,
+            "template",
+            "ec-dev-stores",
+            str(ROOT / "deploy/helm/events-concierge-dev-data"),
+            "-n",
+            "events-concierge-dev",
+            "-f",
+            str(ROOT / "deploy/helm/events-concierge-dev-data/values-shared-development.yaml"),
+            "-f",
+            str(ROOT / "deploy/helm/events-concierge-dev-data/values-private-tls.yaml"),
+        ],
+        capture_output=True,
+        text=True,
+        check=True,
+        timeout=30,
+    )
+    docs = [
+        doc for result in (application, data) for doc in yaml.safe_load_all(result.stdout) if doc
+    ]
+    policies = [doc for doc in docs if doc["kind"] == "NetworkPolicy"]
+
+    def labels(name):
+        return next(
+            doc
+            for doc in docs
+            if doc["kind"] == "Deployment" and doc["metadata"]["name"] == "events-concierge-" + name
+        )["spec"]["template"]["metadata"]["labels"]
+
+    connector, frontend, api = labels("public-tunnel"), labels("frontend"), labels("api")
+    assert _allows(policies, connector, "egress", 3000, peer_labels=frontend)
+    assert _allows(policies, frontend, "ingress", 3000, peer_labels=connector)
+    assert _allows(policies, frontend, "egress", 8000, peer_labels=api)
+    assert _allows(policies, api, "ingress", 8000, peer_labels=frontend)
+    for port in (5432, 6379, 7233, 8000):
+        assert not _allows(policies, connector, "egress", port, peer_labels=api)
+        assert not _allows(policies, api, "ingress", port, peer_labels=connector)
+    assert not _allows(policies, connector, "egress", 80, address="169.254.169.254")
+    assert not _allows(policies, connector, "egress", 443, address="203.0.113.10")
+    for protocol in ("TCP", "UDP"):
+        assert _allows(
+            policies, connector, "egress", 7844, address="198.41.192.1", protocol=protocol
+        )
+        for dns in ("kube-dns", "node-local-dns"):
+            assert _allows(
+                policies,
+                connector,
+                "egress",
+                53,
+                peer_labels={"k8s-app": dns},
+                namespace="kube-system",
+                protocol=protocol,
+            )

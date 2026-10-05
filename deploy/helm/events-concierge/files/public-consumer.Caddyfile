@@ -1,0 +1,60 @@
+{
+  admin off
+  auto_https off
+  persist_config off
+  log {
+    level WARN
+    exclude http.log.error
+  }
+}
+
+# Cloudflared and this filter share only a pod's loopback listener.
+http://:8080 {
+  bind 127.0.0.1
+  @consumer {
+    host {{ .Values.publicTunnel.hostname }}
+    path / /app /sign-in /settings /settings/* /_next/* /v1 /v1/* /auth /auth/* /terms /terms/* /privacy /privacy/* /favicon.ico
+  }
+  handle @consumer {
+    request_header -X-Forwarded-*
+    request_body {
+      max_size 1MB
+    }
+    reverse_proxy {{ include "events-concierge.fullname" . }}-frontend:80 {
+      header_up -Forwarded
+      header_up -X-Real-IP
+      header_up -X-Goog-*
+      header_up -Cf-Access-*
+      header_up -X-Middleware-Subrequest
+      header_up Host {{ .Values.publicTunnel.hostname }}
+      header_up X-Forwarded-Proto https
+      header_up X-Forwarded-Host {{ .Values.publicTunnel.hostname }}
+      transport http {
+        dial_timeout 2s
+        response_header_timeout 30s
+      }
+    }
+  }
+  handle {
+    respond "" 404
+  }
+}
+
+# Probes are never routed through the public listener.
+http://:8081 {
+  bind 127.0.0.1
+  handle /healthz {
+    respond "ok" 200
+  }
+  handle /readyz {
+    reverse_proxy {{ include "events-concierge.fullname" . }}-frontend:80 {
+      transport http {
+        dial_timeout 2s
+        response_header_timeout 5s
+      }
+    }
+  }
+  handle {
+    respond "" 404
+  }
+}
