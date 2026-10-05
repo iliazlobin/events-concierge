@@ -39,6 +39,15 @@ the protected application state bucket; never adopt shared foundation/network/cl
 2. Prepare the [backend example](../infra/terraform/environments/consumer-identity/backend.tf.example) and [variables](../infra/terraform/environments/consumer-identity/identity.tfvars.example). Initialize this new app-owned state, review a saved plan, then apply only after deployment authorization.
 3. Configure provider credentials below and publish approved legal pages. Keep `signup_enabled=false` until the deployed account flow can be tested in a bounded pilot.
 
+**Private Google pilot:** in `iz27-platform-dev`, set `public_origin_profile="private_loopback_https"`
+and `public_origin="https://localhost:14443"`. Identity Platform authorizes `localhost`; the browser
+key permits only that exact HTTPS port and the project auth domain. Use the existing
+[private HTTPS proxy](../deploy/development.md#shared-release-and-access), a browser-trusted
+certificate and `EC_PUBLIC_ORIGIN_PROFILE=private_loopback_https`. Keep public ingress closed.
+Configure `EC_IDENTITY_PLATFORM_PROVIDERS='["google.com"]'`; Apple activation can follow separately.
+Guests see **Sign in**; the same Google flow signs in existing users or creates a new account.
+The selected catalog view and filters survive sign-in. Personal settings require an account.
+
 ```sh
 terraform -chdir=infra/terraform/environments/consumer-identity init -backend-config=backend.hcl
 terraform -chdir=infra/terraform/environments/consumer-identity plan -var-file=identity.tfvars -out=identity.tfplan
@@ -49,6 +58,9 @@ terraform -chdir=infra/terraform/environments/consumer-identity apply identity.t
 **Google:** use a dedicated web OAuth client with the approved application origin and
 `https://<project-id>.firebaseapp.com/__/auth/handler` callback. Secret JSON fields:
 `client_id`, `client_secret`.
+The [OAuth consent brand](https://support.google.com/cloud/answer/15549049) belongs to its
+Google project; a second client does not give it a separate app name. Keep other products'
+existing clients and branding intact when choosing the Events Concierge identity project.
 
 **Apple:** requires Apple Developer membership, a Sign in with Apple-enabled app,
 Services ID, Team ID, Key ID and private key. Register the same auth-domain callback

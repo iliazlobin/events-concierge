@@ -132,6 +132,9 @@ export function SignIn({ reason, returnTo = "/", reauthenticationState }: {
         {config?.auth_provider === "google" && !config.local_demo ? (
           <p className={styles.footnote}>Use the Google account invited to Events Concierge.</p>
         ) : null}
+        {config?.auth_provider === "identity_platform" && !reauthenticationState ? (
+          <p className={styles.footnote}>New here? Continuing creates your account.</p>
+        ) : null}
         <p className={styles.footnote}><a href={returnTo}>Browse without signing in</a></p>
       </section>
     </main>

@@ -22,6 +22,7 @@ class ConsumerIdentityApi(ReleaseApi):
         self.harness = harness
         self.account_status = 401
         self.challenge_status = 200
+        self.providers = ["google.com", "apple.com"]
 
     def config(self, route: Route) -> None:
         self.respond(route, {
@@ -35,7 +36,7 @@ class ConsumerIdentityApi(ReleaseApi):
                 "project_id": "events-identity-test",
                 "api_key": "restricted-browser-key-fixture",
                 "auth_domain": "events-identity-test.firebaseapp.com",
-                "providers": ["google.com", "apple.com"],
+                "providers": self.providers,
             },
             "legal_policy": {
                 "terms_version": "2026-10-05", "privacy_version": "2026-10-05",
@@ -80,10 +81,36 @@ def test_guest_browses_catalog_and_graph_without_personal_data_calls(identity_pa
     expect(page.get_by_role("heading", name="Friday Night Jazz", exact=True)).to_be_visible()
     expect(page.get_by_role("link", name="Sign in to save filters")).to_be_visible()
     expect(page.get_by_role("link", name="Sign in", exact=True)).to_be_visible()
+    expect(page.get_by_role("button", name="Account menu", exact=False)).to_have_count(0)
+    expect(page.get_by_role("menuitem")).to_have_count(0)
     expect(page.get_by_role("button", name="Save filters", exact=True)).to_have_count(0)
+    for width in (1440, 390, 320):
+        page.set_viewport_size({"width": width, "height": 800})
+        expect(page.get_by_role("link", name="Sign in", exact=True)).to_be_visible()
+        assert page.evaluate("document.documentElement.scrollWidth <= innerWidth")
+    page.set_viewport_size({"width": 1440, "height": 800})
     page.locator(".site-nav").get_by_role("button", name="Entities", exact=True).click()
     expect(page.locator(".site-nav").get_by_role("button", name="Entities", exact=True)).to_have_attribute("aria-current", "page")
     assert not any(path.startswith(("/v1/onboard", "/v1/me/", "/v1/preferences", "/auth/")) for _, path in api.calls)
+
+
+def test_guest_signin_keeps_the_selected_view_and_filters(identity_page):
+    harness, _ = identity_page
+    page = harness.page
+    page.goto(f"{BASE}/?view=events&when=week&price=free&city=oakland")
+    expect(page.get_by_role("heading", name="Friday Night Jazz", exact=True)).to_be_visible()
+    page.get_by_role("link", name="Sign in", exact=True).click()
+    expect(page.get_by_role("heading", name="Sign in or create an account", exact=True)).to_be_visible()
+    destination = parse_qs(urlsplit(page.url).query)["return_to"][0]
+    filters = parse_qs(urlsplit(destination).query)
+    assert filters["view"] == ["events"]
+    assert filters["when"] == ["week"]
+    assert filters["price"] == ["free"]
+    assert filters["city"] == ["oakland"]
+    expect(page.get_by_role("link", name="Browse without signing in")).to_have_attribute("href", destination)
+    page.get_by_role("link", name="Browse without signing in").click()
+    expect(page.get_by_role("heading", name="Friday Night Jazz", exact=True)).to_be_visible()
+    assert parse_qs(urlsplit(page.url).query)["price"] == ["free"]
 
 
 def test_google_apple_actions_require_unchecked_legal_consent_without_token_storage(identity_page):
@@ -94,6 +121,8 @@ def test_google_apple_actions_require_unchecked_legal_consent_without_token_stor
     google = page.get_by_role("button", name="Continue with Google", exact=True)
     apple = page.get_by_role("button", name="Continue with Apple", exact=True)
     consent = page.get_by_role("checkbox")
+    expect(page.get_by_role("heading", name="Sign in or create an account", exact=True)).to_be_visible()
+    expect(page.get_by_text("New here? Continuing creates your account.", exact=True)).to_be_visible()
     expect(google).to_be_disabled()
     expect(apple).to_be_disabled()
     expect(consent).not_to_be_checked()
@@ -146,3 +175,14 @@ def test_failed_signin_challenge_cannot_enable_provider_actions(identity_page):
     expect(page.get_by_role("main").get_by_role("alert")).to_contain_text("We couldn\u2019t load sign-in options")
     expect(page.get_by_role("button", name="Continue with Google", exact=True)).to_have_count(0)
     expect(page.get_by_role("link", name="Browse without signing in")).to_be_visible()
+
+
+def test_google_only_pilot_shows_only_its_enabled_provider(identity_page):
+    harness, api = identity_page
+    api.providers = ["google.com"]
+    page = harness.page
+    page.goto(f"{BASE}/sign-in")
+    expect(page.get_by_role("button", name="Continue with Google", exact=True)).to_be_disabled()
+    expect(page.get_by_role("button", name="Continue with Apple", exact=True)).to_have_count(0)
+    page.get_by_role("checkbox").check()
+    expect(page.get_by_role("button", name="Continue with Google", exact=True)).to_be_enabled()

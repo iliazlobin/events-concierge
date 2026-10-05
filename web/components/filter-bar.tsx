@@ -20,6 +20,7 @@ import {
   type FilterChipEditorOption,
 } from "@/components/filter-chip-editor";
 import { SavedFilterPicker } from "@/components/saved-filter-picker";
+import { signInFailurePath } from "@/lib/sign-in";
 import { suggestSavedFilterName, uniqueSavedFilterName } from "@/lib/catalog-filter-name";
 import {
   PriceFilterEditor,
@@ -1111,7 +1112,15 @@ export function FilterBar({
           onSave={onSaveFilters}
           onDelete={onDeleteSavedFilter}
         />
-        ) : <a className="saved-filter-trigger" href={`/sign-in?return_to=${encodeURIComponent(typeof window === "undefined" ? "/" : window.location.pathname + window.location.search)}`}>Sign in to save filters</a>}
+        ) : (
+          <div className="saved-filter-picker">
+            <a className="active-filter-add saved-filter-picker__trigger"
+              href={signInFailurePath(401, typeof window === "undefined" ? "/" : window.location.pathname + window.location.search)}>
+              <Bookmark aria-hidden="true" />
+              <span>Sign in to save filters</span>
+            </a>
+          </div>
+        )}
 
         {filters.sourceKeys.map((sourceKey) => (
           <FilterChipEditor

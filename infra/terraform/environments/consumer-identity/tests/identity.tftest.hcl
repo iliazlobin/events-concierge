@@ -38,3 +38,49 @@ run "explicit_activation_and_owner_edge" {
     error_message = "The only configured operator edge user is the owner."
   }
 }
+
+run "private_google_pilot" {
+  command = plan
+  variables {
+    project_id            = "iz27-platform-dev"
+    public_origin         = "https://localhost:14443"
+    public_origin_profile = "private_loopback_https"
+  }
+  assert {
+    condition     = toset(google_identity_platform_config.consumer.authorized_domains) == toset(["localhost", "iz27-platform-dev.firebaseapp.com"])
+    error_message = "Identity Platform authorizes the hostname; the browser key retains the exact HTTPS port."
+  }
+  assert {
+    condition     = toset(google_apikeys_key.browser.restrictions[0].browser_key_restrictions[0].allowed_referrers) == toset(["https://localhost:14443", "https://localhost:14443/*", "https://iz27-platform-dev.firebaseapp.com", "https://iz27-platform-dev.firebaseapp.com/*"])
+    error_message = "The development pilot must not grant arbitrary localhost ports or wildcard origins."
+  }
+  assert {
+    condition     = google_identity_platform_config.consumer.client[0].permissions[0].disabled_user_signup
+    error_message = "Creating the private identity configuration must not activate signup."
+  }
+}
+
+run "loopback_rejected_for_remote_profile" {
+  command = plan
+  variables { public_origin = "https://localhost:14443" }
+  expect_failures = [var.public_origin]
+}
+
+run "loopback_rejected_in_other_projects" {
+  command = plan
+  variables {
+    public_origin         = "https://localhost:14443"
+    public_origin_profile = "private_loopback_https"
+  }
+  expect_failures = [var.public_origin]
+}
+
+run "private_profile_rejects_other_origins" {
+  command = plan
+  variables {
+    project_id            = "iz27-platform-dev"
+    public_origin         = "https://events.example.test"
+    public_origin_profile = "private_loopback_https"
+  }
+  expect_failures = [var.public_origin]
+}

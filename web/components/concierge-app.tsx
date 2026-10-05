@@ -1298,6 +1298,7 @@ export function ConciergeApp() {
           me={me}
           config={config}
           tenantId={tenantId}
+          returnTo={typeof window === "undefined" ? "/" : window.location.pathname + window.location.search}
           signingOut={signingOut}
           onSignOut={handleSignOut}
         />
