@@ -196,10 +196,11 @@ caddy run --config deploy/private-access.Caddyfile --adapter caddyfile
 - No public DNS/ingress/firewall opening. Browser TLS does not encrypt datastores.
 - [Google activation and deployed login/CSRF/logout checks](../docs/production-operations.md#built-in-oidc-bff-activation).
 
-### Encrypted dependency preparation
+### Authenticated discovery and encrypted dependencies
 
 - Opt-in [data TLS values](helm/events-concierge-dev-data/values-private-tls.yaml) and [Temporal TLS values](helm/temporal-private-tls.yaml).
-- Current overlays remain plaintext/demo; certificate delivery and authenticated application composition pending.
+- [Authenticated application values](helm/events-concierge/values-private-authenticated.example.yaml) use the existing stores with Google Identity Platform, verified TLS and process-specific Temporal client keys. Use this file with chart defaults, not the demo overlays. Provisioning and deployed acceptance are separate release steps.
+- The private profile disables demo admin and deferred product effects. Owner-only admin requires the separately reviewed IAP operator edge; consumer sign-in never grants an admin role.
 
 | Connection | Required contract |
 | --- | --- |
@@ -216,12 +217,29 @@ caddy run --config deploy/private-access.Caddyfile --adapter caddyfile
 - PostgreSQL/Redis stage keys in memory with native ownership/`0600`; rotate Secret names and roll pods.
 - Redis 7 probe `--sni` does not verify hostnames; application clients must.
 
+**Prepare one certificate generation locally**
+
+```bash
+mkdir -p .local/private-tls
+.venv/bin/python scripts/development/private_tls.py --output .local/private-tls/generation-1
+```
+
+- The new directory is `0700`; files are `0600`. Separate PostgreSQL, Redis and Temporal signing keys stay in `authorities/`. Never upload or mount that directory. Record approved recovery custody before using this CA for retained data.
+- `leaves/` contains eight Kubernetes Secret bundles; root `inventory.json` records fingerprints and expiry. Create these as **immutable**, versioned Secrets in `events-concierge-dev` through the verified private access context. Use `ca.crt`, `tls.crt`, `tls.key` from the matching leaf only.
+- Create three CA-only immutable Secrets: `ec-dev-postgres-ca-v1`, `ec-dev-redis-ca-v1`, `ec-dev-temporal-ca-v1`. They contain only the matching `authorities/<store>/ca.crt`. No application, migration or cadence process gets a datastore server key.
+- Leaves expire after 90 days; review/rotate before 14 days remain. Use `--generation 2` and a new output directory for the next version. The issuer creates fresh roots: rotate server, client and trust Secrets together during reviewed maintenance, verify rejection tests, then retire unused generations. No automatic expiry alert or renewal is provided.
+- Populate new numbered database DSN versions with the existing passwords/roles, service FQDN and `sslmode=verify-full`. `PGSSLROOTCERT=/var/run/events-concierge-tls/postgres/ca.crt` is mounted for each SQL consumer, including migration/cadence. Redis DSNs use `rediss` with `ssl_ca_certs=/var/run/events-concierge-tls/redis/ca.crt`, `ssl_cert_reqs=required` and `ssl_check_hostname=true`. Never print DSNs or put them in Helm values.
+- API and erasure use the consumer DB role; executor/catalog use the restricted ingestion role; cadence uses the controller role. Pin actual Secret Manager version numbers; the example's `2` is not proof that a matching version exists. Review each process's IAM access and keep Google provider OAuth secrets outside workloads.
+- This profile reuses retained databases and established restricted roles. A fresh installation needs its separately reviewed role bootstrap before migration; the TLS migration Job does not create operator/ingestion credentials.
+- The separate data chart supplies default-deny and explicit Pod-selector routes for stores, Temporal, DNS and metadata access. On Dataplane V2, private IP CIDRs do not admit Pod traffic. Verify both kube-dns and NodeLocal DNSCache connectivity before cutover.
+
 **Validate without cluster changes**
 
 ```bash
 helm template ec-dev-data deploy/helm/events-concierge-dev-data -n events-concierge-dev -f deploy/helm/events-concierge-dev-data/values-shared-development.yaml -f deploy/helm/events-concierge-dev-data/values-private-tls.yaml
 helm template ec-dev-temporal temporal --repo https://go.temporal.io/helm-charts --version 1.6.0 -n events-concierge-dev -f deploy/helm/temporal-development.yaml -f deploy/helm/temporal-private-tls.yaml
 EC_HELM_BINARY=helm EC_DATA_TLS_DOCKER=1 .venv/bin/python -m pytest tests/unit/test_development_data_tls.py -q
+EC_HELM_BINARY=helm .venv/bin/python -m pytest tests/deployment/test_authenticated_private_runtime.py tests/deployment/test_private_certificate_issuance.py tests/deployment/test_temporal_mtls_transport.py -q
 ```
 
 **Coordinated maintenance**
@@ -232,6 +250,7 @@ EC_HELM_BINARY=helm EC_DATA_TLS_DOCKER=1 .venv/bin/python -m pytest tests/unit/t
 4. Preserve PVCs/data; never initialize restored Temporal databases. Change listeners and clients together.
 5. Require SQL queries, Redis commands and actual Temporal mTLS handshake before writers.
 6. Require rejection of plaintext, wrong CA/hostname and missing/untrusted client certificates; complete authenticated application acceptance.
+   Verify real Google login/consent, reload, personal-data writes, logout and rejection of the revoked session on the trusted deployed origin. Keep signup disabled until approved legal pages and the provider project/client are configured; browser fixtures are not IdP acceptance.
 7. Rollback: stop writers; restore listener/client configuration together; retain certificates/PVCs; verify readiness and queues before resume.
 
 - Cadence's 90-second deadline includes scheduling.

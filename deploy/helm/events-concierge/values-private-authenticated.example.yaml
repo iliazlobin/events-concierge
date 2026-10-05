@@ -1,0 +1,125 @@
+# Use with values.yaml; never layer on the demo development profile.
+# Replace identity/legal fields, pin images and numbered DSN versions before acceptance.
+global:
+  deploymentProfile: private
+  environment: staging
+  releasePhase: migration
+  runtimeProviderReady: false
+applicationConfig:
+  EC_ENV: staging
+  EC_MOCK_CLOUD: "false"
+  EC_RELEASE_PROFILE: discovery
+  EC_RUNTIME_PROVIDER_FACTORY: events_concierge.deployment.gcp_runtime:build_runtime_ports
+  EC_PUBLIC_BASE_URL: https://events.iliazlobin.com
+  EC_UI_AUTH_START_URL: /sign-in
+  EC_IDENTITY_PLATFORM_ENABLED: "true"
+  EC_IDENTITY_PLATFORM_PROJECT_ID: replace-me-identity
+  EC_IDENTITY_PLATFORM_API_KEY: replace-me-restricted-browser-key
+  EC_IDENTITY_PLATFORM_AUTH_DOMAIN: replace-me-identity.firebaseapp.com
+  EC_IDENTITY_PLATFORM_PROVIDERS: '["google.com"]'
+  EC_SIGNUP_TERMS_VERSION: replace-me-approved-version
+  EC_SIGNUP_TERMS_URL: https://events.iliazlobin.com/terms
+  EC_SIGNUP_PRIVACY_VERSION: replace-me-approved-version
+  EC_SIGNUP_PRIVACY_URL: https://events.iliazlobin.com/privacy
+  EC_OIDC_BFF_ENABLED: "false"
+  EC_OIDC_CLIENT_SECRET_FILE: null
+  EC_DATABASE_CONNECTION_MODE: direct_tls
+  EC_DATABASE_POOL_SIZE: "2"
+  EC_DATABASE_MAX_OVERFLOW: "0"
+  EC_TEMPORAL_TARGET: ec-dev-temporal-frontend.events-concierge-dev.svc.cluster.local:7233
+  EC_TEMPORAL_NAMESPACE: events-development
+  EC_TEMPORAL_TLS_ENABLED: "true"
+  EC_TEMPORAL_TLS_DOMAIN: ec-dev-temporal-frontend.events-concierge-dev.svc.cluster.local
+  EC_TEMPORAL_API_KEY_FILE: null
+  EC_TEMPORAL_WORKER_MAX_CONCURRENT_WORKFLOW_TASKS: "2"
+  EC_TEMPORAL_WORKER_MAX_CONCURRENT_ACTIVITIES: "1"
+  EC_TEMPORAL_WORKER_VERSIONING_ENABLED: "true"
+  EC_TEMPORAL_WORKER_ROLE: catalog
+  EC_GOOGLE_CALENDAR_ENABLED: "false"
+  EC_ADMIN_INGESTION_ENABLED: "false"
+  EC_CATALOG_INGESTION_SCHEDULER_ENABLED: "false"
+  EC_AGENT_ENABLED: "false"
+  EC_GCP_PROJECT: iz27-platform-dev
+  EC_GCS_CLAIM_CHECK_BUCKET: iz27-platform-dev-ec-payloads
+  EC_GCS_CLAIM_CHECK_PREFIX: events-concierge/claim-check/v1
+  EC_MEDIA_BACKEND: gcs
+  EC_GCS_MEDIA_BUCKET: iz27-platform-dev-ec-media
+  EC_GCS_MEDIA_PREFIX: events-concierge/media/v1
+cloudSqlProxy:
+  enabled: false
+secretManager:
+  projectId: iz27-platform-dev
+  runtimeSecrets: []
+  migrationSecrets:
+    - {fileName: EC_MIGRATION_URL, secretName: ec-dev-migration-url, version: "2"}
+    - {fileName: EC_APP_ROLE_PASSWORD, secretName: ec-dev-app-role-password, version: "1"}
+privateRuntime:
+  postgresCASecretName: ec-dev-postgres-ca-v1
+  redisCASecretName: ec-dev-redis-ca-v1
+  temporalCASecretName: ec-dev-temporal-ca-v1
+  temporalClientSecretNames:
+    api: ec-dev-temporal-api-tls-v1
+    account-erasure: ec-dev-temporal-erasure-tls-v1
+    ingestion-executor: ec-dev-temporal-executor-tls-v1
+    temporal-catalog: ec-dev-temporal-catalog-tls-v1
+  processSecrets:
+    api:
+      - {fileName: EC_DATABASE_URL, secretName: ec-dev-database-url, version: "2"}
+      - {fileName: EC_REDIS_URL, secretName: ec-dev-redis-url, version: "2"}
+    account-erasure:
+      - {fileName: EC_DATABASE_URL, secretName: ec-dev-database-url, version: "2"}
+      - {fileName: EC_REDIS_URL, secretName: ec-dev-redis-url, version: "2"}
+    ingestion-executor:
+      - {fileName: EC_INGESTION_EXECUTOR_DATABASE_URL, secretName: ec-dev-ingestion-executor-database-url, version: "2"}
+      - {fileName: EC_REDIS_URL, secretName: ec-dev-redis-url, version: "2"}
+    temporal-catalog:
+      - {fileName: EC_INGESTION_EXECUTOR_DATABASE_URL, secretName: ec-dev-ingestion-executor-database-url, version: "2"}
+      - {fileName: EC_REDIS_URL, secretName: ec-dev-redis-url, version: "2"}
+  cadenceEnabled: false # Resume only after verified TLS and catalog-worker readiness.
+  controllerSecrets:
+    - {fileName: EC_OPERATOR_DATABASE_URL, secretName: ec-dev-operator-database-url, version: "2"}
+serviceAccounts:
+  development-admin:
+    gcpServiceAccount: ec-dev-development-admin@iz27-platform-dev.iam.gserviceaccount.com
+  api:
+    gcpServiceAccount: ec-dev-api@iz27-platform-dev.iam.gserviceaccount.com
+  account-erasure:
+    gcpServiceAccount: ec-dev-account-erasure@iz27-platform-dev.iam.gserviceaccount.com
+  ingestion-executor:
+    gcpServiceAccount: ec-dev-ingestion-executor@iz27-platform-dev.iam.gserviceaccount.com
+  temporal-catalog:
+    gcpServiceAccount: ec-dev-temporal-catalog@iz27-platform-dev.iam.gserviceaccount.com
+  migration:
+    gcpServiceAccount: ec-dev-migration@iz27-platform-dev.iam.gserviceaccount.com
+workloads:
+  operator-frontend: {enabled: false}
+  operator-api: {enabled: false}
+  frontend:
+    replicas: 1
+    pdb: {enabled: false}
+    resources: {requests: {cpu: 25m}}
+  api:
+    replicas: 1
+    pdb: {enabled: false}
+    resources: {requests: {cpu: 100m}}
+  account-erasure:
+    replicas: 1
+    resources: {requests: {cpu: 25m}}
+  ingestion-executor:
+    replicas: 1
+    resources: {requests: {cpu: 25m, memory: 192Mi}}
+  temporal-catalog:
+    replicas: 1
+    pdb: {enabled: false}
+    resources: {requests: {cpu: 50m, memory: 256Mi}}
+  temporal-transactional: {enabled: false}
+  request-starter: {enabled: false}
+  notifier: {enabled: false}
+  change-delivery: {enabled: false}
+catalogDispatcher: {enabled: false}
+maintenanceCronJobs:
+  handoff-expiry: {enabled: false}
+  lifecycle-invariants: {enabled: false}
+podMonitoring: {enabled: false}
+networkPolicy:
+  frontendIngressCidrs: [] # Private access only; the edge owner supplies its separate connector.

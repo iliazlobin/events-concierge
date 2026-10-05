@@ -15,6 +15,14 @@ chart's matching overlay consumes the platform-owned `shared-retain` class witho
 The [deployment runbook](../../development.md) owns readiness, state migration, recovery, and
 cutover steps; the overlay alone does not establish production readiness.
 
+For authenticated discovery on those in-cluster stores, use
+[values-private-authenticated.example.yaml](values-private-authenticated.example.yaml) with chart
+defaults and target-checked image/identity bindings. It uses direct PostgreSQL/Redis TLS and four
+separate Temporal client certificate Secrets. The cadence process receives only its controller
+database DSN and CA. Frontend, catalog and controller processes receive no Google OAuth secrets.
+The file does not activate the public edge or IAP admin. Follow the runbook's coordinated TLS
+cutover, provider/legal setup and deployed login/logout checks before enabling signup or cadence.
+
 Only non-secret identifiers belong in values files. The runtime uses `*_FILE` settings, while the
 migration Job receives only its owner URL and application-role bootstrap password files.
 Secret references must use immutable numeric versions, never `latest`; the version lists are hashed
@@ -30,8 +38,9 @@ hostnames, secret IDs, and all three image digests with release evidence, then d
 operations renders fail until an authorized release job has mounted the exact secret versions and
 successfully run `python -m events_concierge.operations validate-config` **without**
 `--structural-only`; only then may that release's protected values set the gate to `true`. The
-repository's current partial GCP provider does not pass that gate, so it must not be enabled merely
-to make a render succeed. CI sets it only while proving manifest structure and never deploys.
+full product profile still has unprovisioned provider ports. The bounded discovery profile uses
+explicit disabled effects; verify its exact deployed configuration and dependencies before setting
+the gate. CI sets it only while proving manifest structure and never deploys.
 
 ```bash
 chart=deploy/helm/events-concierge
