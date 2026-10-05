@@ -3716,6 +3716,55 @@ textarea:focus-visible {
   scrollbar-width: thin;
 }
 
+.map-preview-rail__tabs {
+  border-bottom: 1px solid var(--line);
+  display: grid;
+  flex: 0 0 auto;
+  grid-template-columns: 1fr 1fr;
+  gap: 4px;
+  padding: 8px;
+}
+
+.map-preview-rail__tabs button {
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1.4;
+  padding: 7px;
+}
+
+.map-preview-rail__tabs button[aria-pressed="true"] {
+  background: var(--panel-soft);
+  border-color: var(--line-strong);
+  color: var(--accent);
+}
+
+.map-preview-rail__tabs button:disabled {
+  opacity: 0.5;
+}
+
+.map-preview-rail__tabs span {
+  display: block;
+  font-family: var(--mono);
+  margin-top: 2px;
+}
+
+.map-preview-rail__notice {
+  border-bottom: 1px solid var(--line);
+  color: var(--muted);
+  flex: 0 0 auto;
+  font-size: 11px;
+  line-height: 1.5;
+  margin: 0;
+  padding: 10px 12px;
+}
+
+.map-preview__location-note {
+  color: var(--quiet);
+}
+
 .map-preview {
   background: rgba(24, 24, 26, 0.96);
   border: 1px solid var(--line);
