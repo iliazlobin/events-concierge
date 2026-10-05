@@ -195,7 +195,19 @@ def _catalog_browse_ranges(
 
 
 def _semantic_projection(candidate: CandidateEvent) -> EventSemanticProjection:
-    return extract_event_semantics(candidate.title, candidate.description, candidate.raw)
+    projection = extract_event_semantics(candidate.title, candidate.description, candidate.raw)
+    if _is_tech_week_candidate(candidate):
+        # This official calendar has no admission-price field. Mentions of complimentary
+        # refreshments must not turn an unknown ticket price or its evidence into "free".
+        return EventSemanticProjection(
+            projection.topics, None,
+            tuple(item for item in projection.evidence if item.field != "price_status"),
+        )
+    return projection
+
+
+def _is_tech_week_candidate(candidate: CandidateEvent) -> bool:
+    return candidate.source is Source.PUBLIC_JSONLD and candidate.source_event_id.startswith("tech-week:")
 
 
 def _conservative_shared_entities(
@@ -339,22 +351,49 @@ class PostgresCatalogRepository:
             await self._refresh_price(s, exact_canonical_id)
 
         city_norm = dedup.normalize_city(candidate.city)
+        explicit_calendar_identity = _is_tech_week_candidate(candidate)
         lo = candidate.start_at - dedup.TIME_DELTA
         hi = candidate.start_at + dedup.TIME_DELTA
         rows = (
             await s.execute(
                 text(
                     """
-                    SELECT * FROM canonical_events
+                    SELECT canonical_events.*, EXISTS (
+                        SELECT 1 FROM event_source_links link
+                        WHERE link.canonical_event_id=canonical_events.canonical_event_id
+                          AND link.source='public_jsonld'
+                          AND link.source_event_id LIKE 'tech-week:%'
+                    ) AS has_tech_week_identity
+                    FROM canonical_events
                     WHERE city_norm IS NOT DISTINCT FROM :city
                       AND start_at BETWEEN :lo AND :hi
+                      AND (CAST(:explicit_identity_prefix AS text) IS NULL OR NOT EXISTS (
+                        SELECT 1 FROM event_source_links link
+                        WHERE link.canonical_event_id=canonical_events.canonical_event_id
+                          AND link.source=:source
+                          AND link.source_event_id LIKE CAST(:explicit_identity_prefix AS text) || '%'
+                      ))
                     """
                 ),
-                {"city": city_norm, "lo": lo, "hi": hi},
+                {"city": city_norm, "lo": lo, "hi": hi, "source": candidate.source.value,
+                 # Distinct official calendar IDs must remain discoverable even when their
+                 # titles/times resemble each other and the provider supplies no coordinates.
+                 "explicit_identity_prefix": (
+                     "tech-week:" if explicit_calendar_identity else None
+                 )},
             )
         ).all()
         for row in rows:
             existing = canonical_from_row(row, [])
+            if (explicit_calendar_identity or row.has_tech_week_identity) and (
+                existing.start_at != candidate.start_at
+                or dedup.normalize_title(existing.title) != dedup.normalize_title(candidate.title)
+                or not candidate.venue_name or not existing.venue_name
+                or dedup.normalize_title(existing.venue_name) != dedup.normalize_title(candidate.venue_name)
+            ):
+                # Without public coordinates, approximate title/time similarity cannot prove
+                # that an official conference entry is the same occurrence as another publisher.
+                continue
             if dedup.is_duplicate(candidate, existing):
                 # Serialize refreshes for one canonical event so every aggregate sees the prior
                 # source-link price observation (FR-3.8/FR-5.10).
