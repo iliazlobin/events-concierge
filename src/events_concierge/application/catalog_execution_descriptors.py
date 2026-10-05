@@ -110,6 +110,9 @@ _ADAPTERS: dict[CatalogSourceMode, CatalogAdapterDescriptor] = {
     CatalogSourceMode.MEETUP_GROUP_ICS: CatalogAdapterDescriptor(
         "src/events_concierge/adapters/meetup_group/source.py", "MeetupGroupCalendarCatalogFetcher.fetch"
     ),
+    CatalogSourceMode.TECH_WEEK_MCP: CatalogAdapterDescriptor(
+        "src/events_concierge/adapters/tech_week/source.py", "TechWeekCatalogFetcher.fetch"
+    ),
 }
 
 

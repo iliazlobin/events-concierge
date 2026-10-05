@@ -880,6 +880,10 @@ def catalog_refresh_lease_seconds(source: CatalogSource, *, floor_seconds: int) 
     transport_seconds = 0
     if source.mode is CatalogSourceMode.MEETUP_GROUP_ICS:
         transport_seconds = request_units * _MEETUP_GROUP_TIMEOUT_SECONDS
+    if source.mode is CatalogSourceMode.TECH_WEEK_MCP:
+        # One bounded POST per 75 events, with atomic merge time inside the same lease.
+        transport_seconds = request_units * 20
+        persistence_seconds = (source.page_limit * 75 * 250 + 999) // 1_000
     if source.mode is CatalogSourceMode.BIBLIOCOMMONS_RSS:
         # These reviewed feeds can publish thousands of rows. Their atomic catalog merge is
         # intentionally fenced by the same lease as fetch, so reserve a bounded per-event

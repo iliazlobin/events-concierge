@@ -1,5 +1,7 @@
 # Events Concierge — Requirements Specification
 
+Full-product requirements and review history; retain FR/NFR/AC IDs and held decisions. [PROJECT.md](../PROJECT.md#current-milestone-private-discovery-candidate) defines the narrower discovery release; these targets do not establish its deployed behavior.
+
 **Version:** v0.3 · 2026-07-14 · **DRAFT pending owner sign-off** (folds product-landscape deltas D1–D8 + the FR-2.7 egress fidelity fix onto the signed-off v0.2; the v0.2 signed 2026-07-02 is git-preserved). D9 (growth/invite bridges) and D10 (graduated-autonomy default) are **HELD for owner ruling** — not folded (see §8).
 **Basis:** `research/00-research-brief.md` and `research/00b-gap-remediation-addendum.md` (wave 2 wins over wave-1 on conflict), dossiers `01`–`17`; product-landscape dossiers `18`–`25` and brief `research/00c-product-landscape-brief.md`; `design/product-opinion.md` v1.1 (delta source); `PROJECT.md` owner scope decisions 1–7 (2026-07-02).
 **Notation:** EARS-style phrasing (`When <trigger>, the system shall <response>`); one `shall` and one observable response per statement. Numbers cite the dossier they are evidence-backed by (e.g. `d15`). Targets marked **[owner target]** are provisional product goals set by the owner, ratified at sign-off and revisited when the referenced calibration lands — they are not evidence-derived. The **autonomous-lane RSVP SLA number is explicitly deferred pending gates G1 and G2** (§8) and is not fixed in this document.
