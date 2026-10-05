@@ -17,8 +17,10 @@ export function getCatalogGraphEvent(
   });
 }
 
-/** Graph limits are supplied by the caller and included in its cache key. */
-/** The caps the graph capability accepts. The SQL rejects anything outside 1–24 / 1–48 / 0–6. */
+/**
+ * Caller-supplied graph caps, included in the cache key.
+ * SQL accepts events 1–24, peers 1–48 and topics 0–6.
+ */
 export interface CatalogEntityGraphLimits {
   events: number;
   peers: number;
