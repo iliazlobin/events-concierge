@@ -153,6 +153,7 @@ class CatalogSourceMode(StrEnum):
     LUMA_DISCOVER_JSON = "luma_discover_json"
     MEETUP_CITY_JSONLD = "meetup_city_jsonld"
     MEETUP_GROUP_ICS = "meetup_group_ics"
+    TECH_WEEK_MCP = "tech_week_mcp"
 
 
 class CatalogRefreshRunStatus(StrEnum):
