@@ -1,7 +1,7 @@
 """Durable OpenRouter accounting and application budgets; amounts start unset.
 
 Revision ID: 0201
-Revises: 0199
+Revises: 0200
 """
 
 from __future__ import annotations
@@ -12,7 +12,7 @@ from alembic import op
 from sqlalchemy import text
 
 revision: str = "0201"
-down_revision: str | None = "0199"
+down_revision: str | None = "0200"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 
