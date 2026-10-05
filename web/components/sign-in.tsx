@@ -82,6 +82,9 @@ export function SignIn({ reason, returnTo = "/", reauthenticationState }: {
   };
 
   const message = signInMessage(reason);
+  const title = reauthenticationState ? "Confirm your account"
+    : config?.auth_provider === "identity_platform" && reason === null ? "Sign in or create an account" : message.title;
+  const description = reauthenticationState ? "Sign in with the same account to confirm this change." : message.description;
   const action = config?.local_demo ? "Continue to local demo"
     : config?.auth_provider === "google" ? "Continue with Google" : "Continue to sign in";
 
@@ -90,8 +93,8 @@ export function SignIn({ reason, returnTo = "/", reauthenticationState }: {
       <section className={styles.card} aria-labelledby="sign-in-title">
         <span className="brand-symbol" aria-hidden="true"><i /><i /></span>
         <p className={styles.brand}>Events Concierge</p>
-        <h1 id="sign-in-title">{message.title}</h1>
-        <p className={styles.description}>{message.description}</p>
+        <h1 id="sign-in-title">{title}</h1>
+        <p className={styles.description}>{description}</p>
         <div className={styles.actions}>
           {loading ? (
             <p className={styles.loading} role="status"><LoaderCircle className="spin" aria-hidden="true" />Loading sign-in options…</p>

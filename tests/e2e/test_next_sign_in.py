@@ -84,7 +84,7 @@ def sign_in_page(page_factory):
 @pytest.mark.parametrize(
     "reason,title",
     [
-        ("", "Sign in or create an account"),
+        ("", "Sign in"),
         ("cancelled", "Sign-in cancelled"),
         ("not_authorized", "This account can\u2019t sign in"),
         ("unavailable", "Sign-in is temporarily unavailable"),

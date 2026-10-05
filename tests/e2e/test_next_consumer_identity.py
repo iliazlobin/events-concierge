@@ -186,3 +186,15 @@ def test_google_only_pilot_shows_only_its_enabled_provider(identity_page):
     expect(page.get_by_role("button", name="Continue with Apple", exact=True)).to_have_count(0)
     page.get_by_role("checkbox").check()
     expect(page.get_by_role("button", name="Continue with Google", exact=True)).to_be_enabled()
+
+
+def test_account_confirmation_does_not_offer_signup_or_start_a_new_challenge(identity_page):
+    harness, api = identity_page
+    page = harness.page
+    page.goto(f"{BASE}/sign-in?reauth=1&state={'r' * 43}&return_to=%2Fsettings%2Faccount")
+    expect(page.get_by_role("heading", name="Confirm your account", exact=True)).to_be_visible()
+    expect(page.get_by_text("Sign in with the same account to confirm this change.", exact=True)).to_be_visible()
+    expect(page.get_by_role("button", name="Continue with Google", exact=True)).to_be_enabled()
+    expect(page.get_by_role("checkbox")).to_have_count(0)
+    expect(page.get_by_text("New here? Continuing creates your account.", exact=True)).to_have_count(0)
+    assert not any(path == "/auth/identity/start" for _, path in api.calls)

@@ -24,7 +24,7 @@ export function signInMessage(reason: SignInReason): { title: string; descriptio
     case "unknown":
       return { title: "Sign-in wasn’t completed", description: "Please try signing in again." };
     default:
-      return { title: "Sign in or create an account", description: "Browse events without an account. Sign in to save filters and preferences." };
+      return { title: "Sign in", description: "Browse events without an account. Sign in to save filters and preferences." };
   }
 }
 
