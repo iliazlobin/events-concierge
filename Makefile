@@ -105,8 +105,8 @@ test-integration: up ## Integration tests in a disposable database against compo
 	$(UV) run python -m tests.support.run_isolated_integration -- \
 		-m "integration and not quality_load"
 
-catalog-coverage: up migrate ## Report per-source admitted-catalog shape; fails on a dark or capped source
-	EC_DATABASE_URL=postgresql+psycopg://ec_app:ec_app@localhost:5433/ec \
+catalog-coverage: ## Read admitted source-event memberships; fails on dark, capped or stale sources
+	@test -n "$$EC_DATABASE_URL$$EC_DATABASE_URL_FILE" || { echo "Set EC_DATABASE_URL or EC_DATABASE_URL_FILE for an existing prepared database." >&2; exit 1; }
 	$(UV) run python -m events_concierge.quality.catalog_coverage $(COVERAGE_ARGS)
 
 quality: up ## Run the hermetic synthetic G1-style workflow quality matrix in a disposable database

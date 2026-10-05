@@ -1,32 +1,9 @@
-"""Measure whether each reviewed source publishes a catalog or only a shelf.
+"""Check publication and freshness for currently admitted public-catalog sources.
 
-Every completeness guard the ingestion path already has answers one question: *did we walk the
-configured seed to its end?*  A page-cap raise, a cursor check, a lease fence -- all of them are
-truncation detectors.  None of them can see the failure that actually loses events, which is
-walking the **wrong seed** completely.  A curated city Discover feed that returns one event per
-host is a perfectly complete walk, and it will never raise anything, while the host's own calendar
-publishes eighty-six more.
-
-So this module measures shape rather than truncation.  Its headline signal is **depth**: live
-future events divided by the distinct organizers named across them.  A discovery shelf scores
-about 1.0 by construction -- it is a ranked sample across many hosts.  A source that carries a
-host's real programme scores its programme.  Measured on the live fleet, ``luma-sf`` scores 1.08
-and ``luma-thecommons`` scores 17.4, which is the whole difference between the two source classes
-expressed as one number.
-
-Depth is read only where it means something.  It is diagnostic for a *shelf* mode -- a shelf naming
-eighty hosts at 1.08 events each is telling you those eighty hosts are under-represented.  It says
-nothing about a host calendar: a four-event calendar with four hosts is small, not shallow, and a
-member calendar where every event has a different host is shelf-shaped by nature while still being
-completely captured.
-
-The remaining findings cover the ways a source that once worked goes quiet without failing loudly:
-a run that failed, a page cap that now discards every page, observations the retention rule has
-retracted because they were absent from the newest successful fetch, and a source whose last
-success has aged past its own cadence.
-
-Nothing here reads event content.  The report carries source keys, counts, and closed finding
-codes, so it is safe to archive as build evidence.
+Event totals count source-event memberships: an event present in two sources counts twice.
+Low events-per-organizer depth in a city listing is diagnostic, not proof of missing events or
+complete platform coverage. Empty feeds and retractions also require source-specific review.
+The report carries source keys, counts and closed finding codes, without event content.
 """
 
 from __future__ import annotations
@@ -48,12 +25,10 @@ from ..infra.db import dispose_engine, init_engine, system_session_scope
 
 _MINUTES_PER_HOUR: Final = 60.0
 
-#: Modes that sample across many hosts rather than carrying any one host's programme.  Depth is
-#: diagnostic for exactly these: a shelf scores about 1.0 by construction, and every host it names
-#: is under-represented until some other source carries that host in depth.
+#: City listings where low events-per-organizer depth merits comparison with host calendars.
 _SHELF_MODES: Final = frozenset({"luma_discover_json", "meetup_city_jsonld"})
 
-#: Below this, a source is sampling across hosts rather than carrying a programme.
+#: Threshold for suggesting a host-calendar comparison; this alone proves no missing events.
 _MIN_DEPTH: Final = 1.5
 
 #: Depth over a handful of events says nothing -- a four-event calendar with four hosts is small,
@@ -66,7 +41,7 @@ _MAX_RETRACTED_RATIO: Final = 0.05
 #: How many refresh intervals a source may miss before its live set is treated as aged.
 _STALE_INTERVAL_MULTIPLE: Final = 3.0
 
-_ERROR_CODES: Final = frozenset({"source_dark", "page_cap_exceeded"})
+_ERROR_CODES: Final = frozenset({"source_dark", "page_cap_exceeded", "stale"})
 
 
 class CatalogCoverageError(ValueError):
@@ -135,6 +110,8 @@ class CoverageFinding:
 
 @dataclass(frozen=True, slots=True)
 class CoverageReport:
+    """Fleet totals sum per-source event memberships, not globally unique events."""
+
     generated_at: str
     source_count: int
     live_future_events: int
@@ -197,15 +174,14 @@ def _is_shelf(row: SourceCoverage) -> bool:
 def _findings_for(row: SourceCoverage) -> list[CoverageFinding]:
     findings: list[CoverageFinding] = []
     error = (row.latest_run_error or "").lower()
-    if "page cap" in error:
-        # This one is called out separately from a generic failure because it is terminal by
-        # construction: the adapter discards every page it already fetched, so the source does not
-        # degrade to partial coverage, it goes to zero and stays there until the cap is raised.
+    if "page cap" in error or "reviewed page limit" in error:
+        # Atomic publication retains the prior catalog when a pagination cap stops the refresh.
         findings.append(
             CoverageFinding(
                 "page_cap_exceeded",
                 row.source_key,
-                "the reviewed page cap discarded the entire refresh; raise page_limit",
+                "the reviewed pagination cap stopped publication; review source limits before "
+                "changing the cap",
             )
         )
     elif row.latest_run_status != "succeeded":
@@ -245,23 +221,43 @@ def _findings_for(row: SourceCoverage) -> list[CoverageFinding]:
             CoverageFinding(
                 "shelf_only_coverage",
                 row.source_key,
-                f"names {row.distinct_organizers} hosts at {row.depth:.2f} events each; every one "
-                f"of them is under-represented until a host-level source carries it",
+                f"names {row.distinct_organizers} organizers at {row.depth:.2f} events each; "
+                "compare reviewed host calendars before drawing coverage conclusions",
             )
         )
 
     if row.latest_run_status == "succeeded" and row.live_future_events == 0:
         findings.append(
-            CoverageFinding("no_live_events", row.source_key, "a successful run admitted nothing")
+            CoverageFinding(
+                "no_live_events",
+                row.source_key,
+                "the source has no retained ongoing or future events",
+            )
         )
     return findings
 
 
-_QUERY: Final = "SELECT * FROM public.fn_report_catalog_source_coverage_v1()"
+# All current catalog modes share the public_jsonld/browser discovery policy. Mutation kill
+# switches and paid/RSVP policy do not govern this read-only collection lane.
+_QUERY: Final = """
+    SELECT coverage.*
+    FROM public.fn_report_catalog_source_coverage_v1() AS coverage
+    JOIN public.catalog_sources AS source USING (source_key)
+    JOIN public.source_policy AS policy ON policy.source = 'public_jsonld'
+    WHERE source.enabled
+      AND source.retired_at IS NULL
+      AND source.handoff_only
+      AND source.reviewed_at IS NOT NULL
+      AND source.reviewed_at <= statement_timestamp()
+      AND (source.review_expires_at IS NULL OR source.review_expires_at > statement_timestamp())
+      AND NOT policy.quarantined
+      AND policy.automation_allowed -> 'browser' = 'true'::jsonb
+    ORDER BY coverage.source_key
+"""
 
 
 async def read_source_coverage() -> list[SourceCoverage]:
-    """Read one coverage row per reviewed, non-fixture source from the live catalog.
+    """Read one row per review-current, admitted, non-fixture source from the live catalog.
 
     This CLI runs outside the composition root, so it owns its own read-only engine rather than
     borrowing a container it would otherwise have to build a whole application graph for.
@@ -282,9 +278,7 @@ async def read_source_coverage() -> list[SourceCoverage]:
                     retracted_future_events=int(row.retracted_future_events),
                     distinct_organizers=int(row.distinct_organizers),
                     hours_since_success=(
-                        None
-                        if row.hours_since_success is None
-                        else float(row.hours_since_success)
+                        None if row.hours_since_success is None else float(row.hours_since_success)
                     ),
                     refresh_interval_minutes=int(row.refresh_interval_minutes),
                 )
@@ -295,7 +289,7 @@ async def read_source_coverage() -> list[SourceCoverage]:
 
 
 def main(argv: Sequence[str] | None = None) -> int:
-    """Measure the live catalog and fail when a source has stopped publishing coverage."""
+    """Fail on missing/failed publication, pagination caps or freshness past three cadences."""
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
         "--max-warnings",

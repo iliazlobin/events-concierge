@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
+import json
 from datetime import UTC, datetime
 
 import pytest
 
+from events_concierge.quality import catalog_coverage
 from events_concierge.quality.catalog_coverage import (
     CatalogCoverageError,
     CoverageReport,
@@ -53,12 +55,9 @@ def test_a_healthy_host_calendar_produces_no_findings() -> None:
     assert report.live_future_events == 87
 
 
-def test_a_shelf_naming_many_hosts_is_reported_as_under_representing_all_of_them() -> None:
-    """This is the finding that names the defect: 75 hosts, 1.08 events each.
-
-    A city Discover cursor walked to exhaustion raises nothing anywhere in the ingestion path -- it
-    is a complete walk of a curated seed. Depth is the only place the shape shows up.
-    """
+def test_a_city_listing_with_low_depth_suggests_comparison_without_claiming_missing_events() -> (
+    None
+):
     report = measure_catalog_coverage(
         [_row("luma-sf", mode="luma_discover_json", live=81, organizers=75)],
         now=_NOW,
@@ -68,7 +67,9 @@ def test_a_shelf_naming_many_hosts_is_reported_as_under_representing_all_of_them
     assert report.shelf_sources == 1
     assert report.depth_sources == 0
     finding = report.findings[0]
-    assert "75 hosts at 1.08 events each" in finding.detail
+    assert "75 organizers at 1.08 events each" in finding.detail
+    assert "compare reviewed host calendars" in finding.detail
+    assert "under-represented" not in finding.detail
     assert finding.is_error is False
 
 
@@ -107,15 +108,22 @@ def test_depth_is_undefined_rather_than_zero_when_no_organizer_is_named() -> Non
     assert measure_catalog_coverage([row], now=_NOW).findings == ()
 
 
-def test_a_page_cap_failure_is_reported_apart_from_an_ordinary_failure() -> None:
-    """The cap discards every page already fetched, so it is terminal rather than a bad run."""
+@pytest.mark.parametrize(
+    "error",
+    [
+        "BiblioCommons source exceeds its reviewed 50-page cap",
+        "Tech Week calendar exceeds its reviewed page limit",
+    ],
+)
+def test_a_page_cap_failure_is_reported_apart_from_an_ordinary_failure(error: str) -> None:
+    """Pagination caps stop fresh publication and deserve a specific finding."""
     report = measure_catalog_coverage(
         [
             _row(
                 "sccld-all-physical-branches-events",
                 mode="bibliocommons_rss",
                 status="failed",
-                error="BiblioCommons source exceeds its reviewed 50-page cap",
+                error=error,
                 organizers=0,
             )
         ],
@@ -125,6 +133,15 @@ def test_a_page_cap_failure_is_reported_apart_from_an_ordinary_failure() -> None
     codes = _codes(report, "sccld-all-physical-branches-events")
     assert codes == {"page_cap_exceeded"}
     assert report.error_count == 1
+    assert "raise page_limit" not in report.findings[0].detail
+
+
+def test_a_response_byte_limit_failure_is_not_a_pagination_cap() -> None:
+    report = measure_catalog_coverage(
+        [_row(status="failed", error="Tech Week response exceeds its byte limit")],
+        now=_NOW,
+    )
+    assert _codes(report, "luma-thecommons") == {"source_dark"}
 
 
 def test_a_failed_run_without_a_cap_message_is_reported_as_dark() -> None:
@@ -162,6 +179,37 @@ def test_a_source_that_has_missed_three_cadences_is_stale() -> None:
     )
 
     assert "stale" in _codes(report, "luma-thecommons")
+    assert report.error_count == 1
+
+
+@pytest.mark.parametrize(("hours", "error_count"), [(18.0, 0), (18.01, 1)])
+def test_freshness_fails_only_after_three_cadences(hours: float, error_count: int) -> None:
+    report = measure_catalog_coverage([_row(hours_since_success=hours)], now=_NOW)
+    assert report.error_count == error_count
+
+
+@pytest.mark.parametrize(
+    ("row", "expected_status"),
+    [
+        (_row(hours_since_success=19), 1),
+        (_row(live=0, organizers=0), 0),
+        (_row(live=100, retracted=10), 0),
+        (_row("luma-sf", mode="luma_discover_json", live=81, organizers=75), 0),
+    ],
+)
+def test_default_cli_fails_on_staleness_but_keeps_shape_findings_diagnostic(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    row: SourceCoverage,
+    expected_status: int,
+) -> None:
+    async def read() -> list[SourceCoverage]:
+        return [row]
+
+    monkeypatch.setattr(catalog_coverage, "read_source_coverage", read)
+    assert catalog_coverage.main([]) == expected_status
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["error_count"] == expected_status
 
 
 def test_a_source_one_cadence_behind_is_not_stale() -> None:
@@ -254,4 +302,3 @@ def test_the_headline_shelf_count_never_contradicts_the_findings() -> None:
     shelf_findings = [f for f in report.findings if f.code == "shelf_only_coverage"]
     assert report.shelf_sources == len(shelf_findings) == 2
     assert {f.source_key for f in shelf_findings} == {"luma-sf", "luma-nyc"}
-
