@@ -64,6 +64,7 @@ import type {
 } from "@/lib/types";
 
 interface FilterBarProps {
+  signedIn?: boolean;
   filters: CatalogFilters;
   providers: CatalogProvider[];
   topics: CatalogTopic[];
@@ -329,6 +330,7 @@ export function FilterBar({
   cities,
   resultCount,
   loading,
+  signedIn = true,
   savedFilters,
   savedFiltersBusy = false,
   savedFiltersError = null,
@@ -1095,6 +1097,7 @@ export function FilterBar({
       <div className="active-filter-strip" aria-label="Active filters">
         {/* A whole selection is not another filter, so it leads the strip and is drawn as its own
             class of control -- everything to its right edits one dimension of what it holds. */}
+        {signedIn ? (
         <SavedFilterPicker
           saved={savedFilters}
           appliedId={appliedSavedFilterId}
@@ -1108,6 +1111,8 @@ export function FilterBar({
           onSave={onSaveFilters}
           onDelete={onDeleteSavedFilter}
         />
+        ) : <a className="saved-filter-trigger" href={`/sign-in?return_to=${encodeURIComponent(typeof window === "undefined" ? "/" : window.location.pathname + window.location.search)}`}>Sign in to save filters</a>}
+
         {filters.sourceKeys.map((sourceKey) => (
           <FilterChipEditor
             key={`source:${sourceKey}`}

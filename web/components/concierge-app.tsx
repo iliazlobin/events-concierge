@@ -355,6 +355,14 @@ export function ConciergeApp() {
             setSessionState("onboarding");
             return;
           }
+          if (nextConfig.anonymous_browsing) {
+            setTenantId(null);
+            setMe(null);
+            clearCatalogCache();
+            clearEntityGraphCache();
+            setSessionState("ready");
+            return;
+          }
           window.location.replace(signInFailurePath(error instanceof ApiError ? error.status : null));
         }
       })
@@ -989,7 +997,7 @@ export function ConciergeApp() {
       // The cached ranges are tenant-keyed; never let them outlive the session that fetched them.
       clearCatalogCache();
       clearEntityGraphCache();
-      window.location.replace(config?.local_demo ? "/" : "/sign-in?reason=signed_out");
+      window.location.replace(config?.local_demo || config?.anonymous_browsing ? "/" : "/sign-in?reason=signed_out");
     } catch (error) {
       setSigningOut(false);
       setSignOutError("We couldn’t sign you out. Please try again.");
@@ -1168,9 +1176,9 @@ export function ConciergeApp() {
   }, [tenantId]);
 
   useEffect(() => {
-    if (sessionState !== "ready") return;
+    if (sessionState !== "ready" || !me) return;
     void refreshSavedFilters();
-  }, [refreshSavedFilters, sessionState]);
+  }, [refreshSavedFilters, sessionState, me]);
 
   const handleApplySavedFilter = useCallback((saved: SavedFilter) => {
     // A saved selection is a filter change like any other, so it goes through the same history
@@ -1311,6 +1319,7 @@ export function ConciergeApp() {
             ? summary?.total_event_count ?? 0
             : events.length}
           loading={view === "calendar" ? summaryLoading : catalogLoading}
+          signedIn={Boolean(me)}
           savedFilters={savedFilters}
           savedFiltersBusy={savedFiltersBusy}
           savedFiltersError={savedFiltersError}

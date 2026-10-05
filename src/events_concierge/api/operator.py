@@ -165,6 +165,7 @@ def create_operator_app(settings: Settings | None = None) -> FastAPI:
     verifier = IapOperatorIdentityVerifier(
         audience=settings.operator_iap_audience,
         subject_roles=settings.operator_subject_roles,
+        allowed_email="iliazlobin91@gmail.com",
     )
 
     @asynccontextmanager

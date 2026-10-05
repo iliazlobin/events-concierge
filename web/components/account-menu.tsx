@@ -144,6 +144,8 @@ export function AccountMenu({ me, config, tenantId = null, signingOut, onSignOut
     return cursor;
   };
 
+  if (!me) return <a className="button button--quiet" href="/sign-in">Sign in</a>;
+
   return (
     <div className="account-menu" ref={wrapperRef} onBlur={handleBlur} onKeyDown={handleKeyDown}>
       <button

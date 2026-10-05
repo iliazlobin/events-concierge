@@ -37,15 +37,14 @@ owns deployed revisions, image digests, backup evidence and open coverage inputs
 ### Remaining release work
 
 1. Add authenticated private Helm composition for in-cluster stores; per-process Secret/IAM and certificate mounts.
-2. Configure separate Google client, verified subject mapping and trusted HTTPS; decide deletion pilot limitation.
+2. Configure Google/Apple Identity Platform, approved versioned legal pages and trusted HTTPS. [Consumer accounts](../deployment/consumer-identity.md).
 3. Rehearse combined candidate, migration and transport rollback; check capacity; prepare versioned credentials/certificates.
 4. Approve deployment; suspend cadence, drain writers, verify fresh backup; coordinate migration and encrypted rollout.
 5. Verify identity, TLS/mTLS, CSRF, tenant isolation, discovery and worker recovery; complete monitoring and scheduled recovery.
 
 - **Profile gap:** development requires mock/plaintext/OIDC-off; managed requires Cloud SQL Proxy. Neither supports the intended composition.
 - **Erasure worker:** preserve session revocation and cleanup when narrowing its full application/BFF credentials.
-- **Identity:** no Symphony client reuse; exact callback `https://localhost:14443/auth/callback`; [activation contract](../docs/production-operations.md#built-in-oidc-bff-activation).
-- **Pilot decision:** explicit owner acceptance of unavailable self-service deletion until independent reauthentication exists.
+- **Identity:** dedicated consumer credentials; [managed signup/erasure activation](../deployment/consumer-identity.md). The deployed mock profile remains unchanged until a reviewed production composition is released.
 - **Deferred:** independent project-loss recovery. CI and healthy pods do not prove deployed acceptance.
 
 ## Shared application landing

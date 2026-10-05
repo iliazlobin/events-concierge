@@ -26,6 +26,7 @@ Ports and adapters: domain logic has no external I/O; application services use t
 - **Discovery change:** web route → API → application service/port → PostgreSQL adapter.
 - **Source change:** registered adapter → guarded catalog refresh.
 - **Runtime change:** `composition.py` or `catalog_runtime.py`; provider selection stays outside domain code.
+- **Consumer identity:** `web/lib/consumer-identity.ts` → `api/app.py` → `adapters/identity_platform.py`; `adapters/postgres/consumer_accounts.py` and migration `0203` bind accounts/legal receipts. Redis owns opaque sessions; the separate IAP operator API enforces owner authority. [Release contract](deployment/consumer-identity.md).
 
 ## Runtime flows
 
@@ -66,6 +67,7 @@ discovery reads persisted facts without contacting social providers.
 ## Invariants
 
 - **Tenant isolation:** explicit tenant/system scopes in `infra/db.py`; PostgreSQL RLS and distinct operator/executor roles.
+- **Guest/account boundary:** catalog reads are public; profiles, preferences and saved filters require a verified account/current legal acceptance. Consumer identity never grants production admin access.
 - **Provider access:** reviewed, enabled sources; policy admission, shared pacing and bounded calls before egress.
 - **Publication:** lease-fenced normalization/publication; failed runs preserve the last successful projection.
 - **Durable effects:** persisted pending work, idempotency and ownership. Retries do not guarantee exactly-once remote mutations.

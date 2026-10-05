@@ -62,12 +62,14 @@ class IapOperatorIdentityVerifier:
         *,
         audience: str,
         subject_roles: Mapping[str, OperatorRole],
+        allowed_email: str | None = None,
         key_resolver: Callable[[str], Awaitable[PyJWK]] | None = None,
     ) -> None:
         if not audience or not subject_roles:
             raise ValueError("operator identity requires audience and subject roles")
         self._audience = audience
         self._roles = dict(subject_roles)
+        self._allowed_email = allowed_email
         self._key_resolver = (
             key_resolver
             or _BoundedJwksResolver(
@@ -108,6 +110,8 @@ class IapOperatorIdentityVerifier:
                 raise _unauthenticated()
         except (PyJWTError, ValueError, TypeError, KeyError, OSError) as error:
             raise _unauthenticated() from error
+        if self._allowed_email is not None and claims.get("email") != self._allowed_email:
+            raise HTTPException(403, "operator access is not assigned", headers=_NO_STORE)
         role = self._roles.get(subject)
         if role is None:
             raise HTTPException(403, "operator access is not assigned", headers=_NO_STORE)

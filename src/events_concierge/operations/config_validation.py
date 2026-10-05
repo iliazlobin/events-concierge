@@ -167,7 +167,10 @@ def validate_production_config(
         ),
         _check(
             "built_in_bff_routes",
-            not settings.oidc_bff_enabled or settings.ui_auth_start_url == "/auth/login",
+            (not settings.oidc_bff_enabled or settings.ui_auth_start_url == "/auth/login")
+            and (
+                not settings.identity_platform_enabled or settings.ui_auth_start_url == "/sign-in"
+            ),
             (
                 (
                     "repository OIDC BFF owns fixed same-origin /auth/login, /auth/reauth, "
@@ -183,10 +186,10 @@ def validate_production_config(
         ),
         _check(
             "production_identity_profile",
-            settings.oidc_bff_enabled,
-            "current production profile uses the repository OIDC BFF",
+            settings.oidc_bff_enabled or settings.identity_platform_enabled,
+            "production uses one repository-owned opaque browser-session authority",
             (
-                "current production UI and canary require EC_OIDC_BFF_ENABLED=true; an external "
+                "production requires EC_OIDC_BFF_ENABLED=true or EC_IDENTITY_PLATFORM_ENABLED=true; an external "
                 "BFF needs a separately parameterized contract"
             ),
         ),
@@ -364,7 +367,7 @@ def validate_runtime_ports(runtime: RuntimePorts, *, settings: Settings) -> list
                 "discovery requires concrete disabled effect ports, empty mutation maps and no Calendar access",
             )
         )
-    if settings.oidc_bff_enabled:
+    if settings.oidc_bff_enabled or settings.identity_platform_enabled:
         identity_ready = (
             runtime.auth_context is None
             and runtime.csrf_protection is None
@@ -374,8 +377,12 @@ def validate_runtime_ports(runtime: RuntimePorts, *, settings: Settings) -> list
             _check(
                 "runtime_identity_boundary",
                 identity_ready,
-                "repository OIDC BFF is the sole session authentication and CSRF authority",
-                "built-in OIDC BFF cannot be mixed with provider identity ports",
+                (
+                    "repository Identity Platform sessions are the sole authentication and CSRF authority"
+                    if settings.identity_platform_enabled
+                    else "repository OIDC BFF is the sole session authentication and CSRF authority"
+                ),
+                "built-in browser sessions cannot be mixed with provider identity ports",
             )
         )
     elif runtime.browser_session is not None:
@@ -473,6 +480,22 @@ def _check_public_origin(value: str, *, profile: str = "remote_https") -> Config
 
 
 def _check_builtin_identity_configuration(settings: Settings) -> ConfigCheck:
+    if settings.identity_platform_enabled:
+        return _check(
+            "built_in_identity_configuration",
+            bool(
+                settings.identity_platform_project_id
+                and settings.identity_platform_api_key
+                and settings.identity_platform_auth_domain
+                and settings.identity_platform_providers
+                and settings.signup_terms_version
+                and settings.signup_terms_url
+                and settings.signup_privacy_version
+                and settings.signup_privacy_url
+            ),
+            "Identity Platform project, providers and published legal documents are configured",
+            "Identity Platform requires a complete project-bound signup configuration",
+        )
     if not settings.oidc_bff_enabled:
         return ConfigCheck(
             name="built_in_identity_configuration",

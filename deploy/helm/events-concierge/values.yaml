@@ -58,6 +58,7 @@ applicationConfig:
   EC_GCS_CLAIM_CHECK_PREFIX: events-concierge/claim-check/v1
   EC_ADMIN_INGESTION_ENABLED: "false"
   EC_CATALOG_INGESTION_SCHEDULER_ENABLED: "false"
+  EC_IDENTITY_PLATFORM_ENABLED: "false"
   EC_OIDC_BFF_ENABLED: "true"
   EC_OIDC_ISSUER: https://identity.example.com/
   EC_OIDC_AUTHORIZATION_URL: https://identity.example.com/authorize

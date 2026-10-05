@@ -38,7 +38,8 @@ const nextConfig: NextConfig = {
         source: "/sign-in",
         headers: [
           { key: "Cache-Control", value: "no-store, max-age=0" },
-          { key: "Referrer-Policy", value: "no-referrer" },
+          // Restricted Firebase browser keys require the origin referrer; never send URL state.
+          { key: "Referrer-Policy", value: "strict-origin-when-cross-origin" },
         ],
       },
     ];

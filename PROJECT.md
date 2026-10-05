@@ -12,14 +12,13 @@ Current product scope and delivery priorities. GitHub Issues and PRs own task pr
 | --- | --- |
 | Included | Search, shared filters, Events/Map/Calendar, read-only entity graphs, event details, provider registration links, profiles and saved filters. |
 | Deferred | Chat, automated RSVP, managed handoffs, notifications, Calendar synchronization, purchases and programmatic API keys. |
-| Implemented; activation pending | Google sign-in for provisioned identities, datastore TLS and self-hosted Temporal mTLS. |
+| Implemented; activation pending | Guest catalog access, Google/Apple accounts with legal acceptance, datastore TLS and self-hosted Temporal mTLS. |
 | Accepted development behavior | Private discovery and recovery using mock external product adapters. |
 | Production acceptance pending | OAuth configuration, private HTTPS and deployed identity/transport verification. |
 
 - `EC_RELEASE_PROFILE=discovery` selects product scope; retained full-profile code does not expand it.
 - `EC_MOCK_CLOUD` controls integration behavior independently of product scope.
-- Google self-service account deletion requires independent reauthentication, which remains unsupported.
-- A private pilot accepting unavailable self-service deletion needs an explicit owner decision.
+- [Consumer accounts](deployment/consumer-identity.md): managed signup, reauthentication/erasure and admin restricted to `iliazlobin91@gmail.com`. The legacy Google-only pilot retains its deletion limitation.
 - [Release acceptance](docs/production-operations.md#first-release-acceptance) owns launch gates. Development acceptance does not establish production acceptance.
 
 ## System design
@@ -53,7 +52,7 @@ Current product scope and delivery priorities. GitHub Issues and PRs own task pr
 1. Reconcile unpublished web/admin/backend work through scoped PRs into `main`; preserve existing worktrees and uncommitted changes.
 2. Validate candidate web, backend and browser behavior using [AGENTS.md](AGENTS.md).
 3. Complete authenticated private Helm composition: existing in-cluster stores, per-process permissions and certificate/secret mounts.
-4. Complete Google OAuth provisioning, trusted HTTPS and the account-deletion scope decision. [Remaining release work](deploy/development.md#remaining-release-work).
+4. Configure Google/Apple Identity Platform, approved legal pages and trusted HTTPS. [Remaining release work](deploy/development.md#remaining-release-work).
 5. Rehearse the combined candidate, migration and transport rollback before an authorized release.
 6. Verify authentication/CSRF, tenant isolation, discovery, collection, worker recovery, monitoring and backups in the target environment.
 

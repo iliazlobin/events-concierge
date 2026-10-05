@@ -139,7 +139,7 @@ seccompProfile:
 {{- if or (ne (toString .Values.applicationConfig.EC_MOCK_CLOUD) "true") .Values.cloudSqlProxy.enabled (ne .Values.applicationConfig.EC_DATABASE_CONNECTION_MODE "development_plaintext") -}}
 {{- fail "development requires mock product integrations and its private database connection mode" -}}
 {{- end -}}
-{{- range $field := list "EC_OIDC_BFF_ENABLED" "EC_GOOGLE_CALENDAR_ENABLED" "EC_CATALOG_INGESTION_SCHEDULER_ENABLED" -}}
+{{- range $field := list "EC_OIDC_BFF_ENABLED" "EC_IDENTITY_PLATFORM_ENABLED" "EC_GOOGLE_CALENDAR_ENABLED" "EC_CATALOG_INGESTION_SCHEDULER_ENABLED" -}}
 {{- if ne (toString (index $.Values.applicationConfig $field)) "false" -}}{{- fail (printf "development requires %s=false" $field) -}}{{- end -}}
 {{- end -}}
 {{- if or .Values.catalogDispatcher.enabled .Values.jobs.catalogRefresh.enabled -}}

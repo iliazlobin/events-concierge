@@ -94,6 +94,11 @@ jobs:
       - run: terraform -chdir=infra/terraform/environments/shared-development init -backend=false -input=false -lockfile=readonly
       - run: terraform -chdir=infra/terraform/environments/shared-development validate
       - run: terraform -chdir=infra/terraform/environments/shared-development test -no-color
+      - name: Validate consumer identity without cloud access
+        run: |
+          terraform -chdir=infra/terraform/environments/consumer-identity init -backend=false -input=false -lockfile=readonly
+          terraform -chdir=infra/terraform/environments/consumer-identity validate
+          terraform -chdir=infra/terraform/environments/consumer-identity test -no-color
       - run: helm lint deploy/helm/events-concierge-dev-data -n events-concierge-dev
       - name: Fetch pinned Temporal chart for private TLS render validation
         run: |

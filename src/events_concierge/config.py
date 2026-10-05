@@ -9,6 +9,7 @@ from urllib.parse import urlsplit
 from pydantic import Field, SecretStr, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+from .domain.consumer_identity import LegalPolicy
 from .domain.oidc import (
     GOOGLE_AUTHORIZATION_URL,
     GOOGLE_ISSUER,
@@ -280,6 +281,23 @@ class Settings(BaseSettings):
     # Built-in production browser identity boundary. This is an authorization-code OIDC BFF:
     # identity/access tokens never enter browser storage, while opaque login and session handles
     # live in Secure __Host- cookies and resolve through the shared Redis control plane.
+    # Managed consumer identity is mutually exclusive with the legacy OIDC BFF.
+    identity_platform_enabled: bool = False
+    identity_platform_project_id: str | None = Field(
+        default=None, pattern=r"^[a-z][a-z0-9-]{4,28}[a-z0-9]$"
+    )
+    identity_platform_api_key: str | None = Field(default=None, min_length=20, max_length=256)
+    identity_platform_auth_domain: str | None = None
+    identity_platform_providers: tuple[Literal["google.com", "apple.com"], ...] = ("google.com",)
+    signup_terms_version: str | None = Field(
+        default=None, pattern=r"^[A-Za-z0-9][A-Za-z0-9._-]{0,79}$"
+    )
+    signup_terms_url: str | None = None
+    signup_privacy_version: str | None = Field(
+        default=None, pattern=r"^[A-Za-z0-9][A-Za-z0-9._-]{0,79}$"
+    )
+    signup_privacy_url: str | None = None
+
     oidc_bff_enabled: bool = False
     oidc_provider: Literal["custom_claim", "google"] = "custom_claim"
     oidc_issuer: str | None = None
@@ -433,6 +451,66 @@ class Settings(BaseSettings):
         ):
             raise ValueError("UI auth start URL must be a relative path or an HTTPS URL")
         return value
+
+    @model_validator(mode="after")
+    def validate_identity_platform_configuration(self) -> Settings:
+        if not self.identity_platform_enabled:
+            return self
+        if self.mock_cloud or self.oidc_bff_enabled:
+            raise ValueError("Identity Platform requires non-mock mode and one identity authority")
+        if not self.identity_platform_project_id or not self.identity_platform_api_key:
+            raise ValueError(
+                "Identity Platform requires project ID and its restricted browser API key"
+            )
+        if (
+            self.identity_platform_auth_domain
+            != f"{self.identity_platform_project_id}.firebaseapp.com"
+        ):
+            raise ValueError("Identity Platform requires the project-owned Firebase auth domain")
+        if not self.identity_platform_providers or len(
+            set(self.identity_platform_providers)
+        ) != len(self.identity_platform_providers):
+            raise ValueError("Identity Platform requires a unique Google/Apple provider allowlist")
+        if self.ui_auth_start_url not in {None, "/sign-in"}:
+            raise ValueError("Identity Platform starts at the same-origin sign-in page")
+        origin = urlsplit(self.public_base_url)
+        if (
+            origin.scheme != "https"
+            or not origin.hostname
+            or origin.username
+            or origin.password
+            or origin.path not in {"", "/"}
+            or origin.query
+            or origin.fragment
+        ):
+            raise ValueError("Identity Platform requires an exact HTTPS application origin")
+        if not self.signup_terms_version or not self.signup_privacy_version:
+            raise ValueError("consumer signup requires published terms and privacy versions")
+        for value in (self.signup_terms_url, self.signup_privacy_url):
+            link = urlsplit(value or "")
+            if (
+                not value
+                or len(value) > _MAX_UI_AUTH_URL_LENGTH
+                or any(char.isspace() for char in value)
+                or link.scheme != "https"
+                or not link.hostname
+                or link.username
+                or link.password
+                or link.fragment
+            ):
+                raise ValueError("consumer signup requires published HTTPS legal document URLs")
+        return self
+
+    @property
+    def consumer_legal_policy(self) -> LegalPolicy:
+        assert self.signup_terms_version and self.signup_terms_url
+        assert self.signup_privacy_version and self.signup_privacy_url
+        return LegalPolicy(
+            self.signup_terms_version,
+            self.signup_terms_url,
+            self.signup_privacy_version,
+            self.signup_privacy_url,
+        )
 
     @model_validator(mode="after")
     def validate_media_configuration(self) -> Settings:
