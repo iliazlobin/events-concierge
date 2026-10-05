@@ -117,9 +117,47 @@ kubectl get nodes
 
 - One reviewed commit; all CI/deployment checks passing; immutable backend/frontend digests.
 - Registry: `us-west1-docker.pkg.dev/iz27-platform-dev/ec-dev/`.
-- Optional public CI archive: `candidate-images-COMMIT`, retained three days; verify `SOURCE_REVISION`, `SHA256SUMS` and both revision labels.
-- Push those same images; use registry digests. Archive is neither backup nor deployment.
+- Successful `main` push or explicit `main` CI dispatch retains `candidate-images-COMMIT` for three days after all five CI jobs pass. PR and task-branch builds retain no image archive. The package is public; it contains the tested images, `SOURCE_REVISION` and `SHA256SUMS`, never deployment credentials.
+- CI stops at this handoff. Registry publication and private rollout use the authorized host below. Workload Identity Federation (WIF) publication and private rollout automation remain pending. An archive is neither backup nor deployment.
 - `APP_IMAGE` / `WEB_IMAGE`: `repository@sha256:...`; `BACKEND_REVISION`: full source commit.
+
+**Verify and publish the tested package — after publication authorization**
+
+Set `CI_RUN` to the successful CI run ID and `BACKEND_REVISION` to its full `main` commit. Require current-head independent review and applicable deployment validation for that candidate before publication; an artifact alone does not satisfy those gates. Use a clean download directory and the existing `iliazlobin27@gmail.com` credentials; never copy credentials into the package or GitHub.
+
+```bash
+set -euo pipefail
+test "$(gh api "repos/iliazlobin/events-concierge/actions/runs/$CI_RUN" --jq '.conclusion')" = success
+test "$(gh api "repos/iliazlobin/events-concierge/actions/runs/$CI_RUN" --jq '.head_sha')" = "$BACKEND_REVISION"
+test "$(gh api "repos/iliazlobin/events-concierge/actions/runs/$CI_RUN" --jq '.head_branch')" = main
+test ! -e ".local/candidate-$BACKEND_REVISION"
+mkdir -p ".local/candidate-$BACKEND_REVISION"
+gh run download "$CI_RUN" --repo iliazlobin/events-concierge --name "candidate-images-$BACKEND_REVISION" --dir ".local/candidate-$BACKEND_REVISION"
+(
+  cd ".local/candidate-$BACKEND_REVISION"
+  test "$(cat SOURCE_REVISION)" = "$BACKEND_REVISION"
+  shasum -a 256 -c SHA256SUMS
+  docker load --input images.tar.gz
+)
+test "$(docker inspect --format '{{ index .Config.Labels "org.opencontainers.image.revision" }}' events-concierge:ci)" = "$BACKEND_REVISION"
+test "$(docker inspect --format '{{ index .Config.Labels "org.opencontainers.image.revision" }}' events-concierge-web:ci)" = "$BACKEND_REVISION"
+```
+
+Publish these loaded images without rebuilding. Verify the target account/project and use the host's existing registry credential helper. Missing registry write access blocks publication; do not switch accounts or broaden IAM to work around it.
+
+```bash
+set -euo pipefail
+gcloud auth list --filter='account:iliazlobin27@gmail.com' --format='value(account,status)'
+REGISTRY=us-west1-docker.pkg.dev/iz27-platform-dev/ec-dev
+docker tag events-concierge:ci "$REGISTRY/events-concierge:$BACKEND_REVISION"
+docker tag events-concierge-web:ci "$REGISTRY/events-concierge-web:$BACKEND_REVISION"
+docker push "$REGISTRY/events-concierge:$BACKEND_REVISION"
+docker push "$REGISTRY/events-concierge-web:$BACKEND_REVISION"
+APP_IMAGE=$(gcloud artifacts docker images describe "$REGISTRY/events-concierge:$BACKEND_REVISION" --project=iz27-platform-dev --account=iliazlobin27@gmail.com --format='value(image_summary.fully_qualified_digest)')
+WEB_IMAGE=$(gcloud artifacts docker images describe "$REGISTRY/events-concierge-web:$BACKEND_REVISION" --project=iz27-platform-dev --account=iliazlobin27@gmail.com --format='value(image_summary.fully_qualified_digest)')
+```
+
+Keep both digest references, the source revision and CI run with the existing [release record](https://github.com/iliazlobin/events-concierge/issues/26). Generate values below, then follow **Release** only after deployment authorization and rehearsal. The private API still requires the IAP access procedure; publication creates no cluster access. Preserve prior digests/configuration and a compatible backup for [release and rollback](../docs/production-operations.md#release-and-rollback); verify serving identity, required processes, discovery and collection after rollout.
 
 ```bash
 mkdir -p .local
