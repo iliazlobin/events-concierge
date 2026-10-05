@@ -366,7 +366,15 @@ def test_graph_event_details_match_map_without_prefetch(release_page, tmp_path, 
     assert api.calls.count(("GET", detail_path)) == 1
     assert ("GET", f"/v1/catalog/entities/{ENTITY_ID}") not in api.calls
     assert page.evaluate("document.documentElement.scrollWidth <= window.innerWidth")
+    action = card.locator(".event-action")
+    action.scroll_into_view_if_needed()
+    assert action.evaluate("""link => {
+        const bounds = link.getBoundingClientRect();
+        return document.elementFromPoint(bounds.x + bounds.width / 2,
+            bounds.y + bounds.height / 2)?.closest('a') === link;
+    }""")
     page.screenshot(path=str(tmp_path / f"graph-event-card-{width}.png"), full_page=True)
+    inspector.screenshot(path=str(tmp_path / f"graph-event-detail-{width}.png"))
 
 
 @pytest.mark.parametrize("status", [404, 503])

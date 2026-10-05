@@ -1159,6 +1159,11 @@
 }
 
 @media (max-width: 700px) {
+  .entity-graph-inspector--event {
+    bottom: calc(80px + env(safe-area-inset-bottom, 0px));
+    max-height: min(62dvh, calc(100dvh - var(--header-height) - 100px));
+  }
+
   .entity-graph-heading {
     grid-template-columns: minmax(0, 1fr);
   }
