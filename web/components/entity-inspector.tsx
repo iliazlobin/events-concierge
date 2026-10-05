@@ -20,15 +20,15 @@ import {
   X,
 } from "lucide-react";
 import type { ReactNode } from "react";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { getCatalogEntity, refreshCatalogEntity } from "@/lib/api";
 import type {
   CatalogEntityGraphNode,
   EntityGraphSceneModel,
-  EntityGraphAppearance,
   EntityGraphDetailModel,
 } from "@/lib/entity-graph";
+import { deriveEntityAppearances } from "@/lib/entity-graph";
 import { readEntityDetail, writeEntityDetail } from "@/lib/entity-graph-cache";
 import { SOCIAL_API_PROVIDERS, socialProfileCards } from "@/lib/entity-social-profiles";
 import type {
@@ -171,6 +171,7 @@ function SocialAvatar({ url }: { url: string | null }) {
 export interface EntityInspectorProps {
   tenantId: string | null;
   canRefresh?: boolean;
+  scope?: "catalog" | "entity";
   /** The original occurrence scene, retained beneath the canvas session grouping. */
   model: EntityGraphSceneModel;
   detailModel: EntityGraphDetailModel;
@@ -187,6 +188,7 @@ export interface EntityInspectorProps {
 export function EntityInspector({
   tenantId,
   canRefresh = false,
+  scope = "entity",
   model,
   detailModel,
   selectedNodeId,
@@ -198,11 +200,21 @@ export function EntityInspector({
   onTopicSelect,
 }: EntityInspectorProps) {
   const subject = (selectedNodeId ? model.byId.get(selectedNodeId) : undefined)
-    ?? model.ego
+    ?? (scope === "entity" ? model.ego : null)
     ?? null;
 
+  const subjectNodeId = subject?.node_id ?? null;
+  const subjectEntityId = subject?.node_kind === "entity" ? subject.entity_id : null;
+  const identity = `${tenantId ?? "anonymous"}:${subjectEntityId ?? ""}`;
+  const currentIdentity = useRef(identity);
+  currentIdentity.current = identity;
   const [tab, setTab] = useState<InspectorTab>("overview");
-  const [detail, setDetail] = useState<CatalogEntityDetail | null>(null);
+  const [detailEntry, setDetailEntry] = useState<{ tenantId: string | null; item: CatalogEntityDetail } | null>(null);
+  const detail = detailEntry?.tenantId === tenantId && detailEntry.item.entity.entity_id === subjectEntityId
+    ? detailEntry.item : null;
+  const setDetail = useCallback((item: CatalogEntityDetail | null) => {
+    setDetailEntry(item ? { tenantId, item } : null);
+  }, [tenantId]);
   const [detailLoading, setDetailLoading] = useState(false);
   const [detailError, setDetailError] = useState<string | null>(null);
   const [refreshing, setRefreshing] = useState(false);
@@ -223,9 +235,6 @@ export function EntityInspector({
    */
   const [profileOpenedFor, setProfileOpenedFor] = useState<string | null>(null);
 
-  const subjectNodeId = subject?.node_id ?? null;
-  const subjectEntityId = subject?.node_kind === "entity" ? subject.entity_id : null;
-
   // Read through a ref so the latch effect below can depend on `tab` alone.  If it also depended
   // on the subject it would re-run on a subject change — while `tab` is still "profile", because
   // the reset above has only scheduled its update — and re-latch onto the new subject, which is
@@ -242,6 +251,8 @@ export function EntityInspector({
   }, [tab]);
 
   useEffect(() => {
+    setDetailLoading(false);
+    setRefreshing(false);
     if (!subjectEntityId) {
       setDetail(null);
       setDetailError(null);
@@ -249,12 +260,13 @@ export function EntityInspector({
     }
     setDetail(readEntityDetail(tenantId, subjectEntityId));
     setDetailError(null);
-  }, [subjectEntityId, tenantId]);
+  }, [subjectEntityId, tenantId, setDetail]);
 
   useEffect(() => {
     if (profileOpenedFor !== subjectNodeId || !subjectEntityId) return;
     const cached = readEntityDetail(tenantId, subjectEntityId);
     if (cached) {
+      setDetailLoading(false);
       setDetail(cached);
       setDetailError(null);
       return;
@@ -282,7 +294,7 @@ export function EntityInspector({
     return () => {
       cancelled = true;
     };
-  }, [profileOpenedFor, subjectEntityId, subjectNodeId, tenantId]);
+  }, [profileOpenedFor, subjectEntityId, subjectNodeId, tenantId, setDetail]);
 
   /**
    * Re-read the entity's own exact profile/source URLs.
@@ -297,13 +309,14 @@ export function EntityInspector({
     try {
       const item = await refreshCatalogEntity(tenantId, subjectEntityId);
       writeEntityDetail(tenantId, subjectEntityId, item);
-      setDetail(item);
+      if (currentIdentity.current === identity) setDetail(item);
     } catch (caught: unknown) {
+      if (currentIdentity.current !== identity) return;
       setDetailError(
         caught instanceof Error ? caught.message : "Public sources could not be refreshed.",
       );
     } finally {
-      setRefreshing(false);
+      if (currentIdentity.current === identity) setRefreshing(false);
     }
   };
 
@@ -322,24 +335,12 @@ export function EntityInspector({
     // eslint-disable-next-line react-hooks/exhaustive-deps -- refreshSources is stable per render
   }, [canRefresh, detail?.entity.identity_status, detail?.refresh_due, subjectEntityId]);
 
-  const appearancesByNode = useMemo(() => {
-    const index = new Map<string, EntityGraphAppearance>();
-    for (const item of [...detailModel.upcoming, ...detailModel.past]) index.set(item.node_id, item);
-    return index;
-  }, [detailModel]);
+  const appearances = useMemo(() => (
+    subject?.node_kind === "entity" ? deriveEntityAppearances(model, subject.node_id) : []
+  ), [model, subject]);
 
-  /** Appearances for whichever node is under inspection: all of the ego's, or a peer's shared set. */
-  const appearances = useMemo(() => {
-    if (!subject || subject.node_kind !== "entity") return [];
-    const nodeIds = subject.node_id === model.focusId
-      ? model.events.map((node) => node.node_id)
-      : model.peerEvents.get(subject.node_id) ?? [];
-    return nodeIds
-      .map((nodeId) => appearancesByNode.get(nodeId))
-      .filter((item): item is EntityGraphAppearance => item !== undefined);
-  }, [appearancesByNode, model, subject]);
-
-  const egoLabel = model.ego?.label ?? "the focus";
+  const egoLabel = model.ego?.label ?? "the graph";
+  const closeLabel = scope === "catalog" ? "Close details" : `Back to ${egoLabel}`;
 
   /** Combine the catalog identity, profile facts and imported social links. */
   const identityProfileLinks = useMemo(() => {
@@ -362,6 +363,9 @@ export function EntityInspector({
       subject={subject}
       model={model}
       eventSessions={eventSessions}
+      contextNote={scope === "catalog" && subject.shared_event_count !== null
+        ? `Representative of ${subject.shared_event_count.toLocaleString()} shared ${subject.shared_event_count === 1 ? "event" : "events"}.`
+        : undefined}
       onSelectNode={onSelectNode}
       onHoverNode={onHoverNode}
       onFocusEntity={onFocusEntity}
@@ -387,7 +391,7 @@ export function EntityInspector({
             onClick={() => onSelectNode(null)}
           >
             <X aria-hidden="true" />
-            <span className="sr-only">Back to {egoLabel}</span>
+            <span className="sr-only">{closeLabel}</span>
           </button>
         </header>
         <p className="entity-empty-copy">
@@ -470,7 +474,7 @@ export function EntityInspector({
           <h2>{subject.label}</h2>
           <span>
             {subject.degree} {subject.degree === 1 ? "event" : "events"}
-            {subject.shared_event_count !== null
+            {scope !== "catalog" && subject.shared_event_count !== null
               ? ` · ${subject.shared_event_count} shared with ${egoLabel}`
               : ""}
           </span>
@@ -482,7 +486,7 @@ export function EntityInspector({
             onClick={() => onSelectNode(null)}
           >
             <X aria-hidden="true" />
-            <span className="sr-only">Back to {egoLabel}</span>
+            <span className="sr-only">{closeLabel}</span>
           </button>
         )}
       </header>
@@ -596,6 +600,11 @@ export function EntityInspector({
             "seen <date>", identical on every row because it is the observation date, not the
             event's: it is gone, and role plus asserting source are demoted to one quiet line.
           */}
+          {scope === "catalog" ? (
+            <p className="entity-graph-inspector__provenance">
+              Representative appearances in this graph. Open the entity&rsquo;s graph for its event history.
+            </p>
+          ) : null}
           {appearanceGroups.length ? (
             appearanceGroups.map((group) => (
               <section key={group.key} className="entity-appearance-group">

@@ -432,9 +432,7 @@ export function deriveEntityGraphScene(
   for (const node of normalized.nodes) byId.set(node.node_id, node);
 
   const focusId = normalized.focus_id;
-  const ego = byId.get(focusId)
-    ?? normalized.nodes.find((node) => node.ring === RING_EGO)
-    ?? null;
+  const ego = byId.get(focusId) ?? null;
 
   const events = normalized.nodes
     .filter((node) => node.node_kind === "event")
@@ -506,7 +504,7 @@ export interface EntityGraphAppearance {
   venue_name: string | null;
   city: string | null;
   roles: EventEntityRole[];
-  /** Which source asserted the ego's role on this event, and when. */
+  /** Which source asserted the inspected entity's role on this event, and when. */
   source_labels: string[];
   observed_at: string | null;
   registration_url: string | null;
@@ -550,31 +548,36 @@ export interface EntityGraphDetailModel {
  * Inspector facts derived from the original occurrence scene. Canvas aggregation
  * must preserve each date, role and source assertion here.
  */
-export function deriveEntityGraphDetails(scene: EntityGraphSceneModel): EntityGraphDetailModel {
-  const egoEdges = new Map<string, CatalogEntityGraphEdge>();
+/** Appearance evidence belongs to the inspected entity, even in a sampled catalog graph. */
+export function deriveEntityAppearances(
+  scene: EntityGraphSceneModel,
+  entityNodeId: string,
+): EntityGraphAppearance[] {
+  const mentions = new Map<string, CatalogEntityGraphEdge>();
   for (const edge of scene.edges) {
-    if (edge.kind !== "mention") continue;
-    if (edge.a === scene.focusId) egoEdges.set(edge.b, edge);
+    if (edge.kind === "mention" && edge.a === entityNodeId) mentions.set(edge.b, edge);
   }
-
-  const appearance = (node: CatalogEntityGraphNode): EntityGraphAppearance => {
-    const edge = egoEdges.get(node.node_id);
-    return {
+  return scene.events.flatMap((node) => {
+    const edge = mentions.get(node.node_id);
+    if (!edge) return [];
+    return [{
       node_id: node.node_id,
       title: node.label,
       start_at: node.start_at,
       is_past: isPastEvent(node),
       venue_name: node.venue_name,
       city: node.city,
-      roles: edge ? edge.roles : node.ego_roles,
-      source_labels: edge ? edge.source_labels : [],
-      observed_at: edge ? edge.observed_at : null,
+      roles: edge.roles,
+      source_labels: edge.source_labels,
+      observed_at: edge.observed_at,
       registration_url: node.registration_url,
       entity_count: node.degree,
-    };
-  };
+    }];
+  });
+}
 
-  const appearances = scene.events.map(appearance);
+export function deriveEntityGraphDetails(scene: EntityGraphSceneModel): EntityGraphDetailModel {
+  const appearances = deriveEntityAppearances(scene, scene.focusId);
 
   return {
     focus_id: scene.focusId,
