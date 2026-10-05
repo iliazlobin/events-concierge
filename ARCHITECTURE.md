@@ -26,7 +26,7 @@ Ports and adapters: domain logic has no external I/O; application services use t
 - **Discovery change:** web route → API → application service/port → PostgreSQL adapter.
 - **Source change:** registered adapter → guarded catalog refresh.
 - **Runtime change:** `composition.py` or `catalog_runtime.py`; provider selection stays outside domain code.
-- **Consumer identity:** `web/lib/consumer-identity.ts` → `api/app.py` → `adapters/identity_platform.py`; `adapters/postgres/consumer_accounts.py` and migration `0204` bind accounts/legal receipts. Redis owns opaque sessions; the separate IAP operator API enforces owner authority. [Release contract](deployment/consumer-identity.md).
+- **Consumer identity:** `web/lib/consumer-identity.ts` → `api/app.py` → `adapters/identity_platform.py`; `adapters/postgres/consumer_accounts.py` and migration `0207` bind accounts/legal receipts. Redis owns opaque sessions; the separate IAP operator API enforces owner authority. [Release contract](deployment/consumer-identity.md).
 
 ## Runtime flows
 
