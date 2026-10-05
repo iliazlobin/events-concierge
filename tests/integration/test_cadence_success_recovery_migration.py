@@ -38,12 +38,11 @@ def _roundtrip(connection: Connection, *, spacing_variation: bool) -> None:
         if spacing_variation:
             original = connection.execute(definition_query, parameters).scalar_one()
             assert original.count(migration._FAILED_GATE) == 1
-            connection.execute(
-                text(
-                    original.replace(
-                        migration._FAILED_GATE, "OR\n\tlatest.attempt_status\t<>   'failed'"
-                    )
-                )
+            connection.exec_driver_sql(
+                original.replace(
+                    migration._FAILED_GATE, "OR\n\tlatest.attempt_status\t<>   'failed'"
+                ),
+                execution_options={"no_parameters": True},
             )
         migration.upgrade()
     assert connection.execute(definition_query, parameters).scalar_one() == definition
@@ -79,12 +78,15 @@ def _reject_changed_gate(connection: Connection, gate: str | None) -> None:
         if gate is not None:
             migration.downgrade()
             definition = connection.execute(query, parameters).scalar_one()
-            connection.execute(text(definition.replace(migration._FAILED_GATE, gate)))
+            connection.exec_driver_sql(
+                definition.replace(migration._FAILED_GATE, gate),
+                execution_options={"no_parameters": True},
+            )
         before = connection.execute(query, parameters).scalar_one()
         with pytest.raises(RuntimeError, match="cadence failure gate changed"):
             migration.upgrade()
         assert connection.execute(query, parameters).scalar_one() == before
-    connection.execute(text(original))
+    connection.exec_driver_sql(original, execution_options={"no_parameters": True})
 
 
 @pytest.mark.parametrize(

@@ -54,7 +54,11 @@ def _replace_gate(before: str, after: str) -> None:
         for existing in after_pattern.finditer(definition)
     ):
         raise RuntimeError("cadence failure gate changed; review success-recovery migration")
-    op.execute(definition[: match.start()] + after + definition[match.end() :])
+    # The server-returned body may contain colon names or literal percent signs.
+    op.get_bind().exec_driver_sql(
+        definition[: match.start()] + after + definition[match.end() :],
+        execution_options={"no_parameters": True},
+    )
 
 
 def upgrade() -> None:

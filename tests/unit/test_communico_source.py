@@ -272,8 +272,13 @@ async def test_communico_stops_streaming_an_oversized_response_and_closes_it() -
 
     fetcher = CommunicoCatalogFetcher(user_agent="test", transport=httpx.MockTransport(handler))
 
-    with pytest.raises(CommunicoFetchError, match="response-size limit"):
+    with pytest.raises(CommunicoFetchError, match="response-size limit") as raised:
         await fetcher.fetch(_source())
+    assert _source().source_key in str(raised.value)
+    assert f"{len(read_chunks) * communico_source._RESPONSE_CHUNK_BYTES} decoded bytes" in str(
+        raised.value
+    )
+    assert f"{communico_source._MAX_RESPONSE_BYTES} bytes" in str(raised.value)
     assert len(read_chunks) * communico_source._RESPONSE_CHUNK_BYTES <= (
         communico_source._MAX_RESPONSE_BYTES + communico_source._RESPONSE_CHUNK_BYTES
     )
