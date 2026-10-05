@@ -62,6 +62,7 @@ class ReleaseApi:
     graph_status: int = 200
     empty_graph: bool = False
     social_profiles: bool = False
+    social_links_only: bool = False
 
     def config(self, route: Route) -> None:
         payload = {
@@ -105,6 +106,9 @@ class ReleaseApi:
         elif path == "/v1/catalog/events":
             event = _feed()["items"][0] | {
                 "organizer_name": "Lakehouse Music", "topics": ["jazz"],
+                "host_names": ["Alex Example"], "registration_status": "open",
+                "entity_profiles": [{"name": "Alex Example", "role": "host", "kind": "person",
+                                     "profile_url": "https://www.linkedin.com/in/alex-example"}],
                 "source_keys": ["fixture-jazz"], "providers": ["Fixture Jazz"],
                 "sources": [{"source_key": "fixture-jazz", "source": "public_jsonld", "label": "Fixture Jazz", "registration_url": "https://events.example.test/friday-jazz"}],
             }
@@ -152,7 +156,8 @@ class ReleaseApi:
                            "summary": None, "website_url": None, "logo_url": None,
                            "city": "Oakland", "country": "US", "event_count": 1,
                            "roles": ["organizer"], "source_count": 1, "research_status": "researchable"},
-                "events": [], "external_sources": _social_sources() if self.social_profiles else [],
+                "events": [], "external_sources": (_social_sources() if self.social_profiles else [])
+                + (_linked_social_sources() if self.social_profiles or self.social_links_only else []),
                 "external_facts": [{"provider_key": "website",
                                     "source_url": "https://events.example.test/lakehouse",
                                     "fact_key": "description", "value": "Published profile fixture.",
@@ -173,6 +178,18 @@ def _social_sources():
         for key,url,label,status in [
             ("x_public_api","https://x.com/social_builder","X API","failed"),
             ("instagram_public_api","https://www.instagram.com/social_builder","Instagram API","fresh")]
+    ]
+
+
+def _linked_social_sources():
+    return [
+        {"provider_key": key, "external_id": "social_builder", "source_url": url,
+         "display_name": label, "status": "linked", "fetched_at": None,
+         "next_refresh_at": "2030-06-02T00:00:00Z", "error_code": None}
+        for key, url, label in [
+            ("x_profile", "https://x.com/social_builder", "X"),
+            ("instagram_profile", "https://www.instagram.com/social_builder", "Instagram"),
+        ]
     ]
 
 
@@ -237,7 +254,7 @@ def test_discovery_entity_graph_and_profile_are_read_only(release_page):
     page.goto(f"{BASE}/?view=entities&entity={ENTITY_ID}")
     expect(page.get_by_role("heading", name="Lakehouse Music", exact=True).first).to_be_visible()
     page.get_by_role("tab", name="Profile & sources", exact=True).click()
-    expect(page.get_by_role("heading", name="Connected public sources", exact=True)).to_be_visible()
+    expect(page.get_by_role("heading", name="Profiles", exact=True)).to_be_visible()
     expect(page.get_by_text("Published profile fixture.", exact=True)).to_be_visible()
     assert ("GET", f"/v1/catalog/entities/{ENTITY_ID}") in api.calls
     expect(page.get_by_role("button", name="Refresh", exact=True)).to_have_count(0)
@@ -276,6 +293,32 @@ def test_discovery_entities_empty_state(release_page):
     expect(harness.page.get_by_role("heading", name="No entities match", exact=True)).to_be_visible()
 
 
+@pytest.mark.parametrize("width", [1440, 390])
+def test_imported_profile_links_are_compact_and_read_only(release_page, tmp_path, width):
+    harness, api = release_page
+    api.social_links_only = True
+    page = harness.page
+    page.set_viewport_size({"width": width, "height": 900})
+    page.goto(f"{BASE}/?view=entities&entity={ENTITY_ID}")
+    expect(page.get_by_role("heading", name="Lakehouse Music", exact=True).first).to_be_visible()
+    assert ("GET", f"/v1/catalog/entities/{ENTITY_ID}") not in api.calls
+    expect(page.get_by_role("tab", name="Same name", exact=True)).to_have_count(0)
+    page.get_by_role("tab", name="Profile & sources", exact=True).click()
+    expect(page.get_by_role("link", name="X @social_builder", exact=True)).to_be_visible()
+    expect(page.get_by_role("link", name="Instagram @social_builder", exact=True)).to_be_visible()
+    for url in ("https://x.com/social_builder", "https://www.instagram.com/social_builder",
+                "https://events.example.test/lakehouse"):
+        expect(page.locator(f'.entity-graph-inspector a[href="{url}"]')).to_have_count(1)
+        expect(page.get_by_text(url, exact=True)).to_have_count(0)
+    expect(page.get_by_text("Holding it is not a verification", exact=False)).to_have_count(0)
+    page.get_by_role("tab", name="Profile & sources", exact=True).focus()
+    page.keyboard.press("Tab")
+    expect(page.locator(".entity-graph-inspector a").first).to_be_focused()
+    assert api.calls.count(("GET", f"/v1/catalog/entities/{ENTITY_ID}")) == 1
+    assert page.evaluate("document.documentElement.scrollWidth <= window.innerWidth")
+    page.screenshot(path=str(tmp_path / f"linked-profiles-{width}.png"))
+
+
 @pytest.mark.parametrize("avatar_status", [200, 404])
 def test_social_profile_snapshots_are_separate_read_only_and_responsive(
     release_page, tmp_path, avatar_status
@@ -296,6 +339,8 @@ def test_social_profile_snapshots_are_separate_read_only_and_responsive(
     expect(x.get_by_text("6,412 followers",exact=True)).to_be_visible()
     expect(x.get_by_text("Refresh unavailable; saved facts are shown.",exact=True)).to_be_visible()
     expect(page.get_by_role("region",name="Instagram API").get_by_text("4,300 followers",exact=True)).to_be_visible()
+    expect(page.locator('.entity-graph-inspector a[href="https://x.com/social_builder"]')).to_have_count(1)
+    expect(page.locator('.entity-graph-inspector a[href="https://www.instagram.com/social_builder"]')).to_have_count(1)
     if avatar_status == 200:
         expect(x.locator("img")).to_have_attribute("referrerpolicy", "no-referrer")
     else:
@@ -419,18 +464,43 @@ def test_full_profile_retains_explicitly_inert_security_preview(release_page):
 
 
 @pytest.mark.parametrize("profile", ["discovery", "full"])
-def test_profiles_keep_map_and_calendar_browsing(release_page, profile):
+@pytest.mark.parametrize("width", [1440, 390])
+def test_profiles_keep_map_and_calendar_browsing(release_page, tmp_path, profile, width):
     harness, api = release_page
     api.profile = profile
     page = harness.page
+    page.set_viewport_size({"width": width, "height": 900})
+    page.emulate_media(reduced_motion="reduce")
     page.goto(f"{BASE}/?view=map&when=custom&start=2030-06-01&end=2030-06-30")
     expect(page.get_by_role("button", name="Focus Friday Night Jazz on map", exact=True)).to_be_visible()
     graph = page.get_by_role("button", name="View Friday Night Jazz in Lakehouse Music's graph", exact=True)
     expect(graph).to_be_visible()
     expect(page.get_by_role("link", name="View Friday Night Jazz event page (opens in new tab)", exact=True)).to_be_visible()
-    page.locator(".site-nav").get_by_role("button", name="Calendar", exact=True).click()
+    page.get_by_role("button", name="Focus Friday Night Jazz on map", exact=True).click()
+    map_card = page.locator(".map-selection .event-card")
+    expect(map_card.get_by_role("region")).to_be_visible()
+    map_details = map_card.locator(".event-card__expansion-inner").inner_text()
+    expect(map_card.get_by_role("button", name="Explore host Alex Example", exact=True)).to_be_visible()
+    page.screenshot(path=str(tmp_path / f"map-card-{width}.png"), full_page=True)
+    nav = ".site-nav" if width > 700 else ".mobile-nav"
+    page.locator(nav).get_by_role("button", name="Calendar", exact=True).click()
     expect(page.get_by_role("grid", name="June 2030", exact=True)).to_be_visible()
-    expect(page.get_by_role("gridcell", name=re.compile(r"June 14.*1 event"))).to_be_visible()
+    day = page.get_by_role("gridcell", name=re.compile(r"June 14.*1 event"))
+    expect(day).to_be_visible()
+    day.click()
+    calendar_card = page.locator(".calendar-agenda .event-card")
+    calendar_card.get_by_role("button", name="Show details for Friday Night Jazz", exact=True).click()
+    expect(calendar_card.get_by_role("region")).to_be_visible()
+    assert calendar_card.locator(".event-card__expansion-inner").inner_text() == map_details
+    expect(calendar_card.get_by_role("button", name="Explore host Alex Example", exact=True)).to_be_visible()
+    expect(calendar_card).to_have_class(re.compile(r"is-compact"))
+    assert calendar_card.evaluate("""card => {
+        const bounds = card.getBoundingClientRect();
+        const details = card.querySelector('.event-card__expansion-inner').getBoundingClientRect();
+        return bounds.width > 520 || details.left - bounds.left < 24;
+    }""")
+    assert page.evaluate("document.documentElement.scrollWidth <= window.innerWidth")
+    page.screenshot(path=str(tmp_path / f"calendar-card-{width}.png"), full_page=True)
     assert ("GET", "/v1/catalog/events/summary") in api.calls
 
 

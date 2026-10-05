@@ -45,7 +45,8 @@ with one known professional profile before enabling ordinary batches. No tokens 
   Claims expire after 60 seconds; API work times out after 25 seconds. Stale or changed-link results
   cannot publish. Provider account IDs must remain stable across successful refreshes.
 - Daily refreshes and delayed retries preserve the last successful facts and timestamp.
-  The Profile & sources panel labels retained snapshots when a refresh fails.
+  Profile & sources shows each destination once as a platform/handle link. API snapshots add
+  dated public fields and identify retained facts when a refresh fails.
 - Web reads use PostgreSQL only. Social clients are constructed exclusively by the background
   worker. Requests use fixed HTTPS API origins, bounded bodies and no redirects. No posts, emails,
   contacts, private content or raw provider payloads are retained.

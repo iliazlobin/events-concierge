@@ -48,7 +48,7 @@ import {
   roleLabel,
 } from "@/lib/entity-inspector-model";
 import { EntityIdentityLinks } from "@/components/entity-identity-links";
-import { identityLinks } from "@/lib/entity-identity-links";
+import { identityLinkKey, identityLinks } from "@/lib/entity-identity-links";
 import { eventTopicLabel } from "@/lib/event-topics";
 import { formatCity } from "@/lib/presentation";
 import type {
@@ -76,7 +76,6 @@ const PROFILE_FACTS: ReadonlyArray<readonly [CatalogEntityExternalFact["fact_key
   ["followers", "Followers"],
 ];
 
-/** First value per key, case-folded, so two sources asserting the same thing render once. */
 /**
  * The provenance tail for one mention: which source asserted it, and when it was seen.
  *
@@ -93,6 +92,7 @@ function edgeProvenance(edge: CatalogEntityGraphEdge): string {
     .join("");
 }
 
+/** The first saved value per key, excluding separate social API snapshots. */
 function firstFact(
   detail: CatalogEntityDetail | null,
   key: CatalogEntityExternalFact["fact_key"],
@@ -113,7 +113,6 @@ const TABS = [
   { value: "overview", label: "Overview" },
   { value: "appearances", label: "Appearances" },
   { value: "profile", label: "Profile & sources" },
-  { value: "same-name", label: "Same name" },
 ] as const;
 
 type InspectorTab = (typeof TABS)[number]["value"];
@@ -355,36 +354,15 @@ export function EntityInspector({
 
   const egoLabel = model.ego?.label ?? "the focus";
 
-  /**
-   * The one identity the graph node itself carries, for the Overview.
-   *
-   * Scoped to `profile_url` deliberately. `detail` — and with it every external fact and provider
-   * record — is fetched only when the reader opens "Profile & sources", per the hard contract
-   * above. A row on the *default* tab fed from `detail` would therefore show one link on a first
-   * visit and silently grow after a trip to the third tab and back, so the panel's content would
-   * depend on which tabs you had visited. The full set is rendered where the data is actually
-   * loaded, below.
-   */
-  const egoIdentityLinks = useMemo(
-    () => (subject?.node_kind === "entity" ? identityLinks(subject.profile_url) : []),
-    [subject],
-  );
-
-  /**
-   * Every public identity we hold for the inspected entity, for the Profile & sources tab.
-   *
-   * Gathered from all three places a URL can reach us — the identity the catalog keyed on, the
-   * public-data facts behind it, and the provider records — so the row is whatever is genuinely on
-   * file rather than only the one field the projection happened to key. This is also where the
-   * social rows the enrichment plane now captures (`x_profile`, `instagram_profile`,
-   * `tiktok_profile`, `youtube_profile`) surface as links rather than only as list entries.
-   */
+  /** Combine the catalog identity, profile facts and imported social links. */
   const identityProfileLinks = useMemo(() => {
     if (!subject || subject.node_kind !== "entity") return [];
     return identityLinks(
       subject.profile_url,
-      (detail?.external_facts ?? []).filter((fact) => fact.fact_key !== "avatar").map((fact) => fact.value_url),
-      (detail?.external_sources ?? []).map((source) => source.source_url),
+      (detail?.external_facts ?? []).filter((fact) => fact.fact_key === "profile").map((fact) => fact.value_url),
+      groupEntitySources((detail?.external_sources ?? []).filter(
+        (source) => !SOCIAL_API_PROVIDERS.has(source.provider_key),
+      )).profiles.map((source) => source.source_url),
     );
   }, [detail, subject]);
 
@@ -530,16 +508,6 @@ export function EntityInspector({
 
   const isEgo = subject.node_id === model.focusId;
   /*
-   * `same_name_candidates` is computed from the EGO's normalized name and nothing else — the
-   * capability derives it from `v_ego.normalized_name`.  Rendering it under a peer would present
-   * the ego's namesakes as the peer's, and its empty case would assert "no other catalog row
-   * carries this exact display name" about a peer nobody checked.  Both are name-as-identity
-   * claims, in the one panel binding rule (b) governs most directly.  There is no per-peer
-   * namesake list to fetch instead, and asking for one would widen a name into a join key.
-   */
-  const tabs = isEgo ? TABS : TABS.filter((entry) => entry.value !== "same-name");
-
-  /*
    * Reading logic lives in `entity-inspector-model.ts`, and all four values below are plain
    * derivations rather than `useMemo`s: they run only on the entity branch, which is below the
    * early returns above, and a hook cannot live there.  Each is a walk of at most a few dozen rows.
@@ -568,7 +536,15 @@ export function EntityInspector({
     : isEgo
       ? textModel.topics.map((topic) => topic.label)
       : [];
-  const subjectNoun = subject.entity_kind === "organization" ? "organization" : "person";
+  const snapshots = socialProfileCards(detail);
+  const snapshotKeys = new Set(identityLinks(null, [], snapshots.map(({ source }) => source.source_url))
+    .map(identityLinkKey));
+  const profileLinks = identityProfileLinks.filter((link) => !snapshotKeys.has(identityLinkKey(link)));
+  const profileKeys = new Set(identityProfileLinks.map(identityLinkKey));
+  const publicSources = sourceGroups.public.filter((source) => {
+    const link = identityLinks(null, [], [source.source_url])[0];
+    return !link || !profileKeys.has(identityLinkKey(link));
+  });
 
   const renderSource = (source: CatalogEntityExternalSource, presentation: EntitySourcePresentation) => (
     <li key={source.provider_key} data-status={source.status}>
@@ -630,7 +606,7 @@ export function EntityInspector({
       )}
 
       <div className="entity-graph-tabs" role="tablist" aria-label="Entity detail sections">
-        {tabs.map((entry) => (
+        {TABS.map((entry) => (
           <button
             key={entry.value}
             type="button"
@@ -642,9 +618,6 @@ export function EntityInspector({
             onClick={() => setTab(entry.value)}
           >
             {entry.label}
-            {entry.value === "same-name" && textModel.same_name_candidates.length
-              ? <small>{textModel.same_name_candidates.length}</small>
-              : null}
           </button>
         ))}
       </div>
@@ -682,32 +655,6 @@ export function EntityInspector({
                 <dd>{topicLabels.map((topic) => eventTopicLabel(topic)).join(" · ")}</dd>
               </div>
             ) : null}
-            <div className="entity-insight-grid__identity">
-              <dt>Identity</dt>
-              <dd>
-                {egoIdentityLinks.length ? (
-                  <>
-                    {/*
-                      The link itself, not a sentence about it. This said "A direct profile URL is
-                      on file" — a statement about the existence of a link, printed in the room the
-                      link would have taken, and telling a reader nothing they could go and check.
-                      The caveat below keeps its force: holding a URL a source published is a record
-                      of an assertion, and nothing here goes looking for a profile from a name.
-                    */}
-                    <EntityIdentityLinks links={egoIdentityLinks} />
-                    <span className="entity-insight-grid__caveat">
-                      Attached by a catalog source. Holding it is not a verification that it belongs
-                      to this {subjectNoun}.
-                    </span>
-                  </>
-                ) : (
-                  <>
-                    No source attached a direct profile URL, so this record stays scoped to the
-                    source that named it.
-                  </>
-                )}
-              </dd>
-            </div>
           </dl>
 
           {isEgo ? (
@@ -802,38 +749,14 @@ export function EntityInspector({
           id="entity-panel-profile"
           aria-labelledby="entity-tab-profile"
         >
-          <section className="entity-graph-identity">
-            <h3>Identity</h3>
-            {/*
-              Every public identity on file, gathered here rather than on the Overview because this
-              is the tab whose open triggers the detail fetch: `external_facts` and
-              `external_sources` do not exist until the reader is standing here. It leads the
-              section so the social rows the enrichment plane captures are reachable as links, not
-              only as entries further down the source list.
-            */}
-            <EntityIdentityLinks links={identityProfileLinks} />
-            {subject.profile_url ? (
-              <>
-                <a href={subject.profile_url} target="_blank" rel="noopener noreferrer">
-                  {subject.profile_url} <ArrowUpRight aria-hidden="true" />
-                </a>
-                {/*
-                  Stated plainly rather than implied: holding a URL is a record of what a source
-                  asserted.  It is not a verification of the person, and nothing here offers to go
-                  looking for a profile from the name — a name is display data, not an identity.
-                */}
-                <p className="entity-empty-copy">
-                  This is the profile URL a catalog source attached to this name. Holding it is not
-                  a verification that the profile belongs to this person or organization.
-                </p>
-              </>
-            ) : (
-              <p className="entity-empty-copy">
-                No source attached a direct profile URL to this name, so this record stays scoped to
-                the source that named it.
-              </p>
-            )}
-          </section>
+          {profileLinks.length ? (
+            <section className="entity-graph-identity">
+              <h3>Profiles</h3>
+              <EntityIdentityLinks links={profileLinks} showHandles />
+            </section>
+          ) : null}
+          {detailLoading ? <p className="entity-loading"><LoaderCircle className="spin" />Loading profiles</p> : null}
+          {detailError ? <p className="workspace-error" role="alert">{detailError}</p> : null}
 
           {(() => {
             const description = firstFact(detail, "description");
@@ -869,7 +792,7 @@ export function EntityInspector({
             );
           })()}
 
-          {socialProfileCards(detail).map(({ source, description, followers, avatar }) => (
+          {snapshots.map(({ source, description, followers, avatar }) => (
             <section className="entity-social-profile" key={source.provider_key} aria-label={source.display_name}>
               <header>
                 <SocialAvatar url={avatar} />
@@ -884,114 +807,30 @@ export function EntityInspector({
             </section>
           ))}
 
-          <section>
-            <div className="entity-graph-sources__heading">
-              <h3>Connected public sources</h3>
-              {canRefresh && subject.identity_status === "profile_verified" ? (
-                <button
-                  type="button"
-                  className="entity-graph-refresh"
-                  onClick={() => void refreshSources()}
-                  disabled={refreshing}
-                >
-                  {refreshing ? (
-                    <><LoaderCircle className="spin" aria-hidden="true" />Syncing public data</>
-                  ) : (
-                    <><RefreshCw aria-hidden="true" />Refresh</>
-                  )}
-                </button>
+          {publicSources.length || (canRefresh && subject.identity_status === "profile_verified") ? (
+            <section>
+              <div className="entity-graph-sources__heading">
+                <h3>Sources</h3>
+                {canRefresh && subject.identity_status === "profile_verified" ? (
+                  <button type="button" className="entity-graph-refresh"
+                    onClick={() => void refreshSources()} disabled={refreshing}>
+                    {refreshing ? <><LoaderCircle className="spin" aria-hidden="true" />Refreshing</>
+                      : <><RefreshCw aria-hidden="true" />Refresh</>}
+                  </button>
+                ) : null}
+              </div>
+              {publicSources.length ? (
+                <ul className="entity-source-list">
+                  {publicSources.map((source) => renderSource(source, entitySourcePresentation(source.provider_key)))}
+                </ul>
               ) : null}
-            </div>
-            {detailLoading ? (
-              <p className="entity-loading">
-                <LoaderCircle className="spin" />Loading public sources
-              </p>
-            ) : null}
-            {detailError ? <p className="workspace-error" role="alert">{detailError}</p> : null}
-            {/*
-              Two groups, because they are two different kinds of claim.  A social or professional
-              profile is identity-bearing — it says "this is who they are" — while a website or a
-              repository host is a place the record points at.  Reading them as one list let the
-              weaker claim borrow the stronger one's weight.
-              Provider keys are rendered from the string, not from a closed switch, so the social
-              keys another agent is adding to the CHECK light up the moment a row exists.
-            */}
-            {sourceGroups.profiles.length ? (
-              <div className="entity-source-group" data-group="profile">
-                <h4>Profiles a source published</h4>
-                <p className="entity-source-group__caveat">
-                  These are profile URLs a catalog source attached to this name. Holding one is not
-                  a verification that it belongs to this {subjectNoun}.
-                </p>
-                <ul className="entity-source-list">
-                  {sourceGroups.profiles.map((source) =>
-                    renderSource(source, entitySourcePresentation(source.provider_key)))}
-                </ul>
-              </div>
-            ) : null}
-            {sourceGroups.public.length ? (
-              <div className="entity-source-group" data-group="public">
-                {sourceGroups.profiles.length ? <h4>Sites and public records</h4> : null}
-                <ul className="entity-source-list">
-                  {sourceGroups.public.map((source) =>
-                    renderSource(source, entitySourcePresentation(source.provider_key)))}
-                </ul>
-              </div>
-            ) : null}
-            {!sourceGroups.profiles.length && !sourceGroups.public.length
-              && !detailLoading && !detailError ? (
-              <p className="entity-empty-copy">
-                {subject.identity_status === "profile_verified"
-                  ? "No external source has been connected for this profile yet."
-                  : "A direct public profile is required before external data can be connected."}
-              </p>
-            ) : null}
-          </section>
+            </section>
+          ) : null}
+          {!identityProfileLinks.length && !snapshots.length && !publicSources.length
+            && !detailLoading && !detailError ? <p className="entity-empty-copy">No public profiles available.</p> : null}
         </div>
       ) : null}
 
-      {tab === "same-name" && isEgo ? (
-        <div
-          className="entity-graph-panel"
-          role="tabpanel"
-          id="entity-panel-same-name"
-          aria-labelledby="entity-tab-same-name"
-        >
-          {/*
-            Review candidates, and nothing else.  There is no merge action here and no write path
-            anywhere in this feature: an identical display name is not evidence of an identical
-            entity, and a button that acted on it would make a name into an identity judgment.
-          */}
-          <p className="entity-graph-samename__caveat">
-            Same name — not merged. These rows share an exact display name. That is not evidence
-            they are the same person or organization; compare them yourself.
-          </p>
-          {textModel.same_name_candidates.length ? (
-            <ul className="entity-graph-samename">
-              {textModel.same_name_candidates.map((candidate) => (
-                <li key={candidate.entity_id}>
-                  <button type="button" onClick={() => onFocusEntity(candidate.entity_id)}>
-                    <strong>{candidate.display_name}</strong>
-                    <span>
-                      {candidate.kind}
-                      {" · "}
-                      {candidate.identity_status === "profile_verified"
-                        ? "direct profile on file"
-                        : "source-scoped"}
-                      {" · "}
-                      {candidate.event_count} {candidate.event_count === 1 ? "event" : "events"}
-                    </span>
-                  </button>
-                </li>
-              ))}
-            </ul>
-          ) : (
-            <p className="entity-empty-copy">
-              No other catalog row carries this exact display name.
-            </p>
-          )}
-        </div>
-      ) : null}
     </aside>
   );
 }

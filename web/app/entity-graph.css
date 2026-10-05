@@ -579,46 +579,6 @@
   text-decoration: underline;
 }
 
-.entity-graph-samename__caveat {
-  background: color-mix(in srgb, var(--danger) 10%, transparent);
-  border: 1px solid color-mix(in srgb, var(--danger) 34%, var(--line));
-  border-radius: 14px;
-  color: var(--ink);
-  font-size: 12px;
-  line-height: 1.5;
-  margin: 0;
-  padding: 12px 14px;
-}
-
-.entity-graph-samename {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-  list-style: none;
-  margin: 0;
-  padding: 0;
-}
-
-.entity-graph-samename button {
-  background: var(--panel-raised);
-  border: 1px solid var(--line);
-  border-radius: 14px;
-  color: var(--ink);
-  cursor: pointer;
-  display: flex;
-  flex-direction: column;
-  font: inherit;
-  gap: 3px;
-  padding: 12px 14px;
-  text-align: left;
-  width: 100%;
-}
-
-.entity-graph-samename span {
-  color: var(--muted);
-  font-size: 11px;
-}
-
 /* ---------- text equivalent ---------- */
 
 .entity-graph-text {
@@ -783,8 +743,7 @@
   width: 13px;
 }
 
-.entity-graph-text__peers,
-.entity-graph-text__same-name {
+.entity-graph-text__peers {
   display: flex;
   flex-direction: column;
   gap: 8px;
@@ -793,8 +752,7 @@
   padding: 0;
 }
 
-.entity-graph-text__peers button,
-.entity-graph-text__same-name button {
+.entity-graph-text__peers button {
   background: var(--panel-raised);
   border: 1px solid var(--line);
   border-radius: 16px;
@@ -809,12 +767,10 @@
   width: 100%;
 }
 
-.entity-graph-text__peers span,
-.entity-graph-text__same-name span {
+.entity-graph-text__peers span {
   color: var(--muted);
   font-size: 11px;
 }
-
 .entity-graph-text__peers li > small {
   color: var(--quiet);
   display: block;
@@ -1504,47 +1460,6 @@
 
 
 /* ------------------------------------------------------------------ *
- * Inspector — Overview
- *
- * `.entity-activity-grid` (globals.css) still supplies the dt/dd shape; these rules only add what
- * the identity row needs, so the two files stay separable and nothing here re-declares the grid.
- * ------------------------------------------------------------------ */
-
-.entity-insight-grid__identity {
-  border-top: 1px solid var(--line);
-  padding-top: 12px;
-}
-
-.entity-insight-grid__url {
-  color: var(--accent);
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  font-size: 12px;
-  overflow-wrap: anywhere;
-  text-decoration: none;
-}
-
-.entity-insight-grid__url:hover {
-  text-decoration: underline;
-}
-
-.entity-insight-grid__url svg {
-  flex: none;
-  height: 13px;
-  width: 13px;
-}
-
-/* The caveat travels with the URL and is never smaller than the body's smallest readable size. */
-.entity-insight-grid__caveat {
-  color: var(--muted);
-  display: block;
-  font-size: 11px;
-  line-height: 1.5;
-  margin-top: 5px;
-}
-
-/* ------------------------------------------------------------------ *
  * Inspector — Appearances
  * ------------------------------------------------------------------ */
 
@@ -1581,57 +1496,12 @@
  * reset is ever scoped away from this subtree.
  */
 .entity-graph-inspector__appearances button:focus-visible,
-.entity-graph-inspector__mentions button:focus-visible,
-.entity-graph-samename button:focus-visible {
+.entity-graph-inspector__mentions button:focus-visible {
   outline: 2px solid var(--accent);
   outline-offset: 2px;
 }
 
-/* ------------------------------------------------------------------ *
- * Inspector — Profile & sources
- * ------------------------------------------------------------------ */
-
-.entity-source-group + .entity-source-group {
-  margin-top: 16px;
-}
-
-.entity-source-group h4 {
-  color: var(--muted);
-  font-size: 10px;
-  font-weight: 750;
-  letter-spacing: 0.18em;
-  margin: 0 0 8px;
-  text-transform: uppercase;
-}
-
-/*
- * The identity-bearing group is set apart by a rail rather than by colour alone, so the grouping
- * survives a monochrome or high-contrast rendering.
- */
-.entity-source-group[data-group="profile"] {
-  border-left: 2px solid color-mix(in srgb, var(--accent) 40%, var(--line));
-  padding-left: 12px;
-}
-
-.entity-source-group__caveat {
-  color: var(--muted);
-  font-size: 11px;
-  line-height: 1.5;
-  margin: 0 0 10px;
-}
-
-.entity-source-group .entity-source-list > li > svg {
-  flex: none;
-}
-
-/*
- * The identity row.
- *
- * Neutral glyph plus the network's name, in the panel's own register. No brand mark and no brand
- * colour: next to a URL a source merely asserted, a platform's own mark reads as that platform
- * verifying the account, which is a claim this record cannot make. The full URL is on the hover
- * title and in the Profile & sources tab for anyone who wants to read it.
- */
+/* Compact links to stored profiles. */
 .entity-identity-links {
   display: flex;
   flex-wrap: wrap;
@@ -1641,7 +1511,13 @@
   padding: 0;
 }
 
+.entity-identity-links li {
+  max-width: 100%;
+}
+
 .entity-identity-links a {
+  max-width: 100%;
+  text-decoration: none;
   align-items: center;
   background: var(--panel-raised);
   border: 1px solid var(--line-strong);
@@ -1656,6 +1532,15 @@
     background-color 140ms var(--ease),
     border-color 140ms var(--ease),
     color 140ms var(--ease);
+}
+
+.entity-identity-links small {
+  color: var(--muted);
+  font-size: inherit;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .entity-identity-links svg {
