@@ -61,6 +61,7 @@ class ModelsApi(OperationsApi):
     usage_unavailable: bool = False
     key_unavailable: bool = False
     conflict: bool = False
+    sparse_latency: bool = False
     settings: dict[str, object] | None = None
 
     def handle(self, route: Route) -> None:
@@ -142,6 +143,9 @@ class ModelsApi(OperationsApi):
                         "calls": 2 if index == 1 else (0 if filtered or index == 0 else 1),
                         "failed": 1 if index == 2 and not filtered else 0,
                         "unknown_cost_calls": 1 if index == 2 and not filtered else 0,
+                        "input_tokens": 200 if index == 1 else 0,
+                        "output_tokens": 40 if index == 1 else 0,
+                        "latency_ms": None if self.sparse_latency and index != 1 else 400,
                     }
                 )
             self.respond(
@@ -207,8 +211,19 @@ def test_usage_filters_metrics_history_chart_focus_and_unknown_billing(
     expect(metric.get_by_role("button", name="Tokens", exact=True)).to_have_attribute(
         "aria-pressed", "true"
     )
-    trend.get_by_role("group", name="Model usage intervals").get_by_role("button").nth(1).focus()
-    expect(trend).to_contain_text("Tokens 240")
+    expect(trend.get_by_label("Chart series")).to_contain_text("TotalInputOutput")
+    expect(trend.locator("svg path")).to_have_count(3)
+    intervals = trend.get_by_role("group", name="Model usage intervals").get_by_role("button")
+    intervals.nth(1).focus()
+    expect(trend.get_by_text("200 input · 40 output", exact=True)).to_be_visible()
+    expect(intervals.nth(1)).to_have_attribute("aria-pressed", "true")
+    intervals.nth(1).press("ArrowRight")
+    expect(intervals.nth(2)).to_be_focused()
+    expect(trend).to_contain_text("calls with unknown cost; reported spend excludes them")
+    intervals.nth(2).press("Home")
+    expect(intervals.nth(0)).to_be_focused()
+    intervals.nth(0).press("End")
+    expect(intervals.nth(2)).to_be_focused()
     page.get_by_role("combobox", name="Usage model").select_option("z-ai/fallback")
     expect(page.get_by_text("1 calls with unknown cost", exact=True)).to_have_count(0)
     page.get_by_role("combobox", name="Model usage time range").select_option("30d")
@@ -224,6 +239,23 @@ def test_usage_filters_metrics_history_chart_focus_and_unknown_billing(
     page.get_by_text("Recent calls · latest 1", exact=True).click()
     expect(page.get_by_text("deepseek/primary → z-ai/fallback", exact=True)).to_be_visible()
     expect(page.get_by_role("region", name="OpenRouter key usage")).to_contain_text("$4.00")
+
+
+def test_line_chart_missing_latency_is_a_gap_not_zero(
+    models_page: tuple[Page, ModelsApi, str],
+) -> None:
+    page, scenario, url = models_page
+    scenario.sparse_latency = True
+    page.goto(f"{url}/admin?tab=models&usage_metric=latency")
+    trend = page.get_by_role("region", name="Model usage trend")
+    expect(trend).to_be_visible()
+    path = trend.locator("svg path").get_attribute("d")
+    assert path and path.count("M") == 1 and "L" not in path
+    intervals = trend.get_by_role("group", name="Model usage intervals").get_by_role("button")
+    intervals.nth(0).focus()
+    expect(trend.get_by_text("No measurement", exact=True)).to_be_visible()
+    intervals.nth(0).press("ArrowRight")
+    expect(trend.get_by_text("200 input · 40 output", exact=True)).to_be_visible()
 
 
 def test_budget_edit_survives_refresh_uses_exact_values_and_reports_conflicts(

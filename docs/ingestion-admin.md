@@ -116,6 +116,7 @@ Cadence/operator → durable command → ingestion-command worker
 ## Models
 
 - Open `/admin?tab=models` for OpenRouter spend, tokens, latency and outcomes. Choose 24 hours, 7/30/90 days, custom UTC dates or an actual model; bookmarks retain these filters.
+- Line charts show interval totals, input/output tokens and failed calls. Hover, focus or use arrow keys for interval details; missing latency and pre-accounting history stay gaps.
 - Application history starts when [model accounting](../src/events_concierge/adapters/agent_runtime/openrouter/runtime.py) is activated. Chat and the development CLI record each physical request, including tool-loop calls and fallback models. Missing costs remain unknown; totals include only provider-reported USD. No prompts, answers or keys are retained.
 - Reviewer budget edits are audited and revision checked. Daily/monthly USD limits start unset; zero stops new calls in enforcement mode. Warning mode only shows alerts.
 - Limits use all application calls, independent of chart filters, and reset at midnight UTC. Enforcement stops new calls after recorded spend reaches a limit or a completed/stale pending charge is unknown in the active budget period. Calls already admitted can exceed the limit.

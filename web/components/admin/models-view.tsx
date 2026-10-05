@@ -7,11 +7,11 @@ import {
   budgetAmount, budgetState, usageFiltersFromUrl, usageFiltersUrl, usageValue, usageWindow, usd,
   type BudgetUpdate, type KeyUsage, type ModelBudget, type UsageFilters, type UsageMetric, type UsageReport, type UsageTotals,
 } from "@/lib/admin-model-usage";
-import { Action, Chip, Metrics, PageHead, Segment, ms } from "./console-kit";
+import { Action, Chip, Metrics, PageHead, ms } from "./console-kit";
 import { useAdminSnapshot } from "./use-admin-snapshot";
+import { UsageChart } from "./usage-chart";
 import styles from "./models-view.module.css";
 
-const metricLabels: Record<UsageMetric, string> = { cost: "Spend", tokens: "Tokens", calls: "Calls", latency: "Latency" };
 const count = (value: number) => value.toLocaleString("en-US");
 const utc = (value: string) => new Date(value).toLocaleString("en-US", { timeZone: "UTC", month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
 function metricText(row: UsageTotals, metric: UsageMetric): string {
@@ -142,25 +142,6 @@ function ModelsWorkspace({ filters, onChange, refreshVersion, canConfigureBudget
           <td>{call.input_tokens === null ? "?" : count(call.input_tokens)} / {call.output_tokens === null ? "?" : count(call.output_tokens)}</td><td>{ms(call.latency_ms)}</td></tr>)}
       </tbody></table></div></details> : null}
   </div>;
-}
-
-function UsageChart({ report, metric, onMetric }: { report: UsageReport; metric: UsageMetric; onMetric: (metric: UsageMetric) => void }) {
-  const [selected, setSelected] = useState<string | null>(null);
-  const row = report.series.find((bucket) => bucket.at === selected) ?? null;
-  const peak = Math.max(0, ...report.series.map((bucket) => usageValue(bucket, metric) ?? 0));
-  return <section className={`${styles.section} ${styles.chart}`} aria-label="Model usage trend">
-    <div className={styles.sectionHead}><h2>Over time</h2><Segment label="Chart metric" value={metric} onChange={onMetric} options={Object.entries(metricLabels).map(([value, label]) => ({ value: value as UsageMetric, label }))} /></div>
-    <div className={styles.axis}><span>{metricLabels[metric]} · {report.bucket_hours === 1 ? "hourly" : "daily"} intervals (UTC)</span><span>Peak {peak ? (metric === "cost" ? usd(peak) : metric === "latency" ? ms(peak) : count(peak)) : "—"}</span></div>
-    <div className={styles.plot} role="group" aria-label="Model usage intervals">
-      {report.series.map((bucket) => <button type="button" className={styles.bar} key={bucket.at}
-        aria-label={`${utc(bucket.at)} UTC · ${metricLabels[metric]} ${metricText(bucket, metric)} · ${bucket.calls} calls · ${bucket.unknown_cost_calls} unknown costs`}
-        aria-pressed={row?.at === bucket.at} onFocus={() => setSelected(bucket.at)} onMouseEnter={() => setSelected(bucket.at)} onClick={() => setSelected(bucket.at)}>
-        <span style={{ height: `${peak ? Math.max(1, (usageValue(bucket, metric) ?? 0) / peak * 100) : 1}%` }} />
-      </button>)}
-    </div>
-    <div className={styles.axis}><span>{utc(report.start_at)}</span><span>{utc(report.end_at)} UTC</span></div>
-    <div className={styles.selection} aria-live="polite">{row ? `${utc(row.at)} – ${utc(row.until)} UTC · ${metricLabels[metric]} ${metricText(row, metric)} · ${row.calls} calls · ${row.failed} failed · ${row.unknown_cost_calls} unknown costs` : "Select or focus an interval for details."}</div>
-  </section>;
 }
 
 function BudgetPanel({ budget, canConfigure, onSaved }: { budget: ModelBudget; canConfigure: boolean; onSaved: () => void }) {
