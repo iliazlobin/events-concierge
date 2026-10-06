@@ -43,6 +43,13 @@ SECRETS = {
     **{name: {"database-url", "redis-url"} for name in CONSUMERS},
 }
 SECRET_NAMES = set().union(*SECRETS.values())
+TLS_RECOVERY_NAMES = frozenset(
+    f"ec-dev-{store}-ca-recovery-g1" for store in ("postgres", "redis", "temporal")
+)
+TLS_RECOVERY_ADDRESSES = frozenset(
+    f'google_secret_manager_secret.tls_recovery["{store}"]'
+    for store in ("postgres", "redis", "temporal")
+)
 MEDIA_BUCKET = "iz27-platform-dev-ec-media"
 MEDIA_WORKLOADS = frozenset({"api", "development-admin", "account-erasure"})
 BUCKETS = {
@@ -112,6 +119,32 @@ def _secret_name(value):
     )
 
 
+def _tls_recovery_name(value):
+    return next(
+        (
+            name
+            for name in TLS_RECOVERY_NAMES
+            if value in {name, f"projects/{PROJECT}/secrets/{name}"}
+        ),
+        None,
+    )
+
+
+def _safe_tls_recovery(value):
+    replication = value.get("replication") or []
+    return (
+        value.get("project") == PROJECT
+        and value.get("labels") == {"purpose": "ca-recovery", "generation": "1"}
+        and value.get("version_destroy_ttl") == "2592000s"
+        and not value.get("expire_time")
+        and not value.get("ttl")
+        and len(replication) == 1
+        and len(replication[0].get("auto") or []) == 1
+        and not replication[0].get("user_managed")
+        and not any(key in value for key in ("secret_data", "payload", "ca_private_key_pem"))
+    )
+
+
 def _safe_resource(kind, value):  # noqa: PLR0911, PLR0912 - Scope review stays in one allowlist.
     if kind not in ALLOWED:
         return False
@@ -147,6 +180,8 @@ def _safe_resource(kind, value):  # noqa: PLR0911, PLR0912 - Scope review stays 
             )
         return valid and value.get("repository_id") == "ec-dev" and value.get("format") == "DOCKER"
     if kind.startswith("google_secret_manager_secret"):
+        if _tls_recovery_name(value.get("secret_id")):
+            return kind == "google_secret_manager_secret" and _safe_tls_recovery(value)
         secret = _secret_name(value.get("secret_id"))
         if value.get("project") != PROJECT or secret is None:
             return False
@@ -223,16 +258,47 @@ def _operator_prerequisite_errors(resources):
             value = {}
         if resource.get("type") != kind or any(value.get(k) != v for k, v in required.items()):
             errors.append(f"{address}: wrong dedicated operator identity or grant")
-        if kind == "google_secret_manager_secret_iam_member" and _secret_name(
-            value.get("secret_id")
-        ) != "operator-database-url":
+        if (
+            kind == "google_secret_manager_secret_iam_member"
+            and _secret_name(value.get("secret_id")) != "operator-database-url"
+        ):
             errors.append(f"{address}: operator receives only its controller database secret")
     if seen != OPERATOR_RESOURCES.keys():
-        errors.append("Operator prerequisite plan must include its GSA and both exact IAM resources")
+        errors.append(
+            "Operator prerequisite plan must include its GSA and both exact IAM resources"
+        )
     return errors
 
 
-def inspect(plan, *, operator_prerequisite=False):
+def _tls_recovery_errors(resources):
+    errors = []
+    seen = set()
+    for resource in resources:
+        if resource.get("mode") != "managed":
+            continue
+        address = resource.get("address")
+        change = resource.get("change", {})
+        if address not in TLS_RECOVERY_ADDRESSES:
+            if change.get("actions") != ["no-op"]:
+                errors.append(f"{address}: TLS custody cannot change existing resources")
+            continue
+        seen.add(address)
+        store = address.split('["', 1)[1].split('"', 1)[0]
+        value = change.get("after")
+        if not isinstance(value, dict):
+            value = {}
+        if (
+            resource.get("type") != "google_secret_manager_secret"
+            or value.get("secret_id") != f"ec-dev-{store}-ca-recovery-g1"
+            or not _safe_tls_recovery(value)
+        ):
+            errors.append(f"{address}: wrong TLS recovery container or protection")
+    if seen != TLS_RECOVERY_ADDRESSES:
+        errors.append("TLS custody plan must include all three exact recovery containers")
+    return errors
+
+
+def inspect(plan, *, operator_prerequisite=False, tls_recovery=False):
     errors = []
     for resource in plan.get("resource_changes", []):
         if resource.get("mode") == "data":
@@ -252,6 +318,8 @@ def inspect(plan, *, operator_prerequisite=False):
             )
     if operator_prerequisite:
         errors.extend(_operator_prerequisite_errors(plan.get("resource_changes", [])))
+    if tls_recovery:
+        errors.extend(_tls_recovery_errors(plan.get("resource_changes", [])))
     return errors
 
 
@@ -262,10 +330,17 @@ def main(argv=None):
         action="store_true",
         help="Allow only the dedicated operator GSA and its exact two IAM additions; keep existing resources unchanged",
     )
+    parser.add_argument(
+        "--tls-recovery",
+        action="store_true",
+        help="Allow only the three protected TLS recovery containers; keep existing resources unchanged",
+    )
     parser.add_argument("plan", type=Path, help="Saved terraform show -json application plan")
     args = parser.parse_args(argv)
     errors = inspect(
-        json.loads(args.plan.read_text()), operator_prerequisite=args.operator_prerequisite
+        json.loads(args.plan.read_text()),
+        operator_prerequisite=args.operator_prerequisite,
+        tls_recovery=args.tls_recovery,
     )
     print("\n".join(errors) if errors else "Shared-development application plan scope passed")
     return int(bool(errors))
