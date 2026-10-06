@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from ipaddress import ip_address
 from typing import Any, Literal
 from urllib.parse import urlsplit
@@ -189,7 +190,10 @@ class Settings(BaseSettings):
     # Hosted operators run a separate entrypoint, identity verifier, and database pool. These
     # settings never install operator routes into the consumer app.
     operator_api_enabled: bool = False
+    operator_auth_provider: Literal["iap", "cloudflare_access"] = "iap"
     operator_iap_audience: str | None = Field(default=None, min_length=1, max_length=512)
+    operator_cloudflare_team_domain: str | None = None
+    operator_cloudflare_audience: str | None = None
     operator_public_origin: str | None = None
     operator_subject_roles: dict[str, Literal["viewer", "operator", "reviewer"]] = Field(
         default_factory=dict,
@@ -289,6 +293,8 @@ class Settings(BaseSettings):
     identity_platform_api_key: str | None = Field(default=None, min_length=20, max_length=256)
     identity_platform_auth_domain: str | None = None
     identity_platform_providers: tuple[Literal["google.com", "apple.com"], ...] = ("google.com",)
+    # Only deployment configuration can defer legal acceptance; account/session authority remains.
+    consumer_legal_mode: Literal["required", "deferred"] = "required"
     signup_terms_version: str | None = Field(
         default=None, pattern=r"^[A-Za-z0-9][A-Za-z0-9._-]{0,79}$"
     )
@@ -484,6 +490,37 @@ class Settings(BaseSettings):
             or origin.fragment
         ):
             raise ValueError("Identity Platform requires an exact HTTPS application origin")
+        return self
+
+    @field_validator(
+        "signup_terms_version",
+        "signup_terms_url",
+        "signup_privacy_version",
+        "signup_privacy_url",
+        mode="before",
+    )
+    @classmethod
+    def normalize_unset_legal_documents(cls, value: object) -> object:
+        # Helm/environment overrides clear inherited strict-mode examples with empty strings.
+        return None if value == "" else value
+
+    @model_validator(mode="after")
+    def validate_consumer_legal_configuration(self) -> Settings:
+        if self.consumer_legal_mode == "deferred" and not self.identity_platform_enabled:
+            raise ValueError("legal deferral requires managed consumer identity")
+        if not self.identity_platform_enabled:
+            return self
+        if self.consumer_legal_mode == "deferred":
+            if any(
+                (
+                    self.signup_terms_version,
+                    self.signup_terms_url,
+                    self.signup_privacy_version,
+                    self.signup_privacy_url,
+                )
+            ):
+                raise ValueError("deferred legal acceptance cannot configure legal documents")
+            return self
         if not self.signup_terms_version or not self.signup_privacy_version:
             raise ValueError("consumer signup requires published terms and privacy versions")
         for value in (self.signup_terms_url, self.signup_privacy_url):
@@ -502,7 +539,9 @@ class Settings(BaseSettings):
         return self
 
     @property
-    def consumer_legal_policy(self) -> LegalPolicy:
+    def consumer_legal_policy(self) -> LegalPolicy | None:
+        if self.consumer_legal_mode == "deferred":
+            return None
         assert self.signup_terms_version and self.signup_terms_url
         assert self.signup_privacy_version and self.signup_privacy_url
         return LegalPolicy(
@@ -541,8 +580,23 @@ class Settings(BaseSettings):
         if self.operator_api_enabled:
             if self.mock_cloud or self.admin_ingestion_enabled:
                 raise ValueError("hosted operator API cannot use the local mock admin profile")
-            if not self.operator_iap_audience or not self.operator_subject_roles:
-                raise ValueError("operator API requires IAP audience and explicit subject roles")
+            if not self.operator_subject_roles:
+                raise ValueError("operator API requires explicit subject roles")
+            if self.operator_auth_provider == "iap":
+                if not self.operator_iap_audience:
+                    raise ValueError("operator API requires IAP audience")
+            elif (
+                not re.fullmatch(
+                    r"https://[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.cloudflareaccess\.com",
+                    self.operator_cloudflare_team_domain or "",
+                )
+                or not re.fullmatch(r"[a-f0-9]{64}", self.operator_cloudflare_audience or "")
+                or self.operator_iap_audience is not None
+            ):
+                raise ValueError(
+                    "Cloudflare operator requires an exact HTTPS team domain and application AUD, "
+                    "without an IAP audience"
+                )
             if not self.operator_database_url:
                 raise ValueError("operator API requires a separate operator database credential")
             origin = urlsplit(self.operator_public_origin or "")

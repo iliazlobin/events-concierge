@@ -1,7 +1,7 @@
 """Safe operational projections and durable ingestion commands.
 
 The consumer app installs these routes only in explicit local/mock mode behind loopback checks.
-The separate hosted operator app resolves signed IAP identity and capabilities. Neither edge
+The separate hosted operator app resolves signed edge identity and capabilities. Neither edge
 invokes a catalog runner during an HTTP request.
 """
 

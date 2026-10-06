@@ -486,6 +486,15 @@ def _check_public_origin(value: str, *, profile: str = "remote_https") -> Config
 
 def _check_builtin_identity_configuration(settings: Settings) -> ConfigCheck:
     if settings.identity_platform_enabled:
+        documents = (
+            settings.signup_terms_version,
+            settings.signup_terms_url,
+            settings.signup_privacy_version,
+            settings.signup_privacy_url,
+        )
+        legal_configured = (settings.consumer_legal_mode == "required" and all(documents)) or (
+            settings.consumer_legal_mode == "deferred" and not any(documents)
+        )
         return _check(
             "built_in_identity_configuration",
             bool(
@@ -493,12 +502,9 @@ def _check_builtin_identity_configuration(settings: Settings) -> ConfigCheck:
                 and settings.identity_platform_api_key
                 and settings.identity_platform_auth_domain
                 and settings.identity_platform_providers
-                and settings.signup_terms_version
-                and settings.signup_terms_url
-                and settings.signup_privacy_version
-                and settings.signup_privacy_url
+                and legal_configured
             ),
-            "Identity Platform project, providers and published legal documents are configured",
+            f"Identity Platform project/providers configured; legal acceptance {settings.consumer_legal_mode}",
             "Identity Platform requires a complete project-bound signup configuration",
         )
     if not settings.oidc_bff_enabled:

@@ -140,11 +140,13 @@ these prerequisites or authorize a migration/deployment.
 
 ### Private operator
 
-The [authenticated private values](values-private-authenticated.example.yaml) also support the
-existing signed-IAP operator app against the retained PostgreSQL service. Enable `operator.enabled`
-and both operator workloads only after supplying the separate hostname, TLS/OAuth Secret references,
-exact signed-IAP backend audience, and the owner's stable `accounts.google.com:*` subject/role.
-The API also requires the signed email `iliazlobin91@gmail.com`; consumer login never grants admin access.
+The [authenticated private values](values-private-authenticated.example.yaml) support a separate
+operator app against the retained PostgreSQL service. Enable `operator.enabled` and both operator
+workloads only with a complete reviewed identity configuration. `operator.authProvider=iap` remains
+the default and requires the separate hostname, TLS/OAuth references, exact backend audience and
+owner's stable IAP subject. `cloudflare_access` requires the existing private tunnel profile,
+exact `admin-events.iliazlobin.com` hostname, fixed team issuer/application AUD and the owner's stable
+Access subject. Both require the signed email `iliazlobin91@gmail.com`; consumer login grants no role.
 
 - Supply an isolated operator API GCP identity authorized only for the numbered
   `ec-dev-operator-database-url` Secret Manager version. Its login must retain only
@@ -154,11 +156,14 @@ The API also requires the signed email `iliazlobin91@gmail.com`; consumer login 
   Cloud SQL sidecar. The frontend has no backend secrets or cloud identity. Apply both charts'
   reviewed network policies: the shared data policy excludes both operator components, and the
   application chart supplies only the operator routes.
-- The private chart creates no Gateway or OAuth resources. Its current ingress admits only
-  Google Front End ranges and its API accepts only signed IAP assertions. HTTP IAP needs a
-  separate approved edge/controller change. Cloudflare Access requires a separately reviewed
-  JWT verifier and connector routing; Access headers cannot substitute for IAP assertions.
-  Preserve existing Symphony OAuth and Hermes tunnel resources.
+- The private chart creates no Gateway or OAuth resources. IAP mode admits only Google Front End
+  ranges and requires a separate approved IAP edge. Cloudflare mode admits only the dedicated
+  connector to the operator frontend, which forwards only `Cf-Access-Jwt-Assertion` to the API.
+  The API verifies RS256, issuer/AUD, timestamps, owner email and assigned subject on every request.
+  Its JWKS egress is restricted to reviewed Cloudflare CIDRs on 443; other operator boundaries stay
+  isolated. Use the [admin overlay](values-cloudflare-admin.example.yaml) and
+  [provider/routing acceptance steps](../../public-access.md#cloudflare-admin). Preserve existing
+  Symphony OAuth and Hermes tunnel resources.
 - Add `--operator` to private `wait_ready.py` and backup creation only when both operator pods
   are installed. Recovery uses the recorded inventory; no extra resume flag. Verify owner login,
   admin reads/commands, non-owner denial, missing/forged assertion denial, CSRF, credential

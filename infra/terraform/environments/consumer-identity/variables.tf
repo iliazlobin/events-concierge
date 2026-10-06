@@ -17,7 +17,17 @@ variable "erasure_service_account" { type = string }
 variable "signup_enabled" {
   type        = bool
   default     = false
-  description = "Enable only after providers, legal pages and the deployed account flow are verified."
+  description = "Enable after providers, the approved legal mode and deployed account flow are verified."
+}
+variable "foundation_owned_services" {
+  type        = set(string)
+  default     = []
+  description = "Supporting APIs already enabled and owned by the foundation state; never adopt them here."
+  validation {
+    condition = alltrue([for service in var.foundation_owned_services :
+    contains(["iam.googleapis.com", "secretmanager.googleapis.com"], service)])
+    error_message = "Only IAM and Secret Manager supporting APIs can remain foundation-owned."
+  }
 }
 variable "operator_backend_service" {
   type        = string

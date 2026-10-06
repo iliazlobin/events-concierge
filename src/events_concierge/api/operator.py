@@ -1,7 +1,7 @@
 """Separate production operator ASGI app; no consumer/provider graph is instantiated.
 
 Run uvicorn events_concierge.api.operator:create_operator_app --factory. The public web service
-forwards the original signed IAP assertion; this API validates it on every request.
+forwards the configured edge's signed assertion; this API validates it on every request.
 """
 
 from __future__ import annotations
@@ -31,7 +31,11 @@ from ..infra.operator_database import OperatorDatabase
 from .admin import _local_ingestion_admin, install_ingestion_admin_routes
 from .command_investigation import install_command_investigation_routes
 from .model_usage import install_model_usage_routes
-from .operator_auth import IapOperatorIdentityVerifier, OperatorPrincipal
+from .operator_auth import (
+    CloudflareAccessOperatorIdentityVerifier,
+    IapOperatorIdentityVerifier,
+    OperatorPrincipal,
+)
 from .operator_operations import install_operator_operations_routes
 
 _MAX_BODY_BYTES = 16_384
@@ -98,7 +102,7 @@ def install_operator_session_routes(app: FastAPI) -> None:
                 "role": principal.role,
                 "capabilities": sorted(principal.capabilities),
                 "environment": request.app.state.settings.env,
-                "authentication": "iap",
+                "authentication": principal.provider,
             }
         return {
             "subject": "local-admin",
@@ -161,12 +165,22 @@ def create_operator_app(settings: Settings | None = None) -> FastAPI:
     )
     if not settings.operator_api_enabled or settings.mock_cloud or settings.admin_ingestion_enabled:
         raise ValueError("standalone operator API requires the explicit non-mock operator profile")
-    assert settings.operator_iap_audience is not None
-    verifier = IapOperatorIdentityVerifier(
-        audience=settings.operator_iap_audience,
-        subject_roles=settings.operator_subject_roles,
-        allowed_email="iliazlobin91@gmail.com",
-    )
+    verifier: IapOperatorIdentityVerifier | CloudflareAccessOperatorIdentityVerifier
+    if settings.operator_auth_provider == "cloudflare_access":
+        assert settings.operator_cloudflare_team_domain is not None
+        assert settings.operator_cloudflare_audience is not None
+        verifier = CloudflareAccessOperatorIdentityVerifier(
+            team_domain=settings.operator_cloudflare_team_domain,
+            audience=settings.operator_cloudflare_audience,
+            subject_roles=settings.operator_subject_roles,
+        )
+    else:
+        assert settings.operator_iap_audience is not None
+        verifier = IapOperatorIdentityVerifier(
+            audience=settings.operator_iap_audience,
+            subject_roles=settings.operator_subject_roles,
+            allowed_email="iliazlobin91@gmail.com",
+        )
 
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:

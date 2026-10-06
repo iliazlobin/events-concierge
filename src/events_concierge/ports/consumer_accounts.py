@@ -7,6 +7,10 @@ from ..domain.consumer_identity import LegalPolicy, VerifiedConsumerIdentity
 
 
 class ConsumerAccountRepository(Protocol):
+    async def bootstrap(self, identity: VerifiedConsumerIdentity) -> UUID:
+        """Resolve an immutable account without claiming or writing legal acceptance."""
+        ...
+
     async def accept(self, identity: VerifiedConsumerIdentity, policy: LegalPolicy) -> UUID:
         """Atomically create or resolve one immutable account and record explicit acceptance."""
         ...
@@ -15,6 +19,6 @@ class ConsumerAccountRepository(Protocol):
         """Require this account's receipt for the currently published legal documents."""
         ...
 
-    async def is_ready(self) -> bool:
+    async def is_ready(self, *, legal_required: bool = True) -> bool:
         """Check the narrow signup capability before enabling provider sign-in."""
         ...

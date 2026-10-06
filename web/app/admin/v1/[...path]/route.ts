@@ -7,6 +7,7 @@ const apiOrigin = hostedOperator
   ? process.env.EC_OPERATOR_API_ORIGIN
   : process.env.EC_API_ORIGIN ?? "http://127.0.0.1:8000";
 const operatorPublicOrigin = process.env.EC_OPERATOR_PUBLIC_ORIGIN;
+const operatorAuthProvider = process.env.EC_OPERATOR_AUTH_PROVIDER ?? "iap";
 const loopbackHosts = new Set(["localhost", "127.0.0.1", "[::1]", "::1"]);
 const sourceKey = /^[a-z0-9][a-z0-9-]{1,79}$/;
 const commandId = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
@@ -250,11 +251,16 @@ async function proxyAdminRequest(
 
   const verifiedHeaders: Record<string, string> = {};
   if (hostedOperator) {
-    const assertion = request.headers.get("x-goog-iap-jwt-assertion");
+    if (!["iap", "cloudflare_access"].includes(operatorAuthProvider)) {
+      return jsonError("operator identity provider is not configured", 503);
+    }
+    const assertionHeader = operatorAuthProvider === "cloudflare_access"
+      ? "Cf-Access-Jwt-Assertion" : "X-Goog-IAP-JWT-Assertion";
+    const assertion = request.headers.get(assertionHeader);
     if (!assertion || assertion.length > 8192 || assertion.includes(",")) {
       return jsonError("verified operator identity required", 401);
     }
-    verifiedHeaders["X-Goog-IAP-JWT-Assertion"] = assertion;
+    verifiedHeaders[assertionHeader] = assertion;
     if (method !== "GET") {
       const fetchSite = request.headers.get("sec-fetch-site");
       if (fetchSite !== null && fetchSite !== "same-origin") {

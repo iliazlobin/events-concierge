@@ -42,6 +42,9 @@ test("one imported proxy honors the runtime EC_API_ORIGIN and preserves requests
         authorization: request.headers.authorization,
         cookie: request.headers.cookie,
         spoofedForwarding: request.headers["x-forwarded-host"],
+        operatorIap: request.headers["x-goog-iap-jwt-assertion"],
+        operatorAccess: request.headers["cf-access-jwt-assertion"],
+        operatorEmail: request.headers["cf-access-authenticated-user-email"],
       }));
     });
   })));
@@ -58,6 +61,9 @@ test("one imported proxy honors the runtime EC_API_ORIGIN and preserves requests
           Cookie: "session=abc",
           "Content-Type": "application/json",
           "X-Forwarded-Host": "attacker.example",
+          "X-Goog-IAP-JWT-Assertion": "signed.iap.bytes",
+          "Cf-Access-Jwt-Assertion": "signed.cf.bytes",
+          "Cf-Access-Authenticated-User-Email": "iliazlobin91@gmail.com",
         },
         body: '{"city":"Oakland"}',
       },

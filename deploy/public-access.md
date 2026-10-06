@@ -1,10 +1,13 @@
-# Public consumer access
+# Public access
 
 Public origin: **https://events.iliazlobin.com**. The Helm connector is opt-in;
 publishing DNS requires a reviewed, verified non-mock release and configured
 [consumer identity](../deployment/consumer-identity.md). The private development profile
 cannot enable it. The [authenticated datastore composition](development.md#authenticated-discovery-and-encrypted-dependencies)
 must be released first; this package does not convert plaintext stores to TLS.
+Admin origin: **https://admin-events.iliazlobin.com**, separately protected by Cloudflare Access
+when the operator's `cloudflare_access` mode is enabled. Consumer browsing remains anonymous;
+consumer login grants no operator role. Configuration/rendering does not establish deployed access.
 
 ## Route and ownership
 
@@ -17,10 +20,12 @@ Browser → Cloudflare HTTPS → encrypted tunnel → GKE consumer filter → co
   run inside GKE independently of the Mac.
 - Two small connector pods run digest-pinned cloudflared and Caddy. The filter admits
   the exact consumer hostname and consumer routes; admin, probes and unknown paths return
-  `404`. It removes forwarded operator identity headers. Admin retains its private/IAP route.
+  `404`. It removes forwarded operator identity headers. Cloudflare admin uses a separate
+  loopback listener and operator frontend; existing IAP deployments keep their default mode.
 - The connector has no Kubernetes API token, GCP identity or application credentials.
   Its only secret is a tunnel-specific token file. NetworkPolicy permits DNS, the consumer
-  frontend and [Cloudflare tunnel endpoints](https://developers.cloudflare.com/cloudflare-one/networks/connectors/cloudflare-tunnel/configure-tunnels/tunnel-with-firewall/)
+  frontend, the operator frontend only when Cloudflare admin is enabled, and
+  [Cloudflare tunnel endpoints](https://developers.cloudflare.com/cloudflare-one/networks/connectors/cloudflare-tunnel/configure-tunnels/tunnel-with-firewall/)
   on TCP/UDP 7844. DNS permits only `kube-dns` and [NodeLocal DNSCache](https://docs.cloud.google.com/kubernetes-engine/docs/how-to/nodelocal-dns-cache)
   pods in `kube-system`, port 53. No public GCP Gateway, LoadBalancer or inbound firewall rule is added.
 - The data chart must exclude `public-tunnel` from its internal allow policy in both directions.
@@ -35,7 +40,7 @@ Browser → Cloudflare HTTPS → encrypted tunnel → GKE consumer filter → co
 ## Activate
 
 1. Verify the approved application image/configuration, datastore TLS/mTLS, guest catalog,
-   Google login, consent and owner-only admin. Confirm GKE actually enforces NetworkPolicy.
+   Google login, the approved legal mode and owner-only admin. Confirm GKE actually enforces NetworkPolicy.
 2. Create the dedicated tunnel **without a published route**. Store its token through the
    approved secret channel in a versioned, immutable Kubernetes Secret such as
    `ec-cloudflare-tunnel-v1`, key `token`. Never paste credentials into Git, reports,
@@ -51,9 +56,44 @@ Browser → Cloudflare HTTPS → encrypted tunnel → GKE consumer filter → co
    proxied CNAME `events` → `<dedicated-tunnel-uuid>.cfargotunnel.com`, TTL Auto.
    Check the existing record before creation; publication makes consumer access public.
 5. Verify public TLS and guest browsing in Chrome, filtered URLs, Google cancellation/signup/
-   login/logout, legal acceptance and saved filters. Request `/admin`, `/admin/v1/ingestion`,
+   login/logout, the configured legal behavior and saved filters. Request `/admin`, `/admin/v1/ingestion`,
    `/metrics` and `/readyz`: each must return `404`. Confirm private admin still works.
    Verify cookies, CSRF, two-account isolation and tenant erasure on the deployed origin.
+
+## Cloudflare admin
+
+Browser → owner-only Access application → dedicated tunnel `:8082` → operator frontend → operator API.
+
+1. In the existing Zero Trust team, create a self-hosted Access application for the complete
+   `admin-events.iliazlobin.com` hostname. Allow only `iliazlobin91@gmail.com` through the approved
+   identity provider; do not add a Bypass or Service Auth policy. Leave `events.iliazlobin.com`
+   outside this application. Require application tokens to live at most one hour, including
+   [policy/global/Cloudflare One Client session overrides](https://developers.cloudflare.com/cloudflare-one/access-controls/access-settings/session-management/).
+2. Verify the existing team issuer `https://wild-butterfly-a721.cloudflareaccess.com`, the actual
+   application's AUD, and the owner's stable signed `sub`. Layer
+   [Cloudflare admin values](helm/events-concierge/values-cloudflare-admin.example.yaml) over the
+   reviewed private runtime, tunnel and isolated operator credentials. Empty AUD/subject values
+   deliberately block rendering. Remove IAP/TLS Gateway fields when selecting Cloudflare mode.
+3. Resolve the team's `/cdn-cgi/access/certs` endpoint and approve only the containing
+   [Cloudflare HTTPS CIDRs](https://www.cloudflare.com/ips-v4) in `operator.cloudflareAccess.jwksCidrs`.
+   Kubernetes NetworkPolicy cannot select a hostname; review DNS changes if verification fails.
+   The operator API permits these CIDRs on 443, its application PostgreSQL, DNS and ADC; it has
+   no consumer, Redis or Temporal access. The connector cannot reach the operator API directly.
+4. After approved deployment/readiness, add the exact admin hostname to the dedicated Events
+   tunnel with service `http://127.0.0.1:8082`, original Host preserved. Retain the consumer route
+   on `:8080` and the final `http_status:404` rule. Never use wildcard routes or the Hermes tunnel.
+5. Verify owner login and admin reads/commands in Chrome. Non-owners, missing/forged assertions,
+   wrong issuer/AUD, expired tokens, duplicate assertions and cross-origin mutations must fail.
+   Consumer `/admin` and both hosts' public probes remain `404`; guest catalog access must work.
+
+The API independently verifies the [Access application JWT](https://developers.cloudflare.com/cloudflare-one/access-controls/applications/http-apps/authorization-cookie/application-token/):
+RS256, fixed team issuer/certificate endpoint, exact single application AUD, timestamps,
+`type=app`, signed owner email and configured subject/role. Unsigned email headers, consumer
+cookies and service tokens grant no authority. Signing keys refresh through bounded JWKS
+resolution. Removing/re-adding an Access user changes `sub` and requires a reviewed allowlist
+update. Local signature/expiry checks do not perform an online session-revocation lookup;
+revoke the Access session at the edge and deploy removal of the subject assignment. A retained
+token remains valid to the origin until expiry if the origin still has the old allowlist.
 
 ## Operate
 
@@ -65,7 +105,8 @@ Browser → Cloudflare HTTPS → encrypted tunnel → GKE consumer filter → co
   header debug logging disabled. Check HTTP status metrics and application logs.
 - Token rotation: provision a new immutable Secret, update `tokenSecretName`, verify both
   new connections, then revoke the old tunnel credential. The proxy never mounts the token.
-- Rollback: remove/disable this dedicated published route first, then disable `publicTunnel`.
+- Rollback: remove/disable this dedicated consumer and optional admin published route first,
+  then disable `publicTunnel` and the Cloudflare operator profile together.
   Preserve user identities/data and the private operator route. Never retarget DNS to Hermes
   or restore an incompatible mock/schema release to recover a public endpoint.
 - Offline verification: `EC_HELM_BINARY=helm EC_PUBLIC_TUNNEL_DOCKER=1 .venv/bin/python -m pytest tests/unit/test_public_tunnel.py -o addopts= -q`.

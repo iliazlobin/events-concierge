@@ -119,6 +119,8 @@ function upstreamRequestHeaders(request: Request, bodyLength: number | null): He
       || normalized === "host"
       || normalized === "content-length"
       || normalized === "accept-encoding"
+      || normalized.startsWith("x-goog-")
+      || normalized.startsWith("cf-access-")
     ) {
       return;
     }

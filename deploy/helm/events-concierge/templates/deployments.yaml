@@ -108,6 +108,8 @@ spec:
             - name: EC_OPERATOR_API_ENABLED
               value: {{ ternary "true" "false" (eq $name "operator-frontend") | quote }}
             {{- if eq $name "operator-frontend" }}
+            - name: EC_OPERATOR_AUTH_PROVIDER
+              value: {{ $root.Values.operator.authProvider | quote }}
             - name: EC_OPERATOR_API_ORIGIN
               value: {{ printf "http://%s-operator-api:8000" (include "events-concierge.fullname" $root) | quote }}
             - name: EC_OPERATOR_PUBLIC_ORIGIN

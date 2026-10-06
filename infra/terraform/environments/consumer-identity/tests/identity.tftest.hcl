@@ -62,6 +62,17 @@ run "public_google_origin" {
   }
 }
 
+run "existing_foundation_supporting_apis_remain_unowned" {
+  command = plan
+  variables { foundation_owned_services = ["iam.googleapis.com", "secretmanager.googleapis.com"] }
+  assert {
+    condition = toset([for api in google_project_service.identity : api.service]) == toset([
+      "identitytoolkit.googleapis.com", "apikeys.googleapis.com", "securetoken.googleapis.com",
+    ])
+    error_message = "Existing supporting APIs remain in foundation state, while identity APIs stay app-owned."
+  }
+}
+
 run "loopback_rejected" {
   command = plan
   variables { public_origin = "https://localhost:14443" }

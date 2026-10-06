@@ -1,6 +1,6 @@
-"""Independent operator identity: verified Google IAP assertion plus explicit subject roles.
+"""Independent operator identity: one verified edge assertion plus explicit subject roles.
 
-IAP's unsigned email/ID headers, consumer sessions, and request-body actors confer no authority.
+Unsigned identity headers, consumer sessions, and request-body actors confer no authority.
 The assertion is verified again by the API after the same-origin web proxy forwards it.
 https://cloud.google.com/iap/docs/signed-headers-howto
 """
@@ -21,6 +21,7 @@ OperatorRole = Literal["viewer", "operator", "reviewer"]
 IAP_ISSUER = "https://cloud.google.com/iap"
 IAP_JWKS_URL = "https://www.gstatic.com/iap/verify/public_key-jwk"
 IAP_HEADER = "x-goog-iap-jwt-assertion"
+CLOUDFLARE_ACCESS_HEADER = "cf-access-jwt-assertion"
 _MAX_ASSERTION_BYTES = 8192
 _MAX_SUBJECT_LENGTH = 200
 _MAX_ASSERTION_LIFETIME_SECONDS = 3600
@@ -44,10 +45,11 @@ _ROLE_CAPABILITIES: dict[OperatorRole, frozenset[str]] = {
 class OperatorPrincipal:
     subject: str
     role: OperatorRole
+    provider: Literal["iap", "cloudflare_access"] = "iap"
 
     @property
     def actor(self) -> str:
-        return f"iap:{self.subject}"
+        return f"{self.provider}:{self.subject}"
 
     @property
     def capabilities(self) -> frozenset[str]:
@@ -56,6 +58,8 @@ class OperatorPrincipal:
 
 class IapOperatorIdentityVerifier:
     """ES256-only, fixed issuer/keys/audience, bounded key rotation and subject allowlist."""
+
+    header = IAP_HEADER
 
     def __init__(
         self,
@@ -118,6 +122,81 @@ class IapOperatorIdentityVerifier:
         return OperatorPrincipal(subject, role)
 
 
+class CloudflareAccessOperatorIdentityVerifier:
+    """RS256 application JWTs from one team and audience; never an unsigned email header.
+
+    https://developers.cloudflare.com/cloudflare-one/access-controls/applications/http-apps/authorization-cookie/application-token/
+    """
+
+    header = CLOUDFLARE_ACCESS_HEADER
+
+    def __init__(
+        self,
+        *,
+        team_domain: str,
+        audience: str,
+        subject_roles: Mapping[str, OperatorRole],
+        key_resolver: Callable[[str], Awaitable[PyJWK]] | None = None,
+    ) -> None:
+        if (
+            not re.fullmatch(
+                r"https://[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.cloudflareaccess\.com",
+                team_domain,
+            )
+            or not re.fullmatch(r"[a-f0-9]{64}", audience)
+            or not subject_roles
+        ):
+            raise ValueError("Cloudflare operator requires a fixed team, AUD and subject roles")
+        self._issuer = team_domain
+        self._audience = audience
+        self._roles = dict(subject_roles)
+        self._key_resolver = key_resolver or _BoundedJwksResolver(
+            PyJWKClient(team_domain + "/cdn-cgi/access/certs", timeout=5, cache_jwk_set=True)
+        ).resolve
+
+    async def verify(self, token: str) -> OperatorPrincipal:
+        if not token or len(token.encode("utf-8")) > _MAX_ASSERTION_BYTES:
+            raise _unauthenticated()
+        try:
+            header = get_unverified_header(token)
+            if header.get("alg") != "RS256" or header.get("crit"):
+                raise _unauthenticated()
+            key = await self._key_resolver(token)
+            if key.key_type != "RSA" or key.algorithm_name != "RS256":
+                raise _unauthenticated()
+            claims = decode(
+                token,
+                key.key,
+                algorithms=["RS256"],
+                audience=self._audience,
+                issuer=self._issuer,
+                leeway=30,
+                options={"require": ["iss", "aud", "exp", "iat", "nbf", "sub", "email", "type"]},
+            )
+            subject = claims["sub"]
+            issued, expires, not_before = claims["iat"], claims["exp"], claims["nbf"]
+            if (
+                claims["aud"] not in (self._audience, [self._audience])
+                or claims["type"] != "app"
+                or not isinstance(subject, str)
+                or not subject
+                or len(subject) > _MAX_SUBJECT_LENGTH
+                or not subject.isprintable()
+                or any(char.isspace() for char in subject)
+                or type(issued) is not int
+                or type(expires) is not int
+                or type(not_before) is not int
+                or not 0 < expires - issued <= _MAX_ASSERTION_LIFETIME_SECONDS
+            ):
+                raise _unauthenticated()
+        except (PyJWTError, ValueError, TypeError, KeyError, OSError) as error:
+            raise _unauthenticated() from error
+        role = self._roles.get(subject)
+        if claims["email"] != "iliazlobin91@gmail.com" or role is None:
+            raise HTTPException(403, "operator access is not assigned", headers=_NO_STORE)
+        return OperatorPrincipal(subject, role, "cloudflare_access")
+
+
 def _unauthenticated() -> HTTPException:
     return HTTPException(401, "verified operator identity required", headers=_NO_STORE)
 
@@ -145,10 +224,12 @@ async def authorize_operator(request: Request) -> OperatorPrincipal:
     principal = getattr(request.state, "operator_principal", None)
     if isinstance(principal, OperatorPrincipal):
         return principal
-    assertions = request.headers.getlist(IAP_HEADER)
+    verifier: IapOperatorIdentityVerifier | CloudflareAccessOperatorIdentityVerifier = (
+        request.app.state.operator_identity_verifier
+    )
+    assertions = request.headers.getlist(verifier.header)
     if len(assertions) != 1:
         raise _unauthenticated()
-    verifier: IapOperatorIdentityVerifier = request.app.state.operator_identity_verifier
     principal = await verifier.verify(assertions[0])
     if required_capability(request) not in principal.capabilities:
         raise HTTPException(403, "operator capability is not assigned", headers=_NO_STORE)

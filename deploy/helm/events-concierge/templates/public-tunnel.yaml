@@ -6,6 +6,9 @@ metadata:
 data:
   Caddyfile: |
     {{- tpl (.Files.Get "files/public-consumer.Caddyfile") . | nindent 4 }}
+    {{- if and .Values.operator.enabled (eq .Values.operator.authProvider "cloudflare_access") }}
+    {{- tpl (.Files.Get "files/public-operator.Caddyfile") . | nindent 4 }}
+    {{- end }}
 ---
 apiVersion: apps/v1
 kind: Deployment
@@ -24,6 +27,9 @@ spec:
         {{- include "events-concierge.labels" (dict "root" . "component" "public-tunnel") | nindent 8 }}
       annotations:
         checksum/public-proxy: {{ tpl (.Files.Get "files/public-consumer.Caddyfile") . | sha256sum }}
+        {{- if and .Values.operator.enabled (eq .Values.operator.authProvider "cloudflare_access") }}
+        checksum/operator-proxy: {{ tpl (.Files.Get "files/public-operator.Caddyfile") . | sha256sum }}
+        {{- end }}
     spec:
       # No Workload Identity, Kubernetes API token or application secrets.
       automountServiceAccountToken: false
@@ -147,6 +153,13 @@ spec:
             matchLabels:
               {{- include "events-concierge.selectorLabels" (dict "root" . "component" "frontend") | nindent 14 }}
       ports: [{port: 3000, protocol: TCP}]
+    {{- if and .Values.operator.enabled (eq .Values.operator.authProvider "cloudflare_access") }}
+    - to:
+        - podSelector:
+            matchLabels:
+              {{- include "events-concierge.selectorLabels" (dict "root" . "component" "operator-frontend") | nindent 14 }}
+      ports: [{port: 3000, protocol: TCP}]
+    {{- end }}
     # IPv4 tunnel endpoint ranges; no general Internet, metadata, API or datastore access.
     - to:
         - ipBlock: {cidr: 198.41.192.0/24}

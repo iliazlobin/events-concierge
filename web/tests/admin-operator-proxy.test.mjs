@@ -4,7 +4,7 @@ import http from "node:http";
 import test from "node:test";
 
 async function route(t, environment) {
-  const keys = ["EC_OPERATOR_API_ENABLED", "EC_OPERATOR_API_ORIGIN", "EC_OPERATOR_PUBLIC_ORIGIN", "EC_API_ORIGIN"];
+  const keys = ["EC_OPERATOR_API_ENABLED", "EC_OPERATOR_API_ORIGIN", "EC_OPERATOR_PUBLIC_ORIGIN", "EC_OPERATOR_AUTH_PROVIDER", "EC_API_ORIGIN"];
   const previous = Object.fromEntries(keys.map((key) => [key, process.env[key]]));
   for (const key of keys) {
     if (environment[key] === undefined) delete process.env[key];
@@ -86,6 +86,48 @@ test("hosted proxy rejects unsigned and cross-origin mutations before backend co
     }, "{}"));
     assert.ok([401, 403].includes(response.status));
   }
+  assert.equal(upstream.received.length, 0);
+});
+
+test("Cloudflare operator forwards only its assertion and rejects IAP or unsigned identity", async (t) => {
+  const upstream = await backend(t);
+  const api = await route(t, {
+    EC_OPERATOR_API_ENABLED: "true", EC_OPERATOR_API_ORIGIN: upstream.origin,
+    EC_OPERATOR_PUBLIC_ORIGIN: "https://ops.example.test", EC_OPERATOR_AUTH_PROVIDER: "cloudflare_access",
+  });
+  for (const headers of [
+    { "X-Goog-IAP-JWT-Assertion": "other.jwt.bytes" },
+    { "Cf-Access-Authenticated-User-Email": "iliazlobin91@gmail.com" },
+    { "Cf-Access-Jwt-Assertion": "one.jwt.bytes,two.jwt.bytes" },
+  ]) {
+    assert.equal((await api.GET(...request(["operator", "session"], "GET", headers))).status, 401);
+  }
+  assert.equal(upstream.received.length, 0);
+  const response = await api.POST(...request(["ingestion", "commands"], "POST", {
+    "Cf-Access-Jwt-Assertion": "signed.cf.bytes", "X-Goog-IAP-JWT-Assertion": "other.jwt.bytes",
+    "Cf-Access-Authenticated-User-Email": "attacker@example.test",
+    Authorization: "Bearer consumer", Cookie: "CF_Authorization=untrusted; consumer=secret",
+    Origin: "https://ops.example.test", "Content-Type": "application/json",
+  }, '{"action":"refresh_due"}'));
+  assert.equal(response.status, 200);
+  const received = upstream.received[0].headers;
+  assert.equal(received["cf-access-jwt-assertion"], "signed.cf.bytes");
+  assert.equal(received["x-goog-iap-jwt-assertion"], undefined);
+  assert.equal(received["cf-access-authenticated-user-email"], undefined);
+  assert.equal(received.authorization, undefined);
+  assert.equal(received.cookie, undefined);
+  assert.equal(received.origin, "https://ops.example.test");
+});
+
+test("unknown operator auth provider fails before upstream contact", async (t) => {
+  const upstream = await backend(t);
+  const api = await route(t, {
+    EC_OPERATOR_API_ENABLED: "true", EC_OPERATOR_API_ORIGIN: upstream.origin,
+    EC_OPERATOR_PUBLIC_ORIGIN: "https://ops.example.test", EC_OPERATOR_AUTH_PROVIDER: "headers",
+  });
+  assert.equal((await api.GET(...request(["operator", "session"], "GET", {
+    "X-Goog-IAP-JWT-Assertion": "signed.jwt.bytes",
+  }))).status, 503);
   assert.equal(upstream.received.length, 0);
 });
 
