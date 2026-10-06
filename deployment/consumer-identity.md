@@ -36,9 +36,9 @@ the protected application state bucket; never adopt shared foundation/network/cl
 | API Workload Identity | `firebaseauth.users.get`; no provider secrets or identity deletion. |
 | Erasure Workload Identity | `firebaseauth.users.get` and `firebaseauth.users.delete`. |
 | Provider secrets | `ec-consumer-google`, `ec-consumer-apple`; numbered Secret Manager versions, operator access only. Values never enter Terraform state or containers. |
-| Admin access | Google IAP on the separate admin frontend backend. The API verifies the signed owner email and subject. |
+| Admin access | Google IAP on the `/admin` backend Service; shared Next.js, separate operator API verifying signed owner email and subject. |
 
-1. Use `https://events.iliazlobin.com` as the consumer origin in `iz27-platform-dev`. [Public routing](../deploy/public-access.md) admits guests and protects the separate admin hostname with Google IAP. Verify the active CLI account independently of the [Identity console](https://console.cloud.google.com/customer-identity/providers?project=iz27-platform-dev&authuser=4).
+1. Use `https://events.iliazlobin.com` as the consumer origin in `iz27-platform-dev`. [Public routing](../deploy/public-access.md) admits guests and protects `/admin` with Google IAP. Verify the active CLI account independently of the [Identity console](https://console.cloud.google.com/customer-identity/providers?project=iz27-platform-dev&authuser=4).
 2. Prepare the [backend example](../infra/terraform/environments/consumer-identity/backend.tf.example) and [variables](../infra/terraform/environments/consumer-identity/identity.tfvars.example). Initialize this new app-owned state, review a saved plan, then apply only after deployment authorization.
 3. Configure provider credentials below and the approved legal mode. Record the approved `signup_enabled` setting; new setups default to `false`. Enabling a bounded pilot permits the first real signup test, not a release-acceptance claim.
 

@@ -25,6 +25,9 @@ cutover, provider/legal setup and deployed login/logout checks before enabling s
 
 [Public access](../../public-access.md) uses an opt-in GCP Gateway and Certificate Manager
 for the consumer site and owner-only IAP admin. Both use the same reserved global IP.
+The selected `publicEdge` serves both from `events.iliazlobin.com` through one Next.js
+Deployment. Separate backend Services target Caddy consumer `8080` and protected admin
+`8082`; health checks use `8081`, never Next.js `3000`.
 
 Only non-secret identifiers belong in values files. The runtime uses `*_FILE` settings, while the
 migration Job receives only its owner URL and application-role bootstrap password files.
@@ -159,19 +162,18 @@ Consumer signup grants no admin role.
 - Public access is off by default. Layer [values-public-edge.example.yaml](values-public-edge.example.yaml)
   onto authenticated private values. The shared Gateway uses `ec-public-ip`, certificate map
   `ec-public-cert-map` and TLS policy `ec-public-tls`; Terraform owns those resources.
-- `publicEdge.bootstrap=true` creates the admin Service and IAP policy with no admin Pods.
-  Set the real backend audience and verified owner subject, check backend IAP/IAM, then enable
-  the operator workloads with `bootstrap=false`. Never deploy synthetic test identifiers.
-- The consumer frontend has a credential-free Caddy sidecar on port 8080. It allows consumer
-  pages/API, strips identity headers and redirects exact `/admin` or `/admin/` GET/HEAD requests
-  to the fixed protected admin URL. Admin pages/APIs are never proxied; admin API/probe routes,
-  other entry methods or wrong hosts return 404. Normalized aliases can reach allowed public pages.
-  Health checks use private port 8081. Admin traffic reaches its own frontend on port 3000.
-- GFE/health-check ranges reach only those frontend ports; the operator API accepts only its
-  frontend and mounts only its numbered controller DSN/PostgreSQL CA. No direct public API
-  or datastore route exists. Follow [edge acceptance](../../public-access.md) before DNS cutover.
-- Add `--operator` to private `wait_ready.py` and backup creation only when both operator pods
-  are installed. Recovery uses the recorded inventory; no extra resume flag. Verify owner login,
-  admin reads/commands, non-owner denial, missing/forged assertion denial, CSRF, credential
-  isolation and backup/recovery before declaring the endpoint usable. The consumer admin entry
-  redirects navigation; it never proxies an admin page or API.
+- In `publicEdge`, disable the separate `operator-frontend` workload. Bootstrap uses a
+  nonmatching admin Service selector, disabled operator API/BFF and admin filter. Set the
+  real backend audience/owner subject only after IAP/IAM readback. Then attest
+  `operatorAccessVerified=true`, disable bootstrap and enable the operator API. Helm checks
+  configuration; the attestation is not a cloud-permission query.
+- Consumer filter `8080` strips identity headers and rejects all `/admin` aliases. Protected
+  `8082` accepts only original `/admin` paths and one bounded assertion; the API verifies
+  its JWT. Shared Next.js receives separate consumer/operator API origins and no secrets.
+- GFE reaches only Caddy's reviewed ports. Shared frontend reaches only both APIs and DNS;
+  the operator API retains its controller DSN/PostgreSQL CA. No direct API/datastore route.
+  Health checks measure consumer readiness; verify the operator API separately.
+- PublicEdge readiness/backup use `--operator --shared-frontend --profile private`.
+  Legacy separate frontend installations use `--operator` alone. Recovery uses the recorded
+  inventory. Verify owner login, non-owner/forged-assertion denial, CSRF and recovery through
+  [edge acceptance](../../public-access.md) before declaring the endpoint usable.

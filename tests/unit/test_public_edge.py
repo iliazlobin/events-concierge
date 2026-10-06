@@ -5,8 +5,11 @@ from __future__ import annotations
 import ipaddress
 import os
 import shutil
+import socket
 import subprocess
+import time
 import uuid
+from contextlib import contextmanager
 from pathlib import Path
 
 import pytest
@@ -151,7 +154,7 @@ def public_values(*, bootstrap=False):
     values = runtime_values()
     values["operator"] = {
         "enabled": True,
-        "hostname": "admin-events.iliazlobin.com",
+        "hostname": HOST,
         "tlsSecretName": "",
         "iapAudience": "/projects/123456789/global/backendServices/987654321",
         "iapClientId": "validation.apps.googleusercontent.com",
@@ -168,12 +171,12 @@ def public_values(*, bootstrap=False):
     values["serviceAccounts"]["operator-api"]["gcpServiceAccount"] = (
         "ec-dev-operator-api@iz27-platform-dev.iam.gserviceaccount.com"
     )
-    for name in ("operator-frontend", "operator-api"):
-        values["workloads"][name]["enabled"] = True
-    values["operator"].update({"hostname": "admin-events.iliazlobin.com", "tlsSecretName": ""})
+    values["workloads"]["operator-frontend"]["enabled"] = False
+    values["workloads"]["operator-api"]["enabled"] = True
     values["publicEdge"] = {
         "enabled": True,
         "bootstrap": bootstrap,
+        "operatorAccessVerified": not bootstrap,
         "staticIpName": "ec-public-ip",
         "certificateMap": "ec-public-cert-map",
         "sslPolicy": "ec-public-tls",
@@ -208,6 +211,20 @@ def test_edge_is_off_without_explicit_configuration(helm, tmp_path):
 def test_bootstrap_has_no_admin_endpoints_or_identity_fixtures(helm, tmp_path):
     rendered = documents(render(helm, tmp_path, public_values(bootstrap=True)))
     assert named(rendered, "Service", "operator-frontend")["spec"]["type"] == "ClusterIP"
+    selector = named(rendered, "Service", "operator-frontend")["spec"]["selector"]
+    for (kind, _), item in rendered.items():
+        if kind == "Deployment":
+            assert not _selects(
+                {"matchLabels": selector}, item["spec"]["template"]["metadata"]["labels"]
+            )
+    env = {e["name"]: e["value"] for e in pod(rendered, "frontend")["containers"][0]["env"]}
+    assert env["EC_OPERATOR_API_ENABLED"] == "false"
+    assert "EC_OPERATOR_API_ORIGIN" not in env
+    config = named(rendered, "ConfigMap", "public-edge")["data"]["Caddyfile"]
+    assert "@admin" not in config and "@assertion" not in config
+    policies = [item for (kind, _), item in rendered.items() if kind == "NetworkPolicy"]
+    for address in ("130.211.0.1", "35.191.0.1"):
+        assert not _allows(policies, labels(rendered, "frontend"), "ingress", 8082, address=address)
     assert named(rendered, "GCPBackendPolicy", "operator-iap")["spec"]["default"]["iap"]["enabled"]
     for kind, name in rendered:
         if "operator" in name:
@@ -227,7 +244,7 @@ def test_one_exact_host_gateway_uses_reserved_ip_certificate_map_and_tls_policy(
     listeners = gateway["spec"]["listeners"]
     assert {(x["hostname"], x["port"], x["protocol"]) for x in listeners} == {
         (host, port, protocol)
-        for host in (HOST, "admin-events.iliazlobin.com")
+        for host in (HOST,)
         for port, protocol in ((80, "HTTP"), (443, "HTTPS"))
     }
     for listener in listeners:
@@ -245,9 +262,9 @@ def test_one_exact_host_gateway_uses_reserved_ip_certificate_map_and_tls_policy(
 
 def test_routes_separate_consumer_admin_and_https_redirects(resources):
     routes = [item for (kind, _), item in resources.items() if kind == "HTTPRoute"]
-    assert len(routes) == 4
-    for role in ("consumer", "operator"):
-        redirect = named(resources, "HTTPRoute", role + "-https-redirect")["spec"]
+    assert len(routes) == 3
+    for role in ("public",):
+        redirect = named(resources, "HTTPRoute", "https-redirect")["spec"]
         assert redirect["parentRefs"] == [
             {"name": "events-concierge-public", "sectionName": role + "-http"}
         ]
@@ -271,13 +288,9 @@ def test_routes_separate_consumer_admin_and_https_redirects(resources):
         {"backendRefs": [{"name": "events-concierge-frontend", "port": 80}]}
     ]
     admin = named(resources, "HTTPRoute", "operator")["spec"]
-    assert admin["hostnames"] == ["admin-events.iliazlobin.com"]
+    assert admin["hostnames"] == [HOST]
     assert {x["path"]["value"] for x in admin["rules"][0]["matches"]} == {
-        "/",
         "/admin",
-        "/admin/",
-        "/_next/",
-        "/favicon.ico",
     }
     policies = [item for (kind, _), item in resources.items() if kind == "GCPBackendPolicy"]
     assert len(policies) == 1
@@ -287,9 +300,10 @@ def test_routes_separate_consumer_admin_and_https_redirects(resources):
         "clientID": "validation.apps.googleusercontent.com",
         "oauth2ClientSecret": {"name": "validation-iap-oauth"},
     }
-    # IAP returns to /?gcp-iap-mode=AUTHENTICATING. A path-only exact matcher
-    # leaves that query untouched and associates the callback with IAP's backend.
-    assert {"path": {"type": "Exact", "value": "/"}} in admin["rules"][0]["matches"]
+    assert admin["parentRefs"][0]["sectionName"] == "public-https"
+    # IAP returns to the original /admin URL with its query; public / stays public.
+    assert {"path": {"type": "Exact", "value": "/admin"}} in admin["rules"][0]["matches"]
+    assert {"path": {"type": "PathPrefix", "value": "/admin"}} in admin["rules"][0]["matches"]
     assert admin["rules"][0]["backendRefs"] == [
         {"name": policies[0]["spec"]["targetRef"]["name"], "port": 80}
     ]
@@ -298,6 +312,11 @@ def test_routes_separate_consumer_admin_and_https_redirects(resources):
 def test_public_filter_is_a_credential_free_sidecar_in_existing_frontend(resources):
     spec = pod(resources, "frontend")
     app, edge = spec["containers"]
+    env = {e["name"]: e["value"] for e in app["env"]}
+    assert env["EC_API_ORIGIN"] == "http://events-concierge-api:8000"
+    assert env["EC_OPERATOR_API_ENABLED"] == "true"
+    assert env["EC_OPERATOR_API_ORIGIN"] == "http://events-concierge-operator-api:8000"
+    assert env["EC_OPERATOR_PUBLIC_ORIGIN"] == "https://" + HOST
     assert app["name"] == "frontend" and edge["name"] == "public-edge"
     assert (
         edge["image"]
@@ -318,6 +337,19 @@ def test_public_filter_is_a_credential_free_sidecar_in_existing_frontend(resourc
         "limits": {"cpu": "100m", "memory": "128Mi"},
     }
     assert named(resources, "Service", "frontend")["spec"]["ports"][0]["targetPort"] == 8080
+    admin = named(resources, "Service", "operator-frontend")["spec"]
+    assert admin["ports"][0]["targetPort"] == 8082
+    assert admin["selector"] == named(resources, "Service", "frontend")["spec"]["selector"]
+    assert ("ServiceAccount", "events-concierge-operator-frontend") not in resources
+    assert {p["containerPort"] for p in edge["ports"]} == {8080, 8081, 8082}
+    admin_health = named(resources, "HealthCheckPolicy", "operator-frontend")["spec"]["default"][
+        "config"
+    ]["httpHealthCheck"]
+    assert admin_health == {
+        "portSpecification": "USE_FIXED_PORT",
+        "port": 8081,
+        "requestPath": "/readyz",
+    }
     health = named(resources, "HealthCheckPolicy", "frontend")["spec"]["default"]["config"][
         "httpHealthCheck"
     ]
@@ -332,7 +364,6 @@ def test_public_filter_is_a_credential_free_sidecar_in_existing_frontend(resourc
             "temporal-catalog",
             "ingestion-executor",
             "operator-api",
-            "operator-frontend",
         )
     }
 
@@ -362,6 +393,10 @@ def test_public_filter_is_a_credential_free_sidecar_in_existing_frontend(resourc
         {"operator": {"iapClientSecretName": "ec-consumer-google"}},
         {"operator": {"authProvider": "cloudflare_access"}},
         {"publicEdge": {"bootstrap": True}},
+        {"publicEdge": {"operatorAccessVerified": False}},
+        {"operator": {"hostname": "admin-events.iliazlobin.com"}},
+        {"workloads": {"operator-frontend": {"enabled": True}}},
+        {"workloads": {"frontend": {"command": ["node", "alternate.js"]}}},
         {"publicTunnel": {"enabled": False}},
     ],
 )
@@ -395,25 +430,21 @@ def test_combined_policies_limit_gfe_ingress_and_preserve_store_isolation(
     )
     combined = resources | documents(data)
     policies = [item for (kind, _), item in combined.items() if kind == "NetworkPolicy"]
-    consumer, admin, api = (
-        labels(combined, x) for x in ("frontend", "operator-frontend", "operator-api")
-    )
+    consumer, api = (labels(combined, x) for x in ("frontend", "operator-api"))
     for address in ("130.211.0.1", "35.191.0.1"):
-        for port in (8080, 8081):
+        for port in (8080, 8081, 8082):
             assert _allows(policies, consumer, "ingress", port, address=address)
-        assert _allows(policies, admin, "ingress", 3000, address=address)
         assert not _allows(policies, consumer, "ingress", 3000, address=address)
         assert not _allows(policies, api, "ingress", 8000, address=address)
     for peer in (
-        admin,
         api,
         {"app.kubernetes.io/part-of": "events-concierge", "app.kubernetes.io/component": "unknown"},
     ):
-        for port in (3000, 8080, 8081):
+        for port in (3000, 8080, 8081, 8082):
             assert not _allows(policies, consumer, "ingress", port, peer_labels=peer)
     assert not _allows(policies, consumer, "ingress", 8080, address="203.0.113.10")
-    assert _allows(policies, api, "ingress", 8000, peer_labels=admin)
-    assert not _allows(policies, api, "ingress", 8000, peer_labels=consumer)
+    assert _allows(policies, api, "ingress", 8000, peer_labels=consumer)
+    assert _allows(policies, consumer, "egress", 8000, peer_labels=api)
     consumer_api = labels(combined, "api")
     assert _allows(policies, consumer, "egress", 8000, peer_labels=consumer_api)
     assert _allows(policies, consumer_api, "ingress", 8000, peer_labels=consumer)
@@ -430,7 +461,7 @@ def test_combined_policies_limit_gfe_ingress_and_preserve_store_isolation(
                 namespace="kube-system",
                 protocol=protocol,
             )
-    for role in (consumer, admin, api):
+    for role in (consumer, api):
         for kind, name, port in (
             ("Deployment", "ec-dev-redis", 6379),
             ("StatefulSet", "ec-dev-temporal-postgres", 5432),
@@ -449,7 +480,14 @@ def test_combined_policies_limit_gfe_ingress_and_preserve_store_isolation(
 
 
 @pytest.fixture(scope="module")
-def proxy_rehearsal(resources):
+def proxy_rehearsal(resources, tmp_path_factory):
+    # Native mode is an offline loopback rehearsal; CI uses the pinned container below.
+    if binary := os.environ.get("EC_CADDY_BINARY"):
+        with _native_rehearsal(
+            resources, tmp_path_factory.mktemp("edge-native"), binary
+        ) as request:
+            yield request
+        return
     if os.environ.get("EC_PUBLIC_EDGE_DOCKER") != "1":
         pytest.skip("Set EC_PUBLIC_EDGE_DOCKER=1 for disposable local/CI edge tests")
     docker = shutil.which("docker")
@@ -457,15 +495,8 @@ def proxy_rehearsal(resources):
     pod = named(resources, "Deployment", "frontend")["spec"]["template"]["spec"]
     image = pod["containers"][1]["image"]
     config = named(resources, "ConfigMap", "public-edge")["data"]["Caddyfile"]
-    config = config.replace("127.0.0.1:3000", "127.0.0.1:8082")
-    config += """
-http://:8082 {
-  bind 127.0.0.1
-  @private path /admin /admin/*
-  respond @private "PRIVATE_FIXTURE" 200
-  respond "PUBLIC_FIXTURE host={http.request.host} proto={http.request.header.X-Forwarded-Proto} forwarded={http.request.header.Forwarded} identity={http.request.header.X-Goog-Authenticated-User-Email} access={http.request.header.Cf-Access-Authenticated-User-Email} middleware={http.request.header.X-Middleware-Subrequest}" 200
-}
-"""
+    config = config.replace("127.0.0.1:3000", "127.0.0.1:8083")
+    config += _echo_upstream(8083)
     name = f"ec-public-edge-test-{uuid.uuid4().hex[:12]}"
 
     def command(*args, data=None, timeout=60):
@@ -549,7 +580,8 @@ http://:8082 {
             )
             pytest.fail(startup_error + logs.stderr + logs.stdout + state.stdout)
 
-        def request(path, host=HOST, headers=(), method="GET"):
+        def request(path, host=HOST, headers=(), method="GET", port=8080):
+            assert port in (8080, 8082)
             extra_headers = "".join(f"{key}: {value}\r\n" for key, value in headers)
             # Keep stdin open while both proxy hops respond; BusyBox nc otherwise
             # cancels the request as soon as docker exec delivers input EOF.
@@ -559,7 +591,7 @@ http://:8082 {
                 name,
                 "sh",
                 "-c",
-                "(cat; sleep 1) | nc -w 5 127.0.0.1 8080",
+                f"(cat; sleep 1) | nc -w 5 127.0.0.1 {port}",
                 data=f"{method} {path} HTTP/1.1\r\nHost: {host}\r\n{extra_headers}Connection: close\r\n\r\n",
             )
             assert result.returncode == 0, result.stderr
@@ -569,6 +601,75 @@ http://:8082 {
     finally:
         cleanup = command("rm", "-f", name)
         assert cleanup.returncode == 0, cleanup.stderr
+
+
+def _echo_upstream(port):
+    # Presence/format test only. Real signature/audience verification belongs to the API.
+    echo = "host={http.request.host} proto={http.request.header.X-Forwarded-Proto} forwarded={http.request.header.Forwarded} identity={http.request.header.X-Goog-Authenticated-User-Email} access={http.request.header.Cf-Access-Authenticated-User-Email} middleware={http.request.header.X-Middleware-Subrequest} jwt={http.request.header.X-Goog-IAP-JWT-Assertion} uri={http.request.uri}"
+    return f"""\nhttp://:{port} {{
+  bind 127.0.0.1
+  @private path /admin /admin/*
+  respond @private "PRIVATE_FIXTURE {echo}" 200
+  respond "PUBLIC_FIXTURE {echo}" 200
+}}\n"""
+
+
+@contextmanager
+def _native_rehearsal(resources, directory, binary):
+    ports = set()
+    while len(ports) < 4:
+        with socket.socket() as sock:
+            sock.bind(("127.0.0.1", 0))
+            ports.add(sock.getsockname()[1])
+    edge, admin, health, upstream = ports
+    config = named(resources, "ConfigMap", "public-edge")["data"]["Caddyfile"]
+    for old, new in ((8080, edge), (8082, admin), (8081, health)):
+        config = config.replace(f"http://:{old} {{", f"http://:{new} {{\n  bind 127.0.0.1")
+    config = config.replace("127.0.0.1:3000", f"127.0.0.1:{upstream}") + _echo_upstream(upstream)
+    path = directory / "Caddyfile"
+    path.write_text(config)
+    validate = subprocess.run(
+        [binary, "validate", "--config", str(path), "--adapter", "caddyfile"],
+        capture_output=True,
+        text=True,
+        check=False,
+        timeout=10,
+    )
+    assert validate.returncode == 0, validate.stderr
+    with (directory / "caddy.log").open("w") as log:
+        process = subprocess.Popen(
+            [binary, "run", "--config", str(path), "--adapter", "caddyfile"], stdout=log, stderr=log
+        )
+        try:
+            for _ in range(50):
+                assert process.poll() is None, (directory / "caddy.log").read_text()
+                try:
+                    with socket.create_connection(("127.0.0.1", health), timeout=1):
+                        break
+                except OSError:
+                    time.sleep(0.05)
+            else:
+                raise AssertionError("Loopback Caddy startup timed out")
+
+            def request(path, host=HOST, headers=(), method="GET", port=8080):
+                assert port in (8080, 8082)
+                extra = "".join(f"{key}: {value}\r\n" for key, value in headers)
+                data = (
+                    f"{method} {path} HTTP/1.1\r\nHost: {host}\r\n{extra}Connection: close\r\n\r\n"
+                )
+                with socket.create_connection(
+                    ("127.0.0.1", edge if port == 8080 else admin), timeout=5
+                ) as sock:
+                    sock.sendall(data.encode())
+                    chunks = []
+                    while chunk := sock.recv(65536):
+                        chunks.append(chunk)
+                    return b"".join(chunks).decode()
+
+            yield request
+        finally:
+            process.terminate()
+            process.wait(timeout=5)
 
 
 @pytest.mark.parametrize("path", ["/", "/sign-in", "/v1/events?city=sanfrancisco"])
@@ -615,6 +716,10 @@ def test_forwarded_authority_is_rebuilt_and_operator_headers_are_removed(proxy_r
         "/healthz",
         "/readyz",
         "/metrics",
+        "/_next/image?url=/admin&w=640&q=75",
+        "/_next/data/build/admin.json",
+        "/v1/%252e%252e/admin",
+        "/v1/a%5cb",
     ],
 )
 def test_private_and_probe_paths_never_reach_the_frontend(proxy_rehearsal, path):
@@ -623,44 +728,128 @@ def test_private_and_probe_paths_never_reach_the_frontend(proxy_rehearsal, path)
     assert "PRIVATE_FIXTURE" not in response and "PUBLIC_FIXTURE" not in response
 
 
-@pytest.mark.parametrize("method", ["GET", "HEAD"])
+@pytest.mark.parametrize("method", ["GET", "HEAD", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"])
 @pytest.mark.parametrize(
-    "path", ["/admin", "/admin/", "/admin?tab=sources", "/admin/?next=https://other.example"]
+    "path",
+    ["/admin", "/admin/", "/admin?gcp-iap-mode=AUTHENTICATING", "/admin/v1/operator/session"],
 )
-def test_admin_entry_redirects_only_navigation_to_fixed_protected_origin(
-    proxy_rehearsal, path, method
-):
+def test_public_port_never_proxies_admin_even_with_an_assertion(proxy_rehearsal, path, method):
+    response = proxy_rehearsal(
+        path, method=method, headers=[("X-Goog-IAP-JWT-Assertion", "signed.jwt.bytes")]
+    )
+    assert "404 Not Found" in response.splitlines()[0]
+    assert "PRIVATE_FIXTURE" not in response and "PUBLIC_FIXTURE" not in response
+
+
+@pytest.mark.parametrize(
+    "path",
+    [
+        "/admin",
+        "/admin/",
+        "/admin?gcp-iap-mode=AUTHENTICATING",
+        "/admin/v1/operator/session?cursor=one%2Ftwo",
+    ],
+)
+def test_protected_port_preserves_admin_query_and_only_assertion(proxy_rehearsal, path):
     response = proxy_rehearsal(
         path,
-        method=method,
+        port=8082,
         headers=[
-            ("X-Goog-IAP-JWT-Assertion", "UNTRUSTED_FIXTURE"),
-            ("X-Forwarded-Host", "other.example"),
-            ("Authorization", "Bearer UNTRUSTED_FIXTURE"),
-            ("Cookie", "session=UNTRUSTED_FIXTURE"),
+            ("X-Goog-IAP-JWT-Assertion", "signed.jwt.bytes"),
+            ("X-Goog-Authenticated-User-Email", "UNTRUSTED_FIXTURE"),
+            ("Cf-Access-Jwt-Assertion", "UNTRUSTED_FIXTURE"),
+            ("Forwarded", "UNTRUSTED_FIXTURE"),
+            ("X-Real-IP", "UNTRUSTED_FIXTURE"),
+            ("X-Forwarded-Host", "UNTRUSTED_FIXTURE"),
+            ("X-Middleware-Subrequest", "UNTRUSTED_FIXTURE"),
         ],
     )
-    assert "302 Found" in response.splitlines()[0]
-    assert "Location: https://admin-events.iliazlobin.com/admin" in response.splitlines()
-    assert "PRIVATE_FIXTURE" not in response and "PUBLIC_FIXTURE" not in response
-    assert "UNTRUSTED_FIXTURE" not in response and "other.example" not in response
+    assert "200 OK" in response.splitlines()[0]
+    assert "PRIVATE_FIXTURE" in response and "jwt=signed.jwt.bytes" in response
+    assert "host=events.iliazlobin.com proto=https" in response
+    assert "uri=" + path in response and "UNTRUSTED_FIXTURE" not in response
 
 
-@pytest.mark.parametrize("method", ["POST", "PUT", "PATCH", "DELETE", "OPTIONS"])
-@pytest.mark.parametrize("path", ["/admin", "/admin/"])
-def test_admin_entry_rejects_non_navigation_methods(proxy_rehearsal, method, path):
-    response = proxy_rehearsal(path, method=method)
+@pytest.mark.parametrize(
+    "headers",
+    [
+        [],
+        [("X-Goog-IAP-JWT-Assertion", "")],
+        [("X-Goog-IAP-JWT-Assertion", "not-a-jwt")],
+        [("X-Goog-IAP-JWT-Assertion", "signed.jwt.bytes,other.jwt.bytes")],
+        [
+            ("X-Goog-IAP-JWT-Assertion", "signed.jwt.bytes"),
+            ("X-Goog-IAP-JWT-Assertion", "other.jwt.bytes"),
+        ],
+        [("X-Goog-IAP-JWT-Assertion", "a" * 8193 + ".b.c")],
+    ],
+)
+def test_protected_port_rejects_missing_ambiguous_or_overlong_assertion(proxy_rehearsal, headers):
+    response = proxy_rehearsal("/admin", port=8082, headers=headers)
+    assert "401 Unauthorized" in response.splitlines()[0]
+    assert "PRIVATE_FIXTURE" not in response
+
+
+@pytest.mark.parametrize(
+    "path",
+    [
+        "/",
+        "/v1/events",
+        "/_next/static/app.js",
+        "/admin//",
+        "/admin/.",
+        "/admin/..",
+        "/admin/%2e",
+        "/admin/%2E%2e/v1",
+        "/%61dmin",
+        "/admin%2f",
+        "/admin%5c",
+        "/admin/%252e",
+        "/admin/../v1",
+        "//admin",
+        "/ADMIN",
+        "/administrator",
+    ],
+)
+def test_protected_port_rejects_non_admin_and_ambiguous_raw_paths(proxy_rehearsal, path):
+    response = proxy_rehearsal(
+        path, port=8082, headers=[("X-Goog-IAP-JWT-Assertion", "signed.jwt.bytes")]
+    )
     assert "404 Not Found" in response.splitlines()[0]
-    assert "Location:" not in response
     assert "PRIVATE_FIXTURE" not in response and "PUBLIC_FIXTURE" not in response
 
 
 @pytest.mark.parametrize(
-    "host", ["localhost", "127.0.0.1", "hermes.iliazlobin.com", "other.example.com"]
+    "path",
+    [
+        "/_next/static/chunks/%5Bslug%5D.js",
+        "/v1/catalog/entities/person%3Aabc",
+        "/v1/catalog/entities/Jos%C3%A9",
+        "/?next=%2Fadmin",
+    ],
+)
+def test_safe_encoded_segments_and_query_data_remain_public(proxy_rehearsal, path):
+    response = proxy_rehearsal(path)
+    assert "200 OK" in response.splitlines()[0]
+    assert "PUBLIC_FIXTURE" in response
+
+
+@pytest.mark.parametrize(
+    "host",
+    [
+        "localhost",
+        "127.0.0.1",
+        "hermes.iliazlobin.com",
+        "other.example.com",
+        "events.iliazlobin.com:3000",
+    ],
 )
 @pytest.mark.parametrize("path", ["/", "/admin", "/admin/"])
-def test_unapproved_host_cannot_become_a_loopback_admin_request(proxy_rehearsal, host, path):
-    response = proxy_rehearsal(path, host)
+@pytest.mark.parametrize("port", [8080, 8082])
+def test_unapproved_host_cannot_become_a_loopback_admin_request(proxy_rehearsal, host, path, port):
+    response = proxy_rehearsal(
+        path, host, port=port, headers=[("X-Goog-IAP-JWT-Assertion", "signed.jwt.bytes")]
+    )
     assert "404 Not Found" in response.splitlines()[0]
     assert "Location:" not in response
     assert "PUBLIC_FIXTURE" not in response

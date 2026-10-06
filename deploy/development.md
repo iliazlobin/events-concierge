@@ -306,8 +306,8 @@ kubectl -n events-concierge-dev exec -i deployment/events-concierge-api -- pytho
 ```
 
 - The private gate requires five singleton application Deployments and rejects demo, deferred or unknown Deployments. Promotion uses runtime mTLS and requires recent workflow and activity pollers for the exact candidate build. `smoke.py` remains a synthetic demo check; use the authenticated browser acceptance above.
-- Public access adds a sidecar to the existing frontend Deployment. Run `wait_ready.py --target shared --profile private --operator` after admin activation; verify Gateway/routes, certificate, backend IAP/IAM and browser acceptance separately before publishing DNS. Historical tunnel backup receipts remain supported for recovery; the chart no longer installs a connector.
-- If both private operator workloads are installed, append `--operator` to the readiness and backup-creation commands. It requires their exact singleton inventory; it does not verify browser authentication or create an edge.
+- Public access shares one frontend Deployment and hostname. After admin activation run `wait_ready.py --target shared --profile private --operator --shared-frontend`; verify Gateway/routes, certificate, backend IAP/IAM and browser acceptance separately before DNS publication. Historical tunnel receipts remain recoverable; the chart installs no connector.
+- Add `--operator --shared-frontend` to private backup creation for publicEdge. Legacy private installations with both separate operator workloads use `--operator` alone. These flags select exact inventories; they do not verify browser authentication or create an edge. Resume reads the saved inventory without extra flags.
 - For an authenticated private backup, add `--hold-stopped` to the following creation command for cutover. Replace `SET_ID` with its exact completed prefix; verification uses the saved data, and interrupted recovery selects the saved profile. The demo examples below retain their default profile.
 
 ```bash
@@ -342,7 +342,7 @@ kubectl -n events-concierge-dev exec -i deployment/events-concierge-api -- pytho
 - Ordinary API: administration disabled. Cadence uses separate CronJob.
 - Shared live data and immutable images; readiness checks admin overview through API/frontend.
 - [Open via admin forward](#shared-release-and-access).
-- Authenticated releases instead use the isolated operator frontend/API and [owner-only IAP](public-access.md#admin). The demo Deployment is absent from the private authenticated profile.
+- Authenticated public releases use the shared frontend `/admin`, separate operator API and [owner-only IAP](public-access.md#admin). The demo Deployment is absent from the private authenticated profile.
 
 ## Manual recovery
 
@@ -375,7 +375,7 @@ kubectl -n events-concierge-dev patch cronjob events-concierge-ingestion-cadence
 - Held-stopped path: run readiness only after migration and application restart; follow [release](#shared-release-and-access).
 - Replace `SET_ID` with exact completed prefix printed by backup.
 - **Normal backup:** stop app writers then Temporal; retain PostgreSQL/Redis; save three databases, payloads and image/schema metadata.
-- **Private profile:** stop/wait for the consumer public edge first, then the optional operator frontend, writers and Temporal. Restore Temporal/writers before the operator frontend, and the consumer edge last after guarded exact readiness. Backup `--operator` admits only the paired singleton operator Deployments; unknown, partial or unrequested inventories block backup. Recovery failures trigger guarded edge closure; changed ownership or failed closure needs operator recovery. `resume` uses the saved profile, replicas, identities and templates.
+- **Private recovery:** close the shared frontend first and wait for its Pods to disappear; stop writers and Temporal. Restore Temporal/writers and both APIs before reopening the shared frontend after guarded exact readiness. `--operator --shared-frontend` records this inventory; legacy `--operator` retains the separate-pair ordering. Unknown/partial inventories block backup. Failures close the edge; changed ownership or failed closure needs operator recovery. Resume uses saved mode, replicas, identities and templates.
 - `recovery.json`: saved/read back before stopping writers; completion marker last; normal backup restores original replicas.
 - Verification: disposable Docker restore and checksums; only completed sets qualify. Recreate schema-required password-free roles only in the disposable container; preserve owners/ACLs and verify privilege and tenant isolation.
 - Retain at least three successful sets; no automatic deletion; same project boundary, no independent project-loss protection.

@@ -16,7 +16,6 @@ locals {
   project = "iz27-platform-dev"
   hosts = {
     consumer = "events.iliazlobin.com"
-    admin    = "admin-events.iliazlobin.com"
   }
 }
 

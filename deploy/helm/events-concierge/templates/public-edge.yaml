@@ -31,34 +31,30 @@ spec:
     - type: NamedAddress
       value: {{ .Values.publicEdge.staticIpName | quote }}
   listeners:
-    {{- range $site, $host := dict "consumer" .Values.publicEdge.hostname "operator" .Values.operator.hostname }}
-    - name: {{ $site }}-https
-      hostname: {{ $host | quote }}
+    - name: public-https
+      hostname: {{ .Values.publicEdge.hostname | quote }}
       protocol: HTTPS
       port: 443
       allowedRoutes: {namespaces: {from: Same}}
-    - name: {{ $site }}-http
-      hostname: {{ $host | quote }}
+    - name: public-http
+      hostname: {{ .Values.publicEdge.hostname | quote }}
       protocol: HTTP
       port: 80
       allowedRoutes: {namespaces: {from: Same}}
-    {{- end }}
-{{- range $site, $host := dict "consumer" .Values.publicEdge.hostname "operator" .Values.operator.hostname }}
 ---
 apiVersion: gateway.networking.k8s.io/v1
 kind: HTTPRoute
 metadata:
-  name: {{ include "events-concierge.fullname" $ }}-{{ $site }}-https-redirect
+  name: {{ include "events-concierge.fullname" . }}-https-redirect
 spec:
   parentRefs:
-    - name: {{ include "events-concierge.fullname" $ }}-public
-      sectionName: {{ $site }}-http
-  hostnames: [{{ $host | quote }}]
+    - name: {{ include "events-concierge.fullname" . }}-public
+      sectionName: public-http
+  hostnames: [{{ .Values.publicEdge.hostname | quote }}]
   rules:
     - filters:
         - type: RequestRedirect
           requestRedirect: {scheme: https, statusCode: 301}
-{{- end }}
 ---
 apiVersion: gateway.networking.k8s.io/v1
 kind: HTTPRoute
@@ -67,7 +63,7 @@ metadata:
 spec:
   parentRefs:
     - name: {{ include "events-concierge.fullname" . }}-public
-      sectionName: consumer-https
+      sectionName: public-https
   hostnames: [{{ .Values.publicEdge.hostname | quote }}]
   rules:
     # The same-Pod Caddy filter enforces exact Host/path and strips operator headers.
@@ -82,15 +78,12 @@ metadata:
 spec:
   parentRefs:
     - name: {{ include "events-concierge.fullname" . }}-public
-      sectionName: operator-https
+      sectionName: public-https
   hostnames: [{{ .Values.operator.hostname | quote }}]
   rules:
     - matches:
-        - path: {type: Exact, value: /}
         - path: {type: Exact, value: /admin}
-        - path: {type: PathPrefix, value: /admin/}
-        - path: {type: PathPrefix, value: /_next/}
-        - path: {type: Exact, value: /favicon.ico}
+        - path: {type: PathPrefix, value: /admin}
       backendRefs:
         - name: {{ include "events-concierge.fullname" . }}-operator-frontend
           port: {{ index .Values.services "operator-frontend" "port" }}
@@ -109,7 +102,7 @@ spec:
     group: ""
     kind: Service
     name: {{ include "events-concierge.fullname" . }}-operator-frontend
-{{- range $name, $health := dict "frontend" (dict "port" 8081 "path" "/readyz") "operator-frontend" (dict "port" 3000 "path" "/healthz") }}
+{{- range $name := list "frontend" "operator-frontend" }}
 ---
 apiVersion: networking.gke.io/v1
 kind: HealthCheckPolicy
@@ -121,8 +114,8 @@ spec:
       type: HTTP
       httpHealthCheck:
         portSpecification: USE_FIXED_PORT
-        port: {{ $health.port }}
-        requestPath: {{ $health.path }}
+        port: 8081
+        requestPath: /readyz
   targetRef:
     group: ""
     kind: Service

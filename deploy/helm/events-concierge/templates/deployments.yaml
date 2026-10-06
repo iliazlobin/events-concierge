@@ -3,7 +3,7 @@
 {{- $private := eq .Values.global.deploymentProfile "private" -}}
 {{- if or (eq .Values.global.releasePhase "all") (eq .Values.global.releasePhase "application") }}
 {{- range $name, $workload := .Values.workloads }}
-{{- if and $workload.enabled (or (not $workload.operatorProfile) $root.Values.operator.enabled (and (or $devCatalog $private) (eq $name "ingestion-executor"))) }}
+{{- if and $workload.enabled (not (and $root.Values.publicEdge.enabled (eq $name "operator-frontend"))) (or (not $workload.operatorProfile) $root.Values.operator.enabled (and (or $devCatalog $private) (eq $name "ingestion-executor"))) }}
 {{- $profile := default "runtime" $workload.operatorProfile }}
 {{- if and (eq $name "temporal-catalog") $root.Values.operator.enabled }}{{- $profile = "executor" }}{{- end }}
 {{- if and $devCatalog (has $name (list "ingestion-executor" "temporal-catalog")) }}{{- $profile = "development-executor" }}{{- end }}
@@ -112,8 +112,8 @@ spec:
             - name: EC_API_ORIGIN
               value: {{ ternary (printf "http://%s-operator-api:8000" (include "events-concierge.fullname" $root)) $root.Values.frontend.apiOrigin (eq $name "operator-frontend") | quote }}
             - name: EC_OPERATOR_API_ENABLED
-              value: {{ ternary "true" "false" (eq $name "operator-frontend") | quote }}
-            {{- if eq $name "operator-frontend" }}
+              value: {{ ternary "true" "false" (or (eq $name "operator-frontend") (and $root.Values.publicEdge.enabled $root.Values.operator.enabled (not $root.Values.publicEdge.bootstrap))) | quote }}
+            {{- if or (eq $name "operator-frontend") (and $root.Values.publicEdge.enabled $root.Values.operator.enabled (not $root.Values.publicEdge.bootstrap)) }}
             - name: EC_OPERATOR_AUTH_PROVIDER
               value: {{ $root.Values.operator.authProvider | quote }}
             - name: EC_OPERATOR_API_ORIGIN
@@ -224,6 +224,7 @@ spec:
           ports:
             - {name: public-http, containerPort: 8080, protocol: TCP}
             - {name: edge-health, containerPort: 8081, protocol: TCP}
+            - {name: admin-http, containerPort: 8082, protocol: TCP}
           securityContext:
             {{- include "events-concierge.appSecurityContext" $root | nindent 12 }}
           resources:

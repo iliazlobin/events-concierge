@@ -142,7 +142,9 @@ seccompProfile:
 {{- end -}}
 {{- end -}}
 {{- range $name := list "operator-frontend" "operator-api" "ingestion-executor" "temporal-catalog" -}}
+{{- if not (and $.Values.publicEdge.enabled (eq $name "operator-frontend")) -}}
 {{- if not (index $.Values.workloads $name).enabled -}}{{- fail (printf "operator requires workloads.%s.enabled" $name) -}}{{- end -}}
+{{- end -}}
 {{- end -}}
 {{- end -}}
 {{- if and .Values.developmentCatalog.enabled (not $dev) -}}
@@ -309,7 +311,7 @@ seccompProfile:
 
 {{- define "events-concierge.validatePrivateOperator" -}}
 {{- $operator := .Values.operator -}}
-{{- if or (eq $operator.hostname .Values.publicEdge.hostname) (not (regexMatch "^[a-z0-9]([a-z0-9.-]*[a-z0-9])?$" $operator.hostname)) -}}{{- fail "private operator requires a distinct HTTPS hostname" -}}{{- end -}}
+{{- if or (and (not .Values.publicEdge.enabled) (eq $operator.hostname .Values.publicEdge.hostname)) (not (regexMatch "^[a-z0-9]([a-z0-9.-]*[a-z0-9])?$" $operator.hostname)) -}}{{- fail "private operator requires a distinct HTTPS hostname unless publicEdge shares its frontend" -}}{{- end -}}
 {{- if ne (len $operator.subjectRoles) 1 -}}{{- fail "private operator assigns exactly one stable owner subject" -}}{{- end -}}
 {{- if not (regexMatch "^/projects/[0-9]+/global/backendServices/[0-9]+$" $operator.iapAudience) -}}{{- fail "private operator requires the exact signed IAP backend audience" -}}{{- end -}}
 {{- range $subject, $role := $operator.subjectRoles -}}
@@ -320,6 +322,7 @@ seccompProfile:
 {{- $secret := first $operator.operatorSecrets -}}
 {{- if or (ne $secret.fileName "EC_OPERATOR_DATABASE_URL") (ne $secret.secretName "ec-dev-operator-database-url") (not (regexMatch "^[1-9][0-9]*$" (toString $secret.version))) -}}{{- fail "private operator requires its numbered controller database secret version" -}}{{- end -}}
 {{- range $name, $cpu := dict "operator-frontend" "25m" "operator-api" "100m" -}}
+{{- if not (and $.Values.publicEdge.enabled (eq $name "operator-frontend")) -}}
 {{- $workload := index $.Values.workloads $name -}}
 {{- $memory := ternary "128Mi" "192Mi" (eq $name "operator-frontend") -}}
 {{- $port := ternary 3000 8000 (eq $name "operator-frontend") -}}
@@ -333,6 +336,7 @@ seccompProfile:
 {{- end -}}
 {{- end -}}
 {{- end -}}
+{{- end -}}
 
 {{- define "events-concierge.validatePublicEdge" -}}
 {{- $edge := .Values.publicEdge -}}
@@ -341,7 +345,10 @@ seccompProfile:
 {{- fail "publicEdge requires a verified non-mock private application release" -}}
 {{- end -}}
 {{- if or (not .Values.networkPolicy.enabled) .Values.gateway.enabled (not .Values.workloads.frontend.enabled) -}}{{- fail "publicEdge requires NetworkPolicy and frontend, with legacy gateway disabled" -}}{{- end -}}
-{{- if or (ne $edge.hostname "events.iliazlobin.com") (ne .Values.applicationConfig.EC_PUBLIC_BASE_URL "https://events.iliazlobin.com") (ne $operator.hostname "admin-events.iliazlobin.com") -}}{{- fail "publicEdge requires the exact approved consumer and admin HTTPS origins" -}}{{- end -}}
+{{- if or (ne $edge.hostname "events.iliazlobin.com") (ne .Values.applicationConfig.EC_PUBLIC_BASE_URL "https://events.iliazlobin.com") (ne $operator.hostname $edge.hostname) -}}{{- fail "publicEdge requires the exact shared consumer and admin HTTPS origin" -}}{{- end -}}
+{{- if (index .Values.workloads "operator-frontend").enabled -}}{{- fail "publicEdge uses one shared frontend; disable the separate operator-frontend workload" -}}{{- end -}}
+{{- if or (ne (int .Values.workloads.frontend.port) 3000) .Values.workloads.frontend.command .Values.workloads.frontend.env -}}{{- fail "publicEdge frontend must retain its fixed Next.js entrypoint and configuration" -}}{{- end -}}
+{{- if or (ne (int .Values.services.frontend.port) 80) (ne (int (index .Values.services "operator-frontend").port) 80) (not (index .Values.services "operator-frontend").operatorOnly) -}}{{- fail "publicEdge requires the reviewed consumer and protected admin Services" -}}{{- end -}}
 {{- if or (ne (toString .Values.applicationConfig.EC_IDENTITY_PLATFORM_ENABLED) "true") (ne (toString .Values.applicationConfig.EC_ADMIN_INGESTION_ENABLED) "false") (ne (toString .Values.applicationConfig.EC_OIDC_BFF_ENABLED) "false") -}}{{- fail "publicEdge requires consumer Identity Platform and disabled legacy OIDC/admin ingestion" -}}{{- end -}}
 {{- range $key := list "staticIpName" "certificateMap" "sslPolicy" -}}
 {{- if or (not (index $edge $key)) (contains "replace-me" (index $edge $key)) -}}{{- fail (printf "publicEdge.%s must name its approved existing GCP resource" $key) -}}{{- end -}}
@@ -349,8 +356,8 @@ seccompProfile:
 {{- if or (ne $edge.proxyImage.repository "caddy") (ne $edge.proxyImage.digest "sha256:d44355d3c2149dc580ce2cac735955d1c08d3d00882c30489c241aa51a5c10d9") -}}{{- fail "publicEdge must retain the reviewed immutable Caddy image" -}}{{- end -}}
 {{- if or (ne $operator.authProvider "iap") $operator.tlsSecretName (not $operator.iapClientId) (not $operator.iapClientSecretName) (eq $operator.iapClientSecretName "ec-consumer-google") -}}{{- fail "publicEdge requires a separate admin IAP OAuth client and Secret, with certificate-map TLS" -}}{{- end -}}
 {{- if $edge.bootstrap -}}
-{{- if or $operator.enabled (index .Values.workloads "operator-frontend").enabled (index .Values.workloads "operator-api").enabled $operator.iapAudience $operator.subjectRoles -}}{{- fail "publicEdge bootstrap requires no operator endpoints, audience or subjects" -}}{{- end -}}
+{{- if or $operator.enabled (index .Values.workloads "operator-api").enabled $operator.iapAudience $operator.subjectRoles $edge.operatorAccessVerified -}}{{- fail "publicEdge bootstrap requires no operator endpoints, audience, subjects or access attestation" -}}{{- end -}}
 {{- else -}}
-{{- if not $operator.enabled -}}{{- fail "publicEdge runtime requires the verified operator configuration; use bootstrap before the real audience and subject are known" -}}{{- end -}}
+{{- if or (not $operator.enabled) (not $edge.operatorAccessVerified) -}}{{- fail "publicEdge runtime requires verified IAP policy, real audience and sole-owner access; use bootstrap first" -}}{{- end -}}
 {{- end -}}
 {{- end -}}
