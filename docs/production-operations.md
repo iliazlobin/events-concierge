@@ -74,7 +74,7 @@ make staging-canary BASE_URL="$BASE_URL" \
 | Ingestion-command worker | `python -m events_concierge.workers.ingestion_commands`; claim/lease commands |
 | Catalog Temporal worker | `EC_TEMPORAL_WORKER_ROLE=catalog python -m events_concierge.workflows.worker` |
 | Account-erasure worker | `python -m events_concierge.workers.account_erasure`; fenced cleanup and session revocation |
-| Hosted operator API | Separate IAP identity/roles and database role; consumer identity grants no operator access |
+| Hosted operator API | Separate Cloudflare Access or IAP identity/roles and database role; consumer identity grants no operator access |
 
 - Proxy strips untrusted forwarding/hop headers; 64 KiB request cap and bounded body deadline. Secure cookies, exact-Origin CSRF and safe redirects remain required.
 - Local onboarding/tenant-header identity and `EC_ADMIN_INGESTION_ENABLED` are mock-only. Production uses managed consumer accounts or the legacy OIDC BFF; injected identity requires a separate contract.
@@ -97,7 +97,7 @@ make staging-canary BASE_URL="$BASE_URL" \
 
 Use [GCP Identity Platform](../deployment/consumer-identity.md) for Google/Apple signup,
 required legal acceptance or explicit owner-configured deferral, protected personal data and same-account erasure. Guests
-read the published catalog. Admin access separately requires IAP with signed owner
+read the published catalog. Admin access separately requires Cloudflare Access or IAP with signed owner
 email `iliazlobin91@gmail.com` and its configured subject/role. Deployment remains gated
 on domain/provider setup, the approved legal mode and real browser acceptance.
 

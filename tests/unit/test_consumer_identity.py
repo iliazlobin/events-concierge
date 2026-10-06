@@ -35,6 +35,7 @@ app_module = importlib.import_module("events_concierge.api.app")
 _PROJECT = "events-identity-test"
 _ORIGIN = "https://events.example.test"
 _PROVIDERS = frozenset({"google.com", "apple.com"})
+_VALIDATION_NOW = 1_700_000_000
 
 
 def _claims(**changes: Any) -> dict[str, Any]:
@@ -90,13 +91,18 @@ def _settings(**changes: Any) -> Settings:
         {"sub": ""},
         {"sub": "x" * 129},
         {"auth_time": True},
-        {"auth_time": int(time()) - 301},
-        {"auth_time": int(time()) + 120},
+        {"auth_time": _VALIDATION_NOW - 301},
+        {"auth_time": _VALIDATION_NOW + 120},
     ],
 )
-def test_unverified_stale_or_different_authority_cannot_select_an_account(changes: Any) -> None:
+def test_unverified_stale_or_different_authority_cannot_select_an_account(
+    changes: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # A delayed full-suite run must not turn the future-token fixture into a valid token.
+    monkeypatch.setattr(identity_module, "time", lambda: _VALIDATION_NOW)
+    claims = _claims(auth_time=_VALIDATION_NOW) | changes
     with pytest.raises(AuthenticationFailedError):
-        verified_identity(_claims(**changes), _PROJECT, _PROVIDERS)
+        verified_identity(claims, _PROJECT, _PROVIDERS)
 
 
 def test_apple_verified_relay_email_is_supported_without_email_account_linking() -> None:
