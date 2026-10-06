@@ -40,7 +40,7 @@ Browser → Cloudflare HTTPS → encrypted tunnel → GKE consumer filter → co
 ## Activate
 
 1. Verify the approved application image/configuration, datastore TLS/mTLS, guest catalog,
-   Google login, consent and owner-only admin. Confirm GKE actually enforces NetworkPolicy.
+   Google login, the approved legal mode and owner-only admin. Confirm GKE actually enforces NetworkPolicy.
 2. Create the dedicated tunnel **without a published route**. Store its token through the
    approved secret channel in a versioned, immutable Kubernetes Secret such as
    `ec-cloudflare-tunnel-v1`, key `token`. Never paste credentials into Git, reports,
@@ -56,7 +56,7 @@ Browser → Cloudflare HTTPS → encrypted tunnel → GKE consumer filter → co
    proxied CNAME `events` → `<dedicated-tunnel-uuid>.cfargotunnel.com`, TTL Auto.
    Check the existing record before creation; publication makes consumer access public.
 5. Verify public TLS and guest browsing in Chrome, filtered URLs, Google cancellation/signup/
-   login/logout, legal acceptance and saved filters. Request `/admin`, `/admin/v1/ingestion`,
+   login/logout, the configured legal behavior and saved filters. Request `/admin`, `/admin/v1/ingestion`,
    `/metrics` and `/readyz`: each must return `404`. Confirm private admin still works.
    Verify cookies, CSRF, two-account isolation and tenant erasure on the deployed origin.
 

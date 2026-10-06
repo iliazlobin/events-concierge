@@ -1,8 +1,8 @@
 # Consumer accounts
 
 Google signup uses GCP Identity Platform; Apple is available for later activation.
-Browse the published catalog without an account; sign in and accept the current legal
-documents before storing personal data.
+Browse the published catalog without an account; sign in to store personal data.
+Legal acceptance follows the configured release mode.
 Implementation is available; provider setup and deployed acceptance remain release gates.
 
 ## Access
@@ -11,7 +11,7 @@ Implementation is available; provider setup and deployed acceptance remain relea
 | --- | --- |
 | Guest | Events, Map, Calendar, Entities/Graph, event details and provider links. |
 | Signed-in user | Own profile, preferences, saved filters and account erasure. PostgreSQL RLS and CSRF protect writes. |
-| Admin | Separate IAP operator surface: signed email `iliazlobin91@gmail.com` **and** the configured stable subject/role. Consumer login grants no admin role. |
+| Admin | Separate admin site; Cloudflare Access or IAP verifies `iliazlobin91@gmail.com` and the configured stable subject/role. Consumer login grants no admin role. |
 
 - Default `EC_CONSUMER_LEGAL_MODE=required`: publish approved, versioned HTTPS Terms of Service and Privacy Policy pages. The checkbox starts unchecked; the API records account binding and acceptance atomically.
 - The owner may explicitly select `EC_CONSUMER_LEGAL_MODE=deferred` for a release and unset all four `EC_SIGNUP_TERMS_*`/`EC_SIGNUP_PRIVACY_*` fields. Signup/login/logout remain available with managed identity, sessions, CSRF, tenant isolation and erasure checks. No legal checkbox, document links or acceptance receipts are created; this setting is deployment-owned, never caller-selected.
@@ -36,9 +36,9 @@ the protected application state bucket; never adopt shared foundation/network/cl
 | API Workload Identity | `firebaseauth.users.get`; no provider secrets or identity deletion. |
 | Erasure Workload Identity | `firebaseauth.users.get` and `firebaseauth.users.delete`. |
 | Provider secrets | `ec-consumer-google`, `ec-consumer-apple`; numbered Secret Manager versions, operator access only. Values never enter Terraform state or containers. |
-| Operator edge | Existing IAP backend; optional owner grant. The API separately enforces the signed owner email and subject. |
+| Admin access | Cloudflare Access for the public admin hostname; IAP remains supported for an existing private backend. The API verifies the signed owner email and subject. |
 
-1. Use `https://events.iliazlobin.com` as the consumer origin. Select the identity project and operator host/audience. [Public routing](../deploy/public-access.md) admits guests; admin remains separate and IAP-protected. Verify the active CLI account independently of the [Identity console](https://console.cloud.google.com/customer-identity/providers?project=iz27-platform-dev&authuser=4).
+1. Use `https://events.iliazlobin.com` as the consumer origin in `iz27-platform-dev`. [Public routing](../deploy/public-access.md) admits guests and protects the separate admin hostname with Cloudflare Access. Verify the active CLI account independently of the [Identity console](https://console.cloud.google.com/customer-identity/providers?project=iz27-platform-dev&authuser=4).
 2. Prepare the [backend example](../infra/terraform/environments/consumer-identity/backend.tf.example) and [variables](../infra/terraform/environments/consumer-identity/identity.tfvars.example). Initialize this new app-owned state, review a saved plan, then apply only after deployment authorization.
 3. Configure provider credentials below and the approved legal mode. Keep `signup_enabled=false` during provider bootstrap, then enable signup for the verified release/pilot.
 

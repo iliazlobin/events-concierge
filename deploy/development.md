@@ -47,7 +47,7 @@ Symphony owns task stages; GitHub holds the engineering records below. These pre
 | Health/freshness alerts and scheduled recovery evidence | [Observability](https://github.com/iliazlobin/events-concierge/issues/23) |
 | Combined candidate, migration/transport rollback, capacity and immutable artifacts | [Release rehearsal](https://github.com/iliazlobin/events-concierge/issues/24) |
 
-Configure Google/Apple Identity Platform, approved versioned legal pages and trusted HTTPS. [Consumer accounts](../deployment/consumer-identity.md) defines signup, reauthentication and erasure checks. After deployment approval, suspend cadence, drain writers, verify a fresh backup, coordinate migration/rollout, then verify identity, TLS/mTLS, CSRF, isolation, discovery and worker recovery.
+Configure Google Identity Platform, the approved legal mode and trusted HTTPS. [Consumer accounts](../deployment/consumer-identity.md) defines signup, reauthentication and erasure checks. After deployment approval, suspend cadence, drain writers, verify a fresh backup, coordinate migration/rollout, then verify identity, TLS/mTLS, CSRF, isolation, discovery and worker recovery.
 
 - **Profile gap:** development requires mock/plaintext/OIDC-off; managed requires Cloud SQL Proxy. Neither supports the intended composition.
 - **Erasure worker:** preserve session revocation and cleanup when narrowing its full application/BFF credentials.
@@ -291,7 +291,7 @@ EC_HELM_BINARY=helm .venv/bin/python -m pytest tests/deployment/test_authenticat
 4. Preserve PVCs/data; never initialize restored Temporal databases. Change listeners and clients together.
 5. Require SQL queries, Redis commands and actual Temporal mTLS handshake before writers.
 6. Require rejection of plaintext, wrong CA/hostname and missing/untrusted client certificates; complete authenticated application acceptance.
-   Verify real Google login/consent, reload, personal-data writes, logout and rejection of the revoked session on the trusted deployed origin. Keep signup disabled until approved legal pages and the provider project/client are configured; browser fixtures are not IdP acceptance.
+   Verify real Google login, reload, personal-data writes, logout and rejection of the revoked session on the trusted deployed origin. Configure the provider project/client and the approved legal mode before enabling signup; browser fixtures are not IdP acceptance.
 7. Rollback: stop writers; restore listener/client configuration together; retain certificates/PVCs; verify readiness and queues before resume.
 
 Authenticated private release gates select the profile explicitly; keep cadence disabled until promotion and acceptance:
