@@ -20,7 +20,7 @@ from ..domain.enums import Source
 from ..ports.sources import SourceCapability
 from ..runtime import RuntimePorts, load_runtime_ports
 from ..workflows.temporal_client import validate_temporal_settings
-from .network_safety import is_non_remote_host
+from .network_safety import is_non_remote_host, is_remote_dependency_host
 
 _LOCAL_ENVIRONMENTS = frozenset({"", "dev", "development", "local", "test", "testing"})
 _SHA256_DIGEST = re.compile(r"^sha256:[0-9a-f]{64}$")
@@ -167,26 +167,34 @@ def validate_production_config(
         ),
         _check(
             "built_in_bff_routes",
-            not settings.oidc_bff_enabled or settings.ui_auth_start_url == "/auth/login",
+            (not settings.oidc_bff_enabled or settings.ui_auth_start_url == "/auth/login")
+            and (
+                not settings.identity_platform_enabled or settings.ui_auth_start_url == "/sign-in"
+            ),
             (
                 (
                     "repository OIDC BFF owns fixed same-origin /auth/login, /auth/reauth, "
                     "and /auth/logout routes"
                 )
                 if settings.oidc_bff_enabled
-                else "deployment provider owns the configured login entrypoint"
+                else (
+                    "Identity Platform owns /sign-in, /auth/reauth and /auth/logout"
+                    if settings.identity_platform_enabled
+                    else "deployment provider owns the configured login entrypoint"
+                )
             ),
             (
-                "built-in OIDC BFF requires EC_UI_AUTH_START_URL=/auth/login and its fixed "
+                "built-in browser sessions require EC_UI_AUTH_START_URL=/sign-in (Identity "
+                "Platform) or /auth/login (legacy OIDC) and their fixed "
                 "reauthentication/logout routes"
             ),
         ),
         _check(
             "production_identity_profile",
-            settings.oidc_bff_enabled,
-            "current production profile uses the repository OIDC BFF",
+            settings.oidc_bff_enabled or settings.identity_platform_enabled,
+            "production uses one repository-owned opaque browser-session authority",
             (
-                "current production UI and canary require EC_OIDC_BFF_ENABLED=true; an external "
+                "production requires EC_OIDC_BFF_ENABLED=true or EC_IDENTITY_PLATFORM_ENABLED=true; an external "
                 "BFF needs a separately parameterized contract"
             ),
         ),
@@ -364,7 +372,7 @@ def validate_runtime_ports(runtime: RuntimePorts, *, settings: Settings) -> list
                 "discovery requires concrete disabled effect ports, empty mutation maps and no Calendar access",
             )
         )
-    if settings.oidc_bff_enabled:
+    if settings.oidc_bff_enabled or settings.identity_platform_enabled:
         identity_ready = (
             runtime.auth_context is None
             and runtime.csrf_protection is None
@@ -374,8 +382,12 @@ def validate_runtime_ports(runtime: RuntimePorts, *, settings: Settings) -> list
             _check(
                 "runtime_identity_boundary",
                 identity_ready,
-                "repository OIDC BFF is the sole session authentication and CSRF authority",
-                "built-in OIDC BFF cannot be mixed with provider identity ports",
+                (
+                    "repository Identity Platform sessions are the sole authentication and CSRF authority"
+                    if settings.identity_platform_enabled
+                    else "repository OIDC BFF is the sole session authentication and CSRF authority"
+                ),
+                "built-in browser sessions cannot be mixed with provider identity ports",
             )
         )
     elif runtime.browser_session is not None:
@@ -473,6 +485,22 @@ def _check_public_origin(value: str, *, profile: str = "remote_https") -> Config
 
 
 def _check_builtin_identity_configuration(settings: Settings) -> ConfigCheck:
+    if settings.identity_platform_enabled:
+        return _check(
+            "built_in_identity_configuration",
+            bool(
+                settings.identity_platform_project_id
+                and settings.identity_platform_api_key
+                and settings.identity_platform_auth_domain
+                and settings.identity_platform_providers
+                and settings.signup_terms_version
+                and settings.signup_terms_url
+                and settings.signup_privacy_version
+                and settings.signup_privacy_url
+            ),
+            "Identity Platform project, providers and published legal documents are configured",
+            "Identity Platform requires a complete project-bound signup configuration",
+        )
     if not settings.oidc_bff_enabled:
         return ConfigCheck(
             name="built_in_identity_configuration",
@@ -524,7 +552,7 @@ def _check_redis(value: str) -> ConfigCheck:
         parsed.scheme == "rediss"
         and bool(parsed.hostname)
         and (port is None or 1 <= port <= _MAX_PORT)
-        and not is_non_remote_host(parsed.hostname)
+        and is_remote_dependency_host(parsed.hostname)
         and not parsed.fragment
         and _redis_tls_query_is_verified(parsed.query)
     )
@@ -566,7 +594,7 @@ def _check_database(value: str, *, mode: str) -> ConfigCheck:
     else:
         passed = (
             common
-            and not is_non_remote_host(parsed.hostname)
+            and is_remote_dependency_host(parsed.hostname)
             and _postgres_sslmode_is(parsed.query, "verify-full")
         )
         success = "remote certificate-and-hostname-verified PostgreSQL ec_app role is configured"
@@ -602,7 +630,7 @@ def _check_remote_target(name: str, value: str) -> ConfigCheck:
         and not parsed.fragment
         and value.isprintable()
         and not any(character.isspace() for character in value)
-        and not is_non_remote_host(host)
+        and is_remote_dependency_host(host)
     )
     return _check(
         name,

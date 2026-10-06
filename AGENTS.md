@@ -3,8 +3,9 @@
 ## Scope and navigation
 
 The current product milestone is private event discovery: search, shared filters,
-Events/Map/Calendar views, read-only entity graphs, event details and provider registration links. Google sign-in
-is implemented; configuration and deployed identity acceptance remain pending. Chat, automated
+Events/Map/Calendar views, read-only entity graphs, event details and provider registration links.
+Guest catalog access and Google/Apple signup through GCP Identity Platform are implemented;
+provider configuration and deployed identity acceptance remain pending. Chat, automated
 RSVP, managed handoffs, notifications, calendar synchronization, purchases and programmatic
 API keys are deferred unless the assigned task explicitly changes their scope.
 
@@ -14,6 +15,8 @@ API keys are deferred unless the assigned task explicitly changes their scope.
 - [Development workflow](README.md#development-workflow): `main`, task branches, PRs and release authority.
 - [Release acceptance](docs/production-operations.md#first-release-acceptance): release gates.
 - [Private deployment and recovery](deploy/development.md): application operations.
+- [Consumer accounts](deployment/consumer-identity.md): signup, legal acceptance and owner-only admin release gates.
+- [Public consumer access](deploy/public-access.md): Cloudflare routing and private admin boundary.
 - [Symphony workflow](WORKFLOW.md): bounded coding-agent assignment and handoff.
 - [CI](.github/workflows/ci.yml) and [deployment checks](.github/workflows/deployment-validation.yml):
   authoritative check definitions. Read the relevant design and tests before changing a component.

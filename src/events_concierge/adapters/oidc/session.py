@@ -330,7 +330,163 @@ class RedisOidcSessionStore:
             return None
 
 
-class OidcBffSessionAdapter:
+class OpaqueBrowserSessionAdapter:
+    """Shared fixed-lifetime Redis sessions, CSRF and erasure fences for browser identities."""
+
+    login_cookie_name = "__Host-ec_login"
+    session_cookie_name = "__Host-ec_session"
+    csrf_cookie_name = "__Host-ec_csrf"
+    csrf_header_name = "X-EC-CSRF"
+
+    def __init__(
+        self,
+        *,
+        trusted_origin: str,
+        redis_url: str,
+        login_ttl_seconds: int = 600,
+        session_ttl_seconds: int = 28_800,
+        store_timeout_seconds: float = 2.0,
+        store: _SessionStore | None = None,
+    ) -> None:
+        self._trusted_origin = _origin(trusted_origin)
+        if not _MIN_LOGIN_TTL_SECONDS <= login_ttl_seconds <= _MAX_LOGIN_TTL_SECONDS:
+            raise ValueError("login TTL must be between 60 and 900 seconds")
+        if not _MIN_SESSION_TTL_SECONDS <= session_ttl_seconds <= _MAX_SESSION_TTL_SECONDS:
+            raise ValueError("session TTL must be between 300 and 86400 seconds")
+        self.login_ttl_seconds = login_ttl_seconds
+        self.session_ttl_seconds = session_ttl_seconds
+        self._store = store or RedisOidcSessionStore(
+            redis_url, timeout_seconds=store_timeout_seconds
+        )
+
+    def _session_metadata(self, identity: BrowserIdentity) -> dict[str, str | int]:
+        return {}
+
+    def _assert_session_authority(self, record: Mapping[str, Any]) -> None:
+        if "oidc_provider" in record or "identity_project" in record:
+            raise AuthenticationFailedError("browser session identity authority changed")
+
+    def _assert_step_up_available(self) -> None:
+        raise BrowserStepUpUnavailableError("account deletion requires a supported step-up method")
+
+    async def issue_session(self, identity: BrowserIdentity) -> BrowserSessionCredentials:
+        """Create a fixed-lifetime session; a collision retries without reusing either secret."""
+        _validate_identity(identity)
+        for _attempt in range(2):
+            session_token, csrf_token = _random_token(), _random_token()
+            payload = _json(
+                {
+                    "v": _STORE_VERSION,
+                    "tenant_id": str(identity.tenant_id),
+                    "subject": identity.subject,
+                    "csrf_hash": _digest(csrf_token),
+                    "recent_auth_at": None,
+                    **self._session_metadata(identity),
+                }
+            )
+            if await self._store.create_session(
+                session_token,
+                payload,
+                self.session_ttl_seconds,
+                identity.tenant_id,
+            ):
+                return BrowserSessionCredentials(session_token, csrf_token)
+        raise BrowserSessionUnavailableError("could not allocate browser session")
+
+    async def resolve_tenant_id(self, headers: Mapping[str, str]) -> UUID:
+        try:
+            _, record = await self._session(headers)
+        except BrowserSessionUnavailableError:
+            raise
+        except (AuthenticationFailedError, ValueError) as error:
+            raise AuthenticationFailedError("valid tenant authentication is required") from error
+        return cast("UUID", record["tenant_id"])
+
+    async def verify_state_change(
+        self,
+        tenant_id: UUID,
+        headers: Mapping[str, str],
+    ) -> None:
+        try:
+            _, record = await self._session(headers)
+            if record["tenant_id"] != tenant_id:
+                raise ValueError("session tenant changed between authentication and CSRF checks")
+            origin = _one_header(headers, "origin")
+            if origin is None or not hmac.compare_digest(origin, self._trusted_origin):
+                raise ValueError("request origin is not the configured product origin")
+            cookie_token = _required_cookie(headers, self.csrf_cookie_name)
+            header_token = _one_header(headers, self.csrf_header_name)
+            if (
+                header_token is None
+                or not _valid_token(header_token)
+                or not hmac.compare_digest(cookie_token, header_token)
+                or not hmac.compare_digest(record["csrf_hash"], _digest(header_token))
+            ):
+                raise ValueError("CSRF token is not bound to this session")
+        except BrowserSessionUnavailableError:
+            raise
+        except (AuthenticationFailedError, ValueError) as error:
+            raise CsrfVerificationFailedError("valid state-change authority is required") from error
+
+    async def revoke_session(self, headers: Mapping[str, str]) -> None:
+        token = _optional_cookie(headers, self.session_cookie_name)
+        if token is not None:
+            await self._store.delete_session(token)
+
+    async def verify_recent_auth(
+        self,
+        tenant_id: UUID,
+        headers: Mapping[str, str],
+        *,
+        max_age_seconds: int,
+    ) -> None:
+        """Require one tenant-bound session backed by a recent provider ``auth_time`` claim."""
+        if not 1 <= max_age_seconds <= _MAX_RECENT_AUTH_SECONDS:
+            raise ValueError("recent authentication age must be between 1 and 900 seconds")
+        self._assert_step_up_available()
+        try:
+            _, record = await self._session(headers)
+            if record["tenant_id"] != tenant_id or not _auth_time_is_recent(
+                record["recent_auth_at"],
+                max_age_seconds=max_age_seconds,
+            ):
+                raise ValueError("session is not backed by recent provider authentication")
+        except BrowserSessionUnavailableError:
+            raise
+        except (AuthenticationFailedError, ValueError) as error:
+            raise RecentAuthenticationRequiredError(
+                "recent provider authentication is required"
+            ) from error
+
+    async def revoke_tenant_sessions(self, tenant_id: UUID) -> None:
+        """Fence issuance and revoke all concurrent sessions as one Redis operation."""
+        await self._store.revoke_tenant_sessions(tenant_id)
+
+    async def _session(
+        self,
+        headers: Mapping[str, str],
+    ) -> tuple[str, dict[str, Any]]:
+        session_token = _required_cookie(headers, self.session_cookie_name)
+        raw_session = await self._store.get_session(session_token)
+        if raw_session is None:
+            raise AuthenticationFailedError("valid tenant authentication is required")
+        try:
+            record = _session_record(raw_session)
+        except ValueError:
+            # Corrupt or incompatible records cannot remain repeatedly parseable authority.
+            await self._store.delete_session(session_token)
+            raise
+        self._assert_session_authority(record)
+        return session_token, record
+
+    async def is_ready(self) -> bool:
+        return await self._store.is_ready()
+
+    async def aclose(self) -> None:
+        await self._store.aclose()
+
+
+class OidcBffSessionAdapter(OpaqueBrowserSessionAdapter):
     """Authorization-code BFF implementing auth, CSRF, and browser-session lifecycle ports."""
 
     login_cookie_name = "__Host-ec_login"
@@ -408,6 +564,30 @@ class OidcBffSessionAdapter:
             algorithms=algorithms,
             jwks_timeout_seconds=http_timeout_seconds,
         )
+
+    def _session_metadata(self, identity: BrowserIdentity) -> dict[str, str | int]:
+        return (
+            {"oidc_provider": "google", "oidc_client_id": self._client_id}
+            if self._provider == "google"
+            else {}
+        )
+
+    def _assert_session_authority(self, record: Mapping[str, Any]) -> None:
+        if self._provider == "google":
+            if (
+                record.get("oidc_provider") != "google"
+                or record.get("oidc_client_id") != self._client_id
+                or not record["subject"].startswith(GOOGLE_SUBJECT_PREFIX)
+            ):
+                raise AuthenticationFailedError("browser session identity authority changed")
+        elif "oidc_provider" in record or "identity_project" in record:
+            raise AuthenticationFailedError("browser session identity authority changed")
+
+    def _assert_step_up_available(self) -> None:
+        if self._provider == "google":
+            raise BrowserStepUpUnavailableError(
+                "Google account deletion requires a separately configured step-up method"
+            )
 
     async def start_login(self, return_to: str) -> BrowserLoginStart:
         """Seal one return path beside independent state, nonce, and S256 PKCE secrets."""
@@ -575,106 +755,6 @@ class OidcBffSessionAdapter:
             reauthenticated=reauthenticated,
         )
 
-    async def issue_session(self, identity: BrowserIdentity) -> BrowserSessionCredentials:
-        """Create a fixed-lifetime session; a collision retries without reusing either secret."""
-        _validate_identity(identity)
-        for _attempt in range(2):
-            session_token, csrf_token = _random_token(), _random_token()
-            payload = _json(
-                {
-                    "v": _STORE_VERSION,
-                    "tenant_id": str(identity.tenant_id),
-                    "subject": identity.subject,
-                    "csrf_hash": _digest(csrf_token),
-                    "recent_auth_at": None,
-                    **(
-                        {"oidc_provider": "google", "oidc_client_id": self._client_id}
-                        if self._provider == "google"
-                        else {}
-                    ),
-                }
-            )
-            if await self._store.create_session(
-                session_token,
-                payload,
-                self.session_ttl_seconds,
-                identity.tenant_id,
-            ):
-                return BrowserSessionCredentials(session_token, csrf_token)
-        raise BrowserSessionUnavailableError("could not allocate browser session")
-
-    async def resolve_tenant_id(self, headers: Mapping[str, str]) -> UUID:
-        try:
-            _, record = await self._session(headers)
-        except BrowserSessionUnavailableError:
-            raise
-        except (AuthenticationFailedError, ValueError) as error:
-            raise AuthenticationFailedError("valid tenant authentication is required") from error
-        return cast("UUID", record["tenant_id"])
-
-    async def verify_state_change(
-        self,
-        tenant_id: UUID,
-        headers: Mapping[str, str],
-    ) -> None:
-        try:
-            _, record = await self._session(headers)
-            if record["tenant_id"] != tenant_id:
-                raise ValueError("session tenant changed between authentication and CSRF checks")
-            origin = _one_header(headers, "origin")
-            if origin is None or not hmac.compare_digest(origin, self._trusted_origin):
-                raise ValueError("request origin is not the configured product origin")
-            cookie_token = _required_cookie(headers, self.csrf_cookie_name)
-            header_token = _one_header(headers, self.csrf_header_name)
-            if (
-                header_token is None
-                or not _valid_token(header_token)
-                or not hmac.compare_digest(cookie_token, header_token)
-                or not hmac.compare_digest(record["csrf_hash"], _digest(header_token))
-            ):
-                raise ValueError("CSRF token is not bound to this session")
-        except BrowserSessionUnavailableError:
-            raise
-        except (AuthenticationFailedError, ValueError) as error:
-            raise CsrfVerificationFailedError("valid state-change authority is required") from error
-
-    async def revoke_session(self, headers: Mapping[str, str]) -> None:
-        token = _optional_cookie(headers, self.session_cookie_name)
-        if token is not None:
-            await self._store.delete_session(token)
-
-    async def verify_recent_auth(
-        self,
-        tenant_id: UUID,
-        headers: Mapping[str, str],
-        *,
-        max_age_seconds: int,
-    ) -> None:
-        """Require one tenant-bound session backed by a recent provider ``auth_time`` claim."""
-        if not 1 <= max_age_seconds <= _MAX_RECENT_AUTH_SECONDS:
-            raise ValueError("recent authentication age must be between 1 and 900 seconds")
-        if self._provider == "google":
-            raise BrowserStepUpUnavailableError(
-                "Google account deletion requires a separately configured step-up method"
-            )
-        try:
-            _, record = await self._session(headers)
-            if record["tenant_id"] != tenant_id or not _auth_time_is_recent(
-                record["recent_auth_at"],
-                max_age_seconds=max_age_seconds,
-            ):
-                raise ValueError("session is not backed by recent provider authentication")
-        except BrowserSessionUnavailableError:
-            raise
-        except (AuthenticationFailedError, ValueError) as error:
-            raise RecentAuthenticationRequiredError(
-                "recent provider authentication is required"
-            ) from error
-
-    async def revoke_tenant_sessions(self, tenant_id: UUID) -> None:
-        """Fence issuance and revoke all concurrent sessions as one Redis operation."""
-        await self._store.revoke_tenant_sessions(tenant_id)
-
     async def is_ready(self) -> bool:
         if not await self._store.is_ready():
             return False
@@ -686,31 +766,6 @@ class OidcBffSessionAdapter:
         await self._store.aclose()
         if self._owns_http:
             await self._http.aclose()
-
-    async def _session(
-        self,
-        headers: Mapping[str, str],
-    ) -> tuple[str, dict[str, Any]]:
-        session_token = _required_cookie(headers, self.session_cookie_name)
-        raw_session = await self._store.get_session(session_token)
-        if raw_session is None:
-            raise AuthenticationFailedError("valid tenant authentication is required")
-        try:
-            record = _session_record(raw_session)
-        except ValueError:
-            # Corrupt or incompatible records cannot remain repeatedly parseable authority.
-            await self._store.delete_session(session_token)
-            raise
-        if self._provider == "google":
-            if (
-                record.get("oidc_provider") != "google"
-                or record.get("oidc_client_id") != self._client_id
-                or not record["subject"].startswith(GOOGLE_SUBJECT_PREFIX)
-            ):
-                raise AuthenticationFailedError("browser session identity authority changed")
-        elif "oidc_provider" in record:
-            raise AuthenticationFailedError("browser session identity authority changed")
-        return session_token, record
 
     async def _exchange_code(self, code: str, verifier: str) -> str:
         try:
@@ -816,11 +871,13 @@ def _session_record(raw: str) -> dict[str, Any]:
     intermediate_fields = old_fields | {"authenticated_at"}
     new_fields = old_fields | {"recent_auth_at"}
     google_fields = new_fields | {"oidc_provider", "oidc_client_id"}
+    identity_fields = new_fields | {"identity_project", "identity_auth_time"}
     if frozenset(payload) not in {
         frozenset(old_fields),
         frozenset(intermediate_fields),
         frozenset(new_fields),
         frozenset(google_fields),
+        frozenset(identity_fields),
     }:
         raise ValueError("invalid browser session record")
     if payload["v"] != _STORE_VERSION:
@@ -850,23 +907,34 @@ def _session_record(raw: str) -> dict[str, Any]:
         or recent_auth_at < 0
     ):
         raise ValueError("invalid browser session record")
-    provider_fields: dict[str, str] = {}
-    if frozenset(payload) == frozenset(google_fields):
-        if payload["oidc_provider"] != "google" or not _bounded_text(
-            payload["oidc_client_id"], _MAX_CLIENT_ID_BYTES
-        ):
-            raise ValueError("invalid browser session identity authority")
-        provider_fields = {
-            "oidc_provider": "google",
-            "oidc_client_id": cast("str", payload["oidc_client_id"]),
-        }
     return {
         "tenant_id": tenant_id,
         "subject": subject,
         "csrf_hash": csrf_hash,
         "recent_auth_at": recent_auth_at,
-        **provider_fields,
+        **_session_provider_metadata(payload),
     }
+
+
+def _session_provider_metadata(payload: Mapping[str, object]) -> dict[str, str | int]:
+    if "oidc_provider" in payload:
+        if payload["oidc_provider"] != "google" or not _bounded_text(
+            payload["oidc_client_id"], _MAX_CLIENT_ID_BYTES
+        ):
+            raise ValueError("invalid browser session identity authority")
+        return {
+            "oidc_provider": "google",
+            "oidc_client_id": cast("str", payload["oidc_client_id"]),
+        }
+    if "identity_project" in payload:
+        project = payload["identity_project"]
+        if not isinstance(project, str) or not _bounded_text(project, 63):
+            raise ValueError("invalid browser session identity authority")
+        auth_time = payload["identity_auth_time"]
+        if type(auth_time) is not int or auth_time < 0:
+            raise ValueError("invalid browser session authentication time")
+        return {"identity_project": project, "identity_auth_time": auth_time}
+    return {}
 
 
 def _auth_time_is_recent(value: object, *, max_age_seconds: int) -> bool:
@@ -913,7 +981,22 @@ def _safe_return_path(value: str) -> str:
     ):
         raise ValueError("return path must be a bounded same-origin application path")
     parsed = urlsplit(value)
-    if parsed.scheme or parsed.netloc or parsed.path not in {"/", "/app"}:
+    if (
+        parsed.scheme
+        or parsed.netloc
+        or parsed.path
+        not in {
+            "/",
+            "/app",
+            "/settings",
+            "/settings/account",
+            "/settings/activity",
+            "/settings/api-keys",
+            "/settings/saved-filters",
+            "/settings/security",
+            "/settings/taste",
+        }
+    ):
         raise ValueError("return path must target the same-origin application shell")
     return value
 

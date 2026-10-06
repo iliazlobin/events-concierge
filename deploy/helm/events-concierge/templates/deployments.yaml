@@ -1,11 +1,13 @@
 {{- $root := . -}}
 {{- $devCatalog := and (eq (default "managed" .Values.global.deploymentProfile) "development") .Values.developmentCatalog.enabled -}}
+{{- $private := eq .Values.global.deploymentProfile "private" -}}
 {{- if or (eq .Values.global.releasePhase "all") (eq .Values.global.releasePhase "application") }}
 {{- range $name, $workload := .Values.workloads }}
-{{- if and $workload.enabled (or (not $workload.operatorProfile) $root.Values.operator.enabled (and $devCatalog (eq $name "ingestion-executor"))) }}
+{{- if and $workload.enabled (or (not $workload.operatorProfile) $root.Values.operator.enabled (and (or $devCatalog $private) (eq $name "ingestion-executor"))) }}
 {{- $profile := default "runtime" $workload.operatorProfile }}
 {{- if and (eq $name "temporal-catalog") $root.Values.operator.enabled }}{{- $profile = "executor" }}{{- end }}
 {{- if and $devCatalog (has $name (list "ingestion-executor" "temporal-catalog")) }}{{- $profile = "development-executor" }}{{- end }}
+{{- if $private }}{{- $profile = printf "private-%s" $name }}{{- end }}
 ---
 apiVersion: apps/v1
 kind: Deployment
@@ -19,8 +21,8 @@ spec:
   strategy:
     type: RollingUpdate
     rollingUpdate:
-      maxSurge: {{ ternary 0 1 (eq (default "managed" $root.Values.global.deploymentProfile) "development") }}
-      maxUnavailable: {{ ternary 1 0 (eq (default "managed" $root.Values.global.deploymentProfile) "development") }}
+      maxSurge: {{ ternary 0 1 (or $private (eq (default "managed" $root.Values.global.deploymentProfile) "development")) }}
+      maxUnavailable: {{ ternary 1 0 (or $private (eq (default "managed" $root.Values.global.deploymentProfile) "development")) }}
   selector:
     matchLabels:
       {{- include "events-concierge.selectorLabels" (dict "root" $root "component" $name) | nindent 6 }}
@@ -31,6 +33,9 @@ spec:
         app.kubernetes.io/part-of: events-concierge
       annotations:
         checksum/runtime-config: {{ include (print $root.Template.BasePath "/configmap.yaml") $root | sha256sum }}
+        {{- if $private }}
+        checksum/private-runtime: {{ $root.Values.privateRuntime | toJson | sha256sum }}
+        {{- end }}
         {{- if eq $profile "development-executor" }}
         checksum/development-executor-config: {{ include (print $root.Template.BasePath "/development-operator-config.yaml") $root | sha256sum }}
         {{- end }}
@@ -116,9 +121,13 @@ spec:
           envFrom:
             - configMapRef:
                 name: {{ include "events-concierge.fullname" $root }}-{{ $profile }}
-          {{- with $workload.env }}
+          {{- if or $workload.env $private }}
           env:
-            {{- range $key, $value := . }}
+            {{- if $private }}
+            - name: PGSSLROOTCERT
+              value: /var/run/events-concierge-tls/postgres/ca.crt
+            {{- end }}
+            {{- range $key, $value := $workload.env }}
             - name: {{ $key }}
               value: {{ $value | quote }}
             {{- end }}
@@ -145,6 +154,9 @@ spec:
             - name: runtime-secrets
               mountPath: /var/run/secrets/events-concierge
               readOnly: true
+            {{- end }}
+            {{- if and $private $workload.runtimeSecrets }}
+            {{- include "events-concierge.privateTLSMounts" (dict "root" $root "process" $name) | nindent 12 }}
             {{- end }}
           {{- if eq $workload.probeType "api" }}
           startupProbe:
@@ -199,6 +211,9 @@ spec:
             readOnly: true
             volumeAttributes:
               secretProviderClass: {{ printf "%s-%s" (include "events-concierge.fullname" $root) $profile | quote }}
+        {{- end }}
+        {{- if and $private $workload.runtimeSecrets }}
+        {{- include "events-concierge.privateTLSVolumes" (dict "root" $root "process" $name) | nindent 8 }}
         {{- end }}
 {{- end }}
 {{- end }}

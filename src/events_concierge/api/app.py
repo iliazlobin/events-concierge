@@ -23,9 +23,15 @@ from html import escape
 from pathlib import Path
 from typing import Annotated, Any, Literal, NamedTuple, cast
 from unicodedata import category
+from urllib.parse import urlencode
 from uuid import UUID, uuid4
 
 from fastapi import Depends, FastAPI, HTTPException, Query, Request
+from fastapi.exception_handlers import (
+    http_exception_handler,
+    request_validation_exception_handler,
+)
+from fastapi.exceptions import RequestValidationError
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse, Response
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 from sqlalchemy import text
@@ -33,6 +39,8 @@ from sqlalchemy.exc import DBAPIError
 from sqlalchemy.exc import TimeoutError as SqlAlchemyTimeoutError
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
+from ..adapters.identity_platform import IdentityPlatformBrowserSessionAdapter
+from ..adapters.oidc.session import _safe_return_path
 from ..api.release_profile import apply_release_profile
 from ..application.discovery_results import lifecycle
 from ..application.feed import MAX_FEED_OFFSET
@@ -65,6 +73,7 @@ from ..ports.account_erasure import (
 from ..ports.api_keys import ApiKeyRecord
 from ..ports.auth import (
     AuthenticationFailedError,
+    BrowserIdentity,
     BrowserSessionCredentials,
     BrowserSessionLifecyclePort,
     BrowserSessionUnavailableError,
@@ -736,12 +745,24 @@ class UiConfigOut(BaseModel):
     release_profile: Literal["full", "discovery"] = "full"
     local_demo: bool
     auth_mode: Literal["local_demo", "deployment_session"]
-    auth_provider: Literal["custom_claim", "google"] | None = None
+    auth_provider: Literal["custom_claim", "google", "identity_platform"] | None = None
+    anonymous_browsing: bool = True
+    identity_platform: dict[str, Any] | None = None
+    legal_policy: dict[str, str] | None = None
     auth_start_url: str | None
     reauth_url: str | None
     logout_url: str | None
     csrf_cookie_name: str | None
     csrf_header_name: str | None
+
+
+class IdentitySessionBody(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    id_token: str = Field(min_length=1, max_length=16 * 1024)
+    state: str = Field(min_length=43, max_length=43)
+    accepted_terms: bool = Field(strict=True)
+    terms_version: str = Field(min_length=1, max_length=80)
+    privacy_version: str = Field(min_length=1, max_length=80)
 
 
 class VersionOut(BaseModel):
@@ -1888,7 +1909,7 @@ async def _authenticated_tenant(request: Request) -> UUID:
     """Resolve one edge-authenticated tenant; caller JSON can never select an RLS context.
 
     The local header adapter is deliberately an injected test seam only.  Production composition
-    refuses that adapter and must supply the signed OIDC BFF/session implementation (FR-1.1/1.3).
+    refuses that adapter and requires one verified browser-session authority (FR-1.1/1.3).
     """
     container: Container = request.app.state.container
     try:
@@ -1907,6 +1928,13 @@ async def _authenticated_tenant(request: Request) -> UUID:
     # product account exists.  Check both before any tenant-scoped route can create orphan state.
     if await container.tenant_repo.get(tenant_id) is None:
         raise HTTPException(status_code=404, detail="account not found")
+    if (
+        request.app.state.settings.identity_platform_enabled
+        and not await container.consumer_accounts.has_accepted(
+            tenant_id, request.app.state.settings.consumer_legal_policy
+        )
+    ):
+        raise HTTPException(status_code=428, detail="current terms and privacy acceptance required")
     return tenant_id
 
 
@@ -2211,11 +2239,14 @@ async def _identity_is_ready(app: FastAPI) -> bool:
         "BrowserSessionLifecyclePort | None",
         getattr(container, "browser_session", None),
     )
-    if browser_session is None:
+    if container is None or browser_session is None:
         return False
     try:
         async with asyncio.timeout(_READINESS_TIMEOUT_SECONDS):
-            return await browser_session.is_ready()
+            session_ready = await browser_session.is_ready()
+            if app.state.settings.identity_platform_enabled:
+                return session_ready and await container.consumer_accounts.is_ready()
+            return session_ready
     except (BrowserSessionUnavailableError, TimeoutError):
         return False
 
@@ -2394,6 +2425,23 @@ def create_app() -> FastAPI:
     app = FastAPI(title="Events Concierge", version="0.1.0", lifespan=lifespan)
     app.state.settings = settings
     app.state.ingestion_admin = None
+
+    @app.exception_handler(RequestValidationError)
+    async def redact_auth_validation(request: Request, error: RequestValidationError) -> Response:
+        if request.url.path.startswith("/auth/"):
+            # FastAPI's default validation payload includes input values, including ID tokens.
+            response = JSONResponse({"detail": "invalid sign-in request"}, status_code=422)
+            _secure_auth_response(response)
+            return response
+        return await request_validation_exception_handler(request, error)
+
+    @app.exception_handler(HTTPException)
+    async def secure_auth_error(request: Request, error: HTTPException) -> Response:
+        response = await http_exception_handler(request, error)
+        if request.url.path.startswith("/auth/"):
+            _secure_auth_response(response)
+        return response
+
     app.add_middleware(
         _BoundedRequestBodyMiddleware,
         max_body_bytes=_MAX_REQUEST_BODY_BYTES,
@@ -2488,7 +2536,8 @@ def create_app() -> FastAPI:
         """Expose dependency readiness while treating a Temporal outage as durable degradation."""
         database_ready = await _database_is_ready()
         temporal_ready = await _temporal_is_reachable(app)
-        identity_ready = not settings.oidc_bff_enabled or await _identity_is_ready(app)
+        identity_configured = settings.oidc_bff_enabled or settings.identity_platform_enabled
+        identity_ready = not identity_configured or await _identity_is_ready(app)
         required_ready = database_ready and identity_ready
         metrics.set_dependency_ready("database", database_ready)
         metrics.set_dependency_ready("temporal", temporal_ready)
@@ -2502,8 +2551,8 @@ def create_app() -> FastAPI:
                     "temporal": "ready" if temporal_ready else "degraded",
                     "identity": (
                         "ready"
-                        if settings.oidc_bff_enabled and identity_ready
-                        else ("unavailable" if settings.oidc_bff_enabled else "not_configured")
+                        if identity_configured and identity_ready
+                        else ("unavailable" if identity_configured else "not_configured")
                     ),
                 },
             },
@@ -2516,13 +2565,43 @@ def create_app() -> FastAPI:
             release_profile=settings.release_profile,
             local_demo=settings.mock_cloud,
             auth_mode="local_demo" if settings.mock_cloud else "deployment_session",
-            auth_provider=settings.oidc_provider if settings.oidc_bff_enabled else None,
+            auth_provider=(
+                "identity_platform"
+                if settings.identity_platform_enabled
+                else (settings.oidc_provider if settings.oidc_bff_enabled else None)
+            ),
+            identity_platform=(
+                {
+                    "project_id": settings.identity_platform_project_id,
+                    "api_key": settings.identity_platform_api_key,
+                    "auth_domain": settings.identity_platform_auth_domain,
+                    "providers": list(settings.identity_platform_providers),
+                }
+                if settings.identity_platform_enabled
+                else None
+            ),
+            legal_policy=(
+                {
+                    "terms_version": settings.signup_terms_version,
+                    "terms_url": settings.signup_terms_url,
+                    "privacy_version": settings.signup_privacy_version,
+                    "privacy_url": settings.signup_privacy_url,
+                }
+                if settings.identity_platform_enabled
+                else None
+            ),
             auth_start_url=(
-                settings.ui_auth_start_url or ("/auth/login" if settings.oidc_bff_enabled else None)
+                settings.ui_auth_start_url
+                or (
+                    "/sign-in"
+                    if settings.identity_platform_enabled
+                    else ("/auth/login" if settings.oidc_bff_enabled else None)
+                )
             ),
             reauth_url=(
                 "/auth/reauth"
-                if browser_session is not None and settings.oidc_provider != "google"
+                if browser_session is not None
+                and (settings.identity_platform_enabled or settings.oidc_provider != "google")
                 else None
             ),
             logout_url="/auth/logout" if browser_session is not None else None,
@@ -2545,6 +2624,92 @@ def create_app() -> FastAPI:
                 raise HTTPException(status_code=503, detail="browser identity is unavailable")
             return browser_session
 
+        if settings.identity_platform_enabled:
+
+            @app.get("/auth/identity/start", include_in_schema=False)
+            async def identity_signin_start(
+                return_to: str = Query(default="/", max_length=2048),
+            ) -> Response:
+                browser = configured_browser_session()
+                if not isinstance(browser, IdentityPlatformBrowserSessionAdapter):
+                    raise HTTPException(503, "browser identity is unavailable")
+                if not await _identity_is_ready(app):
+                    raise HTTPException(503, "browser identity is unavailable")
+                try:
+                    challenge = await browser.begin_login(return_to)
+                except ValueError as error:
+                    raise HTTPException(400, "invalid application return path") from error
+                except BrowserSessionUnavailableError as error:
+                    raise HTTPException(503, "browser identity is unavailable") from error
+                response = JSONResponse({"state": challenge.state})
+                _set_login_cookie(response, browser, challenge.transaction_token)
+                _secure_auth_response(response)
+                return response
+
+            @app.post("/auth/identity/session", include_in_schema=False)
+            async def identity_signin_complete(
+                request: Request, body: IdentitySessionBody
+            ) -> Response:
+                browser = configured_browser_session()
+                if not isinstance(browser, IdentityPlatformBrowserSessionAdapter):
+                    raise HTTPException(503, "browser identity is unavailable")
+                try:
+                    completion = await browser.complete_identity_login(
+                        request.headers, token=body.id_token, state=body.state
+                    )
+                    policy = settings.consumer_legal_policy
+                    credentials = None
+                    if not completion.reauthenticated:
+                        if not body.accepted_terms:
+                            raise HTTPException(428, "terms and privacy acceptance required")
+                        if (
+                            body.terms_version != policy.terms_version
+                            or body.privacy_version != policy.privacy_version
+                        ):
+                            raise HTTPException(
+                                409, "legal documents changed; review them before signing in"
+                            )
+                        tenant_id = await app.state.container.consumer_accounts.accept(
+                            completion.identity, policy
+                        )
+                        identity = BrowserIdentity(
+                            tenant_id,
+                            completion.identity.subject,
+                            completion.identity.authenticated_at,
+                        )
+
+                        async def issue_bound_identity_session() -> BrowserSessionCredentials:
+                            await browser.revoke_session(request.headers)
+                            return await browser.issue_session(identity)
+
+                        credentials = await app.state.container.tenant_effect_authority.run(
+                            TenantEffectRequest(
+                                tenant_id=tenant_id,
+                                kind=TenantEffectKind.BROWSER_SESSION,
+                                timeout_seconds=settings.tenant_effect_timeout_seconds,
+                            ),
+                            issue_bound_identity_session,
+                        )
+                except (AuthenticationFailedError, TenantEffectFencedError) as error:
+                    raise HTTPException(401, "sign-in could not be verified") from error
+                except (
+                    BrowserSessionUnavailableError,
+                    DBAPIError,
+                    SqlAlchemyTimeoutError,
+                    TenantEffectLockTimeoutError,
+                    TenantEffectTimedOutError,
+                ) as error:
+                    raise HTTPException(503, "browser identity is unavailable") from error
+                response = JSONResponse({"return_to": completion.return_to})
+                _clear_login_cookie(response, browser)
+                if credentials is not None:
+                    _clear_browser_cookies(response, browser)
+                    _set_session_cookies(
+                        response, browser, credentials.session_token, credentials.csrf_token
+                    )
+                _secure_auth_response(response)
+                return response
+
         @app.get("/auth/login", include_in_schema=False)
         async def oidc_login(
             return_to: str = Query(
@@ -2553,6 +2718,16 @@ def create_app() -> FastAPI:
             ),
         ) -> RedirectResponse:
             browser_session = configured_browser_session()
+            if settings.identity_platform_enabled:
+                try:
+                    safe_return = _safe_return_path(return_to)
+                except ValueError as error:
+                    raise HTTPException(400, "invalid application return path") from error
+                return RedirectResponse(
+                    "/sign-in?" + urlencode({"return_to": safe_return}),
+                    status_code=303,
+                    headers={"Cache-Control": "no-store"},
+                )
             try:
                 login = await browser_session.start_login(return_to)
             except ValueError as error:
@@ -2751,7 +2926,7 @@ def create_app() -> FastAPI:
             interests=list(identity.interests),
             preference_revision=identity.preference_revision,
             local_demo=settings.mock_cloud,
-            is_admin=role in {TenantRole.ADMIN, TenantRole.OPERATOR},
+            is_admin=settings.mock_cloud and role in {TenantRole.ADMIN, TenantRole.OPERATOR},
             profile=_profile_out(profile, avatar),
         )
 
@@ -3253,7 +3428,6 @@ def create_app() -> FastAPI:
 
     @app.get("/v1/catalog/events", response_model=CatalogBrowsePageOut)
     async def browse_catalog_events(
-        tenant_id: AuthenticatedTenant,
         source_key: Annotated[
             list[
                 Annotated[
@@ -3294,7 +3468,6 @@ def create_app() -> FastAPI:
         the page they render rather than paying for inventories they discard. The default stays
         true so every existing caller keeps the response it already parses.
         """
-        del tenant_id
         source_keys = tuple(dict.fromkeys(source_key or []))
         if len(source_keys) > _MAX_CATALOG_SOURCE_SELECTIONS:
             raise HTTPException(status_code=422, detail="too many catalog sources")
@@ -3423,7 +3596,6 @@ def create_app() -> FastAPI:
 
     @app.get("/v1/catalog/events/summary", response_model=CatalogDaySummaryOut)
     async def summarize_catalog_events(
-        tenant_id: AuthenticatedTenant,
         time_zone: str = Query(max_length=_MAX_CATALOG_TIME_ZONE_LENGTH),
         source_key: Annotated[
             list[
@@ -3458,7 +3630,6 @@ def create_app() -> FastAPI:
         accepts, minus paging and ordering, and applies the topic selection so the grid agrees
         with the agenda those filters produce.
         """
-        del tenant_id
         source_keys = tuple(dict.fromkeys(source_key or []))
         if len(source_keys) > _MAX_CATALOG_SOURCE_SELECTIONS:
             raise HTTPException(status_code=422, detail="too many catalog sources")
@@ -3539,10 +3710,8 @@ def create_app() -> FastAPI:
     @app.get("/v1/catalog/events/{canonical_event_id}", response_model=CatalogBrowseItemOut)
     async def read_catalog_event(
         canonical_event_id: UUID,
-        tenant_id: AuthenticatedTenant,
     ) -> CatalogBrowseItemOut:
         """Read selected event details from the published catalog; never contact providers."""
-        del tenant_id
         item = await app.state.container.catalog.get_browse_event(canonical_event_id)
         if item is None:
             raise HTTPException(status_code=404, detail="event is not in the published catalog")
@@ -3550,13 +3719,11 @@ def create_app() -> FastAPI:
 
     @app.get("/v1/catalog/entities", response_model=list[CatalogEntityOut])
     async def browse_catalog_entities(
-        tenant_id: AuthenticatedTenant,
         q: str | None = Query(default=None, max_length=_MAX_CATALOG_FILTER_LENGTH),
         kind: Annotated[list[Literal["person", "organization", "unknown"]] | None, Query()] = None,
         limit: int = Query(default=80, ge=1, le=100),
     ) -> list[CatalogEntityOut]:
         """Browse the indexed role graph without ever merging identities by display name."""
-        del tenant_id
         query = q.strip() if q and q.strip() else None
         if query is not None and any(
             ord(character) < _MIN_PRINTABLE_CODEPOINT for character in query
@@ -3571,13 +3738,11 @@ def create_app() -> FastAPI:
 
     @app.get("/v1/catalog/entity-resolution", response_model=CatalogEntityResolutionOut)
     async def resolve_catalog_event_entity(
-        tenant_id: AuthenticatedTenant,
         canonical_event_id: UUID,
         role: Literal["host", "organizer", "speaker", "partner"],
         name: str = Query(min_length=1, max_length=160),
     ) -> CatalogEntityResolutionOut:
         """Resolve only an entity name already attached to this exact public event and role."""
-        del tenant_id
         entity_id = await app.state.container.catalog_entities.resolve(
             canonical_event_id, role, name
         )
@@ -3588,9 +3753,7 @@ def create_app() -> FastAPI:
     @app.get("/v1/catalog/entities/{entity_id}", response_model=CatalogEntityDetailOut)
     async def get_catalog_entity(
         entity_id: UUID,
-        tenant_id: AuthenticatedTenant,
     ) -> CatalogEntityDetailOut:
-        del tenant_id
         detail = await app.state.container.catalog_entities.get(entity_id)
         if detail is None:
             raise HTTPException(status_code=404, detail="entity not found")
@@ -3617,7 +3780,6 @@ def create_app() -> FastAPI:
     )
     async def get_catalog_entity_graph(
         entity_id: UUID,
-        tenant_id: AuthenticatedTenant,
         events: int = Query(default=18, ge=1, le=24),
         peers: int = Query(default=32, ge=1, le=48),
         topics: int = Query(default=4, ge=0, le=6),
@@ -3629,7 +3791,6 @@ def create_app() -> FastAPI:
         per-entity detail read, which issues five statements per entity against a pool configured
         ``pool_size=5, max_overflow=0``.
         """
-        del tenant_id
         graph = await app.state.container.catalog_entities.graph(
             entity_id,
             event_limit=events,
@@ -3642,7 +3803,6 @@ def create_app() -> FastAPI:
 
     @app.get("/v1/catalog/entity-directory", response_model=CatalogEntityDirectoryOut)
     async def get_catalog_entity_directory(
-        tenant_id: AuthenticatedTenant,
         q: str | None = Query(default=None, max_length=_MAX_CATALOG_FILTER_LENGTH),
         kind: Annotated[list[Literal["person", "organization", "unknown"]] | None, Query()] = None,
         city: Annotated[list[str] | None, Query()] = None,
@@ -3654,7 +3814,6 @@ def create_app() -> FastAPI:
         The coverage figures travel with the ranking they qualify so the disclosure cannot drift
         away from it: only 4% of catalogued events name anyone at all.
         """
-        del tenant_id
         query = q.strip() if q and q.strip() else None
         try:
             directory = await app.state.container.catalog_entities.directory(
@@ -3670,7 +3829,6 @@ def create_app() -> FastAPI:
 
     @app.get("/v1/catalog/entity-overview-graph", response_model=CatalogEntityGraphOut)
     async def get_catalog_entity_overview_graph(
-        tenant_id: AuthenticatedTenant,
         q: str | None = Query(default=None, max_length=_MAX_CATALOG_FILTER_LENGTH),
         kind: Annotated[list[Literal["person", "organization", "unknown"]] | None, Query()] = None,
         identity: Annotated[
@@ -3692,7 +3850,6 @@ def create_app() -> FastAPI:
         already-fetched page: applying it after the top-N cut would rank over a population the
         reader did not choose.
         """
-        del tenant_id
         query = q.strip() if q and q.strip() else None
         try:
             graph = await app.state.container.catalog_entities.overview(

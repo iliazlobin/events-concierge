@@ -40,6 +40,13 @@
         },
         "frontendImage": {
           "$ref": "#/definitions/image"
+        },
+        "deploymentProfile": {
+          "enum": [
+            "managed",
+            "development",
+            "private"
+          ]
         }
       }
     },
@@ -134,6 +141,83 @@
         "executorClaimCheckPrefix": {
           "type": "string",
           "pattern": "^[A-Za-z0-9][A-Za-z0-9/_-]{1,200}$"
+        }
+      }
+    },
+    "privateRuntime": {
+      "type": "object",
+      "properties": {
+        "postgresCASecretName": {
+          "type": "string"
+        },
+        "redisCASecretName": {
+          "type": "string"
+        },
+        "temporalCASecretName": {
+          "type": "string"
+        },
+        "cadenceEnabled": {
+          "type": "boolean"
+        },
+        "temporalClientSecretNames": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "string",
+            "pattern": "^[a-z0-9][a-z0-9.-]*[a-z0-9]$"
+          }
+        },
+        "processSecrets": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "array",
+            "items": {
+              "$ref": "#/definitions/secretFile"
+            }
+          }
+        },
+        "controllerSecrets": {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/secretFile"
+          }
+        }
+      }
+    },
+    "publicTunnel": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "enabled",
+        "hostname",
+        "tokenSecretName",
+        "replicas",
+        "cloudflaredImage",
+        "proxyImage"
+      ],
+      "properties": {
+        "enabled": {
+          "type": "boolean"
+        },
+        "hostname": {
+          "enum": [
+            "events.iliazlobin.com"
+          ]
+        },
+        "tokenSecretName": {
+          "type": "string",
+          "maxLength": 63,
+          "pattern": "^$|^[a-z0-9]([a-z0-9-]*[a-z0-9])?$"
+        },
+        "replicas": {
+          "type": "integer",
+          "minimum": 2,
+          "maximum": 3
+        },
+        "cloudflaredImage": {
+          "$ref": "#/definitions/image"
+        },
+        "proxyImage": {
+          "$ref": "#/definitions/image"
         }
       }
     }

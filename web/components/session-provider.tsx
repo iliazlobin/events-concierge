@@ -69,7 +69,7 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
           setStatus("ready");
         } catch (loadError) {
           if (cancelled) return;
-          if (loadError instanceof ApiError && (loadError.status === 401 || loadError.status === 403 || loadError.status === 404)) {
+          if (loadError instanceof ApiError && [401, 403, 404, 428].includes(loadError.status)) {
             // No resolvable account. Settings has no onboarding of its own; the catalog shell owns
             // that flow, so hand the browser back rather than rendering an orphaned form here.
             if (nextConfig.local_demo) {
@@ -81,7 +81,9 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
               clearEntityGraphCache();
             }
             setStatus("unauthenticated");
-            if (!nextConfig.local_demo) window.location.replace(signInFailurePath(loadError.status));
+            if (!nextConfig.local_demo) window.location.replace(signInFailurePath(
+              loadError.status, `${window.location.pathname}${window.location.search}`,
+            ));
             return;
           }
           setError(loadError instanceof Error ? loadError.message : "Settings are unavailable.");

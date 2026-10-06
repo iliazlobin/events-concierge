@@ -1,0 +1,68 @@
+{{- if eq .Values.global.deploymentProfile "private" }}
+{{- $root := . -}}
+{{- range $name := list "api" "account-erasure" "ingestion-executor" "temporal-catalog" "controller" }}
+{{- if or (ne $name "controller") $root.Values.privateRuntime.cadenceEnabled }}
+{{- $catalog := has $name (list "ingestion-executor" "temporal-catalog") }}
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "events-concierge.fullname" $root }}-private-{{ $name }}
+data:
+  EC_RELEASE_REVISION: {{ $root.Values.global.releaseRevision | quote }}
+  EC_IMAGE_DIGEST: {{ $root.Values.global.appImage.digest | quote }}
+  {{- if has $name (list "api" "account-erasure") }}
+  {{- range $key, $value := $root.Values.applicationConfig }}
+  {{- if or (not (hasSuffix "_FILE" $key)) $value }}
+  {{ $key }}: {{ $value | quote }}
+  {{- end }}
+  {{- end }}
+  {{- else }}
+  EC_ENV: staging
+  EC_MOCK_CLOUD: "false"
+  EC_DATABASE_CONNECTION_MODE: direct_tls
+  EC_DATABASE_POOL_SIZE: "2"
+  EC_DATABASE_MAX_OVERFLOW: "0"
+  EC_ADMIN_INGESTION_ENABLED: "false"
+  EC_IDENTITY_PLATFORM_ENABLED: "false"
+  EC_OIDC_BFF_ENABLED: "false"
+  {{- if $catalog }}
+  EC_INGESTION_EXECUTOR_ENABLED: "true"
+  EC_INGESTION_EXECUTOR_DATABASE_URL_FILE: /var/run/secrets/events-concierge/EC_INGESTION_EXECUTOR_DATABASE_URL
+  EC_REDIS_URL_FILE: /var/run/secrets/events-concierge/EC_REDIS_URL
+  EC_PACER_BACKEND: redis
+  EC_GCS_CLAIM_CHECK_PREFIX: events-concierge/catalog/v1
+  {{- range $key, $value := $root.Values.applicationConfig }}
+  {{- if and $value (ne $key "EC_GCS_CLAIM_CHECK_PREFIX") (or (hasPrefix "EC_TEMPORAL_" $key) (has $key (list "EC_GCP_PROJECT" "EC_GCS_CLAIM_CHECK_BUCKET"))) }}
+  {{ $key }}: {{ $value | quote }}
+  {{- end }}
+  {{- end }}
+  {{- else }}
+  EC_OPERATOR_DATABASE_URL_FILE: /var/run/secrets/events-concierge/EC_OPERATOR_DATABASE_URL
+  EC_CATALOG_INGESTION_SCHEDULER_ENABLED: "true"
+  EC_TEMPORAL_CATALOG_TASK_QUEUE: {{ $root.Values.applicationConfig.EC_TEMPORAL_CATALOG_TASK_QUEUE | quote }}
+  {{- end }}
+  {{- end }}
+  {{- if ne $name "controller" }}
+  EC_TEMPORAL_TLS_SERVER_CA_FILE: /var/run/events-concierge-tls/temporal/ca.crt
+  EC_TEMPORAL_TLS_CLIENT_CERT_FILE: /var/run/events-concierge-tls/client/tls.crt
+  EC_TEMPORAL_TLS_CLIENT_KEY_FILE: /var/run/events-concierge-tls/client/tls.key
+  {{- end }}
+---
+apiVersion: secrets-store.csi.x-k8s.io/v1
+kind: SecretProviderClass
+metadata:
+  name: {{ include "events-concierge.fullname" $root }}-private-{{ $name }}
+spec:
+  provider: gke
+  parameters:
+    secrets: |
+      {{- $secrets := index $root.Values.privateRuntime.processSecrets $name }}
+      {{- if eq $name "controller" }}{{- $secrets = $root.Values.privateRuntime.controllerSecrets }}{{- end }}
+      {{- range $secrets }}
+      - resourceName: "projects/{{ $root.Values.secretManager.projectId }}/secrets/{{ .secretName }}/versions/{{ .version }}"
+        path: {{ .fileName | quote }}
+      {{- end }}
+{{- end }}
+{{- end }}
+{{- end }}

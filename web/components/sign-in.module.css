@@ -40,6 +40,11 @@
   margin: 20px 0 0;
 }
 .actions { margin-top: 28px; }
+.providers { display: grid; gap: 12px; }
+.consent { display: flex; align-items: flex-start; gap: 12px; margin-bottom: 24px; text-align: left; font-size: 13px; line-height: 1.6; color: var(--muted); }
+.consent input { flex-shrink: 0; margin-top: 4px; accent-color: var(--accent); }
+.consent a, .footnote a { color: var(--ink); text-decoration: underline; text-underline-offset: 3px; }
+.continue:disabled { opacity: .45; cursor: not-allowed; }
 .loading {
   display: flex;
   align-items: center;

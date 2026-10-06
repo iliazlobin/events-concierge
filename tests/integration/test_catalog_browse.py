@@ -176,7 +176,7 @@ async def _source_with_current_events(
     return source_key, current, stale, catalog
 
 
-async def test_selected_event_matches_browse_facts_and_requires_authentication(
+async def test_selected_event_matches_browse_facts_for_guests_and_accounts(
     db: None, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setenv("EC_RELEASE_PROFILE", "discovery")
@@ -198,7 +198,10 @@ async def test_selected_event_matches_browse_facts_and_requires_authentication(
         AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client,
     ):
         path = f"/v1/catalog/events/{event_id}"
-        assert (await client.get(path)).status_code == 401
+        guest_detail = await client.get(path)
+        assert guest_detail.status_code == 200
+        assert (await client.get("/v1/me")).status_code == 401
+        assert (await client.get("/v1/me/saved-filters")).status_code == 401
         onboard = await client.post(
             "/v1/onboard", json={"notify_email": f"selected-{uuid4().hex}@example.com"}
         )
@@ -208,12 +211,16 @@ async def test_selected_event_matches_browse_facts_and_requires_authentication(
         )
         detail = await client.get(path, headers=headers)
         assert detail.status_code == 200
+        assert guest_detail.json() == detail.json()
         assert detail.json() == next(
             item for item in page.json()["items"] if item["canonical_event_id"] == str(event_id)
         )
         assert detail.json()["description"] == current[0].description
         assert detail.json()["sources"][0]["source_key"] == source_key
         for missing_id in (uuid4(), stale_event.canonical_event_id, unobserved.canonical_event_id):
+            assert (
+                await client.get(f"/v1/catalog/events/{missing_id}")
+            ).status_code == 404
             assert (
                 await client.get(f"/v1/catalog/events/{missing_id}", headers=headers)
             ).status_code == 404
@@ -1592,7 +1599,7 @@ async def test_catalog_browse_api_pages_and_binds_cursor_to_source_filter(db: No
             },
             headers=headers,
         )
-        unauthenticated = await client.get(
+        guest_page = await client.get(
             "/v1/catalog/events",
             params={"source_key": source_key},
         )
@@ -1611,7 +1618,11 @@ async def test_catalog_browse_api_pages_and_binds_cursor_to_source_filter(db: No
             current[1].title,
         ]
         assert invalid_unknown_ceiling.status_code == 422
-        assert unauthenticated.status_code == 401
+        assert guest_page.status_code == 200
+        assert [item["title"] for item in guest_page.json()["items"]] == [
+            current[0].title,
+            current[1].title,
+        ]
 
 
 async def test_catalog_browse_api_pages_latest_first_and_binds_cursor_to_sort(db: None) -> None:

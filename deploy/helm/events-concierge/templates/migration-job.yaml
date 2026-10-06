@@ -1,5 +1,7 @@
 {{- if and .Values.jobs.migration.enabled (or (eq .Values.global.releasePhase "all") (eq .Values.global.releasePhase "migration")) }}
-{{- $jobRevision := printf "%s:%s" .Values.global.releaseRevision (.Values.secretManager.migrationSecrets | toJson) | sha256sum | trunc 12 }}
+{{- $jobInputs := printf "%s:%s" .Values.global.releaseRevision (.Values.secretManager.migrationSecrets | toJson) -}}
+{{- if eq .Values.global.deploymentProfile "private" -}}{{- $jobInputs = printf "%s:%s" $jobInputs .Values.privateRuntime.postgresCASecretName -}}{{- end -}}
+{{- $jobRevision := $jobInputs | sha256sum | trunc 12 }}
 apiVersion: batch/v1
 kind: Job
 metadata:
@@ -17,6 +19,9 @@ spec:
         app.kubernetes.io/part-of: events-concierge
       annotations:
         checksum/migration-secret-versions: {{ .Values.secretManager.migrationSecrets | toJson | sha256sum }}
+        {{- if eq .Values.global.deploymentProfile "private" }}
+        checksum/private-tls: {{ .Values.privateRuntime.postgresCASecretName | sha256sum }}
+        {{- end }}
     spec:
       restartPolicy: Never
       serviceAccountName: {{ .Values.serviceAccounts.migration.name }}
@@ -61,6 +66,12 @@ spec:
           command: [alembic, upgrade, head]
           {{- end }}
           env:
+            {{- if eq .Values.global.deploymentProfile "private" }}
+            - {name: PGSSLROOTCERT, value: /var/run/events-concierge-tls/postgres/ca.crt}
+            - {name: EC_ENV, value: staging}
+            - {name: EC_MOCK_CLOUD, value: "false"}
+            - {name: EC_DATABASE_CONNECTION_MODE, value: direct_tls}
+            {{- end }}
             {{- if eq (default "managed" .Values.global.deploymentProfile) "development" }}
             - {name: EC_ENV, value: development}
             - {name: EC_MOCK_CLOUD, value: "true"}
@@ -87,6 +98,9 @@ spec:
               mountPath: /var/run/secrets/events-concierge
               readOnly: true
             {{- end }}
+            {{- if eq .Values.global.deploymentProfile "private" }}
+            {{- include "events-concierge.privateTLSMounts" (dict "root" . "process" "migration") | nindent 12 }}
+            {{- end }}
       volumes:
         - name: tmp
           emptyDir:
@@ -98,5 +112,8 @@ spec:
             readOnly: true
             volumeAttributes:
               secretProviderClass: {{ include "events-concierge.migrationSecretProviderClass" . | quote }}
+        {{- end }}
+        {{- if eq .Values.global.deploymentProfile "private" }}
+        {{- include "events-concierge.privateTLSVolumes" (dict "root" . "process" "migration") | nindent 8 }}
         {{- end }}
 {{- end }}

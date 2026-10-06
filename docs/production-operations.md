@@ -77,7 +77,7 @@ make staging-canary BASE_URL="$BASE_URL" \
 | Hosted operator API | Separate IAP identity/roles and database role; consumer identity grants no operator access |
 
 - Proxy strips untrusted forwarding/hop headers; 64 KiB request cap and bounded body deadline. Secure cookies, exact-Origin CSRF and safe redirects remain required.
-- Local onboarding/tenant-header identity and `EC_ADMIN_INGESTION_ENABLED` are mock-only. Production supports built-in OIDC BFF; injected identity requires a separate contract.
+- Local onboarding/tenant-header identity and `EC_ADMIN_INGESTION_ENABLED` are mock-only. Production uses managed consumer accounts or the legacy OIDC BFF; injected identity requires a separate contract.
 - Operator API/cadence receive no consumer, Google, Redis or Temporal credentials. Executor receives only its required DB/Redis/Temporal/storage access; no migration-owner secret mounts.
 - Legacy direct-refresh Job is rejected with `operator.enabled`; Temporal Schedule cutover remains inactive. Entity refresh is unleased: no autoscaling from overview counts.
 - Operator database totals aggregate with **max**, never sum. Missing progress is unknown; compare scrape age and independent worker/poller health. [Ingestion operations](ingestion-admin.md#hosted-operator-boundary).
@@ -93,7 +93,17 @@ make staging-canary BASE_URL="$BASE_URL" \
 | Handoff repair | `python -m events_concierge.workers.handoff_expiry --once` |
 | Lifecycle scanner | `python -m events_concierge.workers.lifecycle_invariants --once` |
 
+### Consumer account activation
+
+Use [GCP Identity Platform](../deployment/consumer-identity.md) for Google/Apple signup,
+versioned legal acceptance, protected personal data and same-account erasure. Guests
+read the published catalog. Admin access separately requires IAP with signed owner
+email `iliazlobin91@gmail.com` and its configured subject/role. Deployment remains gated
+on domain/provider/legal setup and real browser acceptance.
+
 ### Built-in OIDC BFF activation
+
+Compatibility path for provisioned accounts; self-service signup uses the managed flow above.
 
 - Set `EC_OIDC_BFF_ENABLED=true`, `EC_MOCK_CLOUD=false`, `EC_UI_AUTH_START_URL=/auth/login`; secret-managed confidential client uses `client_secret_basic`.
 - Canonical HTTPS origin; exact `<origin>/auth/callback`; HTTPS issuer/authorization/token/JWKS and asymmetric algorithm allowlist.

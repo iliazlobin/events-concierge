@@ -84,7 +84,7 @@ def sign_in_page(page_factory):
 @pytest.mark.parametrize(
     "reason,title",
     [
-        ("", "Find something worth going to."),
+        ("", "Sign in"),
         ("cancelled", "Sign-in cancelled"),
         ("not_authorized", "This account can\u2019t sign in"),
         ("unavailable", "Sign-in is temporarily unavailable"),
@@ -98,7 +98,7 @@ def test_public_landing_is_terminal_and_safe(sign_in_page, reason, title):
     response = page.goto(f"{BASE}/sign-in?reason={reason}" if reason else f"{BASE}/sign-in")
     assert response.status == 200
     assert "no-store" in response.headers["cache-control"]
-    assert response.headers["referrer-policy"] == "no-referrer"
+    assert response.headers["referrer-policy"] == "strict-origin-when-cross-origin"
     expect(page.get_by_role("heading", name=title, exact=True)).to_be_visible()
     link = page.get_by_role("link", name="Continue with Google", exact=True)
     expect(link).to_have_attribute("href", "/auth/login")
@@ -148,7 +148,8 @@ def test_generic_or_unconfigured_authentication_is_not_labelled_google(sign_in_p
         )
     else:
         expect(page.get_by_role("button", name="Check again", exact=True)).to_be_visible()
-        expect(page.get_by_role("link")).to_have_count(0)
+        expect(page.get_by_role("link", name="Browse without signing in")).to_have_attribute("href", "/")
+        expect(page.get_by_role("link", name="Continue to sign in", exact=True)).to_have_count(0)
     expect(page.get_by_role("main")).not_to_contain_text("Google")
 
 
@@ -172,7 +173,8 @@ def test_expired_deployment_session_lands_without_starting_google(sign_in_page, 
     harness.allowed_console_error_fragments.append("401")
     page = harness.page
     page.goto(f"{BASE}{path}")
-    expect(page).to_have_url(f"{BASE}/sign-in")
+    expected = f"{BASE}/sign-in" if path == "/" else f"{BASE}/sign-in?return_to=%2Fsettings%2Faccount"
+    expect(page).to_have_url(expected)
     expect(page.get_by_role("link", name="Continue with Google", exact=True)).to_be_visible()
     assert api.calls.count(("GET", "/v1/me")) == 1
     assert not any(path.startswith("/auth/") for _, path in api.calls)

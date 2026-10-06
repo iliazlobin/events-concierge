@@ -10,6 +10,15 @@ _MANAGED_PRIVATE_NETWORKS = (
     ipaddress.ip_network("192.168.0.0/16"),
     ipaddress.ip_network("fc00::/7"),
 )
+_PRIVATE_DEPENDENCY_HOSTS = frozenset(
+    f"{service}.events-concierge-dev.svc.cluster.local"
+    for service in (
+        "ec-dev-application-postgres",
+        "ec-dev-temporal-postgres",
+        "ec-dev-redis",
+        "ec-dev-temporal-frontend",
+    )
+)
 
 
 def is_loopback_host(host: str | None) -> bool:
@@ -59,6 +68,15 @@ def is_non_remote_host(host: str | None) -> bool:
         or address.is_reserved
         or not address.is_global
     )
+
+
+def is_remote_dependency_host(host: str | None) -> bool:
+    """Admit the reviewed in-cluster stores without admitting .local browser/IdP origins.
+
+    This is a configuration classification, not DNS or certificate verification. Each
+    dependency transport still requires its CA, hostname checks and authentication.
+    """
+    return _normalized_host(host) in _PRIVATE_DEPENDENCY_HOSTS or not is_non_remote_host(host)
 
 
 def _normalized_host(host: str | None) -> str | None:
