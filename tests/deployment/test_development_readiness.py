@@ -267,3 +267,92 @@ def test_readiness_cli_operator_flag_fails_closed_for_default_development(monkey
     with pytest.raises(SystemExit, match="private"):
         runpy.run_path(str(path), run_name="__main__")
     assert not calls
+
+
+def shared_frontend_deployments():
+    return [
+        d
+        for d in operator_deployments()
+        if d["metadata"]["name"] != "events-concierge-operator-frontend"
+    ]
+
+
+def test_shared_frontend_readiness_requires_explicit_mode_and_exact_inventory():
+    items = shared_frontend_deployments()
+    assert readiness.pending_deployments(items, profile="private", operator=True) == [
+        "events-concierge-operator-frontend"
+    ]
+    assert (
+        readiness.pending_deployments(items, profile="private", operator=True, shared_frontend=True)
+        == []
+    )
+    assert len(readiness.expected_replicas("private", operator=True, shared_frontend=True)) == 6
+    assert readiness.pending_deployments(
+        operator_deployments(), profile="private", operator=True, shared_frontend=True
+    ) == ["events-concierge-operator-frontend"]
+
+
+@pytest.mark.parametrize("name", ["events-concierge-frontend", "events-concierge-operator-api"])
+@pytest.mark.parametrize(
+    "section,field,value",
+    [
+        ("spec", "replicas", 0),
+        ("spec", "replicas", 2),
+        ("status", "updatedReplicas", 0),
+        ("status", "observedGeneration", 1),
+        ("status", "unavailableReplicas", 1),
+    ],
+)
+def test_shared_frontend_waits_for_both_public_and_admin_backends(name, section, field, value):
+    items = shared_frontend_deployments()
+    item = next(d for d in items if d["metadata"]["name"] == name)
+    item[section][field] = value
+    assert readiness.pending_deployments(
+        items, profile="private", operator=True, shared_frontend=True
+    ) == [name]
+
+
+@pytest.mark.parametrize(
+    "flags",
+    [[], ["--operator"], ["--profile", "private"]],
+)
+def test_shared_frontend_cli_requires_private_operator_before_cluster_io(monkeypatch, flags):
+    calls = []
+    path = ROOT / "scripts/development/wait_ready.py"
+    monkeypatch.setattr(sys, "argv", [str(path), "--shared-frontend", *flags])
+    monkeypatch.setattr(
+        readiness.subprocess, "check_output", lambda *args, **kwargs: calls.append(args)
+    )
+    with pytest.raises(SystemExit, match="private"):
+        runpy.run_path(str(path), run_name="__main__")
+    assert not calls
+
+
+def test_shared_frontend_cli_waits_for_six_deployments(monkeypatch, capsys):
+    path = ROOT / "scripts/development/wait_ready.py"
+    monkeypatch.setattr(
+        sys, "argv", [str(path), "--profile", "private", "--operator", "--shared-frontend"]
+    )
+    snapshots = iter(
+        [
+            [
+                d
+                for d in shared_frontend_deployments()
+                if d["metadata"]["name"] != "events-concierge-operator-api"
+            ],
+            shared_frontend_deployments(),
+        ]
+    )
+    sleeps = []
+
+    def output(args, **kwargs):
+        if args[1:] == ["config", "current-context"]:
+            return readiness.CONTEXT
+        assert readiness.CONTEXT in args
+        return json.dumps({"items": next(snapshots)})
+
+    monkeypatch.setattr(readiness.subprocess, "check_output", output)
+    monkeypatch.setattr(readiness.time, "sleep", sleeps.append)
+    runpy.run_path(str(path), run_name="__main__")
+    assert sleeps == [5]
+    assert "All 6 expected deployments" in capsys.readouterr().out

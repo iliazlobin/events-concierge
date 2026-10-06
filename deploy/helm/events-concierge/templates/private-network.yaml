@@ -25,6 +25,13 @@ spec:
             matchLabels:
               {{- include "events-concierge.selectorLabels" (dict "root" . "component" "api") | nindent 14 }}
       ports: [{port: 8000, protocol: TCP}]
+    {{- if and .Values.publicEdge.enabled .Values.operator.enabled }}
+    - to:
+        - podSelector:
+            matchLabels:
+              {{- include "events-concierge.selectorLabels" (dict "root" . "component" "operator-api") | nindent 14 }}
+      ports: [{port: 8000, protocol: TCP}]
+    {{- end }}
     - to:
         - namespaceSelector:
             matchLabels: {kubernetes.io/metadata.name: kube-system}
@@ -63,10 +70,16 @@ spec:
   ingress:
     {{- range list "130.211.0.0/22" "35.191.0.0/16" }}
     - from: [{ipBlock: {cidr: {{ . | quote }}}}]
-      ports: [{port: 8080, protocol: TCP}, {port: 8081, protocol: TCP}]
+      ports:
+        - {port: 8080, protocol: TCP}
+        - {port: 8081, protocol: TCP}
+        {{- if and $.Values.operator.enabled (not $.Values.publicEdge.bootstrap) }}
+        - {port: 8082, protocol: TCP}
+        {{- end }}
     {{- end }}
 {{- end }}
 {{- if and .Values.operator.enabled (eq .Values.global.releasePhase "application") }}
+{{- if not .Values.publicEdge.enabled }}
 ---
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
@@ -92,6 +105,7 @@ spec:
         - namespaceSelector:
             matchLabels: {kubernetes.io/metadata.name: kube-system}
       ports: [{port: 53, protocol: UDP}, {port: 53, protocol: TCP}]
+{{- end }}
 ---
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
@@ -106,7 +120,7 @@ spec:
     - from:
         - podSelector:
             matchLabels:
-              {{- include "events-concierge.selectorLabels" (dict "root" . "component" "operator-frontend") | nindent 14 }}
+              {{- include "events-concierge.selectorLabels" (dict "root" . "component" (ternary "frontend" "operator-frontend" .Values.publicEdge.enabled)) | nindent 14 }}
       ports: [{port: 8000, protocol: TCP}]
   egress:
     - to:

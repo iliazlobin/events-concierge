@@ -207,6 +207,9 @@
         "bootstrap": {
           "type": "boolean"
         },
+        "operatorAccessVerified": {
+          "type": "boolean"
+        },
         "hostname": {
           "enum": [
             "events.iliazlobin.com"

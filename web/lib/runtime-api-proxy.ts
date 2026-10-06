@@ -49,6 +49,17 @@ const supportedMethods = new Set([
 
 export type RuntimeApiBasePath = "/v1" | "/auth" | "/healthz" | "/readyz";
 
+// Identity Platform, hosted OIDC and local session adapters use these fixed names.
+// IAP cookies share the browser origin but must never enter the consumer API.
+const consumerCookies = new Set(["__Host-ec_login", "__Host-ec_session", "__Host-ec_csrf"]);
+
+function consumerCookieHeader(value: string): string {
+  return value.split(";").map((cookie) => cookie.trim()).filter((cookie) => {
+    const equals = cookie.indexOf("=");
+    return equals > 0 && consumerCookies.has(cookie.slice(0, equals));
+  }).join("; ");
+}
+
 export interface RuntimeApiProxyOptions {
   requestBodyTimeoutMs?: number;
 }
@@ -121,7 +132,14 @@ function upstreamRequestHeaders(request: Request, bodyLength: number | null): He
       || normalized === "accept-encoding"
       || normalized.startsWith("x-goog-")
       || normalized.startsWith("cf-access-")
+      || normalized === "x-real-ip"
+      || normalized.startsWith("x-middleware-")
     ) {
+      return;
+    }
+    if (normalized === "cookie") {
+      const filtered = consumerCookieHeader(value);
+      if (filtered) headers.append(name, filtered);
       return;
     }
     headers.append(name, value);

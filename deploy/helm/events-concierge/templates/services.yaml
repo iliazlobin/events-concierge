@@ -12,11 +12,19 @@ metadata:
 spec:
   type: ClusterIP
   selector:
-    {{- include "events-concierge.selectorLabels" (dict "root" $root "component" $name) | nindent 4 }}
+    {{- $component := $name }}
+    {{- if and $root.Values.publicEdge.enabled (eq $name "operator-frontend") }}
+    {{- $component = ternary "operator-bootstrap-unassigned" "frontend" $root.Values.publicEdge.bootstrap }}
+    {{- end }}
+    {{- include "events-concierge.selectorLabels" (dict "root" $root "component" $component) | nindent 4 }}
   ports:
     - name: http
       port: {{ $service.port }}
-      targetPort: {{ ternary 8080 (int $service.targetPort) (and $root.Values.publicEdge.enabled (eq $name "frontend")) }}
+      {{- if and $root.Values.publicEdge.enabled (has $name (list "frontend" "operator-frontend")) }}
+      targetPort: {{ ternary 8080 8082 (eq $name "frontend") }}
+      {{- else }}
+      targetPort: {{ $service.targetPort }}
+      {{- end }}
       protocol: TCP
 {{- end }}
 {{- end }}

@@ -16,7 +16,7 @@ run "only_application_edge_prerequisites" {
   assert {
     condition = (
       toset([for auth in google_certificate_manager_dns_authorization.host : auth.domain]) ==
-      toset(["events.iliazlobin.com", "admin-events.iliazlobin.com"]) &&
+      toset(["events.iliazlobin.com"]) &&
       alltrue([for auth in google_certificate_manager_dns_authorization.host : auth.type == "PER_PROJECT_RECORD" && auth.location == "global"])
     )
     error_message = "DNS authorization must exclude wildcard domains and unrelated hostnames."
@@ -25,17 +25,17 @@ run "only_application_edge_prerequisites" {
     condition = (
       google_certificate_manager_certificate.public.scope == "DEFAULT" &&
       toset(google_certificate_manager_certificate.public.managed[0].domains) ==
-      toset(["events.iliazlobin.com", "admin-events.iliazlobin.com"]) &&
+      toset(["events.iliazlobin.com"]) &&
       length(google_certificate_manager_certificate.public.self_managed) == 0 &&
       google_certificate_manager_certificate_map.public.name == "ec-public-cert-map"
     )
-    error_message = "Use a managed certificate for exactly the two app hostnames, without key material."
+    error_message = "Use a managed certificate for exactly the shared app hostname, without key material."
   }
   assert {
     condition = (
-      length(google_certificate_manager_certificate_map_entry.host) == 2 &&
+      length(google_certificate_manager_certificate_map_entry.host) == 1 &&
       toset([for entry in google_certificate_manager_certificate_map_entry.host : entry.hostname]) ==
-      toset(["events.iliazlobin.com", "admin-events.iliazlobin.com"]) &&
+      toset(["events.iliazlobin.com"]) &&
       alltrue([for entry in google_certificate_manager_certificate_map_entry.host : entry.matcher == null])
     )
     error_message = "No primary/default or wildcard certificate-map match is allowed."

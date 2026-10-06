@@ -58,7 +58,7 @@ test("one imported proxy honors the runtime EC_API_ORIGIN and preserves requests
         method: "POST",
         headers: {
           Authorization: "Bearer user-token",
-          Cookie: "session=abc",
+          Cookie: "__Host-ec_session=abc",
           "Content-Type": "application/json",
           "X-Forwarded-Host": "attacker.example",
           "X-Goog-IAP-JWT-Assertion": "signed.iap.bytes",
@@ -77,7 +77,7 @@ test("one imported proxy honors the runtime EC_API_ORIGIN and preserves requests
       url: "/v1/catalog/events?q=music",
       body: '{"city":"Oakland"}',
       authorization: "Bearer user-token",
-      cookie: "session=abc",
+      cookie: "__Host-ec_session=abc",
     });
   }
 });
@@ -123,6 +123,34 @@ test("proxy preserves status, response headers, redirects, and separate cookies"
     "oauth_state=one; HttpOnly; SameSite=Lax; Path=/",
     "csrf=two; Secure; SameSite=Strict; Path=/auth",
   ]);
+});
+
+test("shared-origin IAP cookies stay out of consumer APIs without hiding duplicate consumer cookies", async (t) => {
+  const originalOrigin = process.env.EC_API_ORIGIN;
+  t.after(() => {
+    if (originalOrigin === undefined) delete process.env.EC_API_ORIGIN;
+    else process.env.EC_API_ORIGIN = originalOrigin;
+  });
+  const backend = await listen((request, response) => {
+    response.setHeader("content-type", "application/json");
+    response.end(JSON.stringify({ cookie: request.headers.cookie ?? null,
+      authorization: request.headers.authorization ?? null,
+      csrf: request.headers["x-csrf-token"] ?? null }));
+  });
+  t.after(() => backend.close());
+  process.env.EC_API_ORIGIN = backend.origin;
+  const response = await proxyRuntimeApiRequest(new Request("https://events.example/auth/session", {
+    headers: { Cookie: "GCP_IAP_AUTH_TOKEN_x=admin; __Host-ec_login=login; __Host-ec_session=one; __Host-ec_csrf=csrf; __Host-ec_session=two; unrelated=discard",
+      Authorization: "Bearer local-token", "X-CSRF-Token": "csrf" },
+  }), "/auth", ["session"]);
+  assert.deepEqual(await response.json(), {
+    cookie: "__Host-ec_login=login; __Host-ec_session=one; __Host-ec_csrf=csrf; __Host-ec_session=two",
+    authorization: "Bearer local-token", csrf: "csrf",
+  });
+  const adminOnly = await proxyRuntimeApiRequest(new Request("https://events.example/v1/events", {
+    headers: { Cookie: "GCP_IAP_AUTH_TOKEN_x=admin; gcpiap_authmode=AUTHENTICATING" },
+  }), "/v1", ["events"]);
+  assert.equal((await adminOnly.json()).cookie, null);
 });
 
 test("proxy fails closed for invalid origins and ambiguous or overlong paths", async (t) => {

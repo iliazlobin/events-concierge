@@ -10,7 +10,7 @@ output "gateway_prerequisites" {
 }
 
 # DNS authorization does not publish an application route. Keep these CNAMEs
-# DNS-only; publish the two A records only after the private release gates pass.
+# DNS-only; publish the A record only after the private release gates pass.
 output "certificate_dns_records" {
   value = { for key, auth in google_certificate_manager_dns_authorization.host : key => {
     name = auth.dns_resource_record[0].name

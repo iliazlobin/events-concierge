@@ -3,6 +3,7 @@
 publicEdge:
   enabled: true
   bootstrap: true
+  operatorAccessVerified: false
   hostname: events.iliazlobin.com
   staticIpName: ec-public-ip
   certificateMap: ec-public-cert-map
@@ -10,7 +11,7 @@ publicEdge:
 operator:
   enabled: false
   authProvider: iap
-  hostname: admin-events.iliazlobin.com
+  hostname: events.iliazlobin.com
   tlsSecretName: ""
   iapClientId: ""
   iapClientSecretName: ec-admin-iap

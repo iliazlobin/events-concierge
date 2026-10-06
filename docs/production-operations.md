@@ -2,7 +2,7 @@
 
 Release gates, incident controls and recovery constraints. [GKE release and recovery](../deploy/development.md) owns environment state, access, rollout and backup commands.
 
-- **Selected scope:** discovery; private PostgreSQL, Redis and Temporal on shared GKE; GCS payload storage. [Public HTTPS](../deploy/public-access.md) exposes consumer/admin frontends, with IAP on admin.
+- **Selected scope:** discovery; private PostgreSQL, Redis and Temporal on shared GKE; GCS payload storage. [Public HTTPS](../deploy/public-access.md) exposes one shared web frontend; `/admin` uses IAP and a separate operator API.
 - **Implemented composition:** managed consumer identity, per-process credentials, datastore TLS and Temporal mTLS. Provider configuration, rollout and real browser acceptance are separate release gates; use the dated runtime record rather than infer activation from source or healthy Pods.
 - **Ownership:** [gcp-foundation](https://github.com/iliazlobin/gcp-foundation) owns network/cluster/access; this repository owns application identities, releases, data, migrations and backups.
 
@@ -68,15 +68,16 @@ make staging-canary BASE_URL="$BASE_URL" \
 
 | Discovery process | Entry point / boundary |
 | --- | --- |
-| Next.js | `node server.js`; same-origin proxy via runtime `EC_API_ORIGIN` |
+| Next.js | One `node server.js`; consumer `EC_API_ORIGIN`, protected admin `EC_OPERATOR_API_ORIGIN`; no backend credentials |
 | Consumer API | `uvicorn events_concierge.api.app:app --no-access-log`; ClusterIP-only |
 | Catalog cadence | `python -m events_concierge.workers.ingestion_cadence --once`; append deterministic commands |
 | Ingestion-command worker | `python -m events_concierge.workers.ingestion_commands`; claim/lease commands |
 | Catalog Temporal worker | `EC_TEMPORAL_WORKER_ROLE=catalog python -m events_concierge.workflows.worker` |
 | Account-erasure worker | `python -m events_concierge.workers.account_erasure`; fenced cleanup and session revocation |
-| Operator frontend/API | Separate frontend backend protected by Google IAP; signed assertion, owner role and restricted controller DB login verified by its API; consumer identity grants no operator access |
+| Operator API | Separate FastAPI process and restricted controller DB login; verifies IAP signature/audience/owner. Shared Next.js `/admin` enters through its IAP backend Service; consumer identity grants no operator access |
 
 - Proxy strips untrusted forwarding/hop headers; 64 KiB request cap and bounded body deadline. Secure cookies, exact-Origin CSRF and safe redirects remain required.
+- Public `8080` and IAP `8082` share a credential-free web Pod; Next.js `3000` is not reachable from GFE. Public assets contain no private data. Consumer/IAP sessions are separate; same-origin XSS can act as a signed-in owner. [Route and activation gates](../deploy/public-access.md).
 - Local onboarding/tenant-header identity and `EC_ADMIN_INGESTION_ENABLED` are mock-only. Production uses managed consumer accounts or the legacy OIDC BFF; injected identity requires a separate contract.
 - Operator API/cadence receive no consumer, Google, Redis or Temporal credentials. Executor receives only its required DB/Redis/Temporal/storage access; no migration-owner secret mounts.
 - Legacy direct-refresh Job is rejected with `operator.enabled`; Temporal Schedule cutover remains inactive. Entity refresh is unleased: no autoscaling from overview counts.

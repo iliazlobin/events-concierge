@@ -1,29 +1,39 @@
 # Public access
 
 - Consumer target: [events.iliazlobin.com](https://events.iliazlobin.com); anonymous catalog browsing, Google accounts, chat disabled.
-- Admin target: [admin-events.iliazlobin.com/admin](https://admin-events.iliazlobin.com/admin); Google IAP allows only `iliazlobin91@gmail.com`. The API separately requires its configured subject/role.
-- Consumer `/admin` and `/admin/` accept browser GET/HEAD navigation only: `302` to the fixed admin URL, without query parameters. Admin APIs remain on the protected hostname.
-- One global external Application Load Balancer, reserved IPv4 and managed certificate cover both hosts.
+- Admin target: [events.iliazlobin.com/admin](https://events.iliazlobin.com/admin); Google IAP allows only `iliazlobin91@gmail.com`. The operator API separately verifies the signed owner and configured subject/role.
+- One hostname, global external Application Load Balancer, reserved IPv4, managed certificate and Next.js Deployment. No redirect or separate admin web process.
 - GKE nodes, control plane, API and databases stay private. Consumer sign-in grants no admin role.
 - Rendering, healthy Pods and green CI do not establish public or browser acceptance.
 - Hostname publication and acceptance are tracked in [release preparation](https://github.com/iliazlobin/events-concierge/issues/24); these target links do not establish availability.
 
 ## Route and ownership
 
-Browser → GCP HTTPS load balancer → separate consumer/admin Services → private APIs.
+Browser → GCP HTTPS load balancer → consumer/admin Services → shared Caddy/Next.js Pod → isolated consumer/operator APIs.
+
+| Route | Service / Pod port | Authentication |
+| --- | --- | --- |
+| `/admin`, `/admin/*` | `operator-frontend` / Caddy `8082` | Owner-only IAP; operator API verifies the assertion. |
+| Consumer pages, `/v1/*`, `/auth/*`, `/_next/static/*` | `frontend` / Caddy `8080` | Guest or consumer account. |
+| Health checks | Both backend health policies / `8081` | No browser route; consumer readiness only. Verify operator API readiness separately. |
+
+Next.js `3000` accepts only Pod-local proxy traffic. `/administrator` is not an admin route. HTTP redirects preserve path/query, including IAP's return to `/admin?gcp-iap-mode=AUTHENTICATING`.
 
 | Owner | Resources |
 | --- | --- |
 | Shared platform | Private GKE/VPC, standard Gateway controller and HTTP load-balancing dependency. |
-| [Public-access Terraform](../infra/terraform/environments/public-access) | `ec-public-ip`, two DNS authorizations, managed certificate/map, TLS policy and empty `ec-admin-iap` secret container. |
-| Application Helm | Gateway, exact-host HTTPRoutes, backend/health policies, consumer filter and isolated operator workloads. |
+| [Public-access Terraform](../infra/terraform/environments/public-access) | `ec-public-ip`, one DNS authorization, managed certificate/map entry, TLS policy and empty `ec-admin-iap` secret container. |
+| Application Helm | Gateway, exact-host HTTPRoutes, backend/health policies, shared web Deployment and separate API processes. |
 | [Consumer identity](../deployment/consumer-identity.md) | Identity Platform, restricted browser key and optional backend-scoped owner IAP grant. |
-| DNS authority | Certificate-validation CNAMEs and two A records; no tunnel or HTTP proxy. |
+| DNS authority | Certificate-validation CNAME and one A record; no tunnel or HTTP proxy. |
 
 - Gateway class: `gke-l7-global-external-managed`. No proxy-only subnet, public node or public Kubernetes endpoint.
 - Certificate Manager uses `ec-public-cert-map`; do not combine its annotation with Gateway TLS Secret references. [Certificate configuration](https://docs.cloud.google.com/kubernetes-engine/docs/how-to/secure-gateway).
 - `ec-public-tls` requires TLS 1.2 or newer. Google manages public certificate renewal while the DNS authorizations remain valid.
-- Consumer Caddy runs beside the existing frontend. Only exact raw `/admin` or `/admin/` GET/HEAD requests redirect; admin pages/APIs are never proxied. Admin API/probe routes, other entry methods and unknown hosts return `404`. Paths that normalize to an allowed consumer route can serve that public page, such as `/admin/..` → `/`. Consumer requests have operator identity headers removed.
+- Caddy matches original paths before normalization. Consumer `8080` rejects all admin paths, dot segments, encoded separators and double encoding. Only safe encoded path segments and query data pass. `/_next/image` and `/_next/data` are excluded; immutable build assets are public.
+- Admin `8082` accepts only exact-host `/admin` paths and one bounded JWT-shaped assertion. This checks presence/format, not signature. Missing/duplicate assertions fail; the operator API verifies the JWT. Forwarding authority is fixed; unsigned identity and middleware headers are removed.
+- Shared Next.js uses consumer `EC_API_ORIGIN` and separate `EC_OPERATOR_API_ORIGIN`. No database, Google OAuth or IAP secret is mounted. Consumer proxy cookies are limited to `__Host-ec_login`, `__Host-ec_session` and `__Host-ec_csrf`; IAP cookies never reach consumer FastAPI.
+- Consumer and IAP sessions are independent; consumer logout does not log out IAP. Both views share the browser origin and web process: a consumer XSS could act as a signed-in admin. Exact-Origin CSRF does not isolate scripts on the same origin; API processes and credentials remain isolated.
 - Google Front End ranges reach only reviewed frontend/health ports. NetworkPolicy keeps API/store access scoped; review controller-created firewall rules and NEG endpoints.
 - IAP protects only the admin frontend backend. The API verifies the signed assertion independently: Google issuer/keys, backend audience, timestamps, signed owner email and explicit subject role.
 - Load balancer → filter/frontend uses HTTP within the restricted VPC/Pod network. This is not application mTLS. [Datastore TLS/mTLS](development.md#authenticated-discovery-and-encrypted-dependencies) remains a separate release gate.
@@ -34,7 +44,7 @@ Browser → GCP HTTPS load balancer → separate consumer/admin Services → pri
 1. Verify CLI account/project, approved commits, immutable images and current state. Target `iz27-platform-dev`; preserve existing data, Symphony OAuth configuration and unrelated DNS.
 2. Review the platform plan: only enable HTTP load balancing and `CHANNEL_STANDARD` on the existing private cluster. Apply under explicit cloud authorization, then verify the GatewayClass/controller.
 3. Configure the [public-access backend](../infra/terraform/environments/public-access/backend.tf.example) in the existing protected application bucket. Review the saved plan before applying. This root must not adopt cluster/network/IAP API state, OAuth payloads or a controller-managed load balancer.
-4. Add only the output certificate-validation CNAMEs at the current authoritative DNS provider, DNS-only. Wait for both authorizations and the managed certificate to become active. These records do not route application traffic.
+4. Add only the output certificate-validation CNAME at the current authoritative DNS provider, DNS-only. Wait for authorization and the managed certificate to become active. This record does not route application traffic.
 5. Prepare the separate admin OAuth client below. Provision only its versioned namespace Secret through the approved secret channel; no secret value in Helm/Terraform, logs or command arguments.
 6. Complete [private authenticated rollout](development.md#authenticated-discovery-and-encrypted-dependencies): recovery-key custody, held current backup, coordinated store TLS/Temporal mTLS, migrations through `0208`, consumer identity and private readiness. Preserve rollback and capacity limits.
 
@@ -60,15 +70,15 @@ terraform -chdir=infra/terraform/environments/public-access test -no-color
 
 1. Review the complete Helm resources, IP/certificate/IAP configuration and private acceptance before approving the public Gateway. Creating an external load balancer can expose traffic **before DNS is published**; an empty A record is not an access boundary.
 2. Layer [identity values](helm/events-concierge/values-consumer-identity.example.yaml) and [public edge values](helm/events-concierge/values-public-edge.example.yaml) over the approved private release. Set `publicEdge.enabled=true`, `bootstrap=true`, `staticIpName=ec-public-ip`, `certificateMap=ec-public-cert-map`, `sslPolicy=ec-public-tls`; legacy `gateway.enabled=false`.
-3. Bootstrap renders the Gateway and admin Service/IAP policy with no operator endpoints. Keep operator workloads disabled and audience/subject assignments empty. Use the real separate admin client/Secret; never deploy fixture identity values.
-4. Verify Gateway/HTTPRoutes and policies are accepted/programmed, static IP and certificate match, and the consumer backend is healthy. Resolve the generated admin backend ID, apply the exact owner binding and configure its real audience/verified subject. Set `bootstrap=false` and enable the isolated operator pair.
-5. Verify IAP is enabled on admin and absent on consumer. Check actual NEGs/firewalls, backend health, direct-IP/unexpected-Host rejection and consumer exclusions before publishing the two output A records, DNS-only. Preserve other hostnames/nameservers; remove conflicting records only after inspecting their ownership.
+3. Bootstrap uses an explicitly nonmatching admin Service selector, disabled operator API/BFF, no admin Caddy handler and no GFE ingress on `8082`. Keep audience/subject assignments empty and the separate `operator-frontend` workload disabled. Use the real admin client/Secret; never deploy fixture identities.
+4. Verify programmed Gateway/routes, certificate and healthy consumer backend. Read back the actual admin backend IAP policy and sole-owner IAM grant; configure its real audience and verified owner subject. Only then attest `operatorAccessVerified=true`, set `bootstrap=false` and enable `operator`/`operator-api`. The attestation records a completed human preflight; Helm does not query cloud permissions. The protected Service now selects the shared frontend on `8082`; the separate operator frontend stays disabled.
+5. Require both APIs ready, then run `wait_ready.py --target shared --profile private --operator --shared-frontend`. Check actual NEGs/firewalls, backend IAP, direct-IP/unexpected-Host rejection and consumer exclusions before publishing the output A record, DNS-only. Preserve unrelated DNS.
 6. Verify HTTP → HTTPS preserves host/path/query and trusted certificate validation. In Chrome test anonymous browsing/filters, Google cancellation/signup/login/logout, saved filters and the configured legal mode. Verify cookies, CSRF, two-account isolation and same-account erasure.
-7. Open consumer `/admin` and verify the fixed HTTPS redirect reaches IAP and the console after owner login. Verify admin reads/commands; non-owners, consumer tokens, missing/forged/duplicate/expired/wrong-audience assertions and cross-origin mutations fail. Consumer `/admin/v1/*`, non-navigation entry methods, `/metrics`, `/readyz` and unknown hosts return `404`; normalized aliases cannot reach admin content. Verify the IAP OAuth return; the admin root is retained for the callback.
+7. Open `/admin` and verify IAP owner login and its OAuth return on the same path. Verify reads/commands, consumer and admin sessions, CSRF and non-owner rejection. Missing/forged/duplicate/expired/wrong-audience assertions fail. On consumer `8080`, all `/admin` paths return `404`; Gateway sends them only to the protected backend. Probe paths, optimizer/data aliases and unknown hosts fail; normalized aliases cannot reach admin content.
 8. Promote the accepted canary, then resume cadence last through the private rollout procedure. Browser acceptance is required before declaring release completion.
 
 Failed or unavailable acceptance: remove the dedicated public HTTPRoutes/Gateway exposure first,
-then withdraw only the two app A records. DNS removal alone does not stop direct-IP traffic.
+then withdraw only the app A record. DNS removal alone does not stop direct-IP traffic.
 Preserve identities, databases, recovery copies and private operator access.
 
 ## Operate

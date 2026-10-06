@@ -448,6 +448,8 @@ publicEdge:
   enabled: false
   # Bootstrap creates an IAP-protected Service with no admin endpoints.
   bootstrap: false
+  # Set only after actual IAP policy, backend audience and sole-owner grant are verified.
+  operatorAccessVerified: false
   hostname: events.iliazlobin.com
   staticIpName: ""
   certificateMap: ""

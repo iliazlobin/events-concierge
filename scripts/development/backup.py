@@ -26,6 +26,7 @@ PAYLOAD_ROOT = "gs://" + TARGETS["shared"].payload_bucket
 TARGET_NAME = "shared"
 RECOVERY_FILE = "recovery.json"
 PRIVATE_RECOVERY_VERSION = 2
+SHARED_FRONTEND_RECOVERY_VERSION = 3
 WRITERS = {
     "events-concierge-" + name
     for name in (
@@ -53,7 +54,9 @@ PRIVATE_WRITERS = WRITERS - {
 }
 PUBLIC_TUNNEL = "events-concierge-public-tunnel"
 OPERATOR_FRONTEND = "events-concierge-operator-frontend"
-PRIVATE_OPERATORS = {OPERATOR_FRONTEND, "events-concierge-operator-api"}
+OPERATOR_API = "events-concierge-operator-api"
+SHARED_FRONTEND = "events-concierge-frontend"
+PRIVATE_OPERATORS = {OPERATOR_FRONTEND, OPERATOR_API}
 RESUME_RETRY_DELAYS = (2, 4, 8)
 OPERATOR_ROLE_SCHEMA = 182
 MODEL_USAGE_ROLE_SCHEMA = 201
@@ -122,16 +125,23 @@ def _backup_id(uri):
     return match[1]
 
 
-def _validate_replicas(desired, *, profile="development"):
+def _validate_replicas(desired, *, profile="development", shared_frontend=False):
     if profile not in ("development", "private"):
         raise SystemExit("Unknown deployment profile")
+    if shared_frontend and profile != "private":
+        raise SystemExit("Shared frontend recovery requires the authenticated private profile")
     allowed = (
         PRIVATE_WRITERS | PRIVATE_OPERATORS | {PUBLIC_TUNNEL} if profile == "private" else WRITERS
     )
+    if shared_frontend:
+        allowed = PRIVATE_WRITERS | {OPERATOR_API}
     if not isinstance(desired, dict) or not desired or set(desired) - allowed:
         raise SystemExit("Recovery contains unknown or missing writer deployment names")
     operators = set(desired) & PRIVATE_OPERATORS
-    if operators and operators != PRIVATE_OPERATORS:
+    if shared_frontend:
+        if not {SHARED_FRONTEND, "events-concierge-api", OPERATOR_API} <= set(desired):
+            raise SystemExit("Shared frontend recovery requires the frontend and both APIs")
+    elif operators and operators != PRIVATE_OPERATORS:
         raise SystemExit("Private operator recovery requires both singleton operator deployments")
     # Writers remain singletons; only the explicitly owned public edge has two
     # replicas. Recovery metadata cannot silently change the agreed capacity.
@@ -164,12 +174,15 @@ def _read_schema():
     )
 
 
-def _recovery_metadata(ident, writers, schema, *, profile="development"):
+def _recovery_metadata(ident, writers, schema, *, profile="development", shared_frontend=False):
     desired = {d["metadata"]["name"]: d["spec"]["replicas"] for d in writers}
-    _validate_replicas(desired, profile=profile)
+    _validate_replicas(desired, profile=profile, shared_frontend=shared_frontend)
     uids = {d["metadata"]["name"]: d["metadata"]["uid"] for d in writers}
+    version = PRIVATE_RECOVERY_VERSION if profile == "private" else 1
+    if shared_frontend:
+        version = SHARED_FRONTEND_RECOVERY_VERSION
     metadata = {
-        "version": PRIVATE_RECOVERY_VERSION if profile == "private" else 1,
+        "version": version,
         "id": ident,
         "context": CONTEXT,
         "project": PROJECT,
@@ -181,6 +194,8 @@ def _recovery_metadata(ident, writers, schema, *, profile="development"):
     }
     if profile == "private":
         metadata["deployment_profile"] = profile
+    if shared_frontend:
+        metadata["shared_frontend"] = True
     _validate_recovery(metadata, BACKUP_ROOT + ident)
     return metadata
 
@@ -199,16 +214,23 @@ def _validate_recovery(metadata, uri):
         "deployment_uids",
         "template_sha256",
     }
-    if metadata.get("version") == PRIVATE_RECOVERY_VERSION:
+    if metadata.get("version") in (PRIVATE_RECOVERY_VERSION, SHARED_FRONTEND_RECOVERY_VERSION):
         fields.add("deployment_profile")
+    if metadata.get("version") == SHARED_FRONTEND_RECOVERY_VERSION:
+        fields.add("shared_frontend")
     if set(metadata) != fields:
         raise SystemExit("Invalid recovery metadata fields")
     if (
         type(metadata["version"]) is not int
-        or metadata["version"] not in (1, PRIVATE_RECOVERY_VERSION)
+        or metadata["version"]
+        not in (1, PRIVATE_RECOVERY_VERSION, SHARED_FRONTEND_RECOVERY_VERSION)
         or (
-            metadata["version"] == PRIVATE_RECOVERY_VERSION
+            metadata["version"] in (PRIVATE_RECOVERY_VERSION, SHARED_FRONTEND_RECOVERY_VERSION)
             and metadata["deployment_profile"] != "private"
+        )
+        or (
+            metadata["version"] == SHARED_FRONTEND_RECOVERY_VERSION
+            and metadata["shared_frontend"] is not True
         )
         or metadata["id"] != _backup_id(uri)
         or metadata["context"] != CONTEXT
@@ -219,7 +241,9 @@ def _validate_recovery(metadata, uri):
     if not isinstance(metadata["schema"], str) or not re.fullmatch(r"[0-9]{4}", metadata["schema"]):
         raise SystemExit("Invalid recovery schema version")
     _validate_replicas(
-        metadata["replicas"], profile=metadata.get("deployment_profile", "development")
+        metadata["replicas"],
+        profile=metadata.get("deployment_profile", "development"),
+        shared_frontend=metadata.get("shared_frontend", False),
     )
     uids = metadata["deployment_uids"]
     if not isinstance(uids, dict) or set(uids) != set(metadata["replicas"]):
@@ -304,20 +328,30 @@ def resume(uri):
     print("Check deployment readiness before reopening access.")
 
 
-def _quiesce(deployments):
+def _quiesce(deployments, *, recovery):
     # Close the public edge before writers; let application shutdown finish while
     # Temporal remains available. PostgreSQL and Redis stay running.
+    if not isinstance(recovery, dict):
+        raise RuntimeError("Backup quiescence requires saved recovery metadata")
+    _validate_recovery(recovery, BACKUP_ROOT + recovery["id"])
+    desired = {d["metadata"]["name"]: d["spec"]["replicas"] for d in deployments}
+    if desired != recovery["replicas"]:
+        raise RuntimeError("Backup quiescence does not match the saved writer inventory")
+    _check_recovery_schema(recovery)
+    current = _preflight_private_recovery(desired, recovery)
+    for name in desired:
+        _validate_stop_replicas(current[name], name, recovery)
+    shared_frontend = recovery.get("shared_frontend", False)
     for phase_name in ("edge", "operator-edge", "application", "temporal"):
-        phase = [d for d in deployments if _resume_phase(d["metadata"]["name"]) == phase_name]
-        for d in phase:
-            k(
-                "scale",
-                "deployment/" + d["metadata"]["name"],
-                "--replicas=0",
-                stdout=subprocess.DEVNULL,
-                timeout=30,
-            )
-        for d in phase:
+        phase = [
+            d
+            for d in deployments
+            if _resume_phase(d["metadata"]["name"], shared_frontend=shared_frontend) == phase_name
+        ]
+        stopped = [
+            _scale_recovery(d["metadata"]["name"], 0, recovery, stopping=True) for d in phase
+        ]
+        for d in stopped:
             # Deployment readiness can report success before terminating pods exit.
             selector = ",".join(
                 f"{key}={val}" for key, val in d["spec"]["selector"]["matchLabels"].items()
@@ -384,8 +418,8 @@ def _check_recovery_schema(recovery):
             time.sleep(delay)
 
 
-def _resume_phase(name):
-    if name == PUBLIC_TUNNEL:
+def _resume_phase(name, *, shared_frontend=False):
+    if name == PUBLIC_TUNNEL or (shared_frontend and name == SHARED_FRONTEND):
         return "edge"
     if name == OPERATOR_FRONTEND:
         return "operator-edge"
@@ -393,12 +427,19 @@ def _resume_phase(name):
 
 
 def _wait_before_public_resume(desired, recovery, *, edge=PUBLIC_TUNNEL):
-    required = ("operator-api",) if edge == OPERATOR_FRONTEND else ("api", "frontend")
+    if edge == SHARED_FRONTEND:
+        required = ("api", "operator-api")
+        excluded = {SHARED_FRONTEND}
+    elif edge == OPERATOR_FRONTEND:
+        required = ("operator-api",)
+        excluded = {PUBLIC_TUNNEL, OPERATOR_FRONTEND}
+    else:
+        required = ("api", "frontend")
+        excluded = {PUBLIC_TUNNEL}
     if any(desired.get("events-concierge-" + name) != 1 for name in required):
         raise RuntimeError("Edge recovery requires its running backend replicas")
-    # The operator frontend resumes before the consumer edge; neither edge may
-    # be treated as an already-running writer during that first readiness gate.
-    excluded = {PUBLIC_TUNNEL, OPERATOR_FRONTEND} if edge == OPERATOR_FRONTEND else {PUBLIC_TUNNEL}
+    # Exclude the edge being reopened. In legacy recovery the operator frontend
+    # precedes the consumer tunnel, so that gate excludes both stopped edges.
     for name, count in sorted(desired.items()):
         if count and name not in excluded:
             k(
@@ -439,9 +480,19 @@ def _wait_before_public_resume(desired, recovery, *, edge=PUBLIC_TUNNEL):
     _check_recovery_schema(recovery)
 
 
-def _scale_recovery(name, count, recovery, *, closing_edge=False):
+def _validate_stop_replicas(deployment, name, recovery):
+    replicas = deployment["spec"].get("replicas")
+    if type(replicas) is not int or replicas not in (0, recovery["replicas"][name]):
+        raise RuntimeError("Backup refused: writer replica count changed: " + name)
+
+
+def _scale_recovery(name, count, recovery, *, closing_edge=False, stopping=False):
+    if stopping and recovery is None:
+        raise RuntimeError("Backup stop requires saved recovery metadata")
     for attempt in range(len(RESUME_RETRY_DELAYS) + 1):
         try:
+            if stopping:
+                _check_recovery_schema(recovery)
             preconditions = []
             deployment = None
             if recovery is not None:
@@ -457,6 +508,8 @@ def _scale_recovery(name, count, recovery, *, closing_edge=False):
                     ).stdout
                 )
                 version = _validate_current_deployment(deployment, name, recovery)
+                if stopping:
+                    _validate_stop_replicas(deployment, name, recovery)
                 if closing_edge and deployment["spec"].get("replicas") not in (
                     0,
                     recovery["replicas"][name],
@@ -486,9 +539,14 @@ def _scale_recovery(name, count, recovery, *, closing_edge=False):
 
 
 def _close_recovery_edges(desired, recovery, failures):
-    # A previously reopened operator edge must close if the later consumer gate
-    # fails. Recheck ownership and use a fresh resource version for each write.
-    for name in (PUBLIC_TUNNEL, OPERATOR_FRONTEND):
+    # Close shared access after uncertain recovery, or a legacy operator edge
+    # after a later consumer gate failure. Recheck ownership on each write.
+    edges = (
+        (SHARED_FRONTEND,)
+        if recovery.get("shared_frontend")
+        else (PUBLIC_TUNNEL, OPERATOR_FRONTEND)
+    )
+    for name in edges:
         if not desired.get(name):
             continue
         try:
@@ -520,7 +578,8 @@ def _close_recovery_edges(desired, recovery, failures):
 
 def _resume(desired, *, recovery=None):
     profile = recovery.get("deployment_profile", "development") if recovery else "development"
-    _validate_replicas(desired, profile=profile)
+    shared_frontend = recovery.get("shared_frontend", False) if recovery else False
+    _validate_replicas(desired, profile=profile, shared_frontend=shared_frontend)
     if recovery is not None:
         _check_recovery_schema(recovery)
     if profile == "private":
@@ -529,8 +588,11 @@ def _resume(desired, *, recovery=None):
     # Resume Temporal, then application writers, then the public edge. Attempt all
     # writers after a failure, but never reopen public access to incomplete recovery.
     order = {"temporal": 0, "application": 1, "operator-edge": 2, "edge": 3}
-    for name in sorted(desired, key=lambda n: order[_resume_phase(n)]):
-        if name in {PUBLIC_TUNNEL, OPERATOR_FRONTEND} and desired[name]:
+    edges = {SHARED_FRONTEND} if shared_frontend else {PUBLIC_TUNNEL, OPERATOR_FRONTEND}
+    for name in sorted(
+        desired, key=lambda n: order[_resume_phase(n, shared_frontend=shared_frontend)]
+    ):
+        if name in edges and desired[name]:
             if failures:
                 failures.append(RuntimeError("Edge remains stopped after writer recovery failure"))
                 continue
@@ -577,19 +639,26 @@ def _persist_recovery(folder, dest, recovery):
     )
 
 
-def _check_backup_target(*, profile="development", operator=False):
+def _check_backup_target(*, profile="development", operator=False, shared_frontend=False):
     if operator and profile != "private":
         raise SystemExit("Operator backup requires the authenticated private profile")
+    if shared_frontend and (profile != "private" or not operator):
+        raise SystemExit("Shared frontend backup requires --operator and --profile private")
     _check_context()
     _check_scheduled_writers_quiet()
 
 
-def _backup_deployments(operator):
+def _backup_deployments(operator, *, shared_frontend=False):
     deployments = json.loads(
         k("get", "deployments", "-o", "json", capture_output=True, timeout=30).stdout
     )["items"]
     names = {d["metadata"]["name"] for d in deployments}
-    if names & PRIVATE_OPERATORS != (PRIVATE_OPERATORS if operator else set()):
+    expected_operators = PRIVATE_OPERATORS if operator else set()
+    if shared_frontend:
+        expected_operators = {OPERATOR_API}
+    if names & PRIVATE_OPERATORS != expected_operators:
+        if shared_frontend:
+            raise SystemExit("Shared frontend backup requires only the singleton operator API")
         raise SystemExit("Private operator backup requires explicit opt-in and both deployments")
     return deployments
 
@@ -625,21 +694,23 @@ def _verify_object_inventory(folder, expected):
     return True
 
 
-def backup(*, hold_stopped=False, profile="development", operator=False):
-    _check_backup_target(profile=profile, operator=operator)
+def backup(*, hold_stopped=False, profile="development", operator=False, shared_frontend=False):
+    _check_backup_target(profile=profile, operator=operator, shared_frontend=shared_frontend)
     ident = (
         datetime.datetime.now(datetime.UTC).strftime("%Y%m%dT%H%M%SZ") + "-" + uuid.uuid4().hex[:8]
     )
     dest = BACKUP_ROOT + ident
-    deployments = _backup_deployments(operator)
+    deployments = _backup_deployments(operator, shared_frontend=shared_frontend)
     # This namespace is dedicated to the selected profile. Redis is a store, not
     # a writer to this snapshot. The private public edge is explicitly quiesced;
     # unknown/demo Deployments fail validation before upload or scaling. The
-    # exact optional operator pair requires explicit opt-in at backup creation.
+    # operator inventory and shared frontend require explicit opt-in at creation.
     desired = {d["metadata"]["name"]: d["spec"]["replicas"] for d in deployments}
     writers = [d for d in deployments if d["metadata"]["name"] != "ec-dev-redis"]
     quiesced = {d["metadata"]["name"]: d["spec"]["replicas"] for d in writers}
-    recovery = _recovery_metadata(ident, writers, _read_schema(), profile=profile)
+    recovery = _recovery_metadata(
+        ident, writers, _read_schema(), profile=profile, shared_frontend=shared_frontend
+    )
     with tempfile.TemporaryDirectory(prefix="ec-dev-backup-") as tmp:
         os.chmod(tmp, 0o700)
         folder = pathlib.Path(tmp)
@@ -654,7 +725,7 @@ def backup(*, hold_stopped=False, profile="development", operator=False):
         _persist_recovery(folder, dest, recovery)
         backup_error = None
         try:
-            _quiesce(writers)
+            _quiesce(writers, recovery=recovery)
             _check_scheduled_writers_quiet()
             for store, user, dbs in [
                 ("application", "ec_owner", ["events"]),
@@ -1001,7 +1072,10 @@ if __name__ == "__main__":
     p.add_argument("--target", choices=TARGETS, default="shared")
     p.add_argument("--profile", choices=("development", "private"), default=None)
     p.add_argument(
-        "--operator", action="store_true", help="Include the exact private singleton operator pair"
+        "--operator", action="store_true", help="Include the private singleton operator inventory"
+    )
+    p.add_argument(
+        "--shared-frontend", action="store_true", help="Use the common consumer/admin frontend"
     )
     p.add_argument(
         "--hold-stopped",
@@ -1013,7 +1087,12 @@ if __name__ == "__main__":
     if a.action == "backup":
         if a.uri:
             p.error("backup creates its own prefix; do not supply a URI")
-        backup(hold_stopped=a.hold_stopped, profile=a.profile or "development", operator=a.operator)
+        backup(
+            hold_stopped=a.hold_stopped,
+            profile=a.profile or "development",
+            operator=a.operator,
+            shared_frontend=a.shared_frontend,
+        )
     elif a.uri:
         if a.hold_stopped:
             p.error("--hold-stopped applies only to backup")
@@ -1021,6 +1100,8 @@ if __name__ == "__main__":
             p.error("--profile applies only to backup; resume uses the saved recovery profile")
         if a.operator:
             p.error("--operator applies only to backup; resume uses the saved deployment inventory")
+        if a.shared_frontend:
+            p.error("--shared-frontend applies only to backup; resume uses the saved frontend mode")
         if a.action == "verify":
             verify(a.uri)
         else:

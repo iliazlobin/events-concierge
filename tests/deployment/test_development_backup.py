@@ -6,6 +6,7 @@ import runpy
 import subprocess
 import sys
 import uuid
+from copy import deepcopy
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
@@ -153,11 +154,16 @@ def test_hold_stopped_keeps_writers_down_without_restarting_redis(recording):
     backup.backup(hold_stopped=True)
     scales = [event for event in events if event[0] == "scale"]
     assert scales and all(event[2] == "--replicas=0" for event in scales)
+    assert all("--resource-version=123" in event for event in scales)
     assert not any("ec-dev-redis" in " ".join(event) for event in events[1:])
     app_stopped = events.index(
         ("wait", "--for=delete", "pod", "-l", "component=events-concierge-api", "--timeout=180s")
     )
-    temporal_stop = events.index(("scale", "deployment/ec-dev-temporal-frontend", "--replicas=0"))
+    temporal_stop = next(
+        i
+        for i, event in enumerate(events)
+        if event[:3] == ("scale", "deployment/ec-dev-temporal-frontend", "--replicas=0")
+    )
     assert app_stopped < temporal_stop
     manifest = json.loads(copies["manifest.json"])
     assert manifest["resume_required"] is True
@@ -615,7 +621,7 @@ def test_private_backup_quiesces_public_edge_first_and_records_bounded_recovery(
     events, copies, _ = private_recording
     backup.backup(profile="private", hold_stopped=True)
     scales = [event for event in events if event[0] == "scale"]
-    assert scales[0] == ("scale", "deployment/" + backup.PUBLIC_TUNNEL, "--replicas=0")
+    assert scales[0][:3] == ("scale", "deployment/" + backup.PUBLIC_TUNNEL, "--replicas=0")
     edge_wait = next(
         i
         for i, event in enumerate(events)
@@ -1120,6 +1126,538 @@ def test_backup_cli_refuses_operator_override_for_saved_recovery(action):
     assert error.value.code == 2
     command.assert_not_called()
     output.assert_not_called()
+
+
+@pytest.fixture
+def shared_frontend_recording(private_recording):
+    events, copies, deployments = private_recording
+    deployments[:] = [d for d in deployments if d["metadata"]["name"] != backup.PUBLIC_TUNNEL]
+    deployments.append(deployment(backup.OPERATOR_API))
+    frontend = next(d for d in deployments if d["metadata"]["name"] == backup.SHARED_FRONTEND)
+    frontend["spec"]["template"]["spec"]["containers"].append({"image": "caddy@sha256:456"})
+    return events, copies, deployments
+
+
+def test_shared_frontend_backup_closes_both_routes_before_writers_and_saves_mode(
+    shared_frontend_recording,
+):
+    events, copies, _ = shared_frontend_recording
+    backup.backup(profile="private", operator=True, shared_frontend=True, hold_stopped=True)
+    scales = [event for event in events if event[0] == "scale"]
+    assert scales[0][:3] == ("scale", "deployment/" + backup.SHARED_FRONTEND, "--replicas=0")
+    frontend_wait = next(
+        i
+        for i, event in enumerate(events)
+        if event[0] == "wait" and backup.SHARED_FRONTEND in event[4]
+    )
+    first_writer = next(
+        i
+        for i, event in enumerate(events)
+        if event[0] == "scale" and event[1] != "deployment/" + backup.SHARED_FRONTEND
+    )
+    assert frontend_wait < first_writer
+    assert all(event[2] == "--replicas=0" for event in scales)
+    assert not any(event[1] == "deployment/ec-dev-redis" for event in scales)
+    metadata = json.loads(copies["recovery.json"])
+    assert metadata["version"] == 3
+    assert metadata["deployment_profile"] == "private"
+    assert metadata["shared_frontend"] is True
+    assert metadata["replicas"][backup.SHARED_FRONTEND] == 1
+    assert set(metadata["replicas"]) & PRIVATE_OPERATORS == {backup.OPERATOR_API}
+    backup._validate_recovery(metadata, backup.BACKUP_ROOT + metadata["id"])
+
+
+def test_shared_frontend_resume_derives_mode_and_opens_after_both_apis_and_workers(
+    shared_frontend_recording,
+):
+    events, copies, deployments = shared_frontend_recording
+    backup.backup(profile="private", operator=True, shared_frontend=True, hold_stopped=True)
+    metadata = json.loads(copies["recovery.json"])
+    events.clear()
+    backup.resume(backup.BACKUP_ROOT + metadata["id"])
+    restored = [event for event in events if event[0] == "scale" and event[2] == "--replicas=1"]
+    assert restored[0][1].startswith("deployment/ec-dev-temporal-")
+    assert restored[-1][1:3] == ("deployment/" + backup.SHARED_FRONTEND, "--replicas=1")
+    before_edge = events[: events.index(restored[-1])]
+    waited = {event[2] for event in before_edge if event[0] == "rollout"}
+    assert waited == {
+        "deployment/" + name for name in metadata["replicas"] if name != backup.SHARED_FRONTEND
+    }
+    assert all("--resource-version=123" in event for event in restored)
+    assert all(d["spec"]["replicas"] == 1 for d in deployments)
+
+
+@pytest.mark.parametrize(
+    "missing,extra",
+    [
+        (backup.SHARED_FRONTEND, None),
+        ("events-concierge-api", None),
+        (backup.OPERATOR_API, None),
+        (None, backup.OPERATOR_FRONTEND),
+        (None, backup.PUBLIC_TUNNEL),
+        (None, "events-concierge-admin"),
+    ],
+)
+def test_shared_frontend_backup_rejects_missing_backends_or_legacy_inventory_before_mutation(
+    shared_frontend_recording,
+    missing,
+    extra,
+):
+    events, copies, deployments = shared_frontend_recording
+    if missing:
+        deployments[:] = [d for d in deployments if d["metadata"]["name"] != missing]
+    if extra:
+        deployments.append(deployment(extra, 2 if extra == backup.PUBLIC_TUNNEL else 1))
+    with pytest.raises(SystemExit):
+        backup.backup(profile="private", operator=True, shared_frontend=True)
+    assert not copies
+    assert not any(event[0] == "scale" for event in events)
+
+
+@pytest.mark.parametrize(
+    "profile,operator", [("development", False), ("development", True), ("private", False)]
+)
+def test_shared_frontend_backup_options_fail_before_any_io(profile, operator):
+    with (
+        patch.object(backup, "k") as cluster,
+        patch.object(backup, "gc") as cloud,
+        patch.object(backup, "_check_context") as context,
+        pytest.raises(SystemExit, match="private"),
+    ):
+        backup.backup(profile=profile, operator=operator, shared_frontend=True)
+    cluster.assert_not_called()
+    cloud.assert_not_called()
+    context.assert_not_called()
+
+
+@pytest.mark.parametrize("name", [backup.SHARED_FRONTEND, backup.OPERATOR_API])
+@pytest.mark.parametrize("count", [2, True])
+def test_shared_frontend_backup_keeps_singleton_integer_replica_limits(
+    shared_frontend_recording,
+    name,
+    count,
+):
+    events, copies, deployments = shared_frontend_recording
+    next(d for d in deployments if d["metadata"]["name"] == name)["spec"]["replicas"] = count
+    with pytest.raises(SystemExit):
+        backup.backup(profile="private", operator=True, shared_frontend=True)
+    assert not copies
+    assert not any(event[0] == "scale" for event in events)
+
+
+@pytest.mark.parametrize(
+    "change", ["mode_missing", "mode_false", "mode_integer", "legacy_version", "missing_api"]
+)
+def test_shared_frontend_receipt_cannot_change_mode_or_hide_backend_before_scale(
+    shared_frontend_recording,
+    change,
+):
+    events, copies, _ = shared_frontend_recording
+    backup.backup(profile="private", operator=True, shared_frontend=True, hold_stopped=True)
+    metadata = json.loads(copies["recovery.json"])
+    if change == "mode_missing":
+        metadata.pop("shared_frontend")
+    elif change == "mode_false":
+        metadata["shared_frontend"] = False
+    elif change == "mode_integer":
+        metadata["shared_frontend"] = 1
+    elif change == "legacy_version":
+        metadata["version"] = 2
+        metadata.pop("shared_frontend")
+    else:
+        for field in ("replicas", "deployment_uids", "template_sha256"):
+            metadata[field].pop(backup.OPERATOR_API)
+    copies["recovery.json"] = json.dumps(metadata).encode()
+    events.clear()
+    with pytest.raises(SystemExit):
+        backup.resume(backup.BACKUP_ROOT + metadata["id"])
+    assert not any(event[0] == "scale" for event in events)
+
+
+@pytest.mark.parametrize("change", ["uid", "sidecar", "schema", "inventory"])
+def test_shared_frontend_resume_keeps_saved_release_identity_guards(
+    shared_frontend_recording,
+    change,
+):
+    events, copies, deployments = shared_frontend_recording
+    backup.backup(profile="private", operator=True, shared_frontend=True, hold_stopped=True)
+    metadata = json.loads(copies["recovery.json"])
+    frontend = next(d for d in deployments if d["metadata"]["name"] == backup.SHARED_FRONTEND)
+    if change == "uid":
+        frontend["metadata"]["uid"] = str(uuid.uuid4())
+    elif change == "sidecar":
+        frontend["spec"]["template"]["spec"]["containers"][1]["image"] = "unreviewed-caddy"
+    elif change == "inventory":
+        deployments.append(deployment(backup.OPERATOR_FRONTEND, 0))
+    events.clear()
+    with (
+        patch.object(backup, "_read_schema", return_value="0207" if change == "schema" else "0193"),
+        pytest.raises((RuntimeError, SystemExit)),
+    ):
+        backup.resume(backup.BACKUP_ROOT + metadata["id"])
+    assert not any(event[0] == "scale" for event in events)
+
+
+@pytest.mark.parametrize(
+    "change", ["replicas", "uid", "template", "generation", "ready", "schema", "inventory"]
+)
+def test_shared_frontend_rechecks_backends_after_rollout_before_reopening(
+    shared_frontend_recording,
+    change,
+):
+    events, _, deployments = shared_frontend_recording
+    original = backup.k.side_effect
+    api = next(d for d in deployments if d["metadata"]["name"] == backup.OPERATOR_API)
+
+    def cluster(*args, **kwargs):
+        result = original(*args, **kwargs)
+        if args[:3] == ("rollout", "status", "deployment/" + backup.OPERATOR_API):
+            if change == "replicas":
+                api["spec"]["replicas"] = 2
+            elif change == "uid":
+                api["metadata"]["uid"] = str(uuid.uuid4())
+            elif change == "template":
+                api["spec"]["template"]["spec"]["containers"][0]["image"] = "new-image"
+            elif change == "generation":
+                api["metadata"]["generation"] = 2
+            elif change == "ready":
+                api["status"]["readyReplicas"] = 0
+            elif change == "schema":
+                backup._read_schema.return_value = "0207"
+            else:
+                deployments.append(deployment(backup.OPERATOR_FRONTEND, 0))
+        return result
+
+    backup.k.side_effect = cluster
+    with (
+        patch.object(backup, "_read_schema", return_value="0193"),
+        pytest.raises(ExceptionGroup),
+    ):
+        backup.backup(profile="private", operator=True, shared_frontend=True)
+    frontend = next(d for d in deployments if d["metadata"]["name"] == backup.SHARED_FRONTEND)
+    assert frontend["spec"]["replicas"] == 0
+    assert not any(
+        event[:3] == ("scale", "deployment/" + backup.SHARED_FRONTEND, "--replicas=1")
+        for event in events
+    )
+
+
+def test_shared_frontend_uncertain_scale_is_closed_with_fresh_identity_preconditions(
+    shared_frontend_recording,
+):
+    events, copies, deployments = shared_frontend_recording
+    original = backup.k.side_effect
+    frontend = next(d for d in deployments if d["metadata"]["name"] == backup.SHARED_FRONTEND)
+
+    def cluster(*args, **kwargs):
+        result = original(*args, **kwargs)
+        if args[:3] == ("scale", "deployment/" + backup.SHARED_FRONTEND, "--replicas=1"):
+            frontend["metadata"]["resourceVersion"] = "124"
+            raise subprocess.TimeoutExpired(args, 30)
+        return result
+
+    backup.k.side_effect = cluster
+    with patch.object(backup.time, "sleep"), pytest.raises(ExceptionGroup):
+        backup.backup(profile="private", operator=True, shared_frontend=True)
+    reopened = next(
+        i
+        for i, event in enumerate(events)
+        if event[:3] == ("scale", "deployment/" + backup.SHARED_FRONTEND, "--replicas=1")
+    )
+    closure = next(
+        event
+        for event in events[reopened + 1 :]
+        if event[:3] == ("scale", "deployment/" + backup.SHARED_FRONTEND, "--replicas=0")
+    )
+    assert "--resource-version=124" in closure
+    assert any(
+        event[0] == "wait" and backup.SHARED_FRONTEND in event[4]
+        for event in events[events.index(closure) + 1 :]
+    )
+    assert frontend["spec"]["replicas"] == 0
+    assert json.loads(copies["recovery.json"])["replicas"][backup.SHARED_FRONTEND] == 1
+
+
+@pytest.mark.parametrize("change", ["uid", "sidecar"])
+def test_shared_frontend_failed_recovery_never_scales_a_replaced_edge(
+    shared_frontend_recording,
+    change,
+):
+    events, copies, deployments = shared_frontend_recording
+    original = backup.k.side_effect
+    frontend = next(d for d in deployments if d["metadata"]["name"] == backup.SHARED_FRONTEND)
+    original_uid = frontend["metadata"]["uid"]
+    original_template = backup._template_hash(frontend)
+
+    def cluster(*args, **kwargs):
+        result = original(*args, **kwargs)
+        if args[:3] == ("scale", "deployment/" + backup.SHARED_FRONTEND, "--replicas=1"):
+            if change == "uid":
+                frontend["metadata"]["uid"] = str(uuid.uuid4())
+            else:
+                frontend["spec"]["template"]["spec"]["containers"][1]["image"] = "replacement-caddy"
+            raise subprocess.TimeoutExpired(args, 30)
+        return result
+
+    backup.k.side_effect = cluster
+    with patch.object(backup.time, "sleep"), pytest.raises(ExceptionGroup) as caught:
+        backup.backup(profile="private", operator=True, shared_frontend=True)
+    reopened = next(
+        i
+        for i, event in enumerate(events)
+        if event[:3] == ("scale", "deployment/" + backup.SHARED_FRONTEND, "--replicas=1")
+    )
+    assert not any(
+        event[:3] == ("scale", "deployment/" + backup.SHARED_FRONTEND, "--replicas=0")
+        for event in events[reopened + 1 :]
+    )
+    assert any(isinstance(error, RuntimeError) for error in caught.value.exceptions)
+    metadata = json.loads(copies["recovery.json"])
+    assert metadata["deployment_uids"][backup.SHARED_FRONTEND] == original_uid
+    assert metadata["template_sha256"][backup.SHARED_FRONTEND] == original_template
+
+
+@pytest.mark.parametrize("stopped", [backup.SHARED_FRONTEND, backup.OPERATOR_API])
+def test_shared_frontend_preserves_stopped_replicas_and_never_opens_without_operator_api(
+    shared_frontend_recording,
+    stopped,
+):
+    events, copies, deployments = shared_frontend_recording
+    next(d for d in deployments if d["metadata"]["name"] == stopped)["spec"]["replicas"] = 0
+    if stopped == backup.OPERATOR_API:
+        with pytest.raises(ExceptionGroup):
+            backup.backup(profile="private", operator=True, shared_frontend=True)
+    else:
+        backup.backup(profile="private", operator=True, shared_frontend=True)
+    assert json.loads(copies["recovery.json"])["replicas"][stopped] == 0
+    assert next(d for d in deployments if d["metadata"]["name"] == stopped)["spec"]["replicas"] == 0
+    assert not any(
+        event[:3] == ("scale", "deployment/" + backup.SHARED_FRONTEND, "--replicas=1")
+        for event in events
+    )
+
+
+def test_backup_cli_shared_frontend_records_new_mode_without_legacy_pair(shared_frontend_recording):
+    _, copies, _ = shared_frontend_recording
+    cluster, cloud = backup.k.side_effect, backup.gc.side_effect
+    path = Path(__file__).resolve().parents[2] / "scripts/development/backup.py"
+
+    def command(args, **kwargs):
+        kwargs.pop("check")
+        if args[0] == backup.K:
+            return cluster(*args[4:], **kwargs)
+        assert args[:2] == ["gcloud", "storage"]
+        return cloud(*args[2:-2], **kwargs)
+
+    with (
+        patch.object(
+            sys,
+            "argv",
+            [
+                str(path),
+                "backup",
+                "--profile",
+                "private",
+                "--operator",
+                "--shared-frontend",
+                "--hold-stopped",
+            ],
+        ),
+        patch.object(backup.subprocess, "run", side_effect=command),
+    ):
+        runpy.run_path(str(path), run_name="__main__")
+    metadata = json.loads(copies["recovery.json"])
+    assert metadata["shared_frontend"] is True
+    assert set(metadata["replicas"]) & PRIVATE_OPERATORS == {backup.OPERATOR_API}
+
+
+@pytest.mark.parametrize("action", ["verify", "resume"])
+def test_backup_cli_refuses_shared_mode_override_for_saved_recovery(action):
+    path = Path(__file__).resolve().parents[2] / "scripts/development/backup.py"
+    with (
+        patch.object(sys, "argv", [str(path), action, RECOVERY_URI, "--shared-frontend"]),
+        patch.object(backup.subprocess, "run") as command,
+        patch.object(backup.subprocess, "check_output") as output,
+        pytest.raises(SystemExit) as error,
+    ):
+        runpy.run_path(str(path), run_name="__main__")
+    assert error.value.code == 2
+    command.assert_not_called()
+    output.assert_not_called()
+
+
+@pytest.fixture(params=["development", "private", "operator", "shared"])
+def quiescence_record(request):
+    mode = request.param
+    profile = "development" if mode == "development" else "private"
+    names = set(backup.PRIVATE_WRITERS)
+    if mode == "operator":
+        names |= PRIVATE_OPERATORS | {backup.PUBLIC_TUNNEL}
+    elif mode == "shared":
+        names.add(backup.OPERATOR_API)
+    writers = [
+        deployment(name, 2 if name == backup.PUBLIC_TUNNEL else 1)
+        for name in sorted(names, key=lambda name: (name != "events-concierge-api", name))
+    ]
+    metadata = backup._recovery_metadata(
+        RECOVERY_ID, writers, "0193", profile=profile, shared_frontend=mode == "shared"
+    )
+    current = [*deepcopy(writers), deployment("ec-dev-redis")]
+    first = (
+        backup.SHARED_FRONTEND
+        if mode == "shared"
+        else backup.PUBLIC_TUNNEL
+        if mode == "operator"
+        else "events-concierge-api"
+    )
+    return writers, metadata, current, first
+
+
+@pytest.mark.parametrize("change", ["uid", "template", "replicas"])
+def test_initial_quiescence_refuses_changed_saved_writer_before_stop(quiescence_record, change):
+    writers, metadata, current, name = quiescence_record
+    item = next(d for d in current if d["metadata"]["name"] == name)
+    if change == "uid":
+        item["metadata"]["uid"] = str(uuid.uuid4())
+    elif change == "template":
+        item["spec"]["template"]["spec"]["containers"][0]["image"] = "replacement-image"
+    else:
+        item["spec"]["replicas"] = 3
+    item["metadata"]["resourceVersion"] = "124"
+    writes = []
+
+    def cluster(*args, **kwargs):
+        if args[:2] == ("get", "deployments"):
+            return SimpleNamespace(stdout=json.dumps({"items": current}))
+        if args[0] == "get" and args[1].startswith("deployment/"):
+            return SimpleNamespace(
+                stdout=json.dumps(
+                    next(d for d in current if d["metadata"]["name"] == args[1].split("/", 1)[1])
+                )
+            )
+        writes.append(args)
+        raise AssertionError("Changed saved writer must never be stopped")
+
+    with (
+        patch.object(backup, "_read_schema", return_value="0193"),
+        patch.object(backup, "k", side_effect=cluster),
+        pytest.raises(RuntimeError, match=r"replaced|changed"),
+    ):
+        backup._quiesce(writers, recovery=metadata)
+    assert not writes
+
+
+@pytest.mark.parametrize("change", ["uid", "template", "replicas"])
+def test_initial_quiescence_uses_resource_version_cas_against_get_scale_races(
+    quiescence_record,
+    change,
+):
+    writers, metadata, current, name = quiescence_record
+    item = next(d for d in current if d["metadata"]["name"] == name)
+    attempted = []
+
+    def cluster(*args, **kwargs):
+        if args[:2] == ("get", "deployments"):
+            return SimpleNamespace(stdout=json.dumps({"items": current}))
+        if args[0] == "get" and args[1].startswith("deployment/"):
+            target = next(d for d in current if d["metadata"]["name"] == args[1].split("/", 1)[1])
+            response = json.dumps(target)
+            if target is item:
+                if change == "uid":
+                    item["metadata"]["uid"] = str(uuid.uuid4())
+                elif change == "template":
+                    item["spec"]["template"]["spec"]["containers"][0]["image"] = "replacement-image"
+                else:
+                    item["spec"]["replicas"] = 3
+                item["metadata"]["resourceVersion"] = "124"
+            return SimpleNamespace(stdout=response)
+        assert args[0] == "scale"
+        attempted.append(args)
+        assert args[1] == "deployment/" + name
+        assert "--resource-version=123" in args
+        assert item["metadata"]["resourceVersion"] == "124"
+        raise subprocess.CalledProcessError(
+            1, args, stderr=b"Conflict: resource version precondition failed"
+        )
+
+    with (
+        patch.object(backup, "_read_schema", return_value="0193"),
+        patch.object(backup, "k", side_effect=cluster),
+        patch.object(backup.time, "sleep") as sleep,
+        pytest.raises(subprocess.CalledProcessError),
+    ):
+        backup._quiesce(writers, recovery=metadata)
+    assert len(attempted) == 1
+    assert item["spec"]["replicas"] == (3 if change == "replicas" else metadata["replicas"][name])
+    sleep.assert_not_called()
+
+
+def test_normal_backup_passes_persisted_ownership_to_initial_quiescence(shared_frontend_recording):
+    events, copies, deployments = shared_frontend_recording
+    cloud = backup.gc.side_effect
+    frontend = next(d for d in deployments if d["metadata"]["name"] == backup.SHARED_FRONTEND)
+
+    def mutate_after_receipt(*args, **kwargs):
+        result = cloud(*args, **kwargs)
+        if args[0] == "cat" and args[1].endswith("/recovery.json"):
+            frontend["metadata"]["uid"] = str(uuid.uuid4())
+            frontend["metadata"]["resourceVersion"] = "124"
+        return result
+
+    backup.gc.side_effect = mutate_after_receipt
+    with pytest.raises(ExceptionGroup):
+        backup.backup(profile="private", operator=True, shared_frontend=True)
+    assert "recovery.json" in copies
+    assert "COMPLETE" not in copies
+    assert not any(event[0] == "scale" for event in events)
+    assert frontend["spec"]["replicas"] == 1
+
+
+def test_initial_quiescence_requires_saved_receipt_and_unchanged_schema(quiescence_record):
+    writers, metadata, _, _ = quiescence_record
+    with patch.object(backup, "k") as cluster:
+        with pytest.raises(RuntimeError, match="saved recovery metadata"):
+            backup._quiesce(writers, recovery=None)
+        with (
+            patch.object(backup, "_read_schema", return_value="0207"),
+            pytest.raises(RuntimeError, match="schema changed"),
+        ):
+            backup._quiesce(writers, recovery=metadata)
+    cluster.assert_not_called()
+
+
+def test_initial_quiescence_rechecks_schema_after_inventory_preflight(quiescence_record):
+    writers, metadata, current, _ = quiescence_record
+
+    def cluster(*args, **kwargs):
+        assert args[:2] == ("get", "deployments")
+        return SimpleNamespace(stdout=json.dumps({"items": current}))
+
+    with (
+        patch.object(backup, "_read_schema", side_effect=["0193", "0207"]),
+        patch.object(backup, "k", side_effect=cluster) as calls,
+        pytest.raises(RuntimeError, match="schema changed"),
+    ):
+        backup._quiesce(writers, recovery=metadata)
+    assert calls.call_count == 1
+
+
+def test_initial_quiescence_refuses_a_started_originally_stopped_writer(quiescence_record):
+    writers, metadata, current, name = quiescence_record
+    next(d for d in writers if d["metadata"]["name"] == name)["spec"]["replicas"] = 0
+    metadata["replicas"][name] = 0
+
+    def cluster(*args, **kwargs):
+        assert args[:2] == ("get", "deployments")
+        return SimpleNamespace(stdout=json.dumps({"items": current}))
+
+    with (
+        patch.object(backup, "_read_schema", return_value="0193"),
+        patch.object(backup, "k", side_effect=cluster) as calls,
+        pytest.raises(RuntimeError, match="replica count changed"),
+    ):
+        backup._quiesce(writers, recovery=metadata)
+    assert calls.call_count == 1
 
 
 @pytest.mark.parametrize("edge_mode", ["absent", "stopped"])
