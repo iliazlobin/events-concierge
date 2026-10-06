@@ -1,0 +1,21 @@
+{
+	admin off
+	auto_https off
+	persist_config off
+}
+
+# Owner-only Mac access; never use this gateway as a public tunnel upstream.
+http://:14001 {
+	bind 127.0.0.1
+	@wrong_host not host 127.0.0.1 localhost
+	@admin path /admin /admin/*
+	route {
+		respond @wrong_host 421
+		handle @admin {
+			reverse_proxy 127.0.0.1:14002
+		}
+		handle {
+			reverse_proxy 127.0.0.1:14011
+		}
+	}
+}
