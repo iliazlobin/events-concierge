@@ -5,8 +5,11 @@ terraform {
   }
 }
 
+# Use the selected identity project for API quota, preconditions and billing.
 provider "google" {
   project                     = var.project_id
+  billing_project             = var.project_id
+  user_project_override       = true
   impersonate_service_account = var.impersonate_service_account
 }
 

@@ -43,6 +43,7 @@ the protected application state bucket; never adopt shared foundation/network/cl
 3. Configure provider credentials below and the approved legal mode. Keep `signup_enabled=false` during provider bootstrap, then enable signup for the verified release/pilot.
 
 For the existing `iz27-platform-dev` project, `foundation_owned_services` excludes its foundation-owned IAM and Secret Manager APIs from this state. The identity APIs, restricted browser key, provider containers and narrow IAM remain application-owned; never import shared resources or another product's OAuth clients/branding.
+The provider and bootstrap requests use the selected identity project for quota; the caller needs `serviceusage.services.use` there.
 
 Configure `EC_IDENTITY_PLATFORM_PROVIDERS='["google.com"]'` for the initial release.
 Guests see **Sign in**; the same Google flow signs in existing users or creates a new account.
