@@ -117,11 +117,11 @@ async def test_deferred_bootstrap_retains_erasure_fence_and_database_binding_gua
         await accounts.bootstrap(identity)
     async with system_session_scope() as session:
         with pytest.raises(DBAPIError):
-            await session.execute(
-                text("SELECT public.fn_bootstrap_consumer_account(:id,:subject,:email)"),
-                {"id": uuid4(), "subject": identity.subject, "email": identity.email},
-            )
-        await session.rollback()
+            async with session.begin_nested():
+                await session.execute(
+                    text("SELECT public.fn_bootstrap_consumer_account(:id,:subject,:email)"),
+                    {"id": uuid4(), "subject": identity.subject, "email": identity.email},
+                )
         assert (
             await session.execute(
                 text("""
