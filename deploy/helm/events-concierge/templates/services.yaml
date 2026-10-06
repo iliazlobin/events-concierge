@@ -1,7 +1,7 @@
 {{- if or (eq .Values.global.releasePhase "all") (eq .Values.global.releasePhase "application") }}
 {{- $root := . -}}
 {{- range $name, $service := .Values.services }}
-{{- if or (not $service.operatorOnly) $root.Values.operator.enabled }}
+{{- if or (not $service.operatorOnly) $root.Values.operator.enabled (and $root.Values.publicEdge.enabled $root.Values.publicEdge.bootstrap (eq $name "operator-frontend")) }}
 ---
 apiVersion: v1
 kind: Service
@@ -16,7 +16,7 @@ spec:
   ports:
     - name: http
       port: {{ $service.port }}
-      targetPort: {{ $service.targetPort }}
+      targetPort: {{ ternary 8080 (int $service.targetPort) (and $root.Values.publicEdge.enabled (eq $name "frontend")) }}
       protocol: TCP
 {{- end }}
 {{- end }}

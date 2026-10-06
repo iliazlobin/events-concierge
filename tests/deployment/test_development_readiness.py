@@ -138,27 +138,13 @@ def test_shared_discovery_requires_active_catalog_and_no_deferred_deployments():
     assert readiness.pending_deployments(missing) == [EXECUTOR]
 
 
-def private_deployments(*, public=False):
-    items = [d for d in ready_deployments() if d["metadata"]["name"] != "events-concierge-admin"]
-    if public:
-        tunnel = deepcopy(items[0])
-        tunnel["metadata"]["name"] = readiness.PUBLIC_TUNNEL
-        tunnel["spec"]["replicas"] = 2
-        for field in ("replicas", "updatedReplicas", "availableReplicas", "readyReplicas"):
-            tunnel["status"][field] = 2
-        items.append(tunnel)
-    return items
+def private_deployments():
+    return [d for d in ready_deployments() if d["metadata"]["name"] != "events-concierge-admin"]
 
 
-def test_private_readiness_requires_five_apps_and_explicit_public_edge():
-    items = private_deployments()
-    assert readiness.pending_deployments(items, profile="private") == []
-    assert readiness.pending_deployments(items, profile="private", public_tunnel=True) == [
-        readiness.PUBLIC_TUNNEL
-    ]
-    public = private_deployments(public=True)
-    assert readiness.pending_deployments(public, profile="private", public_tunnel=True) == []
-    assert readiness.pending_deployments(public, profile="private") == [readiness.PUBLIC_TUNNEL]
+def test_private_readiness_retains_five_app_deployments_with_public_sidecar():
+    assert readiness.pending_deployments(private_deployments(), profile="private") == []
+    assert len(readiness.expected_replicas("private")) == 5
 
 
 @pytest.mark.parametrize(
@@ -173,35 +159,11 @@ def test_private_readiness_rejects_unapproved_deployments_even_when_stopped(name
     assert readiness.pending_deployments(items, profile="private") == [name]
 
 
-@pytest.mark.parametrize(
-    "section,field,value",
-    [
-        ("spec", "replicas", 1),
-        ("status", "replicas", 3),
-        ("status", "updatedReplicas", 1),
-        ("status", "availableReplicas", 1),
-        ("status", "readyReplicas", 1),
-        ("status", "observedGeneration", 1),
-    ],
-)
-def test_public_readiness_needs_both_current_tunnel_replicas(section, field, value):
-    items = private_deployments(public=True)
-    items[-1][section][field] = value
-    assert readiness.pending_deployments(items, profile="private", public_tunnel=True) == [
-        readiness.PUBLIC_TUNNEL
-    ]
-
-
-def test_development_cannot_request_a_public_edge_before_any_cluster_read(monkeypatch):
-    with pytest.raises(SystemExit, match="authenticated private"):
-        readiness.main(public_tunnel=True)
-
-
 PRIVATE_OPERATORS = {"events-concierge-operator-api", "events-concierge-operator-frontend"}
 
 
-def operator_deployments(*, public=False):
-    items = private_deployments(public=public)
+def operator_deployments():
+    items = private_deployments()
     for name in sorted(PRIVATE_OPERATORS):
         operator = deepcopy(items[0])
         operator["metadata"]["name"] = name
@@ -220,12 +182,11 @@ def test_private_readiness_requires_explicit_operator_inventory_and_both_singlet
         readiness.pending_deployments(operator_deployments(), profile="private", operator=True)
         == []
     )
-    expected = readiness.expected_replicas("private", operator=True, public_tunnel=True)
+    expected = readiness.expected_replicas("private", operator=True)
     assert {name: expected[name] for name in PRIVATE_OPERATORS} == dict.fromkeys(
         PRIVATE_OPERATORS, 1
     )
-    assert expected[readiness.PUBLIC_TUNNEL] == 2
-    assert len(expected) == 8
+    assert len(expected) == 7
 
 
 @pytest.mark.parametrize("name", sorted(PRIVATE_OPERATORS))
@@ -259,11 +220,11 @@ def test_operator_option_cannot_hide_unapproved_private_processes():
     ]
 
 
-def test_wait_ready_operator_flag_waits_for_both_while_retaining_the_public_edge(
+def test_wait_ready_operator_flag_waits_for_both_with_unchanged_deployment_inventory(
     monkeypatch, capsys
 ):
     name = "events-concierge-operator-api"
-    ready = operator_deployments(public=True)
+    ready = operator_deployments()
     missing = [d for d in ready if d["metadata"]["name"] != name]
     snapshots = iter([missing, ready])
     sleeps = []
@@ -278,12 +239,12 @@ def test_wait_ready_operator_flag_waits_for_both_while_retaining_the_public_edge
 
     monkeypatch.setattr(readiness.subprocess, "check_output", output)
     monkeypatch.setattr(readiness.time, "sleep", sleeps.append)
-    readiness.main(profile="private", operator=True, public_tunnel=True)
+    readiness.main(profile="private", operator=True)
     assert len(calls) == 3
     assert sleeps == [5]
     output = capsys.readouterr().out
     assert "Waiting: " + name in output
-    assert "All 8 expected deployments" in output
+    assert "All 7 expected deployments" in output
 
 
 def test_development_cannot_request_operator_before_any_cluster_read(monkeypatch):

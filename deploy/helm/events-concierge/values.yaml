@@ -126,11 +126,6 @@ operator:
   iapAudience: ""
   iapClientId: ""
   iapClientSecretName: ""
-  cloudflareAccess:
-    teamDomain: ""
-    audience: ""
-    # Reviewed Cloudflare CIDRs containing this team's certificate endpoint; HTTPS only.
-    jwksCidrs: []
   subjectRoles: {}
   # HTTP IAP edge data-plane and health-check ranges, independent of the consumer edge.
   frontendIngressCidrs: [130.211.0.0/22, 35.191.0.0/16]
@@ -449,20 +444,17 @@ gateway:
   hostname: staging.concierge.example
   tlsSecretName: ""
 
-publicTunnel:
+publicEdge:
   enabled: false
+  # Bootstrap creates an IAP-protected Service with no admin endpoints.
+  bootstrap: false
   hostname: events.iliazlobin.com
-  # An externally provisioned, immutable Secret containing one key: token.
-  tokenSecretName: ""
-  replicas: 2
-  cloudflaredImage:
-    repository: cloudflare/cloudflared
-    # Official multi-platform 2026.10.0 image.
-    digest: sha256:9b49eed8f62806d5d45ddf59ecefb5710429598ea6d3fcccd2af938f621b2b07
-    pullPolicy: IfNotPresent
+  staticIpName: ""
+  certificateMap: ""
+  sslPolicy: ""
   proxyImage:
     repository: caddy
-    # Official multi-platform 2.11.6-alpine image.
+    # Official multi-platform 2.11.6-alpine; no credential-bearing tunnel process.
     digest: sha256:d44355d3c2149dc580ce2cac735955d1c08d3d00882c30489c241aa51a5c10d9
     pullPolicy: IfNotPresent
 

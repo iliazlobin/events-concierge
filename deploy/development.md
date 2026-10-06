@@ -273,7 +273,7 @@ mkdir -p .local/private-tls
 - API and erasure use the consumer DB role; executor/catalog use the restricted ingestion role; cadence uses the controller role. Pin actual Secret Manager version numbers; the example's `2` is not proof that a matching version exists. Review each process's IAM access and keep Google provider OAuth secrets outside workloads.
 - This profile reuses retained databases and established restricted roles. A fresh installation needs its separately reviewed role bootstrap before migration; the TLS migration Job does not create operator/ingestion credentials.
 - The separate data chart supplies default-deny and explicit Pod-selector routes for stores, Temporal, DNS and metadata access. On Dataplane V2, private IP CIDRs do not admit Pod traffic. Verify both kube-dns and NodeLocal DNSCache connectivity before cutover.
-- Layer the [public connector](public-access.md) only after transport verification. The data chart excludes it from internal/store routes; the application chart grants only frontend ingress. Deploy both policy changes together: Kubernetes allow rules are additive.
+- Enable the [GCP public edge](public-access.md) only after transport verification. The frontend sidecar preserves consumer route/header filtering; GFE ingress is limited to consumer/admin frontend ports. Review both charts together: Kubernetes allow rules are additive.
 
 **Validate without cluster changes**
 
@@ -303,7 +303,7 @@ kubectl -n events-concierge-dev exec -i deployment/events-concierge-api -- pytho
 ```
 
 - The private gate requires five singleton application Deployments and rejects demo, deferred or unknown Deployments. Promotion uses runtime mTLS and requires recent workflow and activity pollers for the exact candidate build. `smoke.py` remains a synthetic demo check; use the authenticated browser acceptance above.
-- After installing the public tunnel, run `wait_ready.py --target shared --profile private --public-tunnel`; it also requires both updated, available, ready connector replicas before publishing the route.
+- Public access adds a sidecar to the existing frontend Deployment. Run `wait_ready.py --target shared --profile private --operator` after admin activation; verify Gateway/routes, certificate, backend IAP/IAM and browser acceptance separately before publishing DNS. Historical tunnel backup receipts remain supported for recovery; the chart no longer installs a connector.
 - If both private operator workloads are installed, append `--operator` to the readiness and backup-creation commands. It requires their exact singleton inventory; it does not verify browser authentication or create an edge.
 - For an authenticated private backup, add `--hold-stopped` to the following creation command for cutover. Replace `SET_ID` with its exact completed prefix; verification uses the saved data, and interrupted recovery selects the saved profile. The demo examples below retain their default profile.
 

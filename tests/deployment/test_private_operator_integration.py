@@ -197,9 +197,7 @@ def test_operator_mounts_only_its_numbered_database_secret_and_postgres_ca(resou
     assert ("ConfigMap", NAME + "-executor") not in resources
 
 
-def test_operator_reports_the_configured_catalog_queue_without_credentials(
-    helm, tmp_path
-):
+def test_operator_reports_the_configured_catalog_queue_without_credentials(helm, tmp_path):
     configured = operator_values()
     queue = "reviewed-private-catalog-v2"
     configured["applicationConfig"]["EC_TEMPORAL_CATALOG_TASK_QUEUE"] = queue
@@ -436,7 +434,6 @@ def test_private_operator_rejects_unpinned_or_non_operator_secrets(helm, tmp_pat
 def combined(helm, tmp_path_factory):
     directory = tmp_path_factory.mktemp("private-operator-policy")
     config = operator_values()
-    config["publicTunnel"] = {"enabled": True, "tokenSecretName": "validation-consumer-tunnel"}
     app = render(helm, directory, config)
     application = documents(app)
     data = subprocess.run(
@@ -500,7 +497,7 @@ def test_additive_store_policies_cannot_restore_unrelated_operator_authority(com
     policies = [item for (kind, _), item in combined.items() if kind == "NetworkPolicy"]
     frontend, api = labels(combined, "operator-frontend"), labels(combined, "operator-api")
     consumer_api = labels(combined, "api")
-    connector = labels(combined, "public-tunnel")
+    consumer_frontend = labels(combined, "frontend")
     for process in (frontend, api):
         for kind, name, port in (
             ("Deployment", "ec-dev-redis", 6379),
@@ -516,7 +513,7 @@ def test_additive_store_policies_cannot_restore_unrelated_operator_authority(com
         }
         assert not _allows(policies, process, "egress", 7233, peer_labels=temporal)
         assert not _allows(policies, process, "egress", 8000, peer_labels=consumer_api)
-        for peer in (consumer_api, connector):
+        for peer in (consumer_api, consumer_frontend):
             assert not _allows(
                 policies,
                 process,
@@ -532,18 +529,5 @@ def test_additive_store_policies_cannot_restore_unrelated_operator_authority(com
     for address, port in (("169.254.169.254", 80), ("203.0.113.10", 443), ("10.40.0.10", 443)):
         assert not _allows(policies, frontend, "egress", port, address=address)
     assert not _allows(policies, api, "egress", 443, address="10.40.0.10")
-    assert not _allows(policies, connector, "egress", 3000, peer_labels=frontend)
-    assert not _allows(policies, connector, "egress", 8000, peer_labels=api)
-
-
-def test_consumer_tunnel_filter_is_identical_when_operator_is_enabled(helm, tmp_path, combined):
-    config = runtime_values()
-    config["publicTunnel"] = {"enabled": True, "tokenSecretName": "validation-consumer-tunnel"}
-    baseline = documents(render(helm, tmp_path, config))
-    before = resource(baseline, "ConfigMap", "public-tunnel")["data"]
-    after = resource(combined, "ConfigMap", "public-tunnel")["data"]
-    assert before == after
-    assert "-X-Goog-*" in after["Caddyfile"]
-    assert "-Cf-Access-*" in after["Caddyfile"]
-    assert "/admin" not in after["Caddyfile"]
-    assert "operator" not in after["Caddyfile"]
+    assert not _allows(policies, consumer_frontend, "egress", 3000, peer_labels=frontend)
+    assert not _allows(policies, consumer_frontend, "egress", 8000, peer_labels=api)

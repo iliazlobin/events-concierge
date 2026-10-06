@@ -1,8 +1,0 @@
-# Apply only to a verified, non-mock consumer release with identity values configured.
-gateway:
-  enabled: false
-publicTunnel:
-  enabled: true
-  hostname: events.iliazlobin.com
-  tokenSecretName: ec-cloudflare-tunnel-v1
-  replicas: 2

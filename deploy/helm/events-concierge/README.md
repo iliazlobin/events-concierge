@@ -23,8 +23,8 @@ database DSN and CA. Frontend, catalog and controller processes receive no Googl
 The file does not activate the public edge or IAP admin. Follow the runbook's coordinated TLS
 cutover, provider/legal setup and deployed login/logout checks before enabling signup or cadence.
 
-[Public consumer access](../../public-access.md) packages the optional Cloudflare connector
-for `events.iliazlobin.com`; admin access remains separate and activation requires a verified release.
+[Public access](../../public-access.md) uses an opt-in GCP Gateway and Certificate Manager
+for the consumer site and owner-only IAP admin. Both use the same reserved global IP.
 
 Only non-secret identifiers belong in values files. The runtime uses `*_FILE` settings, while the
 migration Job receives only its owner URL and application-role bootstrap password files.
@@ -142,11 +142,9 @@ these prerequisites or authorize a migration/deployment.
 
 The [authenticated private values](values-private-authenticated.example.yaml) support a separate
 operator app against the retained PostgreSQL service. Enable `operator.enabled` and both operator
-workloads only with a complete reviewed identity configuration. `operator.authProvider=iap` remains
-the default and requires the separate hostname, TLS/OAuth references, exact backend audience and
-owner's stable IAP subject. `cloudflare_access` requires the existing private tunnel profile,
-exact `admin-events.iliazlobin.com` hostname, fixed team issuer/application AUD and the owner's stable
-Access subject. Both require the signed email `iliazlobin91@gmail.com`; consumer login grants no role.
+workloads only with a complete reviewed identity configuration. The API verifies the signed
+Google IAP assertion, backend audience, owner email `iliazlobin91@gmail.com` and stable subject.
+Consumer signup grants no admin role.
 
 - Supply an isolated operator API GCP identity authorized only for the numbered
   `ec-dev-operator-database-url` Secret Manager version. Its login must retain only
@@ -156,14 +154,18 @@ Access subject. Both require the signed email `iliazlobin91@gmail.com`; consumer
   Cloud SQL sidecar. The frontend has no backend secrets or cloud identity. Apply both charts'
   reviewed network policies: the shared data policy excludes both operator components, and the
   application chart supplies only the operator routes.
-- The private chart creates no Gateway or OAuth resources. IAP mode admits only Google Front End
-  ranges and requires a separate approved IAP edge. Cloudflare mode admits only the dedicated
-  connector to the operator frontend, which forwards only `Cf-Access-Jwt-Assertion` to the API.
-  The API verifies RS256, issuer/AUD, timestamps, owner email and assigned subject on every request.
-  Its JWKS egress is restricted to reviewed Cloudflare CIDRs on 443; other operator boundaries stay
-  isolated. Use the [admin overlay](values-cloudflare-admin.example.yaml) and
-  [provider/routing acceptance steps](../../public-access.md#cloudflare-admin). Preserve existing
-  Symphony OAuth and Hermes tunnel resources.
+- Public access is off by default. Layer [values-public-edge.example.yaml](values-public-edge.example.yaml)
+  onto authenticated private values. The shared Gateway uses `ec-public-ip`, certificate map
+  `ec-public-cert-map` and TLS policy `ec-public-tls`; Terraform owns those resources.
+- `publicEdge.bootstrap=true` creates the admin Service and IAP policy with no admin Pods.
+  Set the real backend audience and verified owner subject, check backend IAP/IAM, then enable
+  the operator workloads with `bootstrap=false`. Never deploy synthetic test identifiers.
+- The consumer frontend has a credential-free Caddy sidecar on port 8080. It allows consumer
+  pages/API only, strips identity headers and returns 404 for admin/probe paths or wrong hosts.
+  Health checks use private port 8081. Admin traffic reaches its own frontend on port 3000.
+- GFE/health-check ranges reach only those frontend ports; the operator API accepts only its
+  frontend and mounts only its numbered controller DSN/PostgreSQL CA. No direct public API
+  or datastore route exists. Follow [edge acceptance](../../public-access.md) before DNS cutover.
 - Add `--operator` to private `wait_ready.py` and backup creation only when both operator pods
   are installed. Recovery uses the recorded inventory; no extra resume flag. Verify owner login,
   admin reads/commands, non-owner denial, missing/forged assertion denial, CSRF, credential
