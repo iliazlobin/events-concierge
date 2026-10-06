@@ -12,6 +12,7 @@ applicationConfig:
   EC_IDENTITY_PLATFORM_API_KEY: replace-with-restricted-browser-key
   EC_IDENTITY_PLATFORM_AUTH_DOMAIN: iz27-platform-dev.firebaseapp.com
   EC_IDENTITY_PLATFORM_PROVIDERS: '["google.com"]'
+  EC_CONSUMER_LEGAL_MODE: required
   EC_SIGNUP_TERMS_VERSION: replace-with-approved-version
   EC_SIGNUP_TERMS_URL: https://events.iliazlobin.com/terms/approved-version
   EC_SIGNUP_PRIVACY_VERSION: replace-with-approved-version

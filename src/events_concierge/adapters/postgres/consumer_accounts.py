@@ -12,6 +12,31 @@ from ...ports.auth import AuthenticationFailedError, BrowserSessionUnavailableEr
 
 
 class PostgresConsumerAccountRepository:
+    async def bootstrap(self, identity: VerifiedConsumerIdentity) -> UUID:
+        try:
+            async with system_session_scope() as session:
+                tenant_id = (
+                    await session.execute(
+                        text(
+                            "SELECT public.fn_bootstrap_consumer_account(:tenant_id,:subject,:email)"
+                        ),
+                        {
+                            "tenant_id": identity.tenant_id,
+                            "subject": identity.subject,
+                            "email": identity.email,
+                        },
+                    )
+                ).scalar_one()
+        except DBAPIError as error:
+            if getattr(error.orig, "sqlstate", None) == "42501":
+                raise AuthenticationFailedError("consumer account unavailable") from error
+            raise BrowserSessionUnavailableError("consumer signup unavailable") from error
+        except (SqlAlchemyTimeoutError, TimeoutError) as error:
+            raise BrowserSessionUnavailableError("consumer signup unavailable") from error
+        if tenant_id != identity.tenant_id:
+            raise BrowserSessionUnavailableError("invalid consumer account binding")
+        return identity.tenant_id
+
     async def accept(self, identity: VerifiedConsumerIdentity, policy: LegalPolicy) -> UUID:
         try:
             async with system_session_scope() as session:
@@ -64,7 +89,7 @@ class PostgresConsumerAccountRepository:
                 ).scalar_one()
             )
 
-    async def is_ready(self) -> bool:
+    async def is_ready(self, *, legal_required: bool = True) -> bool:
         try:
             async with system_session_scope() as session:
                 return bool(
@@ -72,9 +97,14 @@ class PostgresConsumerAccountRepository:
                         await session.execute(
                             text("""
                     SELECT coalesce(has_function_privilege(current_user,
-                        to_regprocedure('public.fn_accept_consumer_account(uuid,text,text,text,text,text,text)'),
+                        to_regprocedure(:signature),
                         'EXECUTE'), false)
-                """)
+                """),
+                            {
+                                "signature": "public.fn_accept_consumer_account(uuid,text,text,text,text,text,text)"
+                                if legal_required
+                                else "public.fn_bootstrap_consumer_account(uuid,text,text)"
+                            },
                         )
                     ).scalar_one()
                 )

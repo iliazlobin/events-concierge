@@ -75,6 +75,8 @@ export interface UiConfig {
   auth_provider?: "google" | "custom_claim" | "identity_platform" | null;
   anonymous_browsing?: boolean;
   identity_platform?: ConsumerIdentityConfig | null;
+  /** Missing on older deployments: require real legal documents and acceptance. */
+  consumer_legal_mode?: "required" | "deferred";
   legal_policy?: SignupLegalPolicy | null;
   auth_start_url: string | null;
   reauth_url: string | null;

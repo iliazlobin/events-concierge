@@ -171,6 +171,32 @@ def test_cadence_has_no_consumer_identity_redis_or_temporal_credentials(resource
     assert len(files) == 1 and files[0]["path"] == "EC_OPERATOR_DATABASE_URL"
 
 
+def test_explicit_legal_deferral_is_scoped_to_consumer_identity_processes(helm, tmp_path):
+    configured = values()
+    configured["applicationConfig"]["EC_CONSUMER_LEGAL_MODE"] = "deferred"
+    legal_fields = (
+        "EC_SIGNUP_TERMS_VERSION",
+        "EC_SIGNUP_TERMS_URL",
+        "EC_SIGNUP_PRIVACY_VERSION",
+        "EC_SIGNUP_PRIVACY_URL",
+    )
+    configured["applicationConfig"].update(dict.fromkeys(legal_fields, ""))
+    result = render(helm, tmp_path, configured)
+    assert result.returncode == 0, result.stderr
+    configs = {
+        d["metadata"]["name"]: d["data"]
+        for d in yaml.safe_load_all(result.stdout)
+        if d and d["kind"] == "ConfigMap" and "-private-" in d["metadata"]["name"]
+    }
+    for process, config in configs.items():
+        if process in {"events-concierge-private-api", "events-concierge-private-account-erasure"}:
+            assert config["EC_CONSUMER_LEGAL_MODE"] == "deferred"
+            assert all(config[field] == "" for field in legal_fields)
+        else:
+            assert "EC_CONSUMER_LEGAL_MODE" not in config
+            assert not any(field in config for field in legal_fields)
+
+
 def _mtls_files(directory: Path) -> dict[str, str]:
     now = datetime.now(UTC)
     key = ec.generate_private_key(ec.SECP256R1())

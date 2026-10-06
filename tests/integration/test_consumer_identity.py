@@ -56,6 +56,7 @@ async def test_atomic_signup_is_idempotent_and_contact_email_never_merges_accoun
         assert (
             await session.execute(text("SELECT count(*) FROM public.consumer_account_consents"))
         ).scalar_one() == 0
+
         assert not (
             await session.execute(
                 text(
@@ -75,6 +76,63 @@ async def test_atomic_signup_is_idempotent_and_contact_email_never_merges_accoun
                 {"other": second.tenant_id},
             )
         ).scalar_one() == 0
+
+
+async def test_deferred_account_binding_has_no_receipts_and_later_requires_real_acceptance(
+    db: None,
+) -> None:
+    accounts, first, second = PostgresConsumerAccountRepository(), _identity(), _identity()
+    assert await accounts.is_ready(legal_required=False)
+    assert (
+        await asyncio.gather(*(accounts.bootstrap(first) for _ in range(4)))
+        == [first.tenant_id] * 4
+    )
+    assert await accounts.bootstrap(second) == second.tenant_id != first.tenant_id
+    for identity in (first, second):
+        tenant = await PostgresTenantRepository().get(identity.tenant_id)
+        assert (
+            tenant
+            and tenant.oidc_subject == identity.subject
+            and tenant.notify_email == identity.email
+        )
+        assert not await accounts.has_accepted(identity.tenant_id, _POLICY)
+        async with tenant_session_scope(identity.tenant_id) as session:
+            assert (
+                await session.execute(text("SELECT count(*) FROM public.consumer_account_consents"))
+            ).scalar_one() == 0
+    await accounts.accept(first, _POLICY)
+    assert await accounts.has_accepted(first.tenant_id, _POLICY)
+    assert not await accounts.has_accepted(second.tenant_id, _POLICY)
+    assert await accounts.bootstrap(first) == first.tenant_id
+    assert await accounts.has_accepted(first.tenant_id, _POLICY)
+
+
+async def test_deferred_bootstrap_retains_erasure_fence_and_database_binding_guards(
+    db: None,
+) -> None:
+    accounts, identity = PostgresConsumerAccountRepository(), _identity()
+    await accounts.bootstrap(identity)
+    await PostgresAccountErasureRepository().begin(identity.tenant_id, uuid4())
+    with pytest.raises(AuthenticationFailedError):
+        await accounts.bootstrap(identity)
+    async with system_session_scope() as session:
+        with pytest.raises(DBAPIError):
+            await session.execute(
+                text("SELECT public.fn_bootstrap_consumer_account(:id,:subject,:email)"),
+                {"id": uuid4(), "subject": identity.subject, "email": identity.email},
+            )
+        await session.rollback()
+        assert (
+            await session.execute(
+                text("""
+            SELECT p.prosecdef AND r.rolbypassrls
+                AND p.proconfig = ARRAY['search_path=pg_catalog, public']::text[]
+                AND NOT EXISTS (SELECT 1 FROM aclexplode(p.proacl) a WHERE a.grantee=0)
+            FROM pg_proc p JOIN pg_roles r ON r.oid=p.proowner
+            WHERE p.oid='public.fn_bootstrap_consumer_account(uuid,text,text)'::regprocedure
+        """)
+            )
+        ).scalar_one()
 
 
 async def test_terms_versions_are_immutable_and_reacceptance_preserves_old_receipt(

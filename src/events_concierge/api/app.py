@@ -748,6 +748,7 @@ class UiConfigOut(BaseModel):
     auth_provider: Literal["custom_claim", "google", "identity_platform"] | None = None
     anonymous_browsing: bool = True
     identity_platform: dict[str, Any] | None = None
+    consumer_legal_mode: Literal["required", "deferred"] = "required"
     legal_policy: dict[str, str] | None = None
     auth_start_url: str | None
     reauth_url: str | None
@@ -760,9 +761,9 @@ class IdentitySessionBody(BaseModel):
     model_config = ConfigDict(extra="forbid")
     id_token: str = Field(min_length=1, max_length=16 * 1024)
     state: str = Field(min_length=43, max_length=43)
-    accepted_terms: bool = Field(strict=True)
-    terms_version: str = Field(min_length=1, max_length=80)
-    privacy_version: str = Field(min_length=1, max_length=80)
+    accepted_terms: bool = Field(default=False, strict=True)
+    terms_version: str | None = Field(default=None, min_length=1, max_length=80)
+    privacy_version: str | None = Field(default=None, min_length=1, max_length=80)
 
 
 class VersionOut(BaseModel):
@@ -1905,7 +1906,7 @@ async def _parse(container: Container, tenant_id: UUID, text: str) -> tuple[Even
     return request, request_id
 
 
-async def _authenticated_tenant(request: Request) -> UUID:
+async def _session_tenant(request: Request) -> UUID:
     """Resolve one edge-authenticated tenant; caller JSON can never select an RLS context.
 
     The local header adapter is deliberately an injected test seam only.  Production composition
@@ -1928,11 +1929,17 @@ async def _authenticated_tenant(request: Request) -> UUID:
     # product account exists.  Check both before any tenant-scoped route can create orphan state.
     if await container.tenant_repo.get(tenant_id) is None:
         raise HTTPException(status_code=404, detail="account not found")
+    return tenant_id
+
+
+async def _authenticated_tenant(
+    request: Request, tenant_id: Annotated[UUID, Depends(_session_tenant)]
+) -> UUID:
+    container: Container = request.app.state.container
     if (
         request.app.state.settings.identity_platform_enabled
-        and not await container.consumer_accounts.has_accepted(
-            tenant_id, request.app.state.settings.consumer_legal_policy
-        )
+        and (policy := request.app.state.settings.consumer_legal_policy) is not None
+        and not await container.consumer_accounts.has_accepted(tenant_id, policy)
     ):
         raise HTTPException(status_code=428, detail="current terms and privacy acceptance required")
     return tenant_id
@@ -1962,6 +1969,13 @@ async def _csrf_protected_tenant(
 
 
 type CsrfProtectedTenant = Annotated[UUID, Depends(_csrf_protected_tenant)]
+
+
+async def _csrf_session_tenant(
+    request: Request, tenant_id: Annotated[UUID, Depends(_session_tenant)]
+) -> UUID:
+    # Logout can revoke a session even when newly activated legal documents are unaccepted.
+    return await _csrf_protected_tenant(request, tenant_id)
 
 
 async def _account_erasure_protected_tenant(request: Request) -> UUID:
@@ -2245,7 +2259,9 @@ async def _identity_is_ready(app: FastAPI) -> bool:
         async with asyncio.timeout(_READINESS_TIMEOUT_SECONDS):
             session_ready = await browser_session.is_ready()
             if app.state.settings.identity_platform_enabled:
-                return session_ready and await container.consumer_accounts.is_ready()
+                return session_ready and await container.consumer_accounts.is_ready(
+                    legal_required=app.state.settings.consumer_legal_mode == "required"
+                )
             return session_ready
     except (BrowserSessionUnavailableError, TimeoutError):
         return False
@@ -2580,6 +2596,7 @@ def create_app() -> FastAPI:
                 if settings.identity_platform_enabled
                 else None
             ),
+            consumer_legal_mode=settings.consumer_legal_mode,
             legal_policy=(
                 {
                     "terms_version": settings.signup_terms_version,
@@ -2587,7 +2604,7 @@ def create_app() -> FastAPI:
                     "privacy_version": settings.signup_privacy_version,
                     "privacy_url": settings.signup_privacy_url,
                 }
-                if settings.identity_platform_enabled
+                if settings.identity_platform_enabled and settings.consumer_legal_mode == "required"
                 else None
             ),
             auth_start_url=(
@@ -2660,18 +2677,25 @@ def create_app() -> FastAPI:
                     policy = settings.consumer_legal_policy
                     credentials = None
                     if not completion.reauthenticated:
-                        if not body.accepted_terms:
+                        if policy is None:
+                            if body.accepted_terms or body.terms_version or body.privacy_version:
+                                raise HTTPException(400, "legal acceptance is deferred")
+                            tenant_id = await app.state.container.consumer_accounts.bootstrap(
+                                completion.identity
+                            )
+                        elif not body.accepted_terms:
                             raise HTTPException(428, "terms and privacy acceptance required")
-                        if (
+                        elif (
                             body.terms_version != policy.terms_version
                             or body.privacy_version != policy.privacy_version
                         ):
                             raise HTTPException(
                                 409, "legal documents changed; review them before signing in"
                             )
-                        tenant_id = await app.state.container.consumer_accounts.accept(
-                            completion.identity, policy
-                        )
+                        else:
+                            tenant_id = await app.state.container.consumer_accounts.accept(
+                                completion.identity, policy
+                            )
                         identity = BrowserIdentity(
                             tenant_id,
                             completion.identity.subject,
@@ -2880,7 +2904,7 @@ def create_app() -> FastAPI:
         @app.post("/auth/logout", status_code=204, include_in_schema=False)
         async def oidc_logout(
             request: Request,
-            tenant_id: CsrfProtectedTenant,
+            tenant_id: Annotated[UUID, Depends(_csrf_session_tenant)],
         ) -> Response:
             del tenant_id
             browser_session = configured_browser_session()

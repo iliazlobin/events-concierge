@@ -1,7 +1,7 @@
 terraform {
   required_version = ">= 1.9, < 2.0"
   required_providers {
-    google = { source = "hashicorp/google", version = "7.40.0" }
+    google = { source = "registry.terraform.io/hashicorp/google", version = "7.40.0" }
   }
 }
 
@@ -17,13 +17,13 @@ locals {
 
 # This app-owned state never adopts shared network, cluster or application resources.
 resource "google_project_service" "identity" {
-  for_each = toset([
+  for_each = setsubtract(toset([
     "identitytoolkit.googleapis.com",
     "apikeys.googleapis.com",
     "securetoken.googleapis.com",
     "secretmanager.googleapis.com",
     "iam.googleapis.com",
-  ])
+  ]), var.foundation_owned_services)
   project            = var.project_id
   service            = each.value
   disable_on_destroy = false

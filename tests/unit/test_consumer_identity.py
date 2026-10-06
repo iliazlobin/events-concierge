@@ -6,6 +6,7 @@ import importlib
 from time import time
 from types import SimpleNamespace
 from typing import Any, cast
+from unittest.mock import AsyncMock
 from uuid import UUID
 
 import pytest
@@ -387,19 +388,32 @@ async def test_step_up_cannot_authorize_another_account() -> None:
 class _Accounts:
     def __init__(self) -> None:
         self.accepted: list[tuple[VerifiedConsumerIdentity, LegalPolicy]] = []
+        self.bootstrapped: list[VerifiedConsumerIdentity] = []
+
+    async def bootstrap(self, identity: VerifiedConsumerIdentity) -> UUID:
+        self.bootstrapped.append(identity)
+        return identity.tenant_id
 
     async def accept(self, identity: VerifiedConsumerIdentity, policy: LegalPolicy) -> UUID:
         self.accepted.append((identity, policy))
         return identity.tenant_id
 
-    async def is_ready(self) -> bool:
+    async def has_accepted(self, tenant_id: UUID, policy: LegalPolicy) -> bool:
+        return any(
+            identity.tenant_id == tenant_id and accepted == policy
+            for identity, accepted in self.accepted
+        )
+
+    async def is_ready(self, *, legal_required: bool = True) -> bool:
         return True
 
 
-def _api(monkeypatch: pytest.MonkeyPatch) -> tuple[Any, _MemorySessionStore, _Accounts]:
-    monkeypatch.setattr(app_module, "get_settings", _settings)
+def _api(
+    monkeypatch: pytest.MonkeyPatch, **changes: Any
+) -> tuple[Any, _MemorySessionStore, _Accounts]:
+    monkeypatch.setattr(app_module, "get_settings", lambda: _settings(**changes))
     app = app_module.create_app()
-    adapter, store, _ = _adapter()
+    adapter, store, verifier = _adapter()
     accounts = _Accounts()
     app.state.container = SimpleNamespace(
         browser_session=adapter,
@@ -407,6 +421,17 @@ def _api(monkeypatch: pytest.MonkeyPatch) -> tuple[Any, _MemorySessionStore, _Ac
         csrf_protection=adapter,
         consumer_accounts=accounts,
         tenant_effect_authority=DirectTenantEffectAuthority(),
+        tenant_repo=SimpleNamespace(
+            get=AsyncMock(
+                return_value=Tenant(
+                    verifier.identity.tenant_id,
+                    verifier.identity.subject,
+                    verifier.identity.email,
+                    "inactive@accounts.invalid",
+                )
+            )
+        ),
+        account_erasure_repo=SimpleNamespace(get=AsyncMock(return_value=None)),
     )
     return app, store, accounts
 
@@ -479,6 +504,150 @@ async def test_api_acceptance_issues_only_secure_opaque_cookies_and_protected_ro
         if cookie.startswith("__Host-ec_session=") and "Max-Age=28800" in cookie
     )
     assert all(flag in session_cookie for flag in ("HttpOnly", "Secure", "SameSite=lax", "Path=/"))
+
+
+def _deferred() -> dict[str, Any]:
+    return {
+        "consumer_legal_mode": "deferred",
+        "signup_terms_version": None,
+        "signup_terms_url": None,
+        "signup_privacy_version": None,
+        "signup_privacy_url": None,
+    }
+
+
+def test_legal_deferral_is_explicit_and_cannot_claim_approved_documents() -> None:
+    assert _settings().consumer_legal_mode == "required"
+    assert _settings(**_deferred()).consumer_legal_policy is None
+    blank = {key: "" if key.startswith("signup_") else value for key, value in _deferred().items()}
+    assert _settings(**blank).consumer_legal_policy is None
+    with pytest.raises(ValidationError):
+        _settings(**(blank | {"consumer_legal_mode": "required"}))
+    for change in (
+        {"consumer_legal_mode": "ignored"},
+        {"identity_platform_enabled": False},
+        {"signup_terms_version": "invented"},
+        {"signup_terms_url": f"{_ORIGIN}/terms"},
+    ):
+        with pytest.raises(ValidationError):
+            _settings(**(_deferred() | change))
+
+
+async def test_deferred_signup_binds_account_without_receipt_and_preserves_csrf_logout(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    app, store, accounts = _api(monkeypatch, **_deferred())
+    filters = AsyncMock(return_value=[])
+    app.state.container.saved_catalog_filters = SimpleNamespace(list_filters=filters)
+    async with AsyncClient(transport=ASGITransport(app=app), base_url=_ORIGIN) as client:
+        assert (await client.get("/v1/me/saved-filters")).status_code == 401
+        config = (await client.get("/v1/ui-config")).json()
+        assert config["consumer_legal_mode"] == "deferred" and config["legal_policy"] is None
+        assert config["logout_url"] == "/auth/logout"
+        challenge = await client.get("/auth/identity/start?return_to=%2Fsettings")
+        response = await client.post(
+            "/auth/identity/session",
+            headers={"Origin": _ORIGIN},
+            json={"id_token": "verified-fixture-token", "state": challenge.json()["state"]},
+        )
+        assert response.status_code == 200 and response.json() == {"return_to": "/settings"}
+        assert len(accounts.bootstrapped) == len(store.sessions) == 1 and not accounts.accepted
+        assert "verified-fixture-token" not in response.text
+        assert (await client.get("/v1/me/saved-filters")).json() == []
+        filters.assert_awaited_once_with(accounts.bootstrapped[0].tenant_id)
+        assert (await client.post("/auth/logout", headers={"Origin": _ORIGIN})).status_code == 403
+        assert len(store.sessions) == 1
+        csrf = client.cookies.get("__Host-ec_csrf")
+        assert (
+            await client.post("/auth/logout", headers={"Origin": _ORIGIN, "X-EC-CSRF": csrf})
+        ).status_code == 204
+        assert not store.sessions
+        assert (await client.get("/v1/me/saved-filters")).status_code == 401
+
+
+@pytest.mark.parametrize(
+    "body_change,status",
+    [
+        ({"accepted_terms": True}, 400),
+        ({"terms_version": "invented"}, 400),
+        ({"privacy_version": "invented"}, 400),
+        ({"consumer_legal_mode": "deferred"}, 422),
+        ({"id_token": "bad-token"}, 401),
+    ],
+)
+async def test_deferred_signup_rejects_fabricated_acceptance_or_unverified_identity(
+    monkeypatch: pytest.MonkeyPatch,
+    body_change: Any,
+    status: int,
+) -> None:
+    app, store, accounts = _api(monkeypatch, **_deferred())
+    async with AsyncClient(transport=ASGITransport(app=app), base_url=_ORIGIN) as client:
+        challenge = await client.get("/auth/identity/start")
+        response = await client.post(
+            "/auth/identity/session",
+            headers={"Origin": _ORIGIN},
+            json={"id_token": "verified-fixture-token", "state": challenge.json()["state"]}
+            | body_change,
+        )
+    assert response.status_code == status
+    assert not accounts.bootstrapped and not accounts.accepted and not store.sessions
+
+
+async def test_return_to_required_legal_gates_personal_data_until_real_acceptance(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    app, store, accounts = _api(monkeypatch, **_deferred())
+    filters = AsyncMock(return_value=[])
+    app.state.container.saved_catalog_filters = SimpleNamespace(list_filters=filters)
+    async with AsyncClient(transport=ASGITransport(app=app), base_url=_ORIGIN) as client:
+        challenge = await client.get("/auth/identity/start")
+        assert (
+            await client.post(
+                "/auth/identity/session",
+                headers={"Origin": _ORIGIN},
+                json={"id_token": "verified-fixture-token", "state": challenge.json()["state"]},
+            )
+        ).status_code == 200
+        cookies = client.cookies
+    strict_app, _, _ = _api(monkeypatch)
+    strict_app.state.container = app.state.container  # same durable account/session authorities
+    async with AsyncClient(
+        transport=ASGITransport(app=strict_app), base_url=_ORIGIN, cookies=cookies
+    ) as client:
+        assert (await client.get("/v1/me/saved-filters")).status_code == 428
+        assert not accounts.accepted
+        filters.assert_not_awaited()
+        csrf = client.cookies.get("__Host-ec_csrf")
+        assert (
+            await client.post("/auth/logout", headers={"Origin": _ORIGIN, "X-EC-CSRF": csrf})
+        ).status_code == 204
+        assert not store.sessions
+        challenge = await client.get("/auth/identity/start")
+        assert (
+            await client.post(
+                "/auth/identity/session",
+                headers={"Origin": _ORIGIN},
+                json={"id_token": "verified-fixture-token", "state": challenge.json()["state"]},
+            )
+        ).status_code == 428
+        assert not store.sessions and not accounts.accepted
+        challenge = await client.get("/auth/identity/start")
+        assert (
+            await client.post(
+                "/auth/identity/session",
+                headers={"Origin": _ORIGIN},
+                json={
+                    "id_token": "verified-fixture-token",
+                    "state": challenge.json()["state"],
+                    "accepted_terms": True,
+                    "terms_version": "2026-10-05",
+                    "privacy_version": "2026-10-05",
+                },
+            )
+        ).status_code == 200
+        assert len(accounts.bootstrapped) == len(accounts.accepted) == 1
+        assert (await client.get("/v1/me/saved-filters")).json() == []
+        filters.assert_awaited_once_with(accounts.bootstrapped[0].tenant_id)
 
 
 def test_published_catalog_routes_have_no_consumer_identity_dependency(

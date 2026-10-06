@@ -23,6 +23,8 @@ class ConsumerIdentityApi(ReleaseApi):
         self.account_status = 401
         self.challenge_status = 200
         self.providers = ["google.com", "apple.com"]
+        self.legal_mode = "required"
+        self.legal_available = True
 
     def config(self, route: Route) -> None:
         self.respond(route, {
@@ -38,11 +40,12 @@ class ConsumerIdentityApi(ReleaseApi):
                 "auth_domain": "events-identity-test.firebaseapp.com",
                 "providers": self.providers,
             },
+            "consumer_legal_mode": self.legal_mode,
             "legal_policy": {
                 "terms_version": "2026-10-05", "privacy_version": "2026-10-05",
                 "terms_url": "https://events.example.test/terms/2026-10-05",
                 "privacy_url": "https://events.example.test/privacy/2026-10-05",
-            },
+            } if self.legal_available and self.legal_mode != "deferred" else None,
         })
 
     def handle(self, route: Route) -> None:
@@ -186,6 +189,39 @@ def test_google_only_pilot_shows_only_its_enabled_provider(identity_page):
     expect(page.get_by_role("button", name="Continue with Apple", exact=True)).to_have_count(0)
     page.get_by_role("checkbox").check()
     expect(page.get_by_role("button", name="Continue with Google", exact=True)).to_be_enabled()
+
+
+def test_explicit_legal_deferral_enables_signup_without_claiming_acceptance(identity_page):
+    harness, api = identity_page
+    api.legal_mode = "deferred"
+    api.providers = ["google.com"]
+    page = harness.page
+    page.goto(f"{BASE}/sign-in?return_to=%2Fsettings%2Fsaved-filters")
+    expect(page.get_by_role("button", name="Continue with Google", exact=True)).to_be_enabled()
+    expect(page.get_by_role("checkbox")).to_have_count(0)
+    expect(page.get_by_role("link", name="Terms of Service")).to_have_count(0)
+    expect(page.get_by_role("link", name="Privacy Policy")).to_have_count(0)
+    expect(
+        page.get_by_text("New here? Continuing creates your account.", exact=True)
+    ).to_be_visible()
+    assert api.calls.count(("GET", "/auth/identity/start")) == 1
+    assert (
+        page.evaluate("Object.keys(localStorage).filter(key => key.startsWith('firebase:'))") == []
+    )
+    assert (
+        page.evaluate("Object.keys(sessionStorage).filter(key => key.startsWith('firebase:'))")
+        == []
+    )
+
+
+def test_missing_legal_documents_do_not_implicitly_defer_signup(identity_page):
+    harness, api = identity_page
+    api.legal_available = False
+    page = harness.page
+    page.goto(f"{BASE}/sign-in")
+    expect(page.get_by_role("button", name="Continue with Google", exact=True)).to_be_disabled()
+    expect(page.get_by_text("Sign-in is temporarily unavailable.", exact=True)).to_be_visible()
+    assert not any(path == "/auth/identity/start" for _, path in api.calls)
 
 
 def test_account_confirmation_does_not_offer_signup_or_start_a_new_challenge(identity_page):

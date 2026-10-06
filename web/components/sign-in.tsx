@@ -23,6 +23,7 @@ export function SignIn({ reason, returnTo = "/", reauthenticationState }: {
   const [accepted, setAccepted] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const legalRequired = config?.consumer_legal_mode !== "deferred";
 
   useEffect(() => {
     let cancelled = false;
@@ -34,7 +35,9 @@ export function SignIn({ reason, returnTo = "/", reauthenticationState }: {
       if (cancelled) return;
       setConfig(next);
       setHref(signInHref(next, window.location.origin));
-      if (next.auth_provider === "identity_platform" && next.identity_platform && next.legal_policy) {
+      const legalConfigured = next.consumer_legal_mode === "deferred"
+        ? !next.legal_policy : Boolean(next.legal_policy);
+      if (next.auth_provider === "identity_platform" && next.identity_platform && legalConfigured) {
         const sdk = await import("@/lib/consumer-identity");
         const prepared = await sdk.prepareConsumerIdentity(next.identity_platform);
         const transaction = reauthenticationState ? { state: reauthenticationState }
@@ -55,16 +58,19 @@ export function SignIn({ reason, returnTo = "/", reauthenticationState }: {
   }, [attempt, returnTo, reauthenticationState]);
 
   const signIn = async (provider: ConsumerProvider) => {
-    if (!identity || !challenge || !config?.legal_policy || busy) return;
+    if (!identity || !challenge || !config || (legalRequired && !config.legal_policy) || busy) return;
     setBusy(true);
     setError(null);
     try {
       const token = await identity.signIn(provider);
       const result = await api<{ return_to: string }>("/auth/identity/session", {
         method: "POST", bodyJson: {
-          id_token: token, state: challenge, accepted_terms: reauthenticationState ? false : accepted,
-          terms_version: config.legal_policy.terms_version,
-          privacy_version: config.legal_policy.privacy_version,
+          id_token: token, state: challenge,
+          ...(legalRequired && config.legal_policy ? {
+            accepted_terms: reauthenticationState ? false : accepted,
+            terms_version: config.legal_policy.terms_version,
+            privacy_version: config.legal_policy.privacy_version,
+          } : {}),
         },
       });
       window.location.replace(result.return_to);
@@ -109,7 +115,7 @@ export function SignIn({ reason, returnTo = "/", reauthenticationState }: {
               <div className={styles.providers}>
                 {config.identity_platform?.providers.map(provider => (
                   <button key={provider} className={`button ${styles.continue}`} type="button"
-                    disabled={busy || !identity || !challenge || (!reauthenticationState && !accepted)}
+                    disabled={busy || !identity || !challenge || (legalRequired && !reauthenticationState && !accepted)}
                     onClick={() => void signIn(provider)}>
                     {busy ? "Signing in…" : `Continue with ${provider === "apple.com" ? "Apple" : "Google"}`}
                   </button>

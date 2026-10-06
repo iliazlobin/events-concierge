@@ -96,10 +96,10 @@ make staging-canary BASE_URL="$BASE_URL" \
 ### Consumer account activation
 
 Use [GCP Identity Platform](../deployment/consumer-identity.md) for Google/Apple signup,
-versioned legal acceptance, protected personal data and same-account erasure. Guests
+required legal acceptance or explicit owner-configured deferral, protected personal data and same-account erasure. Guests
 read the published catalog. Admin access separately requires IAP with signed owner
 email `iliazlobin91@gmail.com` and its configured subject/role. Deployment remains gated
-on domain/provider/legal setup and real browser acceptance.
+on domain/provider setup, the approved legal mode and real browser acceptance.
 
 ### Built-in OIDC BFF activation
 
