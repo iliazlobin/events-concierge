@@ -17,7 +17,7 @@ variable "erasure_service_account" { type = string }
 variable "signup_enabled" {
   type        = bool
   default     = false
-  description = "Enable after providers, the approved legal mode and deployed account flow are verified."
+  description = "Enable only for an approved pilot or release; provider, legal-mode and deployed account acceptance remain required."
 }
 variable "foundation_owned_services" {
   type        = set(string)

@@ -1,7 +1,7 @@
 # Public access
 
 Public origin: **https://events.iliazlobin.com**. The Helm connector is opt-in;
-publishing DNS requires a reviewed, verified non-mock release and configured
+publishing DNS requires an approved non-mock release, private readiness checks and configured
 [consumer identity](../deployment/consumer-identity.md). The private development profile
 cannot enable it. The [authenticated datastore composition](development.md#authenticated-discovery-and-encrypted-dependencies)
 must be released first; this package does not convert plaintext stores to TLS.
@@ -39,8 +39,9 @@ Browser → Cloudflare HTTPS → encrypted tunnel → GKE consumer filter → co
 
 ## Activate
 
-1. Verify the approved application image/configuration, datastore TLS/mTLS, guest catalog,
-   Google login, the approved legal mode and owner-only admin. Confirm GKE actually enforces NetworkPolicy.
+1. Verify the approved image/configuration, datastore TLS/mTLS, private guest catalog,
+   Google provider configuration, approved legal mode and owner-only Access policy.
+   Confirm GKE enforces NetworkPolicy. Real Google/Access browser checks require the published HTTPS origins.
 2. Create the dedicated tunnel **without a published route**. Store its token through the
    approved secret channel in a versioned, immutable Kubernetes Secret such as
    `ec-cloudflare-tunnel-v1`, key `token`. Never paste credentials into Git, reports,
@@ -50,15 +51,24 @@ Browser → Cloudflare HTTPS → encrypted tunnel → GKE consumer filter → co
    approved release values. Render/lint, review the resources, then deploy under release
    authorization. Require frontend readiness, both connector containers ready and healthy
    Cloudflare connections before publishing. No token value belongs in the chart.
-4. Add only this tunnel's published application route: hostname `events.iliazlobin.com`,
+4. Configure [host-specific HTTP redirects](https://developers.cloudflare.com/rules/url-forwarding/examples/redirect-admin-https/):
+   `http://events.iliazlobin.com/*` → `https://events.iliazlobin.com/${1}` and
+   `http://admin-events.iliazlobin.com/*` → `https://admin-events.iliazlobin.com/${1}`.
+   Use status `308` and **Preserve query string**. Keep other hosts' rules unchanged.
+   Then publish only the approved tunnel route: hostname `events.iliazlobin.com`,
    HTTP service `http://127.0.0.1:8080`, original Host preserved. No wildcard, alternate
    origin or Host override. [Creating the route adds DNS](https://developers.cloudflare.com/tunnel/concepts/routing/):
    proxied CNAME `events` → `<dedicated-tunnel-uuid>.cfargotunnel.com`, TTL Auto.
    Check the existing record before creation; publication makes consumer access public.
-5. Verify public TLS and guest browsing in Chrome, filtered URLs, Google cancellation/signup/
+5. Verify HTTP redirects preserve path/query, trusted public TLS and guest browsing in Chrome,
+   filtered URLs, Google cancellation/signup/
    login/logout, the configured legal behavior and saved filters. Request `/admin`, `/admin/v1/ingestion`,
    `/metrics` and `/readyz`: each must return `404`. Confirm private admin still works.
    Verify cookies, CSRF, two-account isolation and tenant erasure on the deployed origin.
+
+Publication permits browser acceptance; it does not complete the release. If acceptance fails
+or cannot be completed, disable only the dedicated Events Concierge published routes.
+Preserve identities, data, recovery copies and the existing private operator route.
 
 ## Cloudflare admin
 
