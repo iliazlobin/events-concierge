@@ -1,0 +1,31 @@
+name: Private CI smoke
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  isolated-runner:
+    runs-on: events-concierge-linux
+    timeout-minutes: 10
+    steps:
+      - name: Check out reviewed source
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+      - name: Verify pinned tools and isolation; leave disposable sentinel
+        run: python3 deploy/ci/probe_runner.py --write-sentinel
+
+  clean-replacement:
+    needs: isolated-runner
+    runs-on: events-concierge-linux
+    timeout-minutes: 10
+    steps:
+      - name: Check out reviewed source
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+      - name: Verify the next job starts with a clean runner
+        run: python3 deploy/ci/probe_runner.py
