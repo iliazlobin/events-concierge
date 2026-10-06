@@ -10,6 +10,16 @@ variables {
 run "closed_by_default" {
   command = plan
   assert {
+    condition = toset([for api in google_project_service.identity : api.service]) == toset([
+      "identitytoolkit.googleapis.com",
+      "apikeys.googleapis.com",
+      "securetoken.googleapis.com",
+      "secretmanager.googleapis.com",
+      "iam.googleapis.com",
+    ]) && alltrue([for api in google_project_service.identity : !api.disable_on_destroy])
+    error_message = "Identity, provider secret containers and custom roles require their APIs; state removal must leave the APIs enabled."
+  }
+  assert {
     condition     = google_identity_platform_config.consumer.client[0].permissions[0].disabled_user_signup && google_identity_platform_config.consumer.client[0].permissions[0].disabled_user_deletion
     error_message = "Signup starts disabled; only the erasure worker may delete managed accounts."
   }

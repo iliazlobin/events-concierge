@@ -17,7 +17,13 @@ locals {
 
 # This app-owned state never adopts shared network, cluster or application resources.
 resource "google_project_service" "identity" {
-  for_each           = toset(["identitytoolkit.googleapis.com", "apikeys.googleapis.com", "securetoken.googleapis.com"])
+  for_each = toset([
+    "identitytoolkit.googleapis.com",
+    "apikeys.googleapis.com",
+    "securetoken.googleapis.com",
+    "secretmanager.googleapis.com",
+    "iam.googleapis.com",
+  ])
   project            = var.project_id
   service            = each.value
   disable_on_destroy = false
@@ -69,6 +75,7 @@ resource "google_secret_manager_secret" "provider" {
   replication {
     auto {}
   }
+  depends_on = [google_project_service.identity]
   lifecycle { prevent_destroy = true }
 }
 
@@ -77,12 +84,14 @@ resource "google_project_iam_custom_role" "reader" {
   role_id     = "ecConsumerIdentityReader"
   title       = "Events Concierge identity status reader"
   permissions = ["firebaseauth.users.get"]
+  depends_on  = [google_project_service.identity]
 }
 resource "google_project_iam_custom_role" "eraser" {
   project     = var.project_id
   role_id     = "ecConsumerIdentityEraser"
   title       = "Events Concierge managed account eraser"
   permissions = ["firebaseauth.users.get", "firebaseauth.users.delete"]
+  depends_on  = [google_project_service.identity]
 }
 resource "google_project_iam_member" "api_reader" {
   project = var.project_id
