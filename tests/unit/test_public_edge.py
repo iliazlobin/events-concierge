@@ -549,7 +549,7 @@ http://:8082 {
             )
             pytest.fail(startup_error + logs.stderr + logs.stdout + state.stdout)
 
-        def request(path, host=HOST, headers=()):
+        def request(path, host=HOST, headers=(), method="GET"):
             extra_headers = "".join(f"{key}: {value}\r\n" for key, value in headers)
             # Keep stdin open while both proxy hops respond; BusyBox nc otherwise
             # cancels the request as soon as docker exec delivers input EOF.
@@ -560,7 +560,7 @@ http://:8082 {
                 "sh",
                 "-c",
                 "(cat; sleep 1) | nc -w 5 127.0.0.1 8080",
-                data=f"GET {path} HTTP/1.1\r\nHost: {host}\r\n{extra_headers}Connection: close\r\n\r\n",
+                data=f"{method} {path} HTTP/1.1\r\nHost: {host}\r\n{extra_headers}Connection: close\r\n\r\n",
             )
             assert result.returncode == 0, result.stderr
             return result.stdout
@@ -599,10 +599,15 @@ def test_forwarded_authority_is_rebuilt_and_operator_headers_are_removed(proxy_r
 @pytest.mark.parametrize(
     "path",
     [
-        "/admin",
-        "/admin/",
+        "/admin/review",
         "/admin/v1/ingestion",
+        "/admin/v1/ingestion?next=/admin",
+        "/administrator",
+        "/admin//",
+        "/admin/.",
+        "/admin/%2e",
         "/%61dmin/",
+        "/admin%2f",
         "//admin/",
         "/v1/../admin/",
         "/v1/%2e%2e/admin/",
@@ -618,10 +623,44 @@ def test_private_and_probe_paths_never_reach_the_frontend(proxy_rehearsal, path)
     assert "PRIVATE_FIXTURE" not in response and "PUBLIC_FIXTURE" not in response
 
 
+@pytest.mark.parametrize("method", ["GET", "HEAD"])
+@pytest.mark.parametrize(
+    "path", ["/admin", "/admin/", "/admin?tab=sources", "/admin/?next=https://other.example"]
+)
+def test_admin_entry_redirects_only_navigation_to_fixed_protected_origin(
+    proxy_rehearsal, path, method
+):
+    response = proxy_rehearsal(
+        path,
+        method=method,
+        headers=[
+            ("X-Goog-IAP-JWT-Assertion", "UNTRUSTED_FIXTURE"),
+            ("X-Forwarded-Host", "other.example"),
+            ("Authorization", "Bearer UNTRUSTED_FIXTURE"),
+            ("Cookie", "session=UNTRUSTED_FIXTURE"),
+        ],
+    )
+    assert "302 Found" in response.splitlines()[0]
+    assert "Location: https://admin-events.iliazlobin.com/admin" in response.splitlines()
+    assert "PRIVATE_FIXTURE" not in response and "PUBLIC_FIXTURE" not in response
+    assert "UNTRUSTED_FIXTURE" not in response and "other.example" not in response
+
+
+@pytest.mark.parametrize("method", ["POST", "PUT", "PATCH", "DELETE", "OPTIONS"])
+@pytest.mark.parametrize("path", ["/admin", "/admin/"])
+def test_admin_entry_rejects_non_navigation_methods(proxy_rehearsal, method, path):
+    response = proxy_rehearsal(path, method=method)
+    assert "404 Not Found" in response.splitlines()[0]
+    assert "Location:" not in response
+    assert "PRIVATE_FIXTURE" not in response and "PUBLIC_FIXTURE" not in response
+
+
 @pytest.mark.parametrize(
     "host", ["localhost", "127.0.0.1", "hermes.iliazlobin.com", "other.example.com"]
 )
-def test_unapproved_host_cannot_become_a_loopback_admin_request(proxy_rehearsal, host):
-    response = proxy_rehearsal("/", host)
+@pytest.mark.parametrize("path", ["/", "/admin", "/admin/"])
+def test_unapproved_host_cannot_become_a_loopback_admin_request(proxy_rehearsal, host, path):
+    response = proxy_rehearsal(path, host)
     assert "404 Not Found" in response.splitlines()[0]
+    assert "Location:" not in response
     assert "PUBLIC_FIXTURE" not in response

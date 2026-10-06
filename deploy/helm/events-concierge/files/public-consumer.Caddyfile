@@ -10,6 +10,15 @@
 
 # GFE reaches this filter; Next.js is reached over the same Pod's loopback.
 http://:8080 {
+  # Navigation only: never proxy admin requests through the consumer frontend.
+  @admin_entry {
+    host {{ .Values.publicEdge.hostname }}
+    method GET HEAD
+    expression `{http.request.orig_uri}.matches('^/admin/?([?].*)?$')`
+  }
+  handle @admin_entry {
+    redir https://{{ .Values.operator.hostname }}/admin 302
+  }
   @consumer {
     host {{ .Values.publicEdge.hostname }}
     path / /app /sign-in /settings /settings/* /_next/* /v1 /v1/* /auth /auth/* /terms /terms/* /privacy /privacy/* /favicon.ico
