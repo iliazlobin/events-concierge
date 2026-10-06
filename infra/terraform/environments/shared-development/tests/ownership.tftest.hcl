@@ -91,6 +91,31 @@ run "dedicated_private_operator" {
   }
 }
 
+run "operator_only_tls_recovery_containers" {
+  command = plan
+  assert {
+    condition = (
+      toset(keys(google_secret_manager_secret.tls_recovery)) == toset(["postgres", "redis", "temporal"]) &&
+      alltrue([
+        for store, secret in google_secret_manager_secret.tls_recovery :
+        secret.project == "iz27-platform-dev" &&
+        secret.secret_id == "ec-dev-${store}-ca-recovery-g1" &&
+        secret.labels == tomap({ purpose = "ca-recovery", generation = "1" }) &&
+        secret.version_destroy_ttl == "2592000s" &&
+        length(secret.replication[0].auto) == 1 &&
+        length(secret.replication[0].user_managed) == 0 &&
+        !contains(local.secrets, "${store}-ca-recovery-g1") &&
+        alltrue([
+          for reader in google_secret_manager_secret_iam_member.reader :
+          reader.secret_id != secret.secret_id
+        ]) &&
+        google_secret_manager_secret_iam_member.operator_api_database.secret_id != secret.secret_id
+      ])
+    )
+    error_message = "Three non-expiring recovery containers require a 30-day version destruction delay and no workload access."
+  }
+}
+
 run "reject_legacy_platform_contract" {
   command = plan
   variables {

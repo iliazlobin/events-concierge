@@ -206,6 +206,95 @@ def test_shared_app_plan_preserves_workload_identity_and_credential_separation()
     )
 
 
+def _recovery_secret(store="postgres"):
+    return {
+        "project": PROJECT,
+        "secret_id": f"ec-dev-{store}-ca-recovery-g1",
+        "labels": {"purpose": "ca-recovery", "generation": "1"},
+        "replication": [{"auto": [{}], "user_managed": []}],
+        "version_destroy_ttl": "2592000s",
+        "expire_time": None,
+        "ttl": None,
+    }
+
+
+def _recovery_plan():
+    resources = []
+    for store in ("postgres", "redis", "temporal"):
+        resource = _plan("google_secret_manager_secret", _recovery_secret(store))[
+            "resource_changes"
+        ][0]
+        resource["address"] = f'google_secret_manager_secret.tls_recovery["{store}"]'
+        resources.append(resource)
+    return {"resource_changes": resources}
+
+
+def test_tls_recovery_plan_admits_only_exact_three_protected_containers():
+    assert policy.inspect(_recovery_plan(), tls_recovery=True) == []
+    for resource in _recovery_plan()["resource_changes"]:
+        assert policy.inspect({"resource_changes": [resource]}) == []
+    incomplete = _recovery_plan()
+    incomplete["resource_changes"].pop()
+    assert policy.inspect(incomplete, tls_recovery=True)
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("project", "another-project"),
+        ("secret_id", "ec-dev-postgres-ca-recovery-g2"),
+        ("labels", {"purpose": "ca-recovery", "generation": "2"}),
+        ("labels", {}),
+        ("version_destroy_ttl", "0s"),
+        ("version_destroy_ttl", "86400s"),
+        ("expire_time", "2027-01-01T00:00:00Z"),
+        ("ttl", "86400s"),
+        ("replication", [{"user_managed": [{"replicas": [{"location": "us-west1"}]}]}]),
+        ("replication", []),
+        ("payload", "fixture-must-not-enter-state"),
+        ("secret_data", "fixture-must-not-enter-state"),
+        ("ca_private_key_pem", "fixture-must-not-enter-state"),
+    ],
+)
+def test_tls_recovery_plan_rejects_container_or_protection_drift(field, value):
+    plan = _recovery_plan()
+    plan["resource_changes"][0]["change"]["after"][field] = value
+    assert policy.inspect(plan, tls_recovery=True)
+
+
+@pytest.mark.parametrize("store", ["postgres", "redis", "temporal"])
+@pytest.mark.parametrize("member", [_member("api"), _member("operator-api"), "allUsers"])
+def test_tls_recovery_rejects_every_iam_grant(store, member):
+    value = {
+        "project": PROJECT,
+        "secret_id": f"projects/{PROJECT}/secrets/ec-dev-{store}-ca-recovery-g1",
+        "role": "roles/secretmanager.secretAccessor",
+        "member": member,
+    }
+    assert policy.inspect(_plan("google_secret_manager_secret_iam_member", value))
+    assert policy.inspect(_plan("google_secret_manager_secret_iam_binding", value))
+
+
+@pytest.mark.parametrize(
+    "kind", ["google_secret_manager_secret_version", "google_secret_manager_secret_version_access"]
+)
+def test_tls_recovery_rejects_payload_resources(kind):
+    assert policy.inspect(
+        _plan(kind, {"secret": "ec-dev-postgres-ca-recovery-g1", "secret_data": "fixture"})
+    )
+
+
+def test_tls_recovery_scope_cannot_change_other_resources_or_exchange_issuers():
+    plan = _recovery_plan()
+    extra = _plan("google_storage_bucket", _bucket())["resource_changes"][0]
+    plan["resource_changes"].append(extra)
+    assert policy.inspect(plan, tls_recovery=True)
+    extra["change"]["actions"] = ["no-op"]
+    assert policy.inspect(plan, tls_recovery=True) == []
+    plan["resource_changes"][0]["change"]["after"] = _recovery_secret("redis")
+    assert policy.inspect(plan, tls_recovery=True)
+
+
 def _operator_plan():
     resources = []
     for address, kind, value in [
@@ -245,7 +334,10 @@ def test_dedicated_operator_addition_preserves_existing_access_sets():
     assert len(policy.NAMES) == 15
     assert "operator-api" not in policy.NAMES | policy.CONSUMERS | policy.CATALOG
     assert policy.SECRETS["operator-api"] == {"operator-database-url"}
-    assert sum(len(secrets) for name, secrets in policy.SECRETS.items() if name != "operator-api") == 32
+    assert (
+        sum(len(secrets) for name, secrets in policy.SECRETS.items() if name != "operator-api")
+        == 32
+    )
 
 
 @pytest.mark.parametrize("secret", sorted(policy.SECRET_NAMES - {"operator-database-url"}))
@@ -267,9 +359,18 @@ def test_operator_cannot_receive_object_or_bucket_access(bucket, role):
     ("field", "value"),
     [
         ("member", f"serviceAccount:{PROJECT}.svc.id.goog[default/events-concierge-operator-api]"),
-        ("member", f"serviceAccount:{PROJECT}.svc.id.goog[events-concierge-dev/events-concierge-api]"),
-        ("member", "serviceAccount:other-project.svc.id.goog[events-concierge-dev/events-concierge-operator-api]"),
-        ("service_account_id", f"projects/{PROJECT}/serviceAccounts/ec-dev-api@{PROJECT}.iam.gserviceaccount.com"),
+        (
+            "member",
+            f"serviceAccount:{PROJECT}.svc.id.goog[events-concierge-dev/events-concierge-api]",
+        ),
+        (
+            "member",
+            "serviceAccount:other-project.svc.id.goog[events-concierge-dev/events-concierge-operator-api]",
+        ),
+        (
+            "service_account_id",
+            f"projects/{PROJECT}/serviceAccounts/ec-dev-api@{PROJECT}.iam.gserviceaccount.com",
+        ),
         ("role", "roles/iam.serviceAccountTokenCreator"),
         ("condition", [{"expression": "true"}]),
     ],
@@ -291,7 +392,9 @@ def test_operator_prerequisite_mode_checks_resource_identity_not_just_addresses(
 
 def test_operator_prerequisite_mode_requires_all_three_resources_and_no_other_additions():
     plan = _operator_plan()
-    assert policy.inspect({"resource_changes": plan["resource_changes"][:-1]}, operator_prerequisite=True)
+    assert policy.inspect(
+        {"resource_changes": plan["resource_changes"][:-1]}, operator_prerequisite=True
+    )
     extra = _plan("google_storage_bucket", _bucket())["resource_changes"][0]
     plan["resource_changes"].append(extra)
     assert policy.inspect(plan) == []
