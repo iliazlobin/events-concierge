@@ -206,19 +206,31 @@ kubectl -n events-concierge-dev exec -i deployment/events-concierge-api -- pytho
 
 **Access**
 
-The owner's Mac has login-started LaunchAgents for IAP, consumer and admin forwards; they restart after connection loss or pod replacement. Another machine needs its own authenticated platform access. Loopback links work only on the forwarding machine; they do not expose a public service.
-
-Without supervised access, keep IAP running and use one forward per terminal:
+The owner's Mac supervises IAP and application forwards with LaunchAgents. Add the [local gateway](local-access.Caddyfile) to the existing setup:
 
 ```bash
-kubectl -n events-concierge-dev port-forward --address=127.0.0.1 service/events-concierge-api 14000:8000
-kubectl -n events-concierge-dev port-forward --address=127.0.0.1 service/events-concierge-frontend 14001:80
-kubectl -n events-concierge-dev port-forward --address=127.0.0.1 deployment/events-concierge-admin 14002:3000
+python3 scripts/development/local_access.py preview
+python3 scripts/development/local_access.py install
+# Restore the previous two-port setup:
+python3 scripts/development/local_access.py rollback
 ```
 
-- [Consumer](http://127.0.0.1:14001) · [Admin](http://127.0.0.1:14002/admin); dedicated shared kubeconfig.
-- Tunnel interruption: restart platform access, verify context/nodes, restart forwards.
-- Pod replacement: restart affected forwards; Service forwards stay attached to the selected pod.
+- [Consumer](http://127.0.0.1:14001/) · [Admin](http://127.0.0.1:14001/admin): one loopback address; GKE services remain separate.
+- Routes: `/admin` and `/admin/*` → private admin forward `14002`; all other paths → consumer forward `14011`.
+- Consumer/admin frontend digests must match: both use `/_next` assets. The helper checks this before switching, preserves the original web LaunchAgent and restores it if startup fails.
+- This is **owner access**: consumer and admin share browser authority. Keep the gateway private; public access must exclude admin routes. [Caddy preserves request paths and Host by default](https://caddyserver.com/docs/caddyfile/directives/reverse_proxy#defaults).
+- Another machine needs its own authenticated platform access. Connection loss or pod replacement restarts the supervised forwards; persistent failure requires checking IAP, context and nodes.
+
+Without the existing Mac supervisor, keep IAP running and start each command in its own terminal:
+
+```bash
+kubectl -n events-concierge-dev port-forward --address=127.0.0.1 service/events-concierge-frontend 14011:80
+kubectl -n events-concierge-dev port-forward --address=127.0.0.1 deployment/events-concierge-admin 14002:3000
+caddy run --config deploy/local-access.Caddyfile --adapter caddyfile
+```
+
+- Use the dedicated shared kubeconfig. After pod replacement, restart the affected manual forward.
+- Direct API debugging only: `kubectl -n events-concierge-dev port-forward --address=127.0.0.1 service/events-concierge-api 14000:8000`.
 
 **Private HTTPS — preparation only**
 
