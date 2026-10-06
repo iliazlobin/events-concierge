@@ -31,7 +31,7 @@ the protected application state bucket; never adopt shared foundation/network/cl
 
 | Resource | Configuration |
 | --- | --- |
-| Identity Platform | Google/Apple only; anonymous/password/phone signup and automatic email linking disabled. Signup starts disabled. |
+| Identity Platform | Google/Apple only; anonymous/password/phone signup and automatic email linking disabled. `signup_enabled` defaults to `false`; enable only for an approved pilot/release. |
 | Browser API key | Exact application/auth domains; Identity Toolkit and Secure Token APIs only. Public identifier, not user authority. |
 | API Workload Identity | `firebaseauth.users.get`; no provider secrets or identity deletion. |
 | Erasure Workload Identity | `firebaseauth.users.get` and `firebaseauth.users.delete`. |
@@ -40,7 +40,7 @@ the protected application state bucket; never adopt shared foundation/network/cl
 
 1. Use `https://events.iliazlobin.com` as the consumer origin in `iz27-platform-dev`. [Public routing](../deploy/public-access.md) admits guests and protects the separate admin hostname with Cloudflare Access. Verify the active CLI account independently of the [Identity console](https://console.cloud.google.com/customer-identity/providers?project=iz27-platform-dev&authuser=4).
 2. Prepare the [backend example](../infra/terraform/environments/consumer-identity/backend.tf.example) and [variables](../infra/terraform/environments/consumer-identity/identity.tfvars.example). Initialize this new app-owned state, review a saved plan, then apply only after deployment authorization.
-3. Configure provider credentials below and the approved legal mode. Keep `signup_enabled=false` during provider bootstrap, then enable signup for the verified release/pilot.
+3. Configure provider credentials below and the approved legal mode. Record the approved `signup_enabled` setting; new setups default to `false`. Enabling a bounded pilot permits the first real signup test, not a release-acceptance claim.
 
 For the existing `iz27-platform-dev` project, `foundation_owned_services` excludes its foundation-owned IAM and Secret Manager APIs from this state. The identity APIs, restricted browser key, provider containers and narrow IAM remain application-owned; never import shared resources or another product's OAuth clients/branding.
 The provider and bootstrap requests use the selected identity project for quota; the caller needs `serviceusage.services.use` there.
@@ -85,7 +85,7 @@ python scripts/identity_platform.py --project iz27-platform-dev --provider apple
 
 1. Back up the database; apply migrations through `0208` through the existing release process. `0207` retains real consent receipts; `0208` separately binds accounts for deferred releases with the same identity/erasure fence and no consent writes. Do not migrate the retained database as a test.
 2. Layer [consumer identity values](../deploy/helm/events-concierge/values-consumer-identity.example.yaml) over the reviewed non-mock release. Set project, restricted key, exact auth domain, enabled providers and the approved legal mode; `deferred` requires empty legal versions/URLs. Disable the legacy OIDC BFF. Runtime mounts exclude its client secret. Configure operator identity separately.
-3. Run [production validation/canary](../docs/production-operations.md#first-release-acceptance), then explicitly enable signup for a bounded pilot. Keep general access restricted until acceptance succeeds.
+3. Run [production validation](../docs/production-operations.md#first-release-acceptance) and private transport/readiness checks. With signup explicitly approved, follow [controlled hostname publication](../deploy/public-access.md#activate) for the deployed canary and real browser acceptance. Failed or unavailable acceptance requires disabling the dedicated public routes; preserve identities/data.
 4. In Google Chrome and Safari, verify Google signup/cancellation, reload/logout, expiry, disabled/revoked users, saved filters/preferences, two-account isolation and same-account erasure. In `required` mode verify unchecked consent and changed terms; in `deferred` mode verify no legal links/receipts and test later required-mode activation. Repeat for Apple only when enabled. Verify guests can browse and cannot save; another verified Google email must receive admin `403`.
 5. Exercise missing/wrong Origin, CSRF, project, provider, cookie/state replay, concurrent sign-in and erasure/provider outages. Never put test tokens or provider errors into evidence.
 

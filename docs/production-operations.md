@@ -15,13 +15,13 @@ Release gates, incident controls and recovery constraints. [Private GKE runbook]
 | Gate | Required evidence |
 | --- | --- |
 | Candidate | Approved revision and immutable Python/Next.js digests; applicable CI, migrations and compatibility checks |
-| Identity | Real login/logout, expiry/revocation, verified subject mapping, CSRF, TLS and cross-tenant denial; explicit Google pilot limitation below |
+| Identity | Real signup/login/logout, expiry/revocation, verified account binding, CSRF, TLS, cross-tenant denial and same-account erasure; legacy OIDC pilots require the explicit exception below |
 | Discovery | Actual Next.js/API filters, Events/Map/Calendar, entity graphs/profiles without refresh writes, details/provider links, pagination/history, empty/error/loading states, settings, mobile/keyboard |
 | Catalog | Reviewed sources; same-window real counts; last-good preservation; refresh and later scheduled publication; no unexplained loss |
 | Deferred actions | Direct routes rejected; no enqueue/provider effect; workers and credentials disabled |
 | Operations | Private endpoints, isolated process credentials, dependency recovery, monitoring/alerts, current backup and candidate restore evidence |
 
-Record failed/skipped/unavailable gates. Switch access only after acceptance; preserve recovery copies before retiring infrastructure through its owning state. Apply the [launch gates](#external-launch-gates) for each enabled capability.
+Record failed/skipped/unavailable gates. Complete private readiness before approved [first-hostname publication](../deploy/public-access.md#activate); verify the real HTTPS/browser flow before accepting the release. Failed or unavailable acceptance disables the dedicated public routes. Preserve recovery copies before retiring infrastructure through its owning state. Apply the [launch gates](#external-launch-gates) for each enabled capability.
 
 <a id="rollback-and-migration-safety"></a>
 
@@ -108,7 +108,7 @@ Compatibility path for provisioned accounts; self-service signup uses the manage
 - Set `EC_OIDC_BFF_ENABLED=true`, `EC_MOCK_CLOUD=false`, `EC_UI_AUTH_START_URL=/auth/login`; secret-managed confidential client uses `client_secret_basic`.
 - Canonical HTTPS origin; exact `<origin>/auth/callback`; HTTPS issuer/authorization/token/JWKS and asymmetric algorithm allowlist.
 - Private profile: `EC_PUBLIC_ORIGIN_PROFILE=private_loopback_https`, exact `EC_PUBLIC_BASE_URL=https://localhost:14443`; callback `https://localhost:14443/auth/callback`. No alternate host/port/path/query; default `remote_https` rejects loopback.
-- Trusted local TLS and IAP remain required. Origin configuration does not encrypt dependencies or authorize activation; follow [transport preparation](../deploy/development.md#encrypted-dependency-preparation).
+- Trusted local TLS and IAP remain required. Origin configuration does not encrypt dependencies or authorize activation; follow [transport preparation](../deploy/development.md#authenticated-discovery-and-encrypted-dependencies).
 
 | Google setting | Required value |
 | --- | --- |
@@ -235,7 +235,7 @@ Required evidence before enabling the corresponding release or capability. Offli
 
 - [ ] Protected upstream review, secret scanning and required CI; applicable [owner decisions](../design/owner-decisions.md) and explicit scope deferrals.
 - [ ] Authenticated private Helm profile, per-process credentials/IAM, datastore TLS/mTLS, combined migration/rollback rehearsal and approved rollout; [remaining release work](../deploy/development.md#remaining-release-work).
-- [ ] Separate Google client/subject mapping, trusted HTTPS, real login/logout/expiry/revocation/CSRF/isolation; explicit decision on unavailable Google self-service deletion.
+- [ ] Dedicated Google client, trusted HTTPS, real signup/login/logout/expiry/revocation/CSRF/isolation and managed same-account erasure. Only legacy OIDC pilots require an explicit exception for unavailable self-service deletion.
 - [ ] Candidate backup/restore, independent telemetry/canaries/alerts/heartbeats, on-call ownership and scheduled recovery; containment/recovery drill.
 - [ ] Source-specific legal/commercial review and owner activation; disabled/quarantined sources remain disabled.
 
