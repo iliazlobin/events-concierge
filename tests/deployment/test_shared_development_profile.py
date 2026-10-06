@@ -2,6 +2,7 @@
 
 import copy
 import importlib.util
+import json
 import os
 import shutil
 import subprocess
@@ -118,7 +119,7 @@ def test_media_policy_rejects_hidden_retention_or_expiration(field, value):
 
 
 def test_media_access_is_limited_to_profile_and_erasure_workloads():
-    for name in policy.NAMES | {"outside-app"}:
+    for name in policy.IDENTITY_NAMES | {"outside-app"}:
         for role in (
             "roles/storage.objectUser",
             "roles/storage.legacyBucketReader",
@@ -185,6 +186,7 @@ def test_shared_app_plan_preserves_workload_identity_and_credential_separation()
             },
         )
     )
+
     identity = {
         "service_account_id": f"projects/{PROJECT}/serviceAccounts/ec-dev-api@{PROJECT}.iam.gserviceaccount.com",
         "role": "roles/iam.workloadIdentityUser",
@@ -202,6 +204,126 @@ def test_shared_app_plan_preserves_workload_identity_and_credential_separation()
             },
         )
     )
+
+
+def _operator_plan():
+    resources = []
+    for address, kind, value in [
+        (
+            "google_service_account.operator_api",
+            "google_service_account",
+            {"project": PROJECT, "account_id": "ec-dev-operator-api"},
+        ),
+        (
+            "google_service_account_iam_member.operator_api_workload",
+            "google_service_account_iam_member",
+            {
+                "service_account_id": f"projects/{PROJECT}/serviceAccounts/ec-dev-operator-api@{PROJECT}.iam.gserviceaccount.com",
+                "role": "roles/iam.workloadIdentityUser",
+                "member": f"serviceAccount:{PROJECT}.svc.id.goog[events-concierge-dev/events-concierge-operator-api]",
+            },
+        ),
+        (
+            "google_secret_manager_secret_iam_member.operator_api_database",
+            "google_secret_manager_secret_iam_member",
+            {
+                "project": PROJECT,
+                "secret_id": "ec-dev-operator-database-url",
+                "member": _member("operator-api"),
+                "role": "roles/secretmanager.secretAccessor",
+            },
+        ),
+    ]:
+        resource = _plan(kind, value)["resource_changes"][0]
+        resource["address"] = address
+        resources.append(resource)
+    return {"resource_changes": resources}
+
+
+def test_dedicated_operator_addition_preserves_existing_access_sets():
+    assert policy.inspect(_operator_plan(), operator_prerequisite=True) == []
+    assert len(policy.NAMES) == 15
+    assert "operator-api" not in policy.NAMES | policy.CONSUMERS | policy.CATALOG
+    assert policy.SECRETS["operator-api"] == {"operator-database-url"}
+    assert sum(len(secrets) for name, secrets in policy.SECRETS.items() if name != "operator-api") == 32
+
+
+@pytest.mark.parametrize("secret", sorted(policy.SECRET_NAMES - {"operator-database-url"}))
+def test_operator_cannot_access_any_other_secret(secret):
+    plan = _operator_plan()
+    plan["resource_changes"][2]["change"]["after"]["secret_id"] = f"ec-dev-{secret}"
+    assert policy.inspect(plan)
+    assert policy.inspect(plan, operator_prerequisite=True)
+
+
+@pytest.mark.parametrize("bucket", sorted(policy.BUCKETS))
+@pytest.mark.parametrize("role", ["roles/storage.objectUser", "roles/storage.legacyBucketReader"])
+def test_operator_cannot_receive_object_or_bucket_access(bucket, role):
+    value = {"bucket": bucket, "role": role, "member": _member("operator-api")}
+    assert policy.inspect(_plan("google_storage_bucket_iam_member", value))
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("member", f"serviceAccount:{PROJECT}.svc.id.goog[default/events-concierge-operator-api]"),
+        ("member", f"serviceAccount:{PROJECT}.svc.id.goog[events-concierge-dev/events-concierge-api]"),
+        ("member", "serviceAccount:other-project.svc.id.goog[events-concierge-dev/events-concierge-operator-api]"),
+        ("service_account_id", f"projects/{PROJECT}/serviceAccounts/ec-dev-api@{PROJECT}.iam.gserviceaccount.com"),
+        ("role", "roles/iam.serviceAccountTokenCreator"),
+        ("condition", [{"expression": "true"}]),
+    ],
+)
+def test_operator_workload_binding_cannot_broaden_or_target_another_identity(field, value):
+    plan = _operator_plan()
+    plan["resource_changes"][1]["change"]["after"][field] = value
+    assert policy.inspect(plan)
+    assert policy.inspect(plan, operator_prerequisite=True)
+
+
+def test_operator_prerequisite_mode_checks_resource_identity_not_just_addresses():
+    plan = _operator_plan()
+    # A grant to the old admin is valid in the full landing, but is not the new operator grant.
+    plan["resource_changes"][2]["change"]["after"]["member"] = _member("development-admin")
+    assert policy.inspect(plan) == []
+    assert policy.inspect(plan, operator_prerequisite=True)
+
+
+def test_operator_prerequisite_mode_requires_all_three_resources_and_no_other_additions():
+    plan = _operator_plan()
+    assert policy.inspect({"resource_changes": plan["resource_changes"][:-1]}, operator_prerequisite=True)
+    extra = _plan("google_storage_bucket", _bucket())["resource_changes"][0]
+    plan["resource_changes"].append(extra)
+    assert policy.inspect(plan) == []
+    assert policy.inspect(plan, operator_prerequisite=True)
+    extra["change"]["actions"] = ["no-op"]
+    assert policy.inspect(plan, operator_prerequisite=True) == []
+
+
+@pytest.mark.parametrize("index", [0, 1, 2])
+@pytest.mark.parametrize("actions", [["update"], ["delete"], ["delete", "create"]])
+def test_operator_prerequisite_mode_rejects_replacements_updates_and_deletes(index, actions):
+    plan = _operator_plan()
+    plan["resource_changes"][index]["change"]["actions"] = actions
+    assert policy.inspect(plan, operator_prerequisite=True)
+
+
+def test_operator_prerequisite_mode_handles_completed_or_partial_additions():
+    plan = _operator_plan()
+    for resource in plan["resource_changes"]:
+        resource["change"]["actions"] = ["no-op"]
+        assert policy.inspect(plan, operator_prerequisite=True) == []
+
+
+def test_operator_prerequisite_flag_scopes_the_saved_plan(tmp_path, capsys):
+    plan = _operator_plan()
+    plan["resource_changes"].extend(_plan("google_storage_bucket", _bucket())["resource_changes"])
+    path = tmp_path / "operator-plan.json"
+    path.write_text(json.dumps(plan))
+    assert policy.main([str(path)]) == 0
+    assert "scope passed" in capsys.readouterr().out
+    assert policy.main(["--operator-prerequisite", str(path)]) == 1
+    assert "cannot change existing resources" in capsys.readouterr().out
 
 
 def test_shared_app_plan_keeps_catalog_payload_access_in_its_prefix():

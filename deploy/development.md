@@ -70,6 +70,7 @@ Configure Google Identity Platform, the approved legal mode and trusted HTTPS. [
 - The separate [development root](../infra/terraform/environments/development) manages resources awaiting verified retirement.
 - Remove that root only after data/image/identity dependencies are resolved and its owning state is empty.
 - Existing stores: skip installation below; storage changes require separate rehearsal.
+- The private operator uses the dedicated `ec-dev-operator-api` GSA, bound only to `events-concierge-dev/events-concierge-operator-api` with access only to `ec-dev-operator-database-url`. This root grants it no consumer database, Redis, object or project IAM access. For an existing landing, check the saved plan with `scripts/development/check_shared_plan.py --operator-prerequisite`; only this GSA and its two IAM resources may be added, with all existing resources unchanged. Apply requires separate approval; generated release values then include the operator identity.
 
 **New stores / coordinated restoration only**
 

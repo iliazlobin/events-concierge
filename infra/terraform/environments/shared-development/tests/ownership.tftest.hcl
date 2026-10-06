@@ -68,6 +68,29 @@ run "app_resources_and_external_platform_contract" {
   }
 }
 
+run "dedicated_private_operator" {
+  command = plan
+  assert {
+    condition = (
+      google_service_account.operator_api.account_id == "ec-dev-operator-api" &&
+      google_service_account.operator_api.project == "iz27-platform-dev" &&
+      google_service_account_iam_member.operator_api_workload.role == "roles/iam.workloadIdentityUser" &&
+      google_service_account_iam_member.operator_api_workload.service_account_id == "projects/iz27-platform-dev/serviceAccounts/ec-dev-operator-api@iz27-platform-dev.iam.gserviceaccount.com" &&
+      google_service_account_iam_member.operator_api_workload.member == "serviceAccount:iz27-platform-dev.svc.id.goog[events-concierge-dev/events-concierge-operator-api]" &&
+      google_secret_manager_secret_iam_member.operator_api_database.secret_id == "ec-dev-operator-database-url" &&
+      google_secret_manager_secret_iam_member.operator_api_database.role == "roles/secretmanager.secretAccessor" &&
+      google_secret_manager_secret_iam_member.operator_api_database.member == "serviceAccount:ec-dev-operator-api@iz27-platform-dev.iam.gserviceaccount.com" &&
+      !contains(local.names, "operator-api") &&
+      !contains(local.media_workloads, "operator-api") &&
+      length([for access in values(local.secret_access) : access if access.name == "operator-api"]) == 0 &&
+      length(local.secret_access) == 32 &&
+      length(google_storage_bucket_iam_member.payloads) == 9 &&
+      output.service_accounts["operator-api"] == "ec-dev-operator-api@iz27-platform-dev.iam.gserviceaccount.com"
+    )
+    error_message = "The private operator receives only its controller DSN and exact workload binding."
+  }
+}
+
 run "reject_legacy_platform_contract" {
   command = plan
   variables {

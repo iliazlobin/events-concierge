@@ -26,9 +26,11 @@ NAMES = frozenset(
         "ingestion-executor",
     }
 )
+IDENTITY_NAMES = NAMES | {"operator-api"}
 CATALOG = frozenset({"ingestion-executor", "temporal-catalog"})
 CONSUMERS = NAMES - CATALOG - {"frontend", "stores", "migration", "development-admin"}
 SECRETS = {
+    "operator-api": {"operator-database-url"},
     "stores": {"postgres-admin", "temporal-postgres-admin", "redis-password"},
     "migration": {
         "migration-url",
@@ -59,13 +61,36 @@ ALLOWED = {
     "google_storage_bucket",
     "google_storage_bucket_iam_member",
 }
+OPERATOR_EMAIL = f"ec-dev-operator-api@{PROJECT}.iam.gserviceaccount.com"
+OPERATOR_RESOURCES = {
+    "google_service_account.operator_api": (
+        "google_service_account",
+        {"project": PROJECT, "account_id": "ec-dev-operator-api"},
+    ),
+    "google_service_account_iam_member.operator_api_workload": (
+        "google_service_account_iam_member",
+        {
+            "service_account_id": f"projects/{PROJECT}/serviceAccounts/{OPERATOR_EMAIL}",
+            "role": "roles/iam.workloadIdentityUser",
+            "member": f"serviceAccount:{PROJECT}.svc.id.goog[events-concierge-dev/events-concierge-operator-api]",
+        },
+    ),
+    "google_secret_manager_secret_iam_member.operator_api_database": (
+        "google_secret_manager_secret_iam_member",
+        {
+            "project": PROJECT,
+            "role": "roles/secretmanager.secretAccessor",
+            "member": f"serviceAccount:{OPERATOR_EMAIL}",
+        },
+    ),
+}
 
 
 def _workload(member):
     return next(
         (
             name
-            for name in NAMES
+            for name in IDENTITY_NAMES
             if member == f"serviceAccount:ec-dev-{name}@{PROJECT}.iam.gserviceaccount.com"
         ),
         None,
@@ -94,7 +119,7 @@ def _safe_resource(kind, value):  # noqa: PLR0911, PLR0912 - Scope review stays 
         return False
     if kind == "google_service_account":
         return value.get("project") == PROJECT and value.get("account_id") in {
-            f"ec-dev-{n}" for n in NAMES
+            f"ec-dev-{n}" for n in IDENTITY_NAMES
         }
     if kind == "google_service_account_iam_member":
         return (
@@ -104,7 +129,7 @@ def _safe_resource(kind, value):  # noqa: PLR0911, PLR0912 - Scope review stays 
                 == f"projects/{PROJECT}/serviceAccounts/ec-dev-{name}@{PROJECT}.iam.gserviceaccount.com"
                 and value.get("member")
                 == f"serviceAccount:{PROJECT}.svc.id.goog[events-concierge-dev/events-concierge-{name}]"
-                for name in NAMES
+                for name in IDENTITY_NAMES
             )
             and not value.get("condition")
         )
@@ -179,7 +204,35 @@ def _safe_resource(kind, value):  # noqa: PLR0911, PLR0912 - Scope review stays 
     return False
 
 
-def inspect(plan):
+def _operator_prerequisite_errors(resources):
+    errors = []
+    seen = set()
+    for resource in resources:
+        if resource.get("mode") != "managed":
+            continue
+        address = resource.get("address")
+        change = resource.get("change", {})
+        if address not in OPERATOR_RESOURCES:
+            if change.get("actions") != ["no-op"]:
+                errors.append(f"{address}: operator prerequisites cannot change existing resources")
+            continue
+        seen.add(address)
+        kind, required = OPERATOR_RESOURCES[address]
+        value = change.get("after")
+        if not isinstance(value, dict):
+            value = {}
+        if resource.get("type") != kind or any(value.get(k) != v for k, v in required.items()):
+            errors.append(f"{address}: wrong dedicated operator identity or grant")
+        if kind == "google_secret_manager_secret_iam_member" and _secret_name(
+            value.get("secret_id")
+        ) != "operator-database-url":
+            errors.append(f"{address}: operator receives only its controller database secret")
+    if seen != OPERATOR_RESOURCES.keys():
+        errors.append("Operator prerequisite plan must include its GSA and both exact IAM resources")
+    return errors
+
+
+def inspect(plan, *, operator_prerequisite=False):
     errors = []
     for resource in plan.get("resource_changes", []):
         if resource.get("mode") == "data":
@@ -197,14 +250,23 @@ def inspect(plan):
             errors.append(
                 f"{resource.get('address')}: outside shared-development application boundary"
             )
+    if operator_prerequisite:
+        errors.extend(_operator_prerequisite_errors(plan.get("resource_changes", [])))
     return errors
 
 
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument(
+        "--operator-prerequisite",
+        action="store_true",
+        help="Allow only the dedicated operator GSA and its exact two IAM additions; keep existing resources unchanged",
+    )
     parser.add_argument("plan", type=Path, help="Saved terraform show -json application plan")
     args = parser.parse_args(argv)
-    errors = inspect(json.loads(args.plan.read_text()))
+    errors = inspect(
+        json.loads(args.plan.read_text()), operator_prerequisite=args.operator_prerequisite
+    )
     print("\n".join(errors) if errors else "Shared-development application plan scope passed")
     return int(bool(errors))
 
