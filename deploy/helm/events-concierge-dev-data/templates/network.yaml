@@ -11,16 +11,16 @@ metadata: {name: ec-dev-internal}
 spec:
   podSelector:
     matchLabels: {app.kubernetes.io/part-of: events-concierge}
-    # NetworkPolicies are additive: the public connector must not inherit store/ADC access.
+    # Additive policies must not grant edge/isolated operator pods the shared store/ADC routes.
     matchExpressions:
-      - {key: app.kubernetes.io/component, operator: NotIn, values: [public-tunnel]}
+      - {key: app.kubernetes.io/component, operator: NotIn, values: [public-tunnel, operator-frontend, operator-api]}
   policyTypes: [Ingress, Egress]
   ingress:
     - from:
         - podSelector:
             matchLabels: {app.kubernetes.io/part-of: events-concierge}
             matchExpressions:
-              - {key: app.kubernetes.io/component, operator: NotIn, values: [public-tunnel]}
+              - {key: app.kubernetes.io/component, operator: NotIn, values: [public-tunnel, operator-frontend, operator-api]}
       ports:
         - {port: 5432, protocol: TCP}
         - {port: 6379, protocol: TCP}
@@ -38,7 +38,7 @@ spec:
         - podSelector:
             matchLabels: {app.kubernetes.io/part-of: events-concierge}
             matchExpressions:
-              - {key: app.kubernetes.io/component, operator: NotIn, values: [public-tunnel]}
+              - {key: app.kubernetes.io/component, operator: NotIn, values: [public-tunnel, operator-frontend, operator-api]}
       ports:
         - {port: 5432, protocol: TCP}
         - {port: 6379, protocol: TCP}

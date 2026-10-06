@@ -2,7 +2,9 @@
 
 import importlib.util
 import json
+import runpy
 import subprocess
+import sys
 import uuid
 from pathlib import Path
 from types import SimpleNamespace
@@ -758,6 +760,366 @@ def test_private_backup_preserves_stopped_worker_and_edge_counts(private_recordi
     assert all(metadata["replicas"][name] == 0 for name in stopped)
     assert all(d["spec"]["replicas"] == 0 for d in deployments if d["metadata"]["name"] in stopped)
     assert not any(event[0] == "rollout" for event in events)
+
+
+PRIVATE_OPERATORS = {"events-concierge-operator-api", "events-concierge-operator-frontend"}
+
+
+@pytest.fixture
+def operator_recording(private_recording):
+    events, copies, deployments = private_recording
+    deployments.extend(deployment(name) for name in sorted(PRIVATE_OPERATORS))
+    return events, copies, deployments
+
+
+def test_private_backup_requires_explicit_operator_inventory_opt_in(operator_recording):
+    events, copies, _ = operator_recording
+    with pytest.raises(SystemExit):
+        backup.backup(profile="private")
+    assert not copies
+    assert not any(event[0] == "scale" for event in events)
+
+
+@pytest.mark.parametrize("missing", [None, *sorted(PRIVATE_OPERATORS)])
+def test_operator_backup_requires_both_deployments_before_upload_or_scale(
+    private_recording, missing
+):
+    events, copies, deployments = private_recording
+    if missing is not None:
+        deployments.extend(deployment(name) for name in PRIVATE_OPERATORS - {missing})
+    with pytest.raises(SystemExit):
+        backup.backup(profile="private", operator=True)
+    assert not copies
+    assert not any(event[0] == "scale" for event in events)
+
+
+@pytest.mark.parametrize("name", sorted(PRIVATE_OPERATORS))
+def test_operator_backup_rejects_extra_replicas_before_upload_or_scale(operator_recording, name):
+    events, copies, deployments = operator_recording
+    next(d for d in deployments if d["metadata"]["name"] == name)["spec"]["replicas"] = 2
+    with pytest.raises(SystemExit):
+        backup.backup(profile="private", operator=True)
+    assert not copies
+    assert not any(event[0] == "scale" for event in events)
+
+
+def test_operator_option_does_not_expand_other_private_inventory(operator_recording):
+    events, copies, deployments = operator_recording
+    deployments.append(deployment("events-concierge-admin"))
+    with pytest.raises(SystemExit):
+        backup.backup(profile="private", operator=True)
+    assert not copies
+    assert not any(event[0] == "scale" for event in events)
+
+
+def test_operator_backup_records_original_counts_identities_and_templates(operator_recording):
+    events, copies, deployments = operator_recording
+    stopped = "events-concierge-operator-api"
+    next(d for d in deployments if d["metadata"]["name"] == stopped)["spec"]["replicas"] = 0
+    backup.backup(profile="private", operator=True, hold_stopped=True)
+    metadata = json.loads(copies["recovery.json"])
+    manifest = json.loads(copies["manifest.json"])
+    for name in PRIVATE_OPERATORS:
+        original = deployment(name, 0 if name == stopped else 1)
+        assert metadata["replicas"][name] == original["spec"]["replicas"]
+        assert metadata["deployment_uids"][name] == original["metadata"]["uid"]
+        assert metadata["template_sha256"][name] == backup._template_hash(original)
+        assert manifest["quiesced_deployments"][name] == original["spec"]["replicas"]
+    backup._validate_recovery(metadata, backup.BACKUP_ROOT + metadata["id"])
+    scales = [event for event in events if event[0] == "scale"]
+    assert scales[0][1] == "deployment/" + backup.PUBLIC_TUNNEL
+    assert all(event[2] == "--replicas=0" for event in scales)
+    operator_scale = next(
+        event for event in scales if event[1] == "deployment/" + backup.OPERATOR_FRONTEND
+    )
+    operator_wait = next(
+        i
+        for i, event in enumerate(events)
+        if event[0] == "wait" and backup.OPERATOR_FRONTEND in event[4]
+    )
+    first_writer = next(
+        i
+        for i, event in enumerate(events)
+        if event[0] == "scale"
+        and event[1]
+        not in {
+            "deployment/" + backup.PUBLIC_TUNNEL,
+            "deployment/" + backup.OPERATOR_FRONTEND,
+        }
+    )
+    assert events.index(operator_scale) < operator_wait < first_writer
+
+
+def test_operator_recovery_derives_saved_allowlist_and_opens_consumer_edge_last(operator_recording):
+    events, copies, deployments = operator_recording
+    backup.backup(profile="private", operator=True, hold_stopped=True)
+    metadata = json.loads(copies["recovery.json"])
+    events.clear()
+    backup.resume(backup.BACKUP_ROOT + metadata["id"])
+    restored = [event for event in events if event[0] == "scale" and event[2] != "--replicas=0"]
+    assert restored[0][1].startswith("deployment/ec-dev-temporal-")
+    assert restored[-1][1:3] == ("deployment/" + backup.PUBLIC_TUNNEL, "--replicas=2")
+    assert restored[-2][1:3] == ("deployment/" + backup.OPERATOR_FRONTEND, "--replicas=1")
+    before_edge = events[: events.index(restored[-1])]
+    for name in PRIVATE_OPERATORS:
+        assert any(
+            event[:3] == ("rollout", "status", "deployment/" + name) for event in before_edge
+        )
+        assert (
+            next(d for d in deployments if d["metadata"]["name"] == name)["spec"]["replicas"] == 1
+        )
+
+
+@pytest.mark.parametrize("missing", sorted(PRIVATE_OPERATORS))
+def test_recovery_metadata_rejects_a_half_operator_pair_without_cluster_writes(
+    operator_recording, missing
+):
+    events, copies, _ = operator_recording
+    backup.backup(profile="private", operator=True, hold_stopped=True)
+    metadata = json.loads(copies["recovery.json"])
+    for field in ("replicas", "deployment_uids", "template_sha256"):
+        metadata[field].pop(missing)
+    copies["recovery.json"] = json.dumps(metadata).encode()
+    events.clear()
+    with pytest.raises(SystemExit):
+        backup.resume(backup.BACKUP_ROOT + metadata["id"])
+    assert not any(event[0] == "scale" for event in events)
+
+
+@pytest.mark.parametrize("name", sorted(PRIVATE_OPERATORS))
+@pytest.mark.parametrize("change", ["uid", "template"])
+def test_operator_resume_refuses_replacement_or_unreviewed_template_before_scale(
+    operator_recording, name, change
+):
+    events, copies, deployments = operator_recording
+    backup.backup(profile="private", operator=True, hold_stopped=True)
+    metadata = json.loads(copies["recovery.json"])
+    item = next(d for d in deployments if d["metadata"]["name"] == name)
+    if change == "uid":
+        item["metadata"]["uid"] = str(uuid.uuid4())
+    else:
+        item["spec"]["template"]["spec"]["containers"][0]["image"] = "unreviewed-operator-image"
+    events.clear()
+    with pytest.raises(RuntimeError):
+        backup.resume(backup.BACKUP_ROOT + metadata["id"])
+    assert not any(event[0] == "scale" for event in events)
+
+
+def test_operator_backup_is_private_only_before_any_cluster_or_cloud_io():
+    with (
+        patch.object(backup, "k") as cluster,
+        patch.object(backup, "gc") as cloud,
+        patch.object(backup, "_check_context") as context,
+        pytest.raises(SystemExit, match="private"),
+    ):
+        backup.backup(operator=True)
+    cluster.assert_not_called()
+    cloud.assert_not_called()
+    context.assert_not_called()
+
+
+@pytest.mark.parametrize(
+    "failure", ["operator-api-scale", "operator-api-readiness", "operator-frontend-scale"]
+)
+def test_failed_operator_recovery_keeps_operator_and_consumer_edges_stopped(
+    operator_recording, failure
+):
+    events, _, deployments = operator_recording
+    original = backup.k.side_effect
+
+    def cluster(*args, **kwargs):
+        failed_call = {
+            "operator-api-scale": (
+                "scale",
+                "deployment/events-concierge-operator-api",
+                "--replicas=1",
+            ),
+            "operator-api-readiness": (
+                "rollout",
+                "status",
+                "deployment/events-concierge-operator-api",
+            ),
+            "operator-frontend-scale": (
+                "scale",
+                "deployment/" + backup.OPERATOR_FRONTEND,
+                "--replicas=1",
+            ),
+        }[failure]
+        if args[:3] == failed_call:
+            raise subprocess.CalledProcessError(1, args, stderr=b"Forbidden")
+        return original(*args, **kwargs)
+
+    backup.k.side_effect = cluster
+    with pytest.raises(ExceptionGroup):
+        backup.backup(profile="private", operator=True)
+    for name in (backup.PUBLIC_TUNNEL, backup.OPERATOR_FRONTEND):
+        assert (
+            next(d for d in deployments if d["metadata"]["name"] == name)["spec"]["replicas"] == 0
+        )
+    assert not any(
+        event[:3] == ("scale", "deployment/" + backup.PUBLIC_TUNNEL, "--replicas=2")
+        for event in events
+    )
+
+
+@pytest.mark.parametrize(
+    "failure", ["operator-frontend-rollout", "consumer-backend-readiness", "consumer-schema"]
+)
+def test_late_recovery_failure_closes_the_resumed_operator_and_consumer_edges(
+    operator_recording, failure
+):
+    events, copies, deployments = operator_recording
+    original = backup.k.side_effect
+    api_rollouts = 0
+    injected = False
+    operator = next(d for d in deployments if d["metadata"]["name"] == backup.OPERATOR_FRONTEND)
+
+    def cluster(*args, **kwargs):
+        nonlocal api_rollouts, injected
+        if args[:3] == ("rollout", "status", "deployment/events-concierge-api"):
+            api_rollouts += 1
+            if failure == "consumer-backend-readiness" and api_rollouts == 2:
+                injected = True
+                raise subprocess.TimeoutExpired(args, 190)
+        if args[:3] == ("rollout", "status", "deployment/" + backup.OPERATOR_FRONTEND):
+            if failure == "operator-frontend-rollout":
+                injected = True
+                raise subprocess.CalledProcessError(1, args, stderr=b"Forbidden")
+            if failure == "consumer-schema":
+                injected = True
+                backup._read_schema.return_value = "0207"
+        result = original(*args, **kwargs)
+        if args[:3] == ("scale", "deployment/" + backup.OPERATOR_FRONTEND, "--replicas=1"):
+            operator["metadata"]["resourceVersion"] = "124"
+        return result
+
+    backup.k.side_effect = cluster
+    with (
+        patch.object(backup, "_read_schema", return_value="0193"),
+        pytest.raises(ExceptionGroup),
+    ):
+        backup.backup(profile="private", operator=True)
+    assert injected
+    reopened = next(
+        i
+        for i, event in enumerate(events)
+        if event[:3] == ("scale", "deployment/" + backup.OPERATOR_FRONTEND, "--replicas=1")
+    )
+    closure = next(
+        event
+        for event in events[reopened + 1 :]
+        if event[:3] == ("scale", "deployment/" + backup.OPERATOR_FRONTEND, "--replicas=0")
+    )
+    assert "--resource-version=124" in closure
+    closure_index = events.index(closure)
+    assert any(
+        event[0] == "wait" and backup.OPERATOR_FRONTEND in event[4]
+        for event in events[closure_index + 1 :]
+    )
+    for name in (backup.OPERATOR_FRONTEND, backup.PUBLIC_TUNNEL):
+        assert (
+            next(d for d in deployments if d["metadata"]["name"] == name)["spec"]["replicas"] == 0
+        )
+    metadata = json.loads(copies["recovery.json"])
+    assert metadata["replicas"][backup.OPERATOR_FRONTEND] == 1
+    assert metadata["replicas"][backup.PUBLIC_TUNNEL] == 2
+
+
+@pytest.mark.parametrize("change", ["uid", "template"])
+def test_failed_recovery_closure_refuses_replaced_operator_and_preserves_saved_counts(
+    operator_recording, change
+):
+    events, copies, deployments = operator_recording
+    original = backup.k.side_effect
+    operator = next(d for d in deployments if d["metadata"]["name"] == backup.OPERATOR_FRONTEND)
+    original_uid, original_template = operator["metadata"]["uid"], backup._template_hash(operator)
+
+    def cluster(*args, **kwargs):
+        if args[:3] == ("rollout", "status", "deployment/" + backup.OPERATOR_FRONTEND):
+            if change == "uid":
+                operator["metadata"]["uid"] = str(uuid.uuid4())
+            else:
+                operator["spec"]["template"]["spec"]["containers"][0]["image"] = "replacement-image"
+            raise subprocess.CalledProcessError(1, args, stderr=b"Forbidden")
+        return original(*args, **kwargs)
+
+    backup.k.side_effect = cluster
+    with pytest.raises(ExceptionGroup) as caught:
+        backup.backup(profile="private", operator=True)
+    reopened = next(
+        i
+        for i, event in enumerate(events)
+        if event[:3] == ("scale", "deployment/" + backup.OPERATOR_FRONTEND, "--replicas=1")
+    )
+    assert not any(
+        event[:3] == ("scale", "deployment/" + backup.OPERATOR_FRONTEND, "--replicas=0")
+        for event in events[reopened + 1 :]
+    )
+    assert operator["spec"]["replicas"] == 1
+    assert (
+        next(d for d in deployments if d["metadata"]["name"] == backup.PUBLIC_TUNNEL)["spec"][
+            "replicas"
+        ]
+        == 0
+    )
+    assert any(isinstance(error, RuntimeError) for error in caught.value.exceptions)
+    metadata = json.loads(copies["recovery.json"])
+    assert metadata["replicas"][backup.OPERATOR_FRONTEND] == 1
+    assert metadata["replicas"][backup.PUBLIC_TUNNEL] == 2
+    assert metadata["deployment_uids"][backup.OPERATOR_FRONTEND] == original_uid
+    assert metadata["template_sha256"][backup.OPERATOR_FRONTEND] == original_template
+
+
+def test_operator_recovery_preserves_originally_stopped_edges_and_workers(operator_recording):
+    _, copies, deployments = operator_recording
+    stopped = PRIVATE_OPERATORS | {backup.PUBLIC_TUNNEL, "events-concierge-account-erasure"}
+    for item in deployments:
+        if item["metadata"]["name"] in stopped:
+            item["spec"]["replicas"] = 0
+    backup.backup(profile="private", operator=True)
+    metadata = json.loads(copies["recovery.json"])
+    assert all(metadata["replicas"][name] == 0 for name in stopped)
+    assert all(d["spec"]["replicas"] == 0 for d in deployments if d["metadata"]["name"] in stopped)
+
+
+def test_backup_cli_operator_flag_records_the_exact_private_pair(operator_recording):
+    _, copies, _ = operator_recording
+    cluster, cloud = backup.k.side_effect, backup.gc.side_effect
+    path = Path(__file__).resolve().parents[2] / "scripts/development/backup.py"
+
+    def command(args, **kwargs):
+        kwargs.pop("check")
+        if args[0] == backup.K:
+            return cluster(*args[4:], **kwargs)
+        assert args[:2] == ["gcloud", "storage"]
+        return cloud(*args[2:-2], **kwargs)
+
+    with (
+        patch.object(
+            sys,
+            "argv",
+            [str(path), "backup", "--profile", "private", "--operator", "--hold-stopped"],
+        ),
+        patch.object(backup.subprocess, "run", side_effect=command),
+    ):
+        runpy.run_path(str(path), run_name="__main__")
+    metadata = json.loads(copies["recovery.json"])
+    assert set(metadata["replicas"]) & PRIVATE_OPERATORS == PRIVATE_OPERATORS
+
+
+@pytest.mark.parametrize("action", ["verify", "resume"])
+def test_backup_cli_refuses_operator_override_for_saved_recovery(action):
+    path = Path(__file__).resolve().parents[2] / "scripts/development/backup.py"
+    with (
+        patch.object(sys, "argv", [str(path), action, RECOVERY_URI, "--operator"]),
+        patch.object(backup.subprocess, "run") as command,
+        patch.object(backup.subprocess, "check_output") as output,
+        pytest.raises(SystemExit) as error,
+    ):
+        runpy.run_path(str(path), run_name="__main__")
+    assert error.value.code == 2
+    command.assert_not_called()
+    output.assert_not_called()
 
 
 @pytest.mark.parametrize("edge_mode", ["absent", "stopped"])

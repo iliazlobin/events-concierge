@@ -121,7 +121,7 @@ spec:
 {{- end }}
 {{- end }}
 
-{{- if and .Values.operator.enabled .Values.networkPolicy.enabled (eq .Values.global.releasePhase "application") }}
+{{- if and .Values.operator.enabled (ne .Values.global.deploymentProfile "private") .Values.networkPolicy.enabled (eq .Values.global.releasePhase "application") }}
 ---
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy

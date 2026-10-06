@@ -125,6 +125,8 @@ operator:
   iapClientId: ""
   iapClientSecretName: ""
   subjectRoles: {}
+  # HTTP IAP edge data-plane and health-check ranges, independent of the consumer edge.
+  frontendIngressCidrs: [130.211.0.0/22, 35.191.0.0/16]
   executorClaimCheckPrefix: events-concierge/catalog/claim-check/v1
   operatorSecrets:
     - fileName: EC_OPERATOR_DATABASE_URL

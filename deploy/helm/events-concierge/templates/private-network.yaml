@@ -26,4 +26,76 @@ spec:
               {{- include "events-concierge.selectorLabels" (dict "root" . "component" "public-tunnel") | nindent 14 }}
       ports: [{port: 3000, protocol: TCP}]
 {{- end }}
+{{- if and .Values.operator.enabled (eq .Values.global.releasePhase "application") }}
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "events-concierge.fullname" . }}-private-operator-frontend
+spec:
+  podSelector:
+    matchLabels:
+      {{- include "events-concierge.selectorLabels" (dict "root" . "component" "operator-frontend") | nindent 6 }}
+  policyTypes: [Ingress, Egress]
+  ingress:
+    {{- range .Values.operator.frontendIngressCidrs }}
+    - from: [{ipBlock: {cidr: {{ . | quote }}}}]
+      ports: [{port: 3000, protocol: TCP}]
+    {{- end }}
+  egress:
+    - to:
+        - podSelector:
+            matchLabels:
+              {{- include "events-concierge.selectorLabels" (dict "root" . "component" "operator-api") | nindent 14 }}
+      ports: [{port: 8000, protocol: TCP}]
+    - to:
+        - namespaceSelector:
+            matchLabels: {kubernetes.io/metadata.name: kube-system}
+      ports: [{port: 53, protocol: UDP}, {port: 53, protocol: TCP}]
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "events-concierge.fullname" . }}-private-operator-api
+spec:
+  podSelector:
+    matchLabels:
+      {{- include "events-concierge.selectorLabels" (dict "root" . "component" "operator-api") | nindent 6 }}
+  policyTypes: [Ingress, Egress]
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              {{- include "events-concierge.selectorLabels" (dict "root" . "component" "operator-frontend") | nindent 14 }}
+      ports: [{port: 8000, protocol: TCP}]
+  egress:
+    - to:
+        - podSelector: {matchLabels: {ec-store: application-postgres}}
+      ports: [{port: 5432, protocol: TCP}]
+    - to:
+        - namespaceSelector:
+            matchLabels: {kubernetes.io/metadata.name: kube-system}
+      ports: [{port: 53, protocol: UDP}, {port: 53, protocol: TCP}]
+    - to: [{ipBlock: {cidr: 169.254.169.254/32}}]
+      ports: [{port: 80, protocol: TCP}]
+    - to:
+        - ipBlock:
+            cidr: 0.0.0.0/0
+            except: [10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16, 169.254.0.0/16]
+      ports: [{port: 443, protocol: TCP}]
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "events-concierge.fullname" . }}-private-operator-postgres
+spec:
+  podSelector: {matchLabels: {ec-store: application-postgres}}
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              {{- include "events-concierge.selectorLabels" (dict "root" . "component" "operator-api") | nindent 14 }}
+      ports: [{port: 5432, protocol: TCP}]
+{{- end }}
 {{- end }}

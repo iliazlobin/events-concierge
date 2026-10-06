@@ -130,6 +130,7 @@ seccompProfile:
 {{- end -}}
 {{- end -}}
 {{- range $profile := list "operator" "executor" -}}
+{{- if or (eq $profile "operator") (not $private) -}}
 {{- $allowed := list "EC_OPERATOR_DATABASE_URL" -}}
 {{- $required := $allowed -}}
 {{- if eq $profile "executor" -}}
@@ -145,6 +146,7 @@ seccompProfile:
 {{- end -}}
 {{- range $required -}}
 {{- if not (has . $files) -}}{{- fail (printf "operator.%sSecrets requires %s" $profile .) -}}{{- end -}}
+{{- end -}}
 {{- end -}}
 {{- end -}}
 {{- range $name := list "operator-frontend" "operator-api" "ingestion-executor" "temporal-catalog" -}}
@@ -245,8 +247,8 @@ seccompProfile:
 
 
 {{- define "events-concierge.validatePrivateRuntime" -}}
-{{- if or (ne .Release.Namespace "events-concierge-dev") .Values.cloudSqlProxy.enabled .Values.gateway.enabled .Values.operator.enabled .Values.developmentCatalog.enabled -}}
-{{- fail "private requires the existing namespace and direct TLS stores; managed gateways and demo catalog/admin stay disabled" -}}
+{{- if or (ne .Release.Namespace "events-concierge-dev") .Values.cloudSqlProxy.enabled .Values.gateway.enabled .Values.developmentCatalog.enabled -}}
+{{- fail "private requires the existing namespace and direct TLS stores; consumer managed gateways and demo catalog/admin stay disabled" -}}
 {{- end -}}
 {{- range $key, $value := dict "EC_ENV" "staging" "EC_MOCK_CLOUD" "false" "EC_DATABASE_CONNECTION_MODE" "direct_tls" "EC_RELEASE_PROFILE" "discovery" "EC_IDENTITY_PLATFORM_ENABLED" "true" "EC_OIDC_BFF_ENABLED" "false" "EC_ADMIN_INGESTION_ENABLED" "false" "EC_GOOGLE_CALENDAR_ENABLED" "false" "EC_AGENT_ENABLED" "false" "EC_CATALOG_INGESTION_SCHEDULER_ENABLED" "false" "EC_TEMPORAL_TLS_ENABLED" "true" "EC_UI_AUTH_START_URL" "/sign-in" "EC_RUNTIME_PROVIDER_FACTORY" "events_concierge.deployment.gcp_runtime:build_runtime_ports" -}}
 {{- if ne (toString (index $.Values.applicationConfig $key)) $value -}}{{- fail (printf "private requires %s=%s" $key $value) -}}{{- end -}}
@@ -288,8 +290,9 @@ seccompProfile:
 {{- end -}}
 {{- end -}}
 {{- range $name, $workload := .Values.workloads -}}
-{{- if and $workload.enabled (not (has $name (list "frontend" "api" "account-erasure" "ingestion-executor" "temporal-catalog"))) -}}{{- fail "private discovery cannot start deferred or demo workloads" -}}{{- end -}}
+{{- if and $workload.enabled (not (or (has $name (list "frontend" "api" "account-erasure" "ingestion-executor" "temporal-catalog")) (and $.Values.operator.enabled (has $name (list "operator-api" "operator-frontend"))))) -}}{{- fail "private discovery cannot start deferred or demo workloads" -}}{{- end -}}
 {{- end -}}
+{{- if .Values.operator.enabled -}}{{- include "events-concierge.validatePrivateOperator" . -}}{{- end -}}
 {{- $frontend := index .Values.workloads "frontend" -}}
 {{- if or (not $frontend.enabled) $frontend.database $frontend.runtimeSecrets $frontend.needsIdentity -}}{{- fail "private frontend must remain enabled without backend credentials" -}}{{- end -}}
 {{- if ne (len .Values.secretManager.runtimeSecrets) 0 -}}{{- fail "private uses per-process secret profiles; the shared runtime secret bundle must be empty" -}}{{- end -}}
@@ -308,6 +311,33 @@ seccompProfile:
 {{- if not $account.gcpServiceAccount -}}{{- fail "private cadence requires its dedicated controller GCP identity" -}}{{- end -}}
 {{- range $key, $other := .Values.serviceAccounts -}}
 {{- if and (ne $key "development-admin") (or (eq $account.name $other.name) (eq $account.gcpServiceAccount $other.gcpServiceAccount)) -}}{{- fail "private controller identity cannot be shared" -}}{{- end -}}
+{{- end -}}
+{{- end -}}
+{{- end -}}
+
+{{- define "events-concierge.validatePrivateOperator" -}}
+{{- $operator := .Values.operator -}}
+{{- if or (eq $operator.hostname .Values.publicTunnel.hostname) (not (regexMatch "^[a-z0-9]([a-z0-9.-]*[a-z0-9])?$" $operator.hostname)) -}}{{- fail "private operator requires a distinct HTTPS hostname" -}}{{- end -}}
+{{- if not (regexMatch "^/projects/[0-9]+/global/backendServices/[0-9]+$" $operator.iapAudience) -}}{{- fail "private operator requires the exact signed IAP backend audience" -}}{{- end -}}
+{{- if ne (len $operator.subjectRoles) 1 -}}{{- fail "private operator assigns exactly one stable owner IAP subject" -}}{{- end -}}
+{{- range $subject, $role := $operator.subjectRoles -}}
+{{- if or (not (regexMatch "^accounts\\.google\\.com:[A-Za-z0-9_-]+$" $subject)) (not (has $role (list "viewer" "operator" "reviewer"))) -}}{{- fail "private operator requires a stable Google IAP subject and explicit role" -}}{{- end -}}
+{{- end -}}
+{{- if ne (toJson $operator.frontendIngressCidrs) (toJson (list "130.211.0.0/22" "35.191.0.0/16")) -}}{{- fail "private operator ingress is restricted to Google Front End ranges" -}}{{- end -}}
+{{- if ne (len $operator.operatorSecrets) 1 -}}{{- fail "private operator requires only its controller database DSN" -}}{{- end -}}
+{{- $secret := first $operator.operatorSecrets -}}
+{{- if or (ne $secret.fileName "EC_OPERATOR_DATABASE_URL") (ne $secret.secretName "ec-dev-operator-database-url") (not (regexMatch "^[1-9][0-9]*$" (toString $secret.version))) -}}{{- fail "private operator requires its numbered controller database secret version" -}}{{- end -}}
+{{- range $name, $cpu := dict "operator-frontend" "25m" "operator-api" "100m" -}}
+{{- $workload := index $.Values.workloads $name -}}
+{{- $memory := ternary "128Mi" "192Mi" (eq $name "operator-frontend") -}}
+{{- $port := ternary 3000 8000 (eq $name "operator-frontend") -}}
+{{- if ne (int $workload.port) $port -}}{{- fail "private operator must retain its fixed frontend and API ports" -}}{{- end -}}
+{{- if or (ne (int $workload.replicas) 1) $workload.pdb.enabled (ne $workload.resources.requests.cpu $cpu) (ne $workload.resources.requests.memory $memory) -}}{{- fail "private operator requires two bounded singleton workloads with no PDB" -}}{{- end -}}
+{{- if eq $name "operator-api" -}}
+{{- if ne (toJson $workload.env) (toJson (dict "EC_OPERATOR_API_ENABLED" "true")) -}}{{- fail "private operator API cannot override its security configuration" -}}{{- end -}}
+{{- if ne (toJson $workload.command) (toJson (list "uvicorn" "events_concierge.api.operator:create_operator_app" "--factory" "--host" "0.0.0.0" "--port" "8000" "--no-server-header" "--no-access-log")) -}}{{- fail "private operator API must use the verified operator entrypoint" -}}{{- end -}}
+{{- else -}}
+{{- if or $workload.command $workload.env -}}{{- fail "private operator frontend cannot override its isolated configuration" -}}{{- end -}}
 {{- end -}}
 {{- end -}}
 {{- end -}}

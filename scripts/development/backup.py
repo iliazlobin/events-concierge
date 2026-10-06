@@ -52,6 +52,8 @@ PRIVATE_WRITERS = WRITERS - {
     )
 }
 PUBLIC_TUNNEL = "events-concierge-public-tunnel"
+OPERATOR_FRONTEND = "events-concierge-operator-frontend"
+PRIVATE_OPERATORS = {OPERATOR_FRONTEND, "events-concierge-operator-api"}
 RESUME_RETRY_DELAYS = (2, 4, 8)
 OPERATOR_ROLE_SCHEMA = 182
 MODEL_USAGE_ROLE_SCHEMA = 201
@@ -123,9 +125,14 @@ def _backup_id(uri):
 def _validate_replicas(desired, *, profile="development"):
     if profile not in ("development", "private"):
         raise SystemExit("Unknown deployment profile")
-    allowed = PRIVATE_WRITERS | {PUBLIC_TUNNEL} if profile == "private" else WRITERS
+    allowed = (
+        PRIVATE_WRITERS | PRIVATE_OPERATORS | {PUBLIC_TUNNEL} if profile == "private" else WRITERS
+    )
     if not isinstance(desired, dict) or not desired or set(desired) - allowed:
         raise SystemExit("Recovery contains unknown or missing writer deployment names")
+    operators = set(desired) & PRIVATE_OPERATORS
+    if operators and operators != PRIVATE_OPERATORS:
+        raise SystemExit("Private operator recovery requires both singleton operator deployments")
     # Writers remain singletons; only the explicitly owned public edge has two
     # replicas. Recovery metadata cannot silently change the agreed capacity.
     if any(
@@ -300,7 +307,7 @@ def resume(uri):
 def _quiesce(deployments):
     # Close the public edge before writers; let application shutdown finish while
     # Temporal remains available. PostgreSQL and Redis stay running.
-    for phase_name in ("edge", "application", "temporal"):
+    for phase_name in ("edge", "operator-edge", "application", "temporal"):
         phase = [d for d in deployments if _resume_phase(d["metadata"]["name"]) == phase_name]
         for d in phase:
             k(
@@ -380,14 +387,20 @@ def _check_recovery_schema(recovery):
 def _resume_phase(name):
     if name == PUBLIC_TUNNEL:
         return "edge"
+    if name == OPERATOR_FRONTEND:
+        return "operator-edge"
     return "temporal" if name.startswith("ec-dev-temporal-") else "application"
 
 
-def _wait_before_public_resume(desired, recovery):
-    if any(desired.get("events-concierge-" + name) != 1 for name in ("api", "frontend")):
-        raise RuntimeError("Public edge recovery requires running API and frontend replicas")
+def _wait_before_public_resume(desired, recovery, *, edge=PUBLIC_TUNNEL):
+    required = ("operator-api",) if edge == OPERATOR_FRONTEND else ("api", "frontend")
+    if any(desired.get("events-concierge-" + name) != 1 for name in required):
+        raise RuntimeError("Edge recovery requires its running backend replicas")
+    # The operator frontend resumes before the consumer edge; neither edge may
+    # be treated as an already-running writer during that first readiness gate.
+    excluded = {PUBLIC_TUNNEL, OPERATOR_FRONTEND} if edge == OPERATOR_FRONTEND else {PUBLIC_TUNNEL}
     for name, count in sorted(desired.items()):
-        if count and name != PUBLIC_TUNNEL:
+        if count and name not in excluded:
             k(
                 "rollout",
                 "status",
@@ -406,7 +419,7 @@ def _wait_before_public_resume(desired, recovery):
     # Recheck identity, exact replicas and readiness after waiting, before opening
     # the edge. Rollout status alone could accept an independently changed count.
     for name, count in desired.items():
-        if name == PUBLIC_TUNNEL:
+        if name in excluded:
             continue
         deployment = current.get(name)
         if deployment is None:
@@ -426,6 +439,85 @@ def _wait_before_public_resume(desired, recovery):
     _check_recovery_schema(recovery)
 
 
+def _scale_recovery(name, count, recovery, *, closing_edge=False):
+    for attempt in range(len(RESUME_RETRY_DELAYS) + 1):
+        try:
+            preconditions = []
+            deployment = None
+            if recovery is not None:
+                deployment = json.loads(
+                    k(
+                        "get",
+                        "deployment/" + name,
+                        "-o",
+                        "json",
+                        "--request-timeout=20s",
+                        capture_output=True,
+                        timeout=30,
+                    ).stdout
+                )
+                version = _validate_current_deployment(deployment, name, recovery)
+                if closing_edge and deployment["spec"].get("replicas") not in (
+                    0,
+                    recovery["replicas"][name],
+                ):
+                    raise RuntimeError("Recovery refused: edge replica count changed: " + name)
+                preconditions = ["--resource-version=" + version]
+            k(
+                "scale",
+                "deployment/" + name,
+                "--replicas=" + str(count),
+                "--request-timeout=20s",
+                *preconditions,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.PIPE,
+                timeout=30,
+            )
+            return deployment
+        except (subprocess.CalledProcessError, subprocess.TimeoutExpired) as error:
+            transient = isinstance(error, subprocess.TimeoutExpired) or _transient_scale_error(
+                error
+            )
+            if not transient or attempt == len(RESUME_RETRY_DELAYS):
+                raise
+            delay = RESUME_RETRY_DELAYS[attempt]
+            print(f"Transient recovery error for {name}; retrying in {delay}s", flush=True)
+            time.sleep(delay)
+
+
+def _close_recovery_edges(desired, recovery, failures):
+    # A previously reopened operator edge must close if the later consumer gate
+    # fails. Recheck ownership and use a fresh resource version for each write.
+    for name in (PUBLIC_TUNNEL, OPERATOR_FRONTEND):
+        if not desired.get(name):
+            continue
+        try:
+            deployment = _scale_recovery(name, 0, recovery, closing_edge=True)
+            selector = ",".join(
+                f"{key}={val}" for key, val in deployment["spec"]["selector"]["matchLabels"].items()
+            )
+            k(
+                "wait",
+                "--for=delete",
+                "pod",
+                "-l",
+                selector,
+                "--timeout=180s",
+                "--request-timeout=20s",
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.PIPE,
+                timeout=190,
+            )
+        except (
+            subprocess.CalledProcessError,
+            subprocess.TimeoutExpired,
+            RuntimeError,
+            ValueError,
+            KeyError,
+        ) as error:
+            failures.append(error)
+
+
 def _resume(desired, *, recovery=None):
     profile = recovery.get("deployment_profile", "development") if recovery else "development"
     _validate_replicas(desired, profile=profile)
@@ -436,16 +528,14 @@ def _resume(desired, *, recovery=None):
     failures = []
     # Resume Temporal, then application writers, then the public edge. Attempt all
     # writers after a failure, but never reopen public access to incomplete recovery.
-    order = {"temporal": 0, "application": 1, "edge": 2}
+    order = {"temporal": 0, "application": 1, "operator-edge": 2, "edge": 3}
     for name in sorted(desired, key=lambda n: order[_resume_phase(n)]):
-        if name == PUBLIC_TUNNEL and desired[name]:
+        if name in {PUBLIC_TUNNEL, OPERATOR_FRONTEND} and desired[name]:
             if failures:
-                failures.append(
-                    RuntimeError("Public edge remains stopped after writer recovery failure")
-                )
+                failures.append(RuntimeError("Edge remains stopped after writer recovery failure"))
                 continue
             try:
-                _wait_before_public_resume(desired, recovery)
+                _wait_before_public_resume(desired, recovery, edge=name)
             except (
                 subprocess.CalledProcessError,
                 subprocess.TimeoutExpired,
@@ -453,48 +543,19 @@ def _resume(desired, *, recovery=None):
             ) as error:
                 failures.append(error)
                 continue
-        for attempt in range(len(RESUME_RETRY_DELAYS) + 1):
-            try:
-                preconditions = []
-                if recovery is not None:
-                    deployment = json.loads(
-                        k(
-                            "get",
-                            "deployment/" + name,
-                            "-o",
-                            "json",
-                            "--request-timeout=20s",
-                            capture_output=True,
-                            timeout=30,
-                        ).stdout
-                    )
-                    version = _validate_current_deployment(deployment, name, recovery)
-                    preconditions = ["--resource-version=" + version]
-                k(
-                    "scale",
-                    "deployment/" + name,
-                    "--replicas=" + str(desired[name]),
-                    "--request-timeout=20s",
-                    *preconditions,
-                    stdout=subprocess.DEVNULL,
-                    stderr=subprocess.PIPE,
-                    timeout=30,
-                )
-                break
-            except (subprocess.CalledProcessError, subprocess.TimeoutExpired) as error:
-                transient = isinstance(error, subprocess.TimeoutExpired) or _transient_scale_error(
-                    error
-                )
-                if not transient or attempt == len(RESUME_RETRY_DELAYS):
-                    failures.append(error)
-                    break
-                delay = RESUME_RETRY_DELAYS[attempt]
-                print(f"Transient recovery error for {name}; retrying in {delay}s", flush=True)
-                time.sleep(delay)
-            except (RuntimeError, ValueError, KeyError) as error:
-                failures.append(error)
-                break
+        try:
+            _scale_recovery(name, desired[name], recovery)
+        except (
+            subprocess.CalledProcessError,
+            subprocess.TimeoutExpired,
+            RuntimeError,
+            ValueError,
+            KeyError,
+        ) as error:
+            failures.append(error)
     if failures:
+        if profile == "private":
+            _close_recovery_edges(desired, recovery, failures)
         raise ExceptionGroup("Could not restore every original replica count", failures)
 
 
@@ -516,9 +577,21 @@ def _persist_recovery(folder, dest, recovery):
     )
 
 
-def _check_backup_target():
+def _check_backup_target(*, profile="development", operator=False):
+    if operator and profile != "private":
+        raise SystemExit("Operator backup requires the authenticated private profile")
     _check_context()
     _check_scheduled_writers_quiet()
+
+
+def _backup_deployments(operator):
+    deployments = json.loads(
+        k("get", "deployments", "-o", "json", capture_output=True, timeout=30).stdout
+    )["items"]
+    names = {d["metadata"]["name"] for d in deployments}
+    if names & PRIVATE_OPERATORS != (PRIVATE_OPERATORS if operator else set()):
+        raise SystemExit("Private operator backup requires explicit opt-in and both deployments")
+    return deployments
 
 
 def _object_inventory(folder):
@@ -552,18 +625,17 @@ def _verify_object_inventory(folder, expected):
     return True
 
 
-def backup(*, hold_stopped=False, profile="development"):
-    _check_backup_target()
+def backup(*, hold_stopped=False, profile="development", operator=False):
+    _check_backup_target(profile=profile, operator=operator)
     ident = (
         datetime.datetime.now(datetime.UTC).strftime("%Y%m%dT%H%M%SZ") + "-" + uuid.uuid4().hex[:8]
     )
     dest = BACKUP_ROOT + ident
-    deployments = json.loads(
-        k("get", "deployments", "-o", "json", capture_output=True, timeout=30).stdout
-    )["items"]
+    deployments = _backup_deployments(operator)
     # This namespace is dedicated to the selected profile. Redis is a store, not
     # a writer to this snapshot. The private public edge is explicitly quiesced;
-    # unknown/demo/operator Deployments fail validation before upload or scaling.
+    # unknown/demo Deployments fail validation before upload or scaling. The
+    # exact optional operator pair requires explicit opt-in at backup creation.
     desired = {d["metadata"]["name"]: d["spec"]["replicas"] for d in deployments}
     writers = [d for d in deployments if d["metadata"]["name"] != "ec-dev-redis"]
     quiesced = {d["metadata"]["name"]: d["spec"]["replicas"] for d in writers}
@@ -929,6 +1001,9 @@ if __name__ == "__main__":
     p.add_argument("--target", choices=TARGETS, default="shared")
     p.add_argument("--profile", choices=("development", "private"), default=None)
     p.add_argument(
+        "--operator", action="store_true", help="Include the exact private singleton operator pair"
+    )
+    p.add_argument(
         "--hold-stopped",
         action="store_true",
         help="After a successful backup, leave application writers and Temporal stopped for cutover",
@@ -938,12 +1013,14 @@ if __name__ == "__main__":
     if a.action == "backup":
         if a.uri:
             p.error("backup creates its own prefix; do not supply a URI")
-        backup(hold_stopped=a.hold_stopped, profile=a.profile or "development")
+        backup(hold_stopped=a.hold_stopped, profile=a.profile or "development", operator=a.operator)
     elif a.uri:
         if a.hold_stopped:
             p.error("--hold-stopped applies only to backup")
         if a.profile:
             p.error("--profile applies only to backup; resume uses the saved recovery profile")
+        if a.operator:
+            p.error("--operator applies only to backup; resume uses the saved deployment inventory")
         if a.action == "verify":
             verify(a.uri)
         else:
