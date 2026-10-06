@@ -8,10 +8,15 @@ import { eventImageUrl } from "@/lib/event-image";
 import { eventLocationLabel, eventPageUrl } from "@/lib/event-links";
 import { dayCompactLabel, dayTrackLabel } from "@/lib/map-days";
 import type { MapDayGroup, MapDayModel } from "@/lib/map-days";
+import { eventMapCoordinate } from "@/lib/map-viewport";
 import type { EventEntityReference, EventItem } from "@/lib/types";
 
 interface MapPreviewRailProps {
   events: EventItem[];
+  unmappedEvents: EventItem[];
+  mappedCount: number;
+  showUnmapped: boolean;
+  onListChange: (unmapped: boolean) => void;
   selectedId: string | null;
   onSelect: (event: EventItem) => void;
   onEntitySelect?: (reference: EventEntityReference) => void;
@@ -42,6 +47,7 @@ function MapPreviewCard({ event, selected, muted, onSelect, onEntitySelect }: Ma
   const date = formatEventDate(event.start_at);
   const imageUrl = eventImageUrl(event);
   const pageUrl = eventPageUrl(event);
+  const hasMapLocation = eventMapCoordinate(event) !== null;
   const sourceLabel = event.calendar_labels?.find((value) => value.trim())
     ?? event.sources.find((source) => source.label?.trim())?.label
     ?? event.providers?.find((value) => value.trim());
@@ -56,7 +62,7 @@ function MapPreviewCard({ event, selected, muted, onSelect, onEntitySelect }: Ma
         <button
           className="map-preview__select"
           type="button"
-          aria-label={`Focus ${event.title} on map`}
+          aria-label={hasMapLocation ? `Focus ${event.title} on map` : `Show details for ${event.title}`}
           aria-pressed={selected}
           onClick={() => onSelect(event)}
         >
@@ -95,6 +101,7 @@ function MapPreviewCard({ event, selected, muted, onSelect, onEntitySelect }: Ma
             <MapPin aria-hidden="true" />
             {eventLocationLabel(event)}
           </span>
+          {!hasMapLocation ? <small className="map-preview__location-note">Not plotted on map</small> : null}
         </span>
       </div>
 
@@ -111,6 +118,10 @@ function MapPreviewCard({ event, selected, muted, onSelect, onEntitySelect }: Ma
 
 export function MapPreviewRail({
   events,
+  unmappedEvents,
+  mappedCount,
+  showUnmapped,
+  onListChange,
   selectedId,
   onSelect,
   onEntitySelect,
@@ -127,7 +138,8 @@ export function MapPreviewRail({
    * the track still says a day is emphasized. A single-day result has nothing to
    * group, so it renders exactly the flat list it always has.
    */
-  const grouped = model.cells.length > 1;
+  const grouped = !showUnmapped && model.cells.length > 1;
+  const displayedEvents = showUnmapped ? unmappedEvents : events;
 
   /**
    * An emphasized day that has been panned out of view owns no group, so it is
@@ -143,17 +155,32 @@ export function MapPreviewRail({
   return (
     <aside
       className="map-preview-rail"
-      aria-label="Events visible in map"
+      aria-label={showUnmapped ? "Events without map locations" : "Events visible in map"}
     >
+      {unmappedEvents.length ? (
+        <div className="map-preview-rail__tabs" role="group" aria-label="Map event lists">
+          <button type="button" aria-pressed={!showUnmapped} onClick={() => onListChange(false)}
+            disabled={mappedCount === 0}>
+            In this area <span>{events.length}</span>
+          </button>
+          <button type="button" aria-pressed={showUnmapped} onClick={() => onListChange(true)}>
+            Without map locations <span>{unmappedEvents.length}</span>
+          </button>
+        </div>
+      ) : null}
       <header className="map-preview-rail__heading">
         <div>
-          <p>IN THIS AREA</p>
-          <h2>Visible events</h2>
+          <p>{showUnmapped ? "MATCHING YOUR FILTERS" : "IN THIS AREA"}</p>
+          <h2>{showUnmapped ? "Events without pins" : "Visible events"}</h2>
         </div>
         <span aria-live="polite">
-          {activeDay ? `${model.activeInView}/${model.totalInView}` : events.length}
+          {showUnmapped ? unmappedEvents.length : activeDay ? `${model.activeInView}/${model.totalInView}` : events.length}
         </span>
       </header>
+
+      {showUnmapped ? <p className="map-preview-rail__notice">
+        These events have no map coordinates. Open an event for its location details.
+      </p> : null}
 
       {grouped && activeDay ? (
         <div className="map-preview-rail__filter">
@@ -169,7 +196,7 @@ export function MapPreviewRail({
         </div>
       ) : null}
 
-      {!events.length && !sections.length ? (
+      {!displayedEvents.length && !sections.length ? (
         <p className="map-preview-rail__empty" role="status">
           Move or zoom the map to find events in this area.
         </p>
@@ -235,7 +262,7 @@ export function MapPreviewRail({
         </div>
       ) : (
         <div className="map-preview-rail__list" role="list">
-          {events.map((event) => (
+          {displayedEvents.map((event) => (
             <MapPreviewCard
               key={event.canonical_event_id}
               event={event}

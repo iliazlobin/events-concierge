@@ -3,13 +3,12 @@
 import { LoaderCircle } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
-import { EntityGraphCanvas } from "@/components/entity-graph-canvas";
-import { EntityInspector } from "@/components/entity-inspector";
+import { GraphWorkspace } from "@/components/graph-workspace";
 import { GraphWorkspaceHeading } from "@/components/graph-workspace-heading";
 import { getCatalogEntityGraph } from "@/lib/entity-graph-api";
 import type { CatalogEntityGraph } from "@/lib/entity-graph";
 import { aggregateGraphSessions } from "@/lib/entity-graph-sessions";
-import { deriveEntityGraphScene, deriveEntityGraphDetails } from "@/lib/entity-graph";
+import { deriveEntityGraphScene } from "@/lib/entity-graph";
 import { readableGraphError } from "@/lib/entity-graph-errors";
 import { readEntityGraph, writeEntityGraph } from "@/lib/entity-graph-cache";
 import { layoutEgoRings } from "@/lib/entity-graph-layout";
@@ -146,7 +145,6 @@ export function EntityGraphView({
     () => (canvasModel ? layoutEgoRings(canvasModel, viewport) : null),
     [canvasModel, viewport],
   );
-  const detailModel = useMemo(() => (model ? deriveEntityGraphDetails(model) : null), [model]);
 
   const ego = model?.ego ?? null;
 
@@ -221,31 +219,15 @@ export function EntityGraphView({
 
       <p className="sr-only" role="status" aria-live="polite">{announcement}</p>
 
-      {scene && model && detailModel ? (
-        <div className="entity-graph-stage">
-          <div className="entity-graph-column" ref={measureColumn}>
-            <EntityGraphCanvas
-              scene={scene}
-              selectedNodeId={selectedNodeId ? sessions?.representative.get(selectedNodeId) ?? selectedNodeId : null}
-              hoveredNodeId={hoveredNodeId ? sessions?.representative.get(hoveredNodeId) ?? hoveredNodeId : null}
-              onSelect={setSelectedNodeId}
-              onFocus={focusNodeId}
-            />
-          </div>
-          <EntityInspector
-            canRefresh={canRefresh}
-            eventSessions={sessions?.groups.get(sessions.representative.get(selectedNodeId ?? "") ?? "")}
-            tenantId={tenantId}
-            model={model}
-            detailModel={detailModel}
-            selectedNodeId={selectedNodeId}
-            onSelectNode={setSelectedNodeId}
-            onFocusEntity={focusEntity}
-            onHoverNode={setHoveredNodeId}
-            onEntitySelect={onEntitySelect}
-            onTopicSelect={onTopicSelect}
-          />
-        </div>
+      {scene && model ? (
+        <GraphWorkspace scene={scene} model={model} tenantId={tenantId} canRefresh={canRefresh}
+          selectedNodeId={selectedNodeId} hoveredNodeId={hoveredNodeId}
+          canvasSelectedNodeId={selectedNodeId ? sessions?.representative.get(selectedNodeId) ?? selectedNodeId : null}
+          canvasHoveredNodeId={hoveredNodeId ? sessions?.representative.get(hoveredNodeId) ?? hoveredNodeId : null}
+          eventSessions={sessions?.groups.get(sessions.representative.get(selectedNodeId ?? "") ?? "")}
+          measureColumn={measureColumn} onSelectNode={setSelectedNodeId} onHoverNode={setHoveredNodeId}
+          onFocusNode={focusNodeId} onFocusEntity={focusEntity}
+          onEntitySelect={onEntitySelect} onTopicSelect={onTopicSelect} />
       ) : null}
 
       {sessions && [...sessions.groups.values()].some((group) => group.length > 1) ? (

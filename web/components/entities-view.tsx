@@ -1,12 +1,10 @@
 "use client";
 
-import { Building2, Hash, LoaderCircle, SlidersHorizontal, UserRound, UsersRound } from "lucide-react";
-import type { ReactNode } from "react";
+import { LoaderCircle, SlidersHorizontal } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
-import { EntityGraphCanvas } from "@/components/entity-graph-canvas";
+import { GraphWorkspace } from "@/components/graph-workspace";
 import { EntityGraphView } from "@/components/entity-graph-view";
-import { GraphEventInspector } from "@/components/graph-event-inspector";
 import { GraphWorkspaceHeading } from "@/components/graph-workspace-heading";
 import {
   ENTITY_SEARCH_DEBOUNCE_MS,
@@ -21,7 +19,6 @@ import type { CatalogEntityIdentityFilter } from "@/lib/entity-graph-api";
 import type {
   CatalogEntityDirectory,
   CatalogEntityGraph,
-  CatalogEntityGraphNode,
 } from "@/lib/entity-graph";
 import { deriveEntityGraphScene } from "@/lib/entity-graph";
 import {
@@ -35,23 +32,7 @@ import type { CatalogEntityKind, EventEntityReference } from "@/lib/types";
 
 import "@/app/entity-graph.css";
 
-/**
- * The Entities tab, which opens on a graph.
- *
- * There are exactly two states and no third: no entity selected draws the overview — the top hubs
- * and how they interconnect — and a selected entity draws that entity's ego graph. The
- * alphabetical wall that used to be the second half of this file is gone. It answered no question
- * a reader arrives with: the catalog holds thousands of entities, four fifths of them appear at a
- * single event, and a reader who already knows the name types it into the search box, which is
- * still here and now narrows the graph itself.
- *
- * The overview keeps the same bipartite spine as every other picture in this feature: a drawn
- * connection between two hubs is an event both are recorded at — `entity -> event -> entity` —
- * never a synthesised entity-to-entity edge, and never a name match. What the server samples is
- * *which* of a pair's shared events stands for the pair, and the view says so in words, in the
- * same register as the coverage line: a picture that quietly showed one event where a pair shares
- * eighty would be a claim about the catalog rather than a drawing of it.
- */
+/** Catalog and focused graphs share one canvas/inspector UI; only their bounded data scopes differ. */
 
 /**
  * The caps this view asks the endpoint for.
@@ -95,13 +76,6 @@ function count(value: number): string {
   return value.toLocaleString();
 }
 
-function nodeGlyph(node: CatalogEntityGraphNode): ReactNode {
-  if (node.node_kind === "topic") return <Hash aria-hidden="true" />;
-  if (node.entity_kind === "organization") return <Building2 aria-hidden="true" />;
-  if (node.entity_kind === "person") return <UserRound aria-hidden="true" />;
-  return <UsersRound aria-hidden="true" />;
-}
-
 export function EntitiesView({
   tenantId,
   canRefresh = false,
@@ -110,6 +84,9 @@ export function EntitiesView({
   onEntitySelect,
   onTopicSelect,
 }: EntitiesViewProps) {
+  const [query, setQuery] = useState("");
+  const [kinds, setKinds] = useState<CatalogEntityKind[]>([]);
+  const [identity, setIdentity] = useState<CatalogEntityIdentityFilter>("all");
   if (selectedEntityId) {
     return (
       <EntityGraphView
@@ -123,23 +100,31 @@ export function EntitiesView({
     );
   }
 
-  return <EntityOverviewGraph tenantId={tenantId} onSelectEntity={onSelectEntity}
+  return <EntityOverviewGraph tenantId={tenantId} canRefresh={canRefresh}
+    query={query} onQueryChange={setQuery} kinds={kinds} onKindsChange={setKinds}
+    identity={identity} onIdentityChange={setIdentity} onSelectEntity={onSelectEntity}
     onEntitySelect={onEntitySelect} onTopicSelect={onTopicSelect} />;
 }
 
 interface EntityOverviewGraphProps {
   tenantId: string | null;
+  canRefresh: boolean;
+  query: string;
+  onQueryChange: (query: string) => void;
+  kinds: CatalogEntityKind[];
+  onKindsChange: (kinds: CatalogEntityKind[]) => void;
+  identity: CatalogEntityIdentityFilter;
+  onIdentityChange: (identity: CatalogEntityIdentityFilter) => void;
   onSelectEntity: (entityId: string) => void;
   onEntitySelect: (reference: EventEntityReference) => void;
   onTopicSelect: (topic: string) => void;
 }
 
-function EntityOverviewGraph({ tenantId, onSelectEntity, onEntitySelect, onTopicSelect }: EntityOverviewGraphProps) {
+function EntityOverviewGraph({ tenantId, canRefresh, query, kinds, identity,
+  onQueryChange, onKindsChange, onIdentityChange,
+  onSelectEntity, onEntitySelect, onTopicSelect }: EntityOverviewGraphProps) {
   const observerRef = useRef<ResizeObserver | null>(null);
   const abortRef = useRef<AbortController | null>(null);
-  const [query, setQuery] = useState("");
-  const [kinds, setKinds] = useState<CatalogEntityKind[]>([]);
-  const [identity, setIdentity] = useState<CatalogEntityIdentityFilter>("all");
   const [graph, setGraph] = useState<CatalogEntityGraph | null>(null);
   const [facts, setFacts] = useState<CatalogEntityDirectory | null>(null);
   const [loading, setLoading] = useState(false);
@@ -325,8 +310,6 @@ function EntityOverviewGraph({ tenantId, onSelectEntity, onEntitySelect, onTopic
     if (node?.node_kind === "entity" && node.entity_id) onSelectEntity(node.entity_id);
   }, [model, onSelectEntity]);
 
-  const selectedNode = selectedNodeId ? model?.byId.get(selectedNodeId) ?? null : null;
-
   const coverage = facts?.coverage ?? null;
   const coveragePercent = coverage && coverage.events_total > 0
     ? ((coverage.events_with_entities / coverage.events_total) * 100).toFixed(1)
@@ -352,14 +335,14 @@ function EntityOverviewGraph({ tenantId, onSelectEntity, onEntitySelect, onTopic
       <div className="entity-overview">
         <GraphWorkspaceHeading>
           <div className="graph-workspace-tools">
-            <EntitySearchBox query={query} onQueryChange={setQuery} loading={loading}
+            <EntitySearchBox query={query} onQueryChange={onQueryChange} loading={loading}
               placeholder="Search people and organizations…" />
             <details className="graph-workspace-filters">
               <summary><SlidersHorizontal aria-hidden="true" />Filters
                 {kinds.length || identity !== "all" ? <span>{kinds.length + Number(identity !== "all")}</span> : null}
               </summary>
-              <EntityFilterChips kinds={kinds} onKindsChange={setKinds} kindCounts={kindCounts}
-                identity={identity} onIdentityChange={setIdentity} identityCounts={identityCounts}
+              <EntityFilterChips kinds={kinds} onKindsChange={onKindsChange} kindCounts={kindCounts}
+                identity={identity} onIdentityChange={onIdentityChange} identityCounts={identityCounts}
                 identityScope="In the whole catalog" label="Narrow the graph" />
             </details>
           </div>
@@ -420,34 +403,12 @@ function EntityOverviewGraph({ tenantId, onSelectEntity, onEntitySelect, onTopic
           <div className="entity-loading"><LoaderCircle className="spin" />Loading entity graph</div>
         ) : null}
 
-        {scene && scene.placements.length > 0 ? (
-          <div className="entity-graph-stage" data-selection={selectedNode?.node_kind === "event" ? "event" : "none"}>
-            <div className="entity-graph-column" ref={measureColumn}>
-              <EntityGraphCanvas
-                scene={scene}
-                selectedNodeId={selectedNodeId}
-                hoveredNodeId={hoveredNodeId}
-                onSelect={setSelectedNodeId}
-                onFocus={focusNodeId}
-              />
-            </div>
-            {selectedNode?.node_kind === "event" && model ? (
-              <GraphEventInspector
-                key={`${tenantId ?? "anonymous"}:${selectedNode.canonical_event_id ?? selectedNode.node_id}`}
-                tenantId={tenantId}
-                subject={selectedNode}
-                model={model}
-                contextNote={selectedNode.shared_event_count !== null
-                  ? `Representative of ${count(selectedNode.shared_event_count)} shared ${selectedNode.shared_event_count === 1 ? "event" : "events"}.`
-                  : undefined}
-                onSelectNode={setSelectedNodeId}
-                onHoverNode={setHoveredNodeId}
-                onFocusEntity={onSelectEntity}
-                onEntitySelect={onEntitySelect}
-                onTopicSelect={onTopicSelect}
-              />
-            ) : null}
-          </div>
+        {scene && model && scene.placements.length > 0 ? (
+          <GraphWorkspace scene={scene} model={model} scope="catalog" tenantId={tenantId}
+            canRefresh={canRefresh} selectedNodeId={selectedNodeId} hoveredNodeId={hoveredNodeId}
+            measureColumn={measureColumn} onSelectNode={setSelectedNodeId} onHoverNode={setHoveredNodeId}
+            onFocusNode={focusNodeId} onFocusEntity={onSelectEntity}
+            onEntitySelect={onEntitySelect} onTopicSelect={onTopicSelect} />
         ) : null}
 
         {scene && scene.placements.length === 0 && !loading ? (
@@ -456,15 +417,6 @@ function EntityOverviewGraph({ tenantId, onSelectEntity, onEntitySelect, onTopic
             <h2>No entities match</h2>
             <p>Try a broader name, or clear a filter.</p>
           </div>
-        ) : null}
-
-        {selectedNode && selectedNode.node_kind !== "event" ? (
-          <OverviewSelection node={selectedNode} onOpen={onSelectEntity} />
-        ) : !selectedNode ? (
-          <p className="entity-overview-hint">
-            Click a node to read it. Double-click a hub to open its own graph; double-click an event
-            to bring it to the centre.
-          </p>
         ) : null}
 
         <ul className="entity-graph-legend">
@@ -479,56 +431,5 @@ function EntityOverviewGraph({ tenantId, onSelectEntity, onEntitySelect, onTopic
         </ul>
       </div>
     </section>
-  );
-}
-
-/**
- * Entity and topic summaries use the graph payload; event selections use the shared event card.
- */
-function OverviewSelection({
-  node,
-  onOpen,
-}: {
-  node: CatalogEntityGraphNode;
-  onOpen: (entityId: string) => void;
-}) {
-  const facts: string[] = [];
-  if (node.node_kind === "entity") {
-    facts.push(`${count(node.degree)} ${node.degree === 1 ? "event" : "events"}`);
-    facts.push(
-      node.identity_status === "profile_verified"
-        ? "Direct profile URL on file"
-        : "Scoped to the source that named it",
-    );
-    if ((node.roles ?? []).length) {
-      facts.push((node.roles ?? []).map((role) => (
-        role.replace(/^./, (value) => value.toUpperCase())
-      )).join(" · "));
-    }
-  } else {
-    facts.push(`${count(node.degree)} of the drawn events`);
-  }
-
-  return (
-    <div className="entity-overview-selection">
-      <span className="entity-overview-selection__glyph" data-kind={
-        node.node_kind === "entity" ? node.entity_kind ?? "unknown" : node.node_kind
-      }>
-        {nodeGlyph(node)}
-      </span>
-      <span className="entity-overview-selection__copy">
-        <strong>{node.label}</strong>
-        <span>{facts.join(" · ")}</span>
-      </span>
-      {node.node_kind === "entity" && node.entity_id ? (
-        <button
-          type="button"
-          className="entity-overview-selection__open"
-          onClick={() => onOpen(node.entity_id as string)}
-        >
-          Open this graph
-        </button>
-      ) : null}
-    </div>
   );
 }

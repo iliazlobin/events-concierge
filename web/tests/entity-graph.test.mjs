@@ -18,6 +18,7 @@ import {
   writeEntityOverview,
 } from "../lib/entity-graph-cache.ts";
 import {
+  deriveEntityAppearances,
   deriveEntityGraphScene,
   formatGraphNodeId,
   graphNodeEntityId,
@@ -777,6 +778,92 @@ function buildOverview({ entities = 0, pairs = [], isolated = 0 } = {}) {
     same_name_candidates: [],
   };
 }
+
+test("the overview has no ego and retains every hub's appearance adjacency", () => {
+  const graph = buildOverview({ entities: 3, pairs: [[0, 1], [1, 2]], isolated: 1 });
+  const scene = deriveEntityGraphScene(graph);
+  const firstHub = `entity:${uuid("dddddddd", 1)}`;
+  const secondHub = `entity:${uuid("dddddddd", 2)}`;
+  const thirdHub = `entity:${uuid("dddddddd", 3)}`;
+  const isolatedHub = `entity:${uuid("eeeeeeee", 1)}`;
+  const firstEvent = `event:${uuid("ffffffff", 1)}`;
+  const secondEvent = `event:${uuid("ffffffff", 2)}`;
+
+  assert.equal(scene.ego, null, "the first ring-0 hub is not an implicit focus");
+  const details = deriveEntityGraphDetails(scene);
+  assert.equal(details.ego, null);
+  assert.equal(details.upcoming.length + details.past.length, 2);
+  assert.ok([...details.upcoming, ...details.past].every((row) =>
+    row.roles.length === 0 && row.source_labels.length === 0 && row.observed_at === null),
+  "a catalog frame does not borrow any hub's assertions");
+  assert.deepEqual(new Set(scene.peers.map((node) => node.node_id)),
+    new Set([firstHub, secondHub, thirdHub, isolatedHub]));
+  assert.deepEqual(scene.peerEvents.get(firstHub), [firstEvent]);
+  assert.deepEqual(scene.peerEvents.get(secondHub), [firstEvent, secondEvent]);
+  assert.deepEqual(scene.peerEvents.get(thirdHub), [secondEvent]);
+  assert.deepEqual(scene.peerEvents.get(isolatedHub), []);
+  assert.deepEqual(deriveEntityAppearances(scene, isolatedHub), [],
+    "no drawn connection does not create a synthetic appearance");
+});
+
+test("overview appearances retain the selected hub's own roles and source evidence", () => {
+  const graph = buildOverview({ entities: 3, pairs: [[0, 1], [0, 2], [1, 2]] });
+  const selectedHub = `entity:${uuid("dddddddd", 1)}`;
+  for (const edge of graph.edges) {
+    const selected = edge.a === selectedHub;
+    edge.roles = selected ? ["host"] : ["organizer"];
+    edge.source_labels = selected ? ["Host calendar"] : ["Organizer calendar"];
+    edge.observed_at = selected ? "2026-08-02T00:00:00Z" : "2026-08-03T00:00:00Z";
+  }
+  const firstEvent = `event:${uuid("ffffffff", 1)}`;
+  graph.nodes.find((node) => node.node_id === firstEvent).is_past = true;
+  for (const node of graph.nodes.filter((node) => node.node_kind === "event")) {
+    node.ego_roles = ["organizer", "host"];
+  }
+  graph.edges.reverse();
+  const scene = deriveEntityGraphScene(graph);
+  const appearances = deriveEntityAppearances(scene, selectedHub);
+
+  assert.deepEqual(appearances.map((row) => row.node_id),
+    [`event:${uuid("ffffffff", 2)}`, firstEvent],
+    "only incident events are shown, in upcoming-then-past scene order");
+  assert.deepEqual(appearances.map(({ roles, source_labels, observed_at }) =>
+    ({ roles, source_labels, observed_at })), [
+    { roles: ["host"], source_labels: ["Host calendar"], observed_at: "2026-08-02T00:00:00Z" },
+    { roles: ["host"], source_labels: ["Host calendar"], observed_at: "2026-08-02T00:00:00Z" },
+  ]);
+  assert.equal(appearances[0].title, "Bridge 2");
+  assert.equal(appearances[0].start_at, "2026-02-01T18:00:00+00:00");
+  assert.equal(appearances[0].venue_name, "Somewhere");
+});
+
+test("focused peer appearances do not inherit the focus's assertions or unrelated events", () => {
+  const graph = buildGraph({ events: 3, peers: 1, peerShare: 2, upcoming: 2 });
+  const peer = `entity:${uuid("cccccccc", 1)}`;
+  for (const edge of graph.edges) {
+    const isPeer = edge.a === peer;
+    edge.roles = isPeer ? ["speaker"] : ["organizer"];
+    edge.source_labels = isPeer ? ["Speaker calendar"] : ["Focus calendar"];
+    edge.observed_at = isPeer ? "2026-08-04T00:00:00Z" : "2026-08-05T00:00:00Z";
+  }
+  const scene = deriveEntityGraphScene(graph);
+  const appearances = deriveEntityAppearances(scene, peer);
+  const focusAppearances = deriveEntityAppearances(scene, graph.focus_id);
+
+  assert.deepEqual(appearances.map((row) => row.node_id),
+    [`event:${uuid("bbbbbbbb", 1)}`, `event:${uuid("bbbbbbbb", 2)}`]);
+  for (const row of appearances) {
+    assert.deepEqual(row.roles, ["speaker"]);
+    assert.deepEqual(row.source_labels, ["Speaker calendar"]);
+    assert.equal(row.observed_at, "2026-08-04T00:00:00Z");
+  }
+  assert.equal(focusAppearances.length, 3);
+  for (const row of focusAppearances) {
+    assert.deepEqual(row.roles, ["organizer"]);
+    assert.deepEqual(row.source_labels, ["Focus calendar"]);
+    assert.equal(row.observed_at, "2026-08-05T00:00:00Z");
+  }
+});
 
 function overlapping(scene) {
   const clashes = [];
