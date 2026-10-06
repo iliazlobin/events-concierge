@@ -3,7 +3,7 @@
 Public origin: **https://events.iliazlobin.com**. The Helm connector is opt-in;
 publishing DNS requires a reviewed, verified non-mock release and configured
 [consumer identity](../deployment/consumer-identity.md). The private development profile
-cannot enable it. The [authenticated datastore composition](development.md#remaining-release-work)
+cannot enable it. The [authenticated datastore composition](development.md#authenticated-discovery-and-encrypted-dependencies)
 must be released first; this package does not convert plaintext stores to TLS.
 
 ## Route and ownership
@@ -23,6 +23,9 @@ Browser → Cloudflare HTTPS → encrypted tunnel → GKE consumer filter → co
   frontend and [Cloudflare tunnel endpoints](https://developers.cloudflare.com/cloudflare-one/networks/connectors/cloudflare-tunnel/configure-tunnels/tunnel-with-firewall/)
   on TCP/UDP 7844. DNS permits only `kube-dns` and [NodeLocal DNSCache](https://docs.cloud.google.com/kubernetes-engine/docs/how-to/nodelocal-dns-cache)
   pods in `kube-system`, port 53. No public GCP Gateway, LoadBalancer or inbound firewall rule is added.
+- The data chart must exclude `public-tunnel` from its internal allow policy in both directions.
+  Deploy that change with the authenticated profile; overlapping allow policies would otherwise
+  bypass the connector's intended network limits.
 - Cloudflare terminates browser TLS; the tunnel is encrypted. The final filter-to-frontend
   leg is HTTP restricted by NetworkPolicy inside the namespace. This is not end-to-end
   application mTLS. Database, Redis and Temporal encryption remain independent release gates.

@@ -15,6 +15,14 @@ chart's matching overlay consumes the platform-owned `shared-retain` class witho
 The [deployment runbook](../../development.md) owns readiness, state migration, recovery, and
 cutover steps; the overlay alone does not establish production readiness.
 
+For authenticated discovery on those in-cluster stores, use
+[values-private-authenticated.example.yaml](values-private-authenticated.example.yaml) with chart
+defaults and target-checked image/identity bindings. It uses direct PostgreSQL/Redis TLS and four
+separate Temporal client certificate Secrets. The cadence process receives only its controller
+database DSN and CA. Frontend, catalog and controller processes receive no Google OAuth secrets.
+The file does not activate the public edge or IAP admin. Follow the runbook's coordinated TLS
+cutover, provider/legal setup and deployed login/logout checks before enabling signup or cadence.
+
 [Public consumer access](../../public-access.md) packages the optional Cloudflare connector
 for `events.iliazlobin.com`; admin access remains separate and activation requires a verified release.
 
@@ -22,9 +30,10 @@ Only non-secret identifiers belong in values files. The runtime uses `*_FILE` se
 migration Job receives only its owner URL and application-role bootstrap password files.
 Secret references must use immutable numeric versions, never `latest`; the version lists are hashed
 into Pod templates so a reviewed version change produces a rollout.
-The Redis URL secret should reference the mounted CA path
+For the managed profile, the Redis URL secret should reference the mounted CA path
 `/var/run/secrets/events-concierge/REDIS_CA_CERTIFICATE`; Terraform exports the public CA material
-for an audited operator to populate that Secret Manager container.
+for an audited operator to populate that Secret Manager container. The private profile uses
+`/var/run/events-concierge-tls/redis/ca.crt` from its CA-only Kubernetes Secret.
 
 Copy `values-staging.example.yaml` outside version control, replace the example project, identities,
 hostnames, secret IDs, and all three image digests with release evidence, then deploy in two phases:
@@ -33,8 +42,9 @@ hostnames, secret IDs, and all three image digests with release evidence, then d
 operations renders fail until an authorized release job has mounted the exact secret versions and
 successfully run `python -m events_concierge.operations validate-config` **without**
 `--structural-only`; only then may that release's protected values set the gate to `true`. The
-repository's current partial GCP provider does not pass that gate, so it must not be enabled merely
-to make a render succeed. CI sets it only while proving manifest structure and never deploys.
+full product profile still has unprovisioned provider ports. The bounded discovery profile uses
+explicit disabled effects; verify its exact deployed configuration and dependencies before setting
+the gate. CI sets it only while proving manifest structure and never deploys.
 
 ```bash
 chart=deploy/helm/events-concierge

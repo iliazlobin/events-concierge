@@ -6,6 +6,7 @@ namespace:
   labels: {}
 
 global:
+  deploymentProfile: managed
   # Safe bootstrap default: render only migration infrastructure, and still reject placeholders.
   releasePhase: migration
   # Set true only after full non-structural production validation succeeds with deployed secrets.
@@ -152,6 +153,16 @@ developmentCatalog:
   cadenceEnabled: false
   claimCheckPrefix: events-concierge/catalog/v1
   executorSecrets: []
+
+# Authenticated discovery with the existing in-cluster stores. Values hold references only.
+privateRuntime:
+  postgresCASecretName: ""
+  redisCASecretName: ""
+  temporalCASecretName: ""
+  processSecrets: {}
+  temporalClientSecretNames: {}
+  cadenceEnabled: false
+  controllerSecrets: []
 
 serviceAccounts:
   development-admin:

@@ -20,7 +20,7 @@ from ..domain.enums import Source
 from ..ports.sources import SourceCapability
 from ..runtime import RuntimePorts, load_runtime_ports
 from ..workflows.temporal_client import validate_temporal_settings
-from .network_safety import is_non_remote_host
+from .network_safety import is_non_remote_host, is_remote_dependency_host
 
 _LOCAL_ENVIRONMENTS = frozenset({"", "dev", "development", "local", "test", "testing"})
 _SHA256_DIGEST = re.compile(r"^sha256:[0-9a-f]{64}$")
@@ -552,7 +552,7 @@ def _check_redis(value: str) -> ConfigCheck:
         parsed.scheme == "rediss"
         and bool(parsed.hostname)
         and (port is None or 1 <= port <= _MAX_PORT)
-        and not is_non_remote_host(parsed.hostname)
+        and is_remote_dependency_host(parsed.hostname)
         and not parsed.fragment
         and _redis_tls_query_is_verified(parsed.query)
     )
@@ -594,7 +594,7 @@ def _check_database(value: str, *, mode: str) -> ConfigCheck:
     else:
         passed = (
             common
-            and not is_non_remote_host(parsed.hostname)
+            and is_remote_dependency_host(parsed.hostname)
             and _postgres_sslmode_is(parsed.query, "verify-full")
         )
         success = "remote certificate-and-hostname-verified PostgreSQL ec_app role is configured"
@@ -630,7 +630,7 @@ def _check_remote_target(name: str, value: str) -> ConfigCheck:
         and not parsed.fragment
         and value.isprintable()
         and not any(character.isspace() for character in value)
-        and not is_non_remote_host(host)
+        and is_remote_dependency_host(host)
     )
     return _check(
         name,
