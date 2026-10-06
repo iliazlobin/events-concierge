@@ -1,7 +1,7 @@
 {{- if eq .Values.global.deploymentProfile "private" }}
 {{- $root := . -}}
-{{- range $name := list "api" "account-erasure" "ingestion-executor" "temporal-catalog" "controller" }}
-{{- if or (ne $name "controller") $root.Values.privateRuntime.cadenceEnabled }}
+{{- range $name := list "api" "account-erasure" "ingestion-executor" "temporal-catalog" "controller" "operator-api" }}
+{{- if and (or (ne $name "controller") $root.Values.privateRuntime.cadenceEnabled) (or (ne $name "operator-api") $root.Values.operator.enabled) }}
 {{- $catalog := has $name (list "ingestion-executor" "temporal-catalog") }}
 ---
 apiVersion: v1
@@ -37,13 +37,19 @@ data:
   {{ $key }}: {{ $value | quote }}
   {{- end }}
   {{- end }}
+  {{- else if eq $name "operator-api" }}
+  EC_OPERATOR_API_ENABLED: "true"
+  EC_OPERATOR_DATABASE_URL_FILE: /var/run/secrets/events-concierge/EC_OPERATOR_DATABASE_URL
+  EC_OPERATOR_IAP_AUDIENCE: {{ $root.Values.operator.iapAudience | quote }}
+  EC_OPERATOR_PUBLIC_ORIGIN: {{ printf "https://%s" $root.Values.operator.hostname | quote }}
+  EC_OPERATOR_SUBJECT_ROLES: {{ $root.Values.operator.subjectRoles | toJson | quote }}
   {{- else }}
   EC_OPERATOR_DATABASE_URL_FILE: /var/run/secrets/events-concierge/EC_OPERATOR_DATABASE_URL
   EC_CATALOG_INGESTION_SCHEDULER_ENABLED: "true"
   EC_TEMPORAL_CATALOG_TASK_QUEUE: {{ $root.Values.applicationConfig.EC_TEMPORAL_CATALOG_TASK_QUEUE | quote }}
   {{- end }}
   {{- end }}
-  {{- if ne $name "controller" }}
+  {{- if not (has $name (list "controller" "operator-api")) }}
   EC_TEMPORAL_TLS_SERVER_CA_FILE: /var/run/events-concierge-tls/temporal/ca.crt
   EC_TEMPORAL_TLS_CLIENT_CERT_FILE: /var/run/events-concierge-tls/client/tls.crt
   EC_TEMPORAL_TLS_CLIENT_KEY_FILE: /var/run/events-concierge-tls/client/tls.key
@@ -59,6 +65,7 @@ spec:
     secrets: |
       {{- $secrets := index $root.Values.privateRuntime.processSecrets $name }}
       {{- if eq $name "controller" }}{{- $secrets = $root.Values.privateRuntime.controllerSecrets }}{{- end }}
+      {{- if eq $name "operator-api" }}{{- $secrets = $root.Values.operator.operatorSecrets }}{{- end }}
       {{- range $secrets }}
       - resourceName: "projects/{{ $root.Values.secretManager.projectId }}/secrets/{{ .secretName }}/versions/{{ .version }}"
         path: {{ .fileName | quote }}

@@ -2,7 +2,7 @@
 - name: postgres-ca
   mountPath: /var/run/events-concierge-tls/postgres
   readOnly: true
-{{- if not (has .process (list "controller" "migration")) }}
+{{- if not (has .process (list "controller" "migration" "operator-api")) }}
 - name: redis-ca
   mountPath: /var/run/events-concierge-tls/redis
   readOnly: true
@@ -21,7 +21,7 @@
     secretName: {{ .root.Values.privateRuntime.postgresCASecretName | quote }}
     defaultMode: 0440
     items: [{key: ca.crt, path: ca.crt}]
-{{- if not (has .process (list "controller" "migration")) }}
+{{- if not (has .process (list "controller" "migration" "operator-api")) }}
 - name: redis-ca
   secret:
     secretName: {{ .root.Values.privateRuntime.redisCASecretName | quote }}

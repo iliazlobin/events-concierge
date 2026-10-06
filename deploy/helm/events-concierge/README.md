@@ -99,7 +99,7 @@ rolling back only Helm values cannot restore database access.
 
 ## Hosted operator profile
 
-`operator.enabled` is disabled by default. Enable it only with a reviewed deployment configuration.
+`operator.enabled` is disabled by default. The managed profile below uses Cloud SQL and a GKE IAP Gateway.
 
 Prepare the [Terraform foundation](../../../infra/terraform/README.md) with its separate
 `operator_enabled = true` opt-in. After authorized provisioning, `tofu output -json
@@ -137,3 +137,30 @@ scrapes queue state and progress timestamps, not worker liveness. Production fie
 IAP grant/revocation, credential separation, command replay/restart/fencing, eventual publication,
 alert routing, and the unchanged full-product provider validation gate. Rendering does not activate
 these prerequisites or authorize a migration/deployment.
+
+### Private operator
+
+The [authenticated private values](values-private-authenticated.example.yaml) also support the
+existing signed-IAP operator app against the retained PostgreSQL service. Enable `operator.enabled`
+and both operator workloads only after supplying the separate hostname, TLS/OAuth Secret references,
+exact signed-IAP backend audience, and the owner's stable `accounts.google.com:*` subject/role.
+The API also requires the signed email `iliazlobin91@gmail.com`; consumer login never grants admin access.
+
+- Supply an isolated operator API GCP identity authorized only for the numbered
+  `ec-dev-operator-database-url` Secret Manager version. Its login must retain only
+  `ec_operator_controller`. The API mounts that DSN and the PostgreSQL CA, uses `direct_tls`
+  with `sslmode=verify-full`, and has no Redis, Temporal, consumer or migration credentials.
+- Frontend/API are singletons requesting `25m/128Mi` and `100m/192Mi`, with zero surge and no
+  Cloud SQL sidecar. The frontend has no backend secrets or cloud identity. Apply both charts'
+  reviewed network policies: the shared data policy excludes both operator components, and the
+  application chart supplies only the operator routes.
+- The private chart creates no Gateway or OAuth resources. Its current ingress admits only
+  Google Front End ranges and its API accepts only signed IAP assertions. HTTP IAP needs a
+  separate approved edge/controller change. Cloudflare Access requires a separately reviewed
+  JWT verifier and connector routing; Access headers cannot substitute for IAP assertions.
+  Preserve existing Symphony OAuth and Hermes tunnel resources.
+- Add `--operator` to private `wait_ready.py` and backup creation only when both operator pods
+  are installed. Recovery uses the recorded inventory; no extra resume flag. Verify owner login,
+  admin reads/commands, non-owner denial, missing/forged assertion denial, CSRF, credential
+  isolation and backup/recovery before declaring the endpoint usable. Public consumer routing
+  continues to reject `/admin`.

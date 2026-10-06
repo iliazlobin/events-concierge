@@ -2,6 +2,8 @@
 
 import importlib.util
 import json
+import runpy
+import sys
 from copy import deepcopy
 from pathlib import Path
 
@@ -193,3 +195,114 @@ def test_public_readiness_needs_both_current_tunnel_replicas(section, field, val
 def test_development_cannot_request_a_public_edge_before_any_cluster_read(monkeypatch):
     with pytest.raises(SystemExit, match="authenticated private"):
         readiness.main(public_tunnel=True)
+
+
+PRIVATE_OPERATORS = {"events-concierge-operator-api", "events-concierge-operator-frontend"}
+
+
+def operator_deployments(*, public=False):
+    items = private_deployments(public=public)
+    for name in sorted(PRIVATE_OPERATORS):
+        operator = deepcopy(items[0])
+        operator["metadata"]["name"] = name
+        items.append(operator)
+    return items
+
+
+def test_private_readiness_requires_explicit_operator_inventory_and_both_singletons():
+    assert readiness.pending_deployments(operator_deployments(), profile="private") == sorted(
+        PRIVATE_OPERATORS
+    )
+    assert readiness.pending_deployments(
+        private_deployments(), profile="private", operator=True
+    ) == sorted(PRIVATE_OPERATORS)
+    assert (
+        readiness.pending_deployments(operator_deployments(), profile="private", operator=True)
+        == []
+    )
+    expected = readiness.expected_replicas("private", operator=True, public_tunnel=True)
+    assert {name: expected[name] for name in PRIVATE_OPERATORS} == dict.fromkeys(
+        PRIVATE_OPERATORS, 1
+    )
+    assert expected[readiness.PUBLIC_TUNNEL] == 2
+    assert len(expected) == 8
+
+
+@pytest.mark.parametrize("name", sorted(PRIVATE_OPERATORS))
+@pytest.mark.parametrize(
+    "section,field,value",
+    [
+        ("spec", "replicas", 0),
+        ("spec", "replicas", 2),
+        ("status", "replicas", 2),
+        ("status", "updatedReplicas", 0),
+        ("status", "availableReplicas", 0),
+        ("status", "readyReplicas", 0),
+        ("status", "observedGeneration", 1),
+        ("status", "unavailableReplicas", 1),
+    ],
+)
+def test_operator_readiness_requires_the_exact_observed_singleton(name, section, field, value):
+    items = operator_deployments()
+    item = next(d for d in items if d["metadata"]["name"] == name)
+    item[section][field] = value
+    assert readiness.pending_deployments(items, profile="private", operator=True) == [name]
+
+
+def test_operator_option_cannot_hide_unapproved_private_processes():
+    items = operator_deployments()
+    demo = deepcopy(items[0])
+    demo["metadata"]["name"] = "events-concierge-admin"
+    items.append(demo)
+    assert readiness.pending_deployments(items, profile="private", operator=True) == [
+        "events-concierge-admin"
+    ]
+
+
+def test_wait_ready_operator_flag_waits_for_both_while_retaining_the_public_edge(
+    monkeypatch, capsys
+):
+    name = "events-concierge-operator-api"
+    ready = operator_deployments(public=True)
+    missing = [d for d in ready if d["metadata"]["name"] != name]
+    snapshots = iter([missing, ready])
+    sleeps = []
+    calls = []
+
+    def output(args, **kwargs):
+        calls.append(args)
+        if args[1:] == ["config", "current-context"]:
+            return readiness.CONTEXT
+        assert readiness.CONTEXT in args
+        return json.dumps({"items": next(snapshots)}).encode()
+
+    monkeypatch.setattr(readiness.subprocess, "check_output", output)
+    monkeypatch.setattr(readiness.time, "sleep", sleeps.append)
+    readiness.main(profile="private", operator=True, public_tunnel=True)
+    assert len(calls) == 3
+    assert sleeps == [5]
+    output = capsys.readouterr().out
+    assert "Waiting: " + name in output
+    assert "All 8 expected deployments" in output
+
+
+def test_development_cannot_request_operator_before_any_cluster_read(monkeypatch):
+    calls = []
+    monkeypatch.setattr(
+        readiness.subprocess, "check_output", lambda *args, **kwargs: calls.append(args)
+    )
+    with pytest.raises(SystemExit, match="private"):
+        readiness.main(operator=True)
+    assert not calls
+
+
+def test_readiness_cli_operator_flag_fails_closed_for_default_development(monkeypatch):
+    calls = []
+    path = ROOT / "scripts/development/wait_ready.py"
+    monkeypatch.setattr(sys, "argv", [str(path), "--operator"])
+    monkeypatch.setattr(
+        readiness.subprocess, "check_output", lambda *args, **kwargs: calls.append(args)
+    )
+    with pytest.raises(SystemExit, match="private"):
+        runpy.run_path(str(path), run_name="__main__")
+    assert not calls

@@ -240,7 +240,7 @@ caddy run --config deploy/private-access.Caddyfile --adapter caddyfile
 
 - Opt-in [data TLS values](helm/events-concierge-dev-data/values-private-tls.yaml) and [Temporal TLS values](helm/temporal-private-tls.yaml).
 - [Authenticated application values](helm/events-concierge/values-private-authenticated.example.yaml) use the existing stores with Google Identity Platform, verified TLS and process-specific Temporal client keys. Use this file with chart defaults, not the demo overlays. Provisioning and deployed acceptance are separate release steps.
-- The private profile disables demo admin and deferred product effects. Owner-only admin requires the separately reviewed IAP operator edge; consumer sign-in never grants an admin role.
+- The private profile disables demo admin and deferred product effects. The opt-in [private operator](helm/events-concierge/README.md#private-operator) uses the isolated controller credential; its signed identity and separate edge still need release acceptance. Consumer sign-in never grants an admin role.
 
 | Connection | Required contract |
 | --- | --- |
@@ -303,6 +303,7 @@ kubectl -n events-concierge-dev exec -i deployment/events-concierge-api -- pytho
 
 - The private gate requires five singleton application Deployments and rejects demo, deferred or unknown Deployments. Promotion uses runtime mTLS and requires recent workflow and activity pollers for the exact candidate build. `smoke.py` remains a synthetic demo check; use the authenticated browser acceptance above.
 - After installing the public tunnel, run `wait_ready.py --target shared --profile private --public-tunnel`; it also requires both updated, available, ready connector replicas before publishing the route.
+- If both private operator workloads are installed, append `--operator` to the readiness and backup-creation commands. It requires their exact singleton inventory; it does not verify browser authentication or create an edge.
 - For an authenticated private backup, add `--hold-stopped` to the following creation command for cutover. Replace `SET_ID` with its exact completed prefix; verification uses the saved data, and interrupted recovery selects the saved profile. The demo examples below retain their default profile.
 
 ```bash
@@ -367,7 +368,7 @@ kubectl -n events-concierge-dev patch cronjob events-concierge-ingestion-cadence
 - Held-stopped path: run readiness only after migration and application restart; follow [release](#shared-release-and-access).
 - Replace `SET_ID` with exact completed prefix printed by backup.
 - **Normal backup:** stop app writers then Temporal; retain PostgreSQL/Redis; save three databases, payloads and image/schema metadata.
-- **Private profile:** stop/wait for the public edge first, then writers and Temporal; restore the edge last after guarded writer/Temporal recovery and exact readiness. Only its approved two replicas are allowed; unknown/operator Deployments block backup. Failed writer recovery leaves the edge stopped. Recovery metadata records the private profile; `resume` selects it from the saved record.
+- **Private profile:** stop/wait for the consumer public edge first, then the optional operator frontend, writers and Temporal. Restore Temporal/writers before the operator frontend, and the consumer edge last after guarded exact readiness. Backup `--operator` admits only the paired singleton operator Deployments; unknown, partial or unrequested inventories block backup. Failed recovery keeps edges stopped. `resume` uses the saved profile, replicas, identities and templates.
 - `recovery.json`: saved/read back before stopping writers; completion marker last; normal backup restores original replicas.
 - Verification: disposable Docker restore and checksums; only completed sets qualify. Recreate schema-required password-free roles only in the disposable container; preserve owners/ACLs and verify privilege and tenant isolation.
 - Retain at least three successful sets; no automatic deletion; same project boundary, no independent project-loss protection.

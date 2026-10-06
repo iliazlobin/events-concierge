@@ -47,6 +47,16 @@ applicationConfig:
   EC_GCS_MEDIA_PREFIX: events-concierge/media/v1
 cloudSqlProxy:
   enabled: false
+operator:
+  enabled: false # Enable only after separate edge, signed owner identity and release acceptance.
+  hostname: ""
+  tlsSecretName: ""
+  iapAudience: ""
+  iapClientId: ""
+  iapClientSecretName: ""
+  subjectRoles: {}
+  operatorSecrets:
+    - {fileName: EC_OPERATOR_DATABASE_URL, secretName: ec-dev-operator-database-url, version: "2"}
 secretManager:
   projectId: iz27-platform-dev
   runtimeSecrets: []
@@ -79,6 +89,8 @@ privateRuntime:
   controllerSecrets:
     - {fileName: EC_OPERATOR_DATABASE_URL, secretName: ec-dev-operator-database-url, version: "2"}
 serviceAccounts:
+  operator-api:
+    gcpServiceAccount: "" # Dedicated identity with access only to the operator database secret.
   development-admin:
     gcpServiceAccount: ec-dev-development-admin@iz27-platform-dev.iam.gserviceaccount.com
   api:
@@ -92,8 +104,16 @@ serviceAccounts:
   migration:
     gcpServiceAccount: ec-dev-migration@iz27-platform-dev.iam.gserviceaccount.com
 workloads:
-  operator-frontend: {enabled: false}
-  operator-api: {enabled: false}
+  operator-frontend:
+    enabled: false
+    replicas: 1
+    pdb: {enabled: false}
+    resources: {requests: {cpu: 25m, memory: 128Mi}}
+  operator-api:
+    enabled: false
+    replicas: 1
+    pdb: {enabled: false}
+    resources: {requests: {cpu: 100m, memory: 192Mi}}
   frontend:
     replicas: 1
     pdb: {enabled: false}
