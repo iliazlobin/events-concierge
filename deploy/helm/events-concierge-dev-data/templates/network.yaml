@@ -11,8 +11,10 @@ metadata: {name: ec-dev-internal}
 spec:
   podSelector:
     matchLabels: {app.kubernetes.io/part-of: events-concierge}
-    # Additive policies must not grant edge/isolated operator pods the shared store/ADC routes.
+    # Isolated frontends/operators cannot inherit shared store or metadata routes.
+    # Keep the historical connector excluded while retained backup receipts depend on it.
     matchExpressions:
+      - {key: ec-network-role, operator: NotIn, values: [consumer-frontend]}
       - {key: app.kubernetes.io/component, operator: NotIn, values: [public-tunnel, operator-frontend, operator-api]}
   policyTypes: [Ingress, Egress]
   ingress:
@@ -20,6 +22,7 @@ spec:
         - podSelector:
             matchLabels: {app.kubernetes.io/part-of: events-concierge}
             matchExpressions:
+              - {key: ec-network-role, operator: NotIn, values: [consumer-frontend]}
               - {key: app.kubernetes.io/component, operator: NotIn, values: [public-tunnel, operator-frontend, operator-api]}
       ports:
         - {port: 5432, protocol: TCP}
@@ -38,6 +41,7 @@ spec:
         - podSelector:
             matchLabels: {app.kubernetes.io/part-of: events-concierge}
             matchExpressions:
+              - {key: ec-network-role, operator: NotIn, values: [consumer-frontend]}
               - {key: app.kubernetes.io/component, operator: NotIn, values: [public-tunnel, operator-frontend, operator-api]}
       ports:
         - {port: 5432, protocol: TCP}

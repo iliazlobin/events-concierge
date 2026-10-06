@@ -16,7 +16,7 @@ API keys are deferred unless the assigned task explicitly changes their scope.
 - [Release acceptance](docs/production-operations.md#first-release-acceptance): release gates.
 - [Private deployment and recovery](deploy/development.md): application operations.
 - [Consumer accounts](deployment/consumer-identity.md): signup, legal acceptance and owner-only admin release gates.
-- [Public consumer access](deploy/public-access.md): Cloudflare routing and private admin boundary.
+- [Public consumer access](deploy/public-access.md): GCP routing, TLS and owner-only IAP admin.
 - [Symphony workflow](WORKFLOW.md): bounded coding-agent assignment and handoff.
 - [CI](.github/workflows/ci.yml) and [deployment checks](.github/workflows/deployment-validation.yml):
   authoritative check definitions. Read the relevant design and tests before changing a component.

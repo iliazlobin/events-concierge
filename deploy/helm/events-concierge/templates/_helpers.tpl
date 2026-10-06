@@ -35,12 +35,7 @@ app.kubernetes.io/component: {{ .component }}
 
 {{- define "events-concierge.operatorIdentityConfig" -}}
 EC_OPERATOR_AUTH_PROVIDER: {{ .Values.operator.authProvider | quote }}
-{{- if eq .Values.operator.authProvider "cloudflare_access" }}
-EC_OPERATOR_CLOUDFLARE_TEAM_DOMAIN: {{ .Values.operator.cloudflareAccess.teamDomain | quote }}
-EC_OPERATOR_CLOUDFLARE_AUDIENCE: {{ .Values.operator.cloudflareAccess.audience | quote }}
-{{- else }}
 EC_OPERATOR_IAP_AUDIENCE: {{ .Values.operator.iapAudience | quote }}
-{{- end }}
 EC_OPERATOR_PUBLIC_ORIGIN: {{ printf "https://%s" .Values.operator.hostname | quote }}
 EC_OPERATOR_SUBJECT_ROLES: {{ .Values.operator.subjectRoles | toJson | quote }}
 {{- end -}}
@@ -74,49 +69,15 @@ seccompProfile:
 {{- $dev := eq (default "managed" .Values.global.deploymentProfile) "development" -}}
 {{- $private := eq .Values.global.deploymentProfile "private" -}}
 {{- if $private -}}{{- include "events-concierge.validatePrivateRuntime" . -}}{{- end -}}
-{{- if .Values.publicTunnel.enabled -}}
-{{- if or $dev (ne .Values.global.releasePhase "application") (not .Values.global.runtimeProviderReady) (ne (toString .Values.applicationConfig.EC_MOCK_CLOUD) "false") -}}
-{{- fail "publicTunnel requires a verified non-mock application release; private development cannot be published" -}}
-{{- end -}}
-{{- if or (not .Values.networkPolicy.enabled) .Values.gateway.enabled (not .Values.workloads.frontend.enabled) -}}
-{{- fail "publicTunnel requires NetworkPolicy and the consumer frontend, with gateway.enabled=false" -}}
-{{- end -}}
-{{- if or (ne .Values.publicTunnel.hostname "events.iliazlobin.com") (ne .Values.applicationConfig.EC_PUBLIC_BASE_URL "https://events.iliazlobin.com") -}}
-{{- fail "publicTunnel and the application must use the approved origin https://events.iliazlobin.com" -}}
-{{- end -}}
-{{- if or (ne (toString .Values.applicationConfig.EC_IDENTITY_PLATFORM_ENABLED) "true") (ne (toString .Values.applicationConfig.EC_ADMIN_INGESTION_ENABLED) "false") (ne (toString .Values.applicationConfig.EC_OIDC_BFF_ENABLED) "false") -}}
-{{- fail "publicTunnel requires consumer Identity Platform and disabled legacy OIDC/admin ingestion" -}}
-{{- end -}}
-{{- if not .Values.publicTunnel.tokenSecretName -}}{{- fail "publicTunnel.tokenSecretName must reference an externally provisioned tunnel-only Secret" -}}{{- end -}}
-{{- range $image := list .Values.publicTunnel.cloudflaredImage .Values.publicTunnel.proxyImage -}}
-{{- if eq $image.digest "sha256:0000000000000000000000000000000000000000000000000000000000000000" -}}
-{{- fail "publicTunnel images must use verified non-placeholder sha256 digests" -}}
-{{- end -}}
-{{- end -}}
-{{- end -}}
+{{- if hasKey .Values "publicTunnel" -}}{{- fail "publicTunnel is retired; use the GCP publicEdge profile" -}}{{- end -}}
+{{- if .Values.publicEdge.enabled -}}{{- include "events-concierge.validatePublicEdge" . -}}{{- end -}}
 {{- if and $dev .Values.operator.enabled -}}
 {{- fail "development disables operator.enabled; use the loopback-only development admin" -}}
 {{- end -}}
 {{- if .Values.operator.enabled -}}
-{{- if not (has .Values.operator.authProvider (list "iap" "cloudflare_access")) -}}{{- fail "operator.authProvider must be iap or cloudflare_access" -}}{{- end -}}
-{{- $identityKeys := list "hostname" -}}
-{{- if eq .Values.operator.authProvider "iap" -}}
-{{- $identityKeys = concat $identityKeys (list "tlsSecretName" "iapAudience" "iapClientId" "iapClientSecretName") -}}
-{{- else -}}
-{{- if not (and $private .Values.publicTunnel.enabled (eq .Values.operator.hostname "admin-events.iliazlobin.com")) -}}
-{{- fail "Cloudflare operator requires the private publicTunnel profile and exact admin-events.iliazlobin.com hostname" -}}
-{{- end -}}
-{{- if or (not (regexMatch "^https://[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?\\.cloudflareaccess\\.com$" .Values.operator.cloudflareAccess.teamDomain)) (not (regexMatch "^[a-f0-9]{64}$" .Values.operator.cloudflareAccess.audience)) -}}
-{{- fail "Cloudflare operator requires an exact HTTPS team domain and application AUD" -}}
-{{- end -}}
-{{- if or .Values.operator.iapAudience .Values.operator.iapClientId .Values.operator.iapClientSecretName .Values.operator.tlsSecretName -}}
-{{- fail "Cloudflare operator cannot retain IAP or Gateway TLS configuration" -}}
-{{- end -}}
-{{- if not .Values.operator.cloudflareAccess.jwksCidrs -}}{{- fail "Cloudflare operator requires reviewed certificate endpoint CIDRs" -}}{{- end -}}
-{{- range .Values.operator.cloudflareAccess.jwksCidrs -}}
-{{- if not (has . (list "104.16.0.0/13" "104.24.0.0/14" "172.64.0.0/13")) -}}{{- fail "Cloudflare certificate CIDRs must be reviewed Cloudflare HTTPS ranges" -}}{{- end -}}
-{{- end -}}
-{{- end -}}
+{{- if ne .Values.operator.authProvider "iap" -}}{{- fail "operator.authProvider must be iap" -}}{{- end -}}
+{{- $identityKeys := list "hostname" "iapAudience" "iapClientId" "iapClientSecretName" -}}
+{{- if not .Values.publicEdge.enabled -}}{{- $identityKeys = append $identityKeys "tlsSecretName" -}}{{- end -}}
 {{- range $key := $identityKeys -}}
 {{- if not (index $.Values.operator $key) -}}{{- fail (printf "operator.%s is required" $key) -}}{{- end -}}
 {{- end -}}
@@ -348,20 +309,13 @@ seccompProfile:
 
 {{- define "events-concierge.validatePrivateOperator" -}}
 {{- $operator := .Values.operator -}}
-{{- if or (eq $operator.hostname .Values.publicTunnel.hostname) (not (regexMatch "^[a-z0-9]([a-z0-9.-]*[a-z0-9])?$" $operator.hostname)) -}}{{- fail "private operator requires a distinct HTTPS hostname" -}}{{- end -}}
+{{- if or (eq $operator.hostname .Values.publicEdge.hostname) (not (regexMatch "^[a-z0-9]([a-z0-9.-]*[a-z0-9])?$" $operator.hostname)) -}}{{- fail "private operator requires a distinct HTTPS hostname" -}}{{- end -}}
 {{- if ne (len $operator.subjectRoles) 1 -}}{{- fail "private operator assigns exactly one stable owner subject" -}}{{- end -}}
-{{- if eq $operator.authProvider "iap" -}}
 {{- if not (regexMatch "^/projects/[0-9]+/global/backendServices/[0-9]+$" $operator.iapAudience) -}}{{- fail "private operator requires the exact signed IAP backend audience" -}}{{- end -}}
 {{- range $subject, $role := $operator.subjectRoles -}}
 {{- if or (not (regexMatch "^accounts\\.google\\.com:[A-Za-z0-9_-]+$" $subject)) (not (has $role (list "viewer" "operator" "reviewer"))) -}}{{- fail "private operator requires a stable Google IAP subject and explicit role" -}}{{- end -}}
 {{- end -}}
 {{- if ne (toJson $operator.frontendIngressCidrs) (toJson (list "130.211.0.0/22" "35.191.0.0/16")) -}}{{- fail "private operator ingress is restricted to Google Front End ranges" -}}{{- end -}}
-{{- else -}}
-{{- range $subject, $role := $operator.subjectRoles -}}
-{{- if or (not (regexMatch "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$" $subject)) (not (has $role (list "viewer" "operator" "reviewer"))) -}}{{- fail "private Cloudflare operator requires the stable Access user UUID and explicit role" -}}{{- end -}}
-{{- end -}}
-{{- if $operator.frontendIngressCidrs -}}{{- fail "Cloudflare operator ingress uses only the tunnel connector, without IP grants" -}}{{- end -}}
-{{- end -}}
 {{- if ne (len $operator.operatorSecrets) 1 -}}{{- fail "private operator requires only its controller database DSN" -}}{{- end -}}
 {{- $secret := first $operator.operatorSecrets -}}
 {{- if or (ne $secret.fileName "EC_OPERATOR_DATABASE_URL") (ne $secret.secretName "ec-dev-operator-database-url") (not (regexMatch "^[1-9][0-9]*$" (toString $secret.version))) -}}{{- fail "private operator requires its numbered controller database secret version" -}}{{- end -}}
@@ -377,5 +331,26 @@ seccompProfile:
 {{- else -}}
 {{- if or $workload.command $workload.env -}}{{- fail "private operator frontend cannot override its isolated configuration" -}}{{- end -}}
 {{- end -}}
+{{- end -}}
+{{- end -}}
+
+{{- define "events-concierge.validatePublicEdge" -}}
+{{- $edge := .Values.publicEdge -}}
+{{- $operator := .Values.operator -}}
+{{- if or (ne .Values.global.deploymentProfile "private") (ne .Values.global.releasePhase "application") (not .Values.global.runtimeProviderReady) (ne (toString .Values.applicationConfig.EC_MOCK_CLOUD) "false") -}}
+{{- fail "publicEdge requires a verified non-mock private application release" -}}
+{{- end -}}
+{{- if or (not .Values.networkPolicy.enabled) .Values.gateway.enabled (not .Values.workloads.frontend.enabled) -}}{{- fail "publicEdge requires NetworkPolicy and frontend, with legacy gateway disabled" -}}{{- end -}}
+{{- if or (ne $edge.hostname "events.iliazlobin.com") (ne .Values.applicationConfig.EC_PUBLIC_BASE_URL "https://events.iliazlobin.com") (ne $operator.hostname "admin-events.iliazlobin.com") -}}{{- fail "publicEdge requires the exact approved consumer and admin HTTPS origins" -}}{{- end -}}
+{{- if or (ne (toString .Values.applicationConfig.EC_IDENTITY_PLATFORM_ENABLED) "true") (ne (toString .Values.applicationConfig.EC_ADMIN_INGESTION_ENABLED) "false") (ne (toString .Values.applicationConfig.EC_OIDC_BFF_ENABLED) "false") -}}{{- fail "publicEdge requires consumer Identity Platform and disabled legacy OIDC/admin ingestion" -}}{{- end -}}
+{{- range $key := list "staticIpName" "certificateMap" "sslPolicy" -}}
+{{- if or (not (index $edge $key)) (contains "replace-me" (index $edge $key)) -}}{{- fail (printf "publicEdge.%s must name its approved existing GCP resource" $key) -}}{{- end -}}
+{{- end -}}
+{{- if or (ne $edge.proxyImage.repository "caddy") (ne $edge.proxyImage.digest "sha256:d44355d3c2149dc580ce2cac735955d1c08d3d00882c30489c241aa51a5c10d9") -}}{{- fail "publicEdge must retain the reviewed immutable Caddy image" -}}{{- end -}}
+{{- if or (ne $operator.authProvider "iap") $operator.tlsSecretName (not $operator.iapClientId) (not $operator.iapClientSecretName) (eq $operator.iapClientSecretName "ec-consumer-google") -}}{{- fail "publicEdge requires a separate admin IAP OAuth client and Secret, with certificate-map TLS" -}}{{- end -}}
+{{- if $edge.bootstrap -}}
+{{- if or $operator.enabled (index .Values.workloads "operator-frontend").enabled (index .Values.workloads "operator-api").enabled $operator.iapAudience $operator.subjectRoles -}}{{- fail "publicEdge bootstrap requires no operator endpoints, audience or subjects" -}}{{- end -}}
+{{- else -}}
+{{- if not $operator.enabled -}}{{- fail "publicEdge runtime requires the verified operator configuration; use bootstrap before the real audience and subject are known" -}}{{- end -}}
 {{- end -}}
 {{- end -}}

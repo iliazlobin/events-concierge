@@ -1,124 +1,79 @@
 # Public access
 
-Public origin: **https://events.iliazlobin.com**. The Helm connector is opt-in;
-publishing DNS requires an approved non-mock release, private readiness checks and configured
-[consumer identity](../deployment/consumer-identity.md). The private development profile
-cannot enable it. The [authenticated datastore composition](development.md#authenticated-discovery-and-encrypted-dependencies)
-must be released first; this package does not convert plaintext stores to TLS.
-Admin origin: **https://admin-events.iliazlobin.com**, separately protected by Cloudflare Access
-when the operator's `cloudflare_access` mode is enabled. Consumer browsing remains anonymous;
-consumer login grants no operator role. Configuration/rendering does not establish deployed access.
+- Consumer: **https://events.iliazlobin.com**; anonymous catalog browsing, Google accounts, chat disabled.
+- Admin: **https://admin-events.iliazlobin.com/admin**; Google IAP allows only `iliazlobin91@gmail.com`.
+- One global external Application Load Balancer, reserved IPv4 and managed certificate cover both hosts.
+- GKE nodes, control plane, API and databases stay private. Consumer sign-in grants no admin role.
+- Rendering, healthy Pods and green CI do not establish public or browser acceptance.
 
 ## Route and ownership
 
-Browser → Cloudflare HTTPS → encrypted tunnel → GKE consumer filter → consumer frontend → API.
+Browser → GCP HTTPS load balancer → separate consumer/admin Services → private APIs.
 
-- Create a dedicated **Events Concierge** remotely managed tunnel in the
-  [Cloudflare account](https://dash.cloudflare.com/cbd93b4cd44ff28c000239e7da2e5cbc/tunnels).
-  Keep the Mac's Hermes tunnel and wildcard route intact. Every new replica must reach
-  the same origin; [Kubernetes connectors](https://developers.cloudflare.com/tunnel/guides/kubernetes/)
-  run inside GKE independently of the Mac.
-- Two small connector pods run digest-pinned cloudflared and Caddy. The filter admits
-  the exact consumer hostname and consumer routes; admin, probes and unknown paths return
-  `404`. It removes forwarded operator identity headers. Cloudflare admin uses a separate
-  loopback listener and operator frontend; existing IAP deployments keep their default mode.
-- The connector has no Kubernetes API token, GCP identity or application credentials.
-  Its only secret is a tunnel-specific token file. NetworkPolicy permits DNS, the consumer
-  frontend, the operator frontend only when Cloudflare admin is enabled, and
-  [Cloudflare tunnel endpoints](https://developers.cloudflare.com/cloudflare-one/networks/connectors/cloudflare-tunnel/configure-tunnels/tunnel-with-firewall/)
-  on TCP/UDP 7844. DNS permits only `kube-dns` and [NodeLocal DNSCache](https://docs.cloud.google.com/kubernetes-engine/docs/how-to/nodelocal-dns-cache)
-  pods in `kube-system`, port 53. No public GCP Gateway, LoadBalancer or inbound firewall rule is added.
-- The data chart must exclude `public-tunnel` from its internal allow policy in both directions.
-  Deploy that change with the authenticated profile; overlapping allow policies would otherwise
-  bypass the connector's intended network limits.
-- Cloudflare terminates browser TLS; the tunnel is encrypted. The final filter-to-frontend
-  leg is HTTP restricted by NetworkPolicy inside the namespace. This is not end-to-end
-  application mTLS. Database, Redis and Temporal encryption remain independent release gates.
-- Two replicas share the existing node capacity; one-node hosting has no node-level HA.
-  Combined requests: 100m CPU / 256 MiB. NAT traffic and existing GKE capacity still incur cost.
+| Owner | Resources |
+| --- | --- |
+| Shared platform | Private GKE/VPC, standard Gateway controller and HTTP load-balancing dependency. |
+| [Public-access Terraform](../infra/terraform/environments/public-access) | `ec-public-ip`, two DNS authorizations, managed certificate/map, TLS policy and empty `ec-admin-iap` secret container. |
+| Application Helm | Gateway, exact-host HTTPRoutes, backend/health policies, consumer filter and isolated operator workloads. |
+| [Consumer identity](../deployment/consumer-identity.md) | Identity Platform, restricted browser key and optional backend-scoped owner IAP grant. |
+| DNS authority | Certificate-validation CNAMEs and two A records; no tunnel or HTTP proxy. |
+
+- Gateway class: `gke-l7-global-external-managed`. No proxy-only subnet, public node or public Kubernetes endpoint.
+- Certificate Manager uses `ec-public-cert-map`; do not combine its annotation with Gateway TLS Secret references. [Certificate configuration](https://docs.cloud.google.com/kubernetes-engine/docs/how-to/secure-gateway).
+- `ec-public-tls` requires TLS 1.2 or newer. Google manages public certificate renewal while the DNS authorizations remain valid.
+- Consumer Caddy runs beside the existing frontend. It admits the exact consumer host and supported routes, removes operator identity headers, and returns `404` for admin/probes/unknown paths.
+- Google Front End ranges reach only reviewed frontend/health ports. NetworkPolicy keeps API/store access scoped; review controller-created firewall rules and NEG endpoints.
+- IAP protects only the admin frontend backend. The API verifies the signed assertion independently: Google issuer/keys, backend audience, timestamps, signed owner email and explicit subject role.
+- Load balancer → filter/frontend uses HTTP within the restricted VPC/Pod network. This is not application mTLS. [Datastore TLS/mTLS](development.md#authenticated-discovery-and-encrypted-dependencies) remains a separate release gate.
+- Single-node hosting has no node-level HA. [Load-balancer rules, processing and internet egress](https://cloud.google.com/vpc/network-pricing#lb) add cost; a reserved IP is charged while unused. No new application node is required.
+
+## Prepare
+
+1. Verify CLI account/project, approved commits, immutable images and current state. Target `iz27-platform-dev`; preserve existing data, Symphony OAuth configuration and unrelated DNS.
+2. Review the platform plan: only enable HTTP load balancing and `CHANNEL_STANDARD` on the existing private cluster. Apply under explicit cloud authorization, then verify the GatewayClass/controller.
+3. Configure the [public-access backend](../infra/terraform/environments/public-access/backend.tf.example) in the existing protected application bucket. Review the saved plan before applying. This root must not adopt cluster/network/IAP API state, OAuth payloads or a controller-managed load balancer.
+4. Add only the output certificate-validation CNAMEs at the current authoritative DNS provider, DNS-only. Wait for both authorizations and the managed certificate to become active. These records do not route application traffic.
+5. Prepare the separate admin OAuth client below. Provision only its versioned namespace Secret through the approved secret channel; no secret value in Helm/Terraform, logs or command arguments.
+6. Complete [private authenticated rollout](development.md#authenticated-discovery-and-encrypted-dependencies): recovery-key custody, held current backup, coordinated store TLS/Temporal mTLS, migrations through `0208`, consumer identity and private readiness. Preserve rollback and capacity limits.
+
+Offline prerequisites:
+
+```sh
+terraform -chdir=infra/terraform/environments/public-access init -backend=false -input=false -lockfile=readonly
+terraform -chdir=infra/terraform/environments/public-access validate
+terraform -chdir=infra/terraform/environments/public-access test -no-color
+```
+
+## Admin
+
+- Use a dedicated **External Web OAuth client** for IAP; personal Gmail cannot use an organization-only Google-managed client. Keep it separate from the consumer Firebase callback/client. [Custom IAP OAuth](https://docs.cloud.google.com/iap/docs/custom-oauth-configuration).
+- Register `https://iap.googleapis.com/v1/oauth/clientIds/<admin-client-id>:handleRedirect`. Preserve the project's existing consent brand and other clients.
+- Import the approved credential into a pinned `ec-admin-iap` Secret Manager version. The same-namespace Secret referenced by `operator.iapClientSecretName` supplies the credential in data key `key`; application containers never mount it. Google's [Gateway-specific sample](https://docs.cloud.google.com/kubernetes-engine/docs/how-to/configure-gateway-resources?hl=es#configure_iap) documents this format. Require successful policy attachment and backend IAP readback before activation.
+- Grant `roles/iap.httpsResourceAccessor` only to `user:iliazlobin91@gmail.com` on the actual **operator frontend backend service**. Inspect inherited permissions; broader grants invalidate owner-only edge acceptance.
+- Set `operator.iapAudience=/projects/<project-number>/global/backendServices/<operator-frontend-backend-id>` from the created backend. Neither the API ID nor consumer client/backend ID is valid.
+- Record the owner's verified `accounts.google.com:<subject>` as the sole `reviewer` assignment. Never substitute the former Cloudflare UUID, an email header or a test fixture.
+- Removing the subject assignment blocks API access. Revoke edge sessions/grants as appropriate; origin signature validation alone does not establish immediate online session revocation.
 
 ## Activate
 
-1. Verify the approved image/configuration, datastore TLS/mTLS, private guest catalog,
-   Google provider configuration, approved legal mode and owner-only Access policy.
-   Confirm GKE enforces NetworkPolicy. Real Google/Access browser checks require the published HTTPS origins.
-2. Create the dedicated tunnel **without a published route**. Store its token through the
-   approved secret channel in a versioned, immutable Kubernetes Secret such as
-   `ec-cloudflare-tunnel-v1`, key `token`. Never paste credentials into Git, reports,
-   process arguments or Helm values. [cloudflared reads a token file](https://developers.cloudflare.com/tunnel/reference/run-parameters/#token-file).
-3. Layer [identity values](helm/events-concierge/values-consumer-identity.example.yaml) and
-   [tunnel values](helm/events-concierge/values-public-tunnel.example.yaml) over the exact
-   approved release values. Render/lint, review the resources, then deploy under release
-   authorization. Require frontend readiness, both connector containers ready and healthy
-   Cloudflare connections before publishing. No token value belongs in the chart.
-4. Configure [host-specific HTTP redirects](https://developers.cloudflare.com/rules/url-forwarding/examples/redirect-admin-https/):
-   `http://events.iliazlobin.com/*` → `https://events.iliazlobin.com/${1}` and
-   `http://admin-events.iliazlobin.com/*` → `https://admin-events.iliazlobin.com/${1}`.
-   Use status `308` and **Preserve query string**. Keep other hosts' rules unchanged.
-   Then publish only the approved tunnel route: hostname `events.iliazlobin.com`,
-   HTTP service `http://127.0.0.1:8080`, original Host preserved. No wildcard, alternate
-   origin or Host override. [Creating the route adds DNS](https://developers.cloudflare.com/tunnel/concepts/routing/):
-   proxied CNAME `events` → `<dedicated-tunnel-uuid>.cfargotunnel.com`, TTL Auto.
-   Check the existing record before creation; publication makes consumer access public.
-5. Verify HTTP redirects preserve path/query, trusted public TLS and guest browsing in Chrome,
-   filtered URLs, Google cancellation/signup/
-   login/logout, the configured legal behavior and saved filters. Request `/admin`, `/admin/v1/ingestion`,
-   `/metrics` and `/readyz`: each must return `404`. Confirm private admin still works.
-   Verify cookies, CSRF, two-account isolation and tenant erasure on the deployed origin.
+1. Review the complete Helm resources, IP/certificate/IAP configuration and private acceptance before approving the public Gateway. Creating an external load balancer can expose traffic **before DNS is published**; an empty A record is not an access boundary.
+2. Layer [identity values](helm/events-concierge/values-consumer-identity.example.yaml) and [public edge values](helm/events-concierge/values-public-edge.example.yaml) over the approved private release. Set `publicEdge.enabled=true`, `bootstrap=true`, `staticIpName=ec-public-ip`, `certificateMap=ec-public-cert-map`, `sslPolicy=ec-public-tls`; legacy `gateway.enabled=false`.
+3. Bootstrap renders the Gateway and admin Service/IAP policy with no operator endpoints. Keep operator workloads disabled and audience/subject assignments empty. Use the real separate admin client/Secret; never deploy fixture identity values.
+4. Verify Gateway/HTTPRoutes and policies are accepted/programmed, static IP and certificate match, and the consumer backend is healthy. Resolve the generated admin backend ID, apply the exact owner binding and configure its real audience/verified subject. Set `bootstrap=false` and enable the isolated operator pair.
+5. Verify IAP is enabled on admin and absent on consumer. Check actual NEGs/firewalls, backend health, direct-IP/unexpected-Host rejection and consumer exclusions before publishing the two output A records, DNS-only. Preserve other hostnames/nameservers; remove conflicting records only after inspecting their ownership.
+6. Verify HTTP → HTTPS preserves host/path/query and trusted certificate validation. In Chrome test anonymous browsing/filters, Google cancellation/signup/login/logout, saved filters and the configured legal mode. Verify cookies, CSRF, two-account isolation and same-account erasure.
+7. Open the admin `/admin` entry point and verify owner login/read/commands; non-owners, consumer tokens, missing/forged/duplicate/expired/wrong-audience assertions and cross-origin mutations fail. Consumer `/admin*`, `/metrics`, `/readyz`, unknown routes/hosts remain `404`. Verify the IAP OAuth return reaches the console; the admin root is retained for the IAP callback.
+8. Promote the accepted canary, then resume cadence last through the private rollout procedure. Browser acceptance is required before declaring release completion.
 
-Publication permits browser acceptance; it does not complete the release. If acceptance fails
-or cannot be completed, disable only the dedicated Events Concierge published routes.
-Preserve identities, data, recovery copies and the existing private operator route.
-
-## Cloudflare admin
-
-Browser → owner-only Access application → dedicated tunnel `:8082` → operator frontend → operator API.
-
-1. In the existing Zero Trust team, create a self-hosted Access application for the complete
-   `admin-events.iliazlobin.com` hostname. Allow only `iliazlobin91@gmail.com` through the approved
-   identity provider; do not add a Bypass or Service Auth policy. Leave `events.iliazlobin.com`
-   outside this application. Require application tokens to live at most one hour, including
-   [policy/global/Cloudflare One Client session overrides](https://developers.cloudflare.com/cloudflare-one/access-controls/access-settings/session-management/).
-2. Verify the existing team issuer `https://wild-butterfly-a721.cloudflareaccess.com`, the actual
-   application's AUD, and the owner's stable signed `sub`. Layer
-   [Cloudflare admin values](helm/events-concierge/values-cloudflare-admin.example.yaml) over the
-   reviewed private runtime, tunnel and isolated operator credentials. Empty AUD/subject values
-   deliberately block rendering. Remove IAP/TLS Gateway fields when selecting Cloudflare mode.
-3. Resolve the team's `/cdn-cgi/access/certs` endpoint and approve only the containing
-   [Cloudflare HTTPS CIDRs](https://www.cloudflare.com/ips-v4) in `operator.cloudflareAccess.jwksCidrs`.
-   Kubernetes NetworkPolicy cannot select a hostname; review DNS changes if verification fails.
-   The operator API permits these CIDRs on 443, its application PostgreSQL, DNS and ADC; it has
-   no consumer, Redis or Temporal access. The connector cannot reach the operator API directly.
-4. After approved deployment/readiness, add the exact admin hostname to the dedicated Events
-   tunnel with service `http://127.0.0.1:8082`, original Host preserved. Retain the consumer route
-   on `:8080` and the final `http_status:404` rule. Never use wildcard routes or the Hermes tunnel.
-5. Verify owner login and admin reads/commands in Chrome. Non-owners, missing/forged assertions,
-   wrong issuer/AUD, expired tokens, duplicate assertions and cross-origin mutations must fail.
-   Consumer `/admin` and both hosts' public probes remain `404`; guest catalog access must work.
-
-The API independently verifies the [Access application JWT](https://developers.cloudflare.com/cloudflare-one/access-controls/applications/http-apps/authorization-cookie/application-token/):
-RS256, fixed team issuer/certificate endpoint, exact single application AUD, timestamps,
-`type=app`, signed owner email and configured subject/role. Unsigned email headers, consumer
-cookies and service tokens grant no authority. Signing keys refresh through bounded JWKS
-resolution. Removing/re-adding an Access user changes `sub` and requires a reviewed allowlist
-update. Local signature/expiry checks do not perform an online session-revocation lookup;
-revoke the Access session at the edge and deploy removal of the subject assignment. A retained
-token remains valid to the origin until expiry if the origin still has the old allowlist.
+Failed or unavailable acceptance: remove the dedicated public HTTPRoutes/Gateway exposure first,
+then withdraw only the two app A records. DNS removal alone does not stop direct-IP traffic.
+Preserve identities, databases, recovery copies and private operator access.
 
 ## Operate
 
-- Inspect `events-concierge-public-tunnel` Deployment, readiness and PodMonitoring. `/ready`
-  reports Cloudflare connectivity; the filter's private readiness checks the frontend.
-  Pod readiness alone does not prove public routing or Google acceptance.
-- Failed connections reconnect without a liveness restart loop. A frontend outage returns
-  an error; the filter never falls back to admin, a demo or another origin. Keep request/
-  header debug logging disabled. Check HTTP status metrics and application logs.
-- Token rotation: provision a new immutable Secret, update `tokenSecretName`, verify both
-  new connections, then revoke the old tunnel credential. The proxy never mounts the token.
-- Rollback: remove/disable this dedicated consumer and optional admin published route first,
-  then disable `publicTunnel` and the Cloudflare operator profile together.
-  Preserve user identities/data and the private operator route. Never retarget DNS to Hermes
-  or restore an incompatible mock/schema release to recover a public endpoint.
-- Offline verification: `EC_HELM_BINARY=helm EC_PUBLIC_TUNNEL_DOCKER=1 .venv/bin/python -m pytest tests/unit/test_public_tunnel.py -o addopts= -q`.
-  This rehearsal uses synthetic data, no tunnel token and a network-isolated container;
-  [deployment CI](../.github/workflows/deployment-validation.yml) runs it too.
+- Inspect Gateway/HTTPRoute conditions, backend health, IAP denials and HTTP status/latency in [Load balancing](https://console.cloud.google.com/net-services/loadbalancing/list/loadBalancers?project=iz27-platform-dev&authuser=4).
+- Monitor certificate state/expiry and DNS authorizations in [Certificate Manager](https://console.cloud.google.com/security/ccm/list/certificates?project=iz27-platform-dev&authuser=4). Public certificate renewal is independent of private datastore CA rotation.
+- Keep request/header/token debug logs disabled. Do not read or copy IAP secrets from backend-service output.
+- Preserve controller ownership of NEGs/load-balancer resources; do not patch them manually. Use reviewed Kubernetes policies for changes.
+- Rotate admin OAuth through a new pinned secret version and namespace Secret, verify IAP before retiring the old credential.
+- Roll back only to a tested schema-compatible image/configuration. Preserve data and recovery assets; never fall back to mock data or another product's origin.

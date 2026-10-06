@@ -142,4 +142,4 @@ maintenanceCronJobs:
   lifecycle-invariants: {enabled: false}
 podMonitoring: {enabled: false}
 networkPolicy:
-  frontendIngressCidrs: [] # Private access only; the edge owner supplies its separate connector.
+  frontendIngressCidrs: [] # Private access only; publicEdge supplies GFE frontend rules.

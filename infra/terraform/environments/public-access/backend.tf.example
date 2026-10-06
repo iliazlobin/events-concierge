@@ -1,0 +1,6 @@
+terraform {
+  backend "gcs" {
+    bucket = "iz27-platform-dev-ec-state"
+    prefix = "public-access"
+  }
+}

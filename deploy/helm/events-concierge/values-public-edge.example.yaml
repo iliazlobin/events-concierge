@@ -1,0 +1,21 @@
+# Layer onto reviewed private authenticated values; this file alone is not deployable.
+# Bootstrap has no admin endpoints. Fill the real separate admin OAuth client first.
+publicEdge:
+  enabled: true
+  bootstrap: true
+  hostname: events.iliazlobin.com
+  staticIpName: ec-public-ip
+  certificateMap: ec-public-cert-map
+  sslPolicy: ec-public-tls
+operator:
+  enabled: false
+  authProvider: iap
+  hostname: admin-events.iliazlobin.com
+  tlsSecretName: ""
+  iapClientId: ""
+  iapClientSecretName: ec-admin-iap
+  iapAudience: "" # Actual /projects/PROJECT_NUMBER/global/backendServices/ADMIN_BACKEND_ID.
+  subjectRoles: {} # Actual signed Google IAP sub -> reviewer, only the owner's account.
+workloads:
+  operator-frontend: {enabled: false}
+  operator-api: {enabled: false}

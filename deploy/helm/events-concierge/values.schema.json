@@ -114,22 +114,9 @@
           "type": "boolean"
         },
         "authProvider": {
-          "enum": ["iap", "cloudflare_access"]
-        },
-        "cloudflareAccess": {
-          "type": "object",
-          "additionalProperties": false,
-          "required": ["teamDomain", "audience", "jwksCidrs"],
-          "properties": {
-            "teamDomain": {"type": "string", "maxLength": 255},
-            "audience": {"type": "string", "maxLength": 64},
-            "jwksCidrs": {
-              "type": "array",
-              "maxItems": 3,
-              "uniqueItems": true,
-              "items": {"enum": ["104.16.0.0/13", "104.24.0.0/14", "172.64.0.0/13"]}
-            }
-          }
+          "enum": [
+            "iap"
+          ]
         },
         "subjectRoles": {
           "type": "object",
@@ -201,19 +188,23 @@
         }
       }
     },
-    "publicTunnel": {
+    "publicEdge": {
       "type": "object",
       "additionalProperties": false,
       "required": [
         "enabled",
+        "bootstrap",
         "hostname",
-        "tokenSecretName",
-        "replicas",
-        "cloudflaredImage",
-        "proxyImage"
+        "staticIpName",
+        "certificateMap",
+        "proxyImage",
+        "sslPolicy"
       ],
       "properties": {
         "enabled": {
+          "type": "boolean"
+        },
+        "bootstrap": {
           "type": "boolean"
         },
         "hostname": {
@@ -221,21 +212,23 @@
             "events.iliazlobin.com"
           ]
         },
-        "tokenSecretName": {
+        "staticIpName": {
           "type": "string",
           "maxLength": 63,
-          "pattern": "^$|^[a-z0-9]([a-z0-9-]*[a-z0-9])?$"
+          "pattern": "^$|^[a-z]([a-z0-9-]*[a-z0-9])?$"
         },
-        "replicas": {
-          "type": "integer",
-          "minimum": 2,
-          "maximum": 3
-        },
-        "cloudflaredImage": {
-          "$ref": "#/definitions/image"
+        "certificateMap": {
+          "type": "string",
+          "maxLength": 63,
+          "pattern": "^$|^[a-z]([a-z0-9-]*[a-z0-9])?$"
         },
         "proxyImage": {
           "$ref": "#/definitions/image"
+        },
+        "sslPolicy": {
+          "type": "string",
+          "maxLength": 63,
+          "pattern": "^$|^[a-z]([a-z0-9-]*[a-z0-9])?$"
         }
       }
     }

@@ -31,8 +31,14 @@ spec:
       labels:
         {{- include "events-concierge.selectorLabels" (dict "root" $root "component" $name) | nindent 8 }}
         app.kubernetes.io/part-of: events-concierge
+        {{- if and $private (eq $name "frontend") }}
+        ec-network-role: consumer-frontend
+        {{- end }}
       annotations:
         checksum/runtime-config: {{ include (print $root.Template.BasePath "/configmap.yaml") $root | sha256sum }}
+        {{- if and $root.Values.publicEdge.enabled (eq $name "frontend") }}
+        checksum/public-edge: {{ tpl ($root.Files.Get "files/public-consumer.Caddyfile") $root | sha256sum }}
+        {{- end }}
         {{- if $private }}
         checksum/private-runtime: {{ $root.Values.privateRuntime | toJson | sha256sum }}
         {{- end }}
@@ -202,10 +208,55 @@ spec:
             periodSeconds: 15
             timeoutSeconds: 3
           {{- end }}
+        {{- if and $root.Values.publicEdge.enabled (eq $name "frontend") }}
+        # Keep the public allowlist beside Next.js without adding a backup Deployment.
+        - name: public-edge
+          image: {{ include "events-concierge.image" $root.Values.publicEdge.proxyImage | quote }}
+          imagePullPolicy: {{ $root.Values.publicEdge.proxyImage.pullPolicy }}
+          # Ordinary cp removes the image binary's low-port file capability.
+          # All capabilities remain dropped; this proxy binds only high ports.
+          command: [/bin/sh, -ec]
+          args:
+            - cp /usr/bin/caddy /tmp/caddy; exec /tmp/caddy run --config /etc/caddy/Caddyfile --adapter caddyfile
+          env:
+            - {name: XDG_CONFIG_HOME, value: /tmp/config}
+            - {name: XDG_DATA_HOME, value: /tmp/data}
+          ports:
+            - {name: public-http, containerPort: 8080, protocol: TCP}
+            - {name: edge-health, containerPort: 8081, protocol: TCP}
+          securityContext:
+            {{- include "events-concierge.appSecurityContext" $root | nindent 12 }}
+          resources:
+            requests: {cpu: 10m, memory: 32Mi}
+            limits: {cpu: 100m, memory: 128Mi}
+          volumeMounts:
+            - {name: public-edge-config, mountPath: /etc/caddy, readOnly: true}
+            - {name: edge-tmp, mountPath: /tmp}
+          startupProbe:
+            httpGet: {path: /healthz, port: edge-health}
+            failureThreshold: 30
+            periodSeconds: 2
+          readinessProbe:
+            httpGet: {path: /readyz, port: edge-health}
+            periodSeconds: 10
+            timeoutSeconds: 3
+          livenessProbe:
+            httpGet: {path: /healthz, port: edge-health}
+            periodSeconds: 20
+            timeoutSeconds: 3
+        {{- end }}
       volumes:
         - name: tmp
           emptyDir:
             sizeLimit: 64Mi
+        {{- if and $root.Values.publicEdge.enabled (eq $name "frontend") }}
+        - name: edge-tmp
+          emptyDir: {sizeLimit: 128Mi}
+        - name: public-edge-config
+          configMap:
+            name: {{ include "events-concierge.fullname" $root }}-public-edge
+            defaultMode: 0444
+        {{- end }}
         {{- if and $workload.runtimeSecrets $root.Values.secretManager.enabled }}
         - name: runtime-secrets
           csi:
