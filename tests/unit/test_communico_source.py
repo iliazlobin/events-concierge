@@ -176,9 +176,12 @@ async def test_communico_refuses_an_unreviewed_source_key_before_requesting() ->
 
 async def test_communico_accepts_a_complete_calendar_above_the_old_byte_limit() -> None:
     """A large description must not discard an otherwise complete, bounded public calendar."""
-    # Preserve the observed regression size, independently of the new reviewed limit.
-    payload = json.dumps([_event(1001, description="x" * 2_016_138)]).encode()
-    assert 2_000_000 < len(payload) <= communico_source._MAX_RESPONSE_BYTES
+    old_limit = 2_000_000
+    event = _event(1001, description="")
+    baseline_bytes = len(json.dumps([event]).encode())
+    event["description"] = "x" * (old_limit + 1 - baseline_bytes)
+    payload = json.dumps([event]).encode()
+    assert len(payload) == old_limit + 1 <= communico_source._MAX_RESPONSE_BYTES
 
     async def handler(request: httpx.Request) -> httpx.Response:
         return httpx.Response(200, content=payload, request=request)
@@ -323,6 +326,81 @@ async def test_communico_does_not_retry_or_follow_rejected_responses(status: int
 
     fetcher = CommunicoCatalogFetcher(user_agent="test", transport=httpx.MockTransport(handler))
 
-    with pytest.raises(CommunicoFetchError):
+    with pytest.raises(CommunicoFetchError) as raised:
         await fetcher.fetch(_source())
     assert len(requested) == 1
+    if status == 302:
+        assert _source().source_key in str(raised.value)
+        assert "response_status=302" in str(raised.value)
+        assert "unreviewed.example" not in str(raised.value)
+
+
+@pytest.mark.parametrize(
+    ("response_url", "safe_context"),
+    [
+        (
+            "https://user:secret-password@unreviewed.example/secret-path?token=secret-query#secret-fragment",
+            "<unapproved URL redacted>",
+        ),
+        (
+            "https://berkeleypubliclibrary.libnet.info/secret-path?token=secret-query#secret-fragment",
+            "https://berkeleypubliclibrary.libnet.info/<unapproved path redacted>?<redacted>#<redacted>",
+        ),
+    ],
+)
+async def test_communico_response_endpoint_violation_identifies_source_without_url_secrets(
+    response_url: str,
+    safe_context: str,
+) -> None:
+    requested: list[str] = []
+
+    class EndpointResponse(httpx.Response):
+        @property
+        def url(self) -> httpx.URL:
+            # HTTPX attaches the original request to MockTransport responses; vary the
+            # reported final URL independently so the endpoint guard is exercised.
+            return httpx.URL(response_url)
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        requested.append(str(request.url))
+        return EndpointResponse(200, request=request)
+
+    fetcher = CommunicoCatalogFetcher(user_agent="test", transport=httpx.MockTransport(handler))
+
+    with pytest.raises(CommunicoFetchError) as raised:
+        await fetcher.fetch(_source())
+    message = str(raised.value)
+    assert _source().source_key in message
+    assert (
+        "requested_url=https://berkeleypubliclibrary.libnet.info/eeventcaldata?<redacted>"
+        in message
+    )
+    assert f"response_url={safe_context}" in message
+    assert "response_status=200" in message
+    assert all(
+        secret not in message
+        for secret in ("secret-password", "secret-path", "secret-query", "secret-fragment")
+    )
+    assert len(requested) == 1
+
+
+async def test_communico_request_endpoint_violation_is_redacted_before_any_request(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        communico_source,
+        "_request_url",
+        lambda *_args: "https://unreviewed.example/secret-path?token=secret-query",
+    )
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        pytest.fail("An endpoint violation must not issue a request")
+
+    fetcher = CommunicoCatalogFetcher(user_agent="test", transport=httpx.MockTransport(handler))
+
+    with pytest.raises(CommunicoFetchError) as raised:
+        await fetcher.fetch(_source())
+    assert _source().source_key in str(raised.value)
+    assert "requested_url=<unapproved URL redacted>" in str(raised.value)
+    assert "secret-path" not in str(raised.value)
+    assert "secret-query" not in str(raised.value)

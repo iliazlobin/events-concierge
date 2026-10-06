@@ -128,7 +128,7 @@ class CommunicoCatalogFetcher:
         )
         url = _request_url(source.seed_url, horizon_start, request_days)
         if not _is_approved_endpoint_url(source, publisher, url):
-            raise CommunicoFetchError("Communico request left the approved endpoint")
+            raise CommunicoFetchError(_endpoint_violation_context(source, publisher, url))
         headers = {"User-Agent": self._user_agent}
         async with httpx.AsyncClient(
             headers=headers,
@@ -142,7 +142,9 @@ class CommunicoCatalogFetcher:
                     if response.is_redirect or not _is_approved_endpoint_url(
                         source, publisher, str(response.url)
                     ):
-                        raise CommunicoFetchError("Communico request left the approved endpoint")
+                        raise CommunicoFetchError(
+                            _endpoint_violation_context(source, publisher, url, response)
+                        )
                     if response.is_server_error:
                         raise SourceTransientError(
                             f"Communico source {source.source_key} returned HTTP {response.status_code}",
@@ -239,6 +241,42 @@ def _is_approved_endpoint_url(
         and parsed.netloc.casefold() == publisher.api_host
         and parsed.path == publisher.api_path
     )
+
+
+def _redacted_endpoint_url(publisher: _CommunicoPublisher, url: str) -> str:
+    """Describe only the closed publisher endpoint; never expose unreviewed URL values."""
+    try:
+        parsed = urlsplit(url)
+    except ValueError:
+        return "<invalid URL redacted>"
+    if parsed.scheme.casefold() != "https" or parsed.netloc.casefold() != publisher.api_host:
+        return "<unapproved URL redacted>"
+    path = (
+        publisher.api_path if parsed.path == publisher.api_path else "/<unapproved path redacted>"
+    )
+    return (
+        f"https://{publisher.api_host}{path}"
+        + ("?<redacted>" if parsed.query else "")
+        + ("#<redacted>" if parsed.fragment else "")
+    )
+
+
+def _endpoint_violation_context(
+    source: CatalogSource,
+    publisher: _CommunicoPublisher,
+    requested_url: str,
+    response: httpx.Response | None = None,
+) -> str:
+    message = (
+        f"Communico source {source.source_key} request left the approved endpoint; "
+        f"requested_url={_redacted_endpoint_url(publisher, requested_url)}"
+    )
+    if response is not None:
+        message += (
+            f"; response_url={_redacted_endpoint_url(publisher, str(response.url))}"
+            f"; response_status={response.status_code}"
+        )
+    return message
 
 
 def _request_url(seed_url: str, horizon_start: datetime, request_days: int = _REQUEST_DAYS) -> str:
