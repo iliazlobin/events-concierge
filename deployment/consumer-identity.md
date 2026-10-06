@@ -11,7 +11,7 @@ Implementation is available; provider setup and deployed acceptance remain relea
 | --- | --- |
 | Guest | Events, Map, Calendar, Entities/Graph, event details and provider links. |
 | Signed-in user | Own profile, preferences, saved filters and account erasure. PostgreSQL RLS and CSRF protect writes. |
-| Admin | Separate admin site; Google IAP verifies `iliazlobin91@gmail.com` and the configured stable subject/role. Consumer login grants no admin role. |
+| Admin | `/admin` routes; Google IAP admits only `iliazlobin91@gmail.com`; the operator API verifies the signed owner and stable subject/role. Consumer login grants no admin role. |
 
 - Default `EC_CONSUMER_LEGAL_MODE=required`: publish approved, versioned HTTPS Terms of Service and Privacy Policy pages. The checkbox starts unchecked; the API records account binding and acceptance atomically.
 - The owner may explicitly select `EC_CONSUMER_LEGAL_MODE=deferred` for a release and unset all four `EC_SIGNUP_TERMS_*`/`EC_SIGNUP_PRIVACY_*` fields. Signup/login/logout remain available with managed identity, sessions, CSRF, tenant isolation and erasure checks. No legal checkbox, document links or acceptance receipts are created; this setting is deployment-owned, never caller-selected.

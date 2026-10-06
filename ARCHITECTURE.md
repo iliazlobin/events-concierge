@@ -77,7 +77,7 @@ discovery reads persisted facts without contacting social providers.
 ## Development and ownership
 
 - **Local:** Docker Compose. Fixed project/ports and test endpoints; source worktrees do not isolate runtime state.
-- **GCP:** private application/data Helm workloads; selected consumer/admin exposure uses a global GCP Gateway, Certificate Manager and admin IAP. [Public access](deploy/public-access.md) owns routing; the [runbook](deploy/development.md) owns release and recovery.
+- **GCP:** private application/data Helm workloads; one hostname and shared Next.js process, separate consumer/operator APIs. A global GCP Gateway and Certificate Manager expose consumer paths and IAP-protected `/admin`. [Public access](deploy/public-access.md) owns routing; the [runbook](deploy/development.md) owns release and recovery.
 - **Shared platform:** [gcp-foundation](https://github.com/iliazlobin/gcp-foundation) owns foundation, network and GKE cluster.
 - **Application:** this repository owns application resources, identities and data.
 - **Agent work:** isolated source, dependencies and outputs; initial Symphony service-backed checks run in CI.

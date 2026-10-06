@@ -2,7 +2,7 @@
 
 Release gates, incident controls and recovery constraints. [GKE release and recovery](../deploy/development.md) owns environment state, access, rollout and backup commands.
 
-- **Selected scope:** discovery; private PostgreSQL, Redis and Temporal on shared GKE; GCS payload storage. [Public HTTPS](../deploy/public-access.md) exposes consumer/admin frontends, with IAP on admin.
+- **Selected scope:** discovery; private PostgreSQL, Redis and Temporal on shared GKE; GCS payload storage. [Public HTTPS](../deploy/public-access.md) exposes one shared web frontend; `/admin` uses IAP and a separate operator API.
 - **Implemented composition:** managed consumer identity, per-process credentials, datastore TLS and Temporal mTLS. Provider configuration, rollout and real browser acceptance are separate release gates; use the dated runtime record rather than infer activation from source or healthy Pods.
 - **Ownership:** [gcp-foundation](https://github.com/iliazlobin/gcp-foundation) owns network/cluster/access; this repository owns application identities, releases, data, migrations and backups.
 
