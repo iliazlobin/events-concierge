@@ -165,7 +165,7 @@ test("the picker saves, reapplies, and forgets a selection", () => {
   // as its own class of control rather than as one more "Add …" chip.
   assert.match(
     filterBar,
-    /aria-label="Active filters">\s*(?:\{\/\*[\s\S]*?\*\/\}\s*)?<SavedFilterPicker/,
+    /aria-label="Active filters">\s*(?:\{\/\*[\s\S]*?\*\/\}\s*)?\{signedIn \? \(\s*<SavedFilterPicker/,
   );
   assert.match(styles, /\.saved-filter-picker \{[^}]*border-right:/);
   assert.match(styles, /\.saved-filter-picker__popover \{[^}]*left: 0;/);

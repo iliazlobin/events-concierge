@@ -26,6 +26,10 @@ from .adapters.entity_intelligence.public_sources import (
     WikidataSource,
 )
 from .adapters.google_calendar.calendar import GoogleCalendarAdapter
+from .adapters.identity_platform import (
+    IdentityPlatformBrowserSessionAdapter,
+    IdentityPlatformVerifier,
+)
 from .adapters.local_media import LocalFilesystemMediaStore
 from .adapters.luma.source import LumaSource
 from .adapters.mock.auth import HeaderAuthContext, LocalHeaderCsrfProtection
@@ -55,6 +59,7 @@ from .adapters.postgres.catalog_sources import PostgresCatalogSourceRepository
 from .adapters.postgres.change_detection import PostgresChangeDetectionRepository
 from .adapters.postgres.consent import PostgresRegistrationConsentEvidenceRepository
 from .adapters.postgres.consumer import PostgresConsumerReadRepository
+from .adapters.postgres.consumer_accounts import PostgresConsumerAccountRepository
 from .adapters.postgres.discovery_policy import PostgresDiscoveryPolicyReader
 from .adapters.postgres.handoff_expiry import PostgresHandoffExpiryRepository
 from .adapters.postgres.ingestion_admin import PostgresIngestionAdminRepository
@@ -118,6 +123,7 @@ from .ports.calendar import CalendarPort
 from .ports.catalog_sources import CatalogPagedSourceFetcher, CatalogSourceFetcher
 from .ports.consent import RegistrationConsentEvidencePort
 from .ports.consumer import ConsumerReadPort
+from .ports.consumer_accounts import ConsumerAccountRepository
 from .ports.credentials import CredentialVault
 from .ports.discovery_policy import DiscoveryPolicyGate
 from .ports.google_calendar import GoogleCalendarAccessPort, GoogleCalendarBindingPort
@@ -153,6 +159,7 @@ class Container:
     budget_ledger: PostgresBudgetLedger
     action_audit: RegistrationActionAuditPort
     account_erasure_repo: AccountErasureRepository
+    consumer_accounts: ConsumerAccountRepository
     tenant_repo: PostgresTenantRepository
     consumer: ConsumerReadPort
     request_repo: PostgresRequestRepository
@@ -311,11 +318,11 @@ def build_container(
     )
     if settings.release_profile == "discovery" and not settings.mock_cloud:
         validate_discovery_settings(settings)
-        if not settings.oidc_bff_enabled or any(
+        if not (settings.oidc_bff_enabled or settings.identity_platform_enabled) or any(
             boundary is not None for boundary in (auth_context, csrf_protection, browser_session)
         ):
             raise ValueError(
-                "non-mock discovery requires the repository OIDC BFF as sole identity authority"
+                "non-mock discovery requires the configured browser session as sole identity authority"
             )
         if not discovery_effects_disabled(
             RuntimePorts(
@@ -537,6 +544,7 @@ def build_container(
         action_audit=configured_action_audit,
         account_erasure_repo=PostgresAccountErasureRepository(),
         tenant_repo=tenant_repo,
+        consumer_accounts=PostgresConsumerAccountRepository(),
         consumer=consumer,
         request_repo=request_repo,
         lifecycle_repo=lifecycle_repo,
@@ -851,6 +859,23 @@ def _build_identity_boundaries(
         if csrf_protection is not None and csrf_protection is not browser_session:
             raise ValueError("browser session must be the configured CsrfProtectionPort")
         return browser_session, browser_session, browser_session
+
+    if settings.identity_platform_enabled:
+        if auth_context is not None or csrf_protection is not None:
+            raise ValueError("Identity Platform cannot be combined with injected auth boundaries")
+        assert settings.identity_platform_project_id
+        configured_identity = IdentityPlatformBrowserSessionAdapter(
+            verifier=IdentityPlatformVerifier(
+                settings.identity_platform_project_id, settings.identity_platform_providers
+            ),
+            tenant_lookup=PostgresTenantRepository().get,
+            trusted_origin=settings.public_base_url.rstrip("/"),
+            redis_url=settings.redis_url,
+            login_ttl_seconds=settings.oidc_login_ttl_seconds,
+            session_ttl_seconds=settings.oidc_session_ttl_seconds,
+            store_timeout_seconds=settings.oidc_session_store_timeout_seconds,
+        )
+        return configured_identity, configured_identity, configured_identity
 
     if settings.oidc_bff_enabled:
         if auth_context is not None or csrf_protection is not None:

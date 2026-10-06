@@ -2,15 +2,19 @@
 
 from __future__ import annotations
 
+import gzip
 import json
+from collections.abc import AsyncIterator
 from datetime import UTC, datetime
 
 import httpx
 import pytest
 
+from events_concierge.adapters.communico import source as communico_source
 from events_concierge.adapters.communico.source import CommunicoCatalogFetcher, CommunicoFetchError
 from events_concierge.domain.catalog_sources import CatalogSource
 from events_concierge.domain.enums import CatalogSourceMode, PriceStatus
+from events_concierge.ports.sources import SourceTransientError
 
 
 def _source() -> CatalogSource:
@@ -130,7 +134,9 @@ async def test_communico_fails_closed_on_a_capped_unpaged_result() -> None:
 
     async def handler(request: httpx.Request) -> httpx.Response:
         return httpx.Response(
-            200, json=[_event(index + 1) for index in range(600)], request=request
+            200,
+            json=[_event(index + 1) for index in range(communico_source._MAX_ITEMS)],
+            request=request,
         )
 
     fetcher = CommunicoCatalogFetcher(user_agent="test", transport=httpx.MockTransport(handler))
@@ -166,3 +172,235 @@ async def test_communico_refuses_an_unreviewed_source_key_before_requesting() ->
     with pytest.raises(ValueError, match="reviewed public events"):
         await fetcher.fetch(source)
     assert requested == []
+
+
+async def test_communico_accepts_a_complete_calendar_above_the_old_byte_limit() -> None:
+    """A large description must not discard an otherwise complete, bounded public calendar."""
+    old_limit = 2_000_000
+    event = _event(1001, description="")
+    baseline_bytes = len(json.dumps([event]).encode())
+    event["description"] = "x" * (old_limit + 1 - baseline_bytes)
+    payload = json.dumps([event]).encode()
+    assert len(payload) == old_limit + 1 <= communico_source._MAX_RESPONSE_BYTES
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, content=payload, request=request)
+
+    fetcher = CommunicoCatalogFetcher(
+        user_agent="test",
+        now=lambda: datetime(2026, 7, 17, 19, 0, tzinfo=UTC),
+        transport=httpx.MockTransport(handler),
+    )
+
+    assert len(await fetcher.fetch(_source())) == 1
+
+
+async def test_communico_decodes_compressed_calendar_only_once() -> None:
+    compressed = gzip.compress(json.dumps([_event(1001)]).encode())
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200, content=compressed, headers={"Content-Encoding": "gzip"}, request=request
+        )
+
+    fetcher = CommunicoCatalogFetcher(
+        user_agent="test",
+        now=lambda: datetime(2026, 7, 17, 19, 0, tzinfo=UTC),
+        transport=httpx.MockTransport(handler),
+    )
+
+    assert len(await fetcher.fetch(_source())) == 1
+
+
+async def test_communico_decoded_response_discards_transport_headers() -> None:
+    payload = json.dumps([_event(1001)]).encode()
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            content=gzip.compress(payload),
+            headers={
+                "Content-Encoding": "gzip",
+                "Content-Type": "application/json",
+                "Transfer-Encoding": "chunked",
+                "Connection": "keep-alive, X-Hop-Only",
+                "Keep-Alive": "timeout=5",
+                "X-Hop-Only": "transport metadata",
+            },
+            request=request,
+        )
+
+    source = _source()
+    publisher = communico_source._publisher_for_source(source)
+    assert publisher is not None
+    fetcher = CommunicoCatalogFetcher(user_agent="test", transport=httpx.MockTransport(handler))
+
+    response = await fetcher._response_or_error(
+        source, publisher, datetime(2026, 7, 17, tzinfo=UTC)
+    )
+
+    assert response.json() == [_event(1001)]
+    assert response.headers["content-length"] == str(len(payload))
+    assert response.headers["content-type"] == "application/json"
+    assert all(
+        name not in response.headers
+        for name in (
+            "content-encoding",
+            "transfer-encoding",
+            "connection",
+            "keep-alive",
+            "x-hop-only",
+        )
+    )
+
+
+async def test_communico_stops_streaming_an_oversized_response_and_closes_it() -> None:
+    """Do not read an unbounded payload merely to reject it after downloading."""
+    read_chunks: list[int] = []
+    closed: list[bool] = []
+
+    class OversizedStream(httpx.AsyncByteStream):
+        async def __aiter__(self) -> AsyncIterator[bytes]:
+            for index in range(
+                communico_source._MAX_RESPONSE_BYTES // communico_source._RESPONSE_CHUNK_BYTES + 3
+            ):
+                read_chunks.append(index)
+                yield b" " * communico_source._RESPONSE_CHUNK_BYTES
+
+        async def aclose(self) -> None:
+            closed.append(True)
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, stream=OversizedStream(), request=request)
+
+    fetcher = CommunicoCatalogFetcher(user_agent="test", transport=httpx.MockTransport(handler))
+
+    with pytest.raises(CommunicoFetchError, match="response-size limit") as raised:
+        await fetcher.fetch(_source())
+    assert _source().source_key in str(raised.value)
+    assert f"{len(read_chunks) * communico_source._RESPONSE_CHUNK_BYTES} decoded bytes" in str(
+        raised.value
+    )
+    assert f"{communico_source._MAX_RESPONSE_BYTES} bytes" in str(raised.value)
+    assert len(read_chunks) * communico_source._RESPONSE_CHUNK_BYTES <= (
+        communico_source._MAX_RESPONSE_BYTES + communico_source._RESPONSE_CHUNK_BYTES
+    )
+    assert closed == [True]
+
+
+@pytest.mark.parametrize("failure", [httpx.ConnectError, httpx.ReadTimeout])
+async def test_communico_transport_outage_uses_bounded_retry(
+    failure: type[httpx.TransportError],
+) -> None:
+    async def handler(request: httpx.Request) -> httpx.Response:
+        raise failure("Name or service not known", request=request)
+
+    fetcher = CommunicoCatalogFetcher(user_agent="test", transport=httpx.MockTransport(handler))
+
+    with pytest.raises(SourceTransientError) as raised:
+        await fetcher.fetch(_source())
+    assert raised.value.retry_after_seconds == communico_source._TRANSIENT_RETRY_DELAY_S
+
+
+@pytest.mark.parametrize("status", [500, 503, 504])
+async def test_communico_server_outage_uses_bounded_retry(status: int) -> None:
+    async def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(status, request=request)
+
+    fetcher = CommunicoCatalogFetcher(user_agent="test", transport=httpx.MockTransport(handler))
+
+    with pytest.raises(SourceTransientError) as raised:
+        await fetcher.fetch(_source())
+    assert raised.value.retry_after_seconds == communico_source._TRANSIENT_RETRY_DELAY_S
+
+
+@pytest.mark.parametrize("status", [302, 403, 404])
+async def test_communico_does_not_retry_or_follow_rejected_responses(status: int) -> None:
+    requested: list[str] = []
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        requested.append(str(request.url))
+        return httpx.Response(
+            status, headers={"Location": "https://unreviewed.example/events"}, request=request
+        )
+
+    fetcher = CommunicoCatalogFetcher(user_agent="test", transport=httpx.MockTransport(handler))
+
+    with pytest.raises(CommunicoFetchError) as raised:
+        await fetcher.fetch(_source())
+    assert len(requested) == 1
+    if status == 302:
+        assert _source().source_key in str(raised.value)
+        assert "response_status=302" in str(raised.value)
+        assert "unreviewed.example" not in str(raised.value)
+
+
+@pytest.mark.parametrize(
+    ("response_url", "safe_context"),
+    [
+        (
+            "https://user:secret-password@unreviewed.example/secret-path?token=secret-query#secret-fragment",
+            "<unapproved URL redacted>",
+        ),
+        (
+            "https://berkeleypubliclibrary.libnet.info/secret-path?token=secret-query#secret-fragment",
+            "https://berkeleypubliclibrary.libnet.info/<unapproved path redacted>?<redacted>#<redacted>",
+        ),
+    ],
+)
+async def test_communico_response_endpoint_violation_identifies_source_without_url_secrets(
+    response_url: str,
+    safe_context: str,
+) -> None:
+    requested: list[str] = []
+
+    class EndpointResponse(httpx.Response):
+        @property
+        def url(self) -> httpx.URL:
+            # HTTPX attaches the original request to MockTransport responses; vary the
+            # reported final URL independently so the endpoint guard is exercised.
+            return httpx.URL(response_url)
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        requested.append(str(request.url))
+        return EndpointResponse(200, request=request)
+
+    fetcher = CommunicoCatalogFetcher(user_agent="test", transport=httpx.MockTransport(handler))
+
+    with pytest.raises(CommunicoFetchError) as raised:
+        await fetcher.fetch(_source())
+    message = str(raised.value)
+    assert _source().source_key in message
+    assert (
+        "requested_url=https://berkeleypubliclibrary.libnet.info/eeventcaldata?<redacted>"
+        in message
+    )
+    assert f"response_url={safe_context}" in message
+    assert "response_status=200" in message
+    assert all(
+        secret not in message
+        for secret in ("secret-password", "secret-path", "secret-query", "secret-fragment")
+    )
+    assert len(requested) == 1
+
+
+async def test_communico_request_endpoint_violation_is_redacted_before_any_request(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        communico_source,
+        "_request_url",
+        lambda *_args: "https://unreviewed.example/secret-path?token=secret-query",
+    )
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        pytest.fail("An endpoint violation must not issue a request")
+
+    fetcher = CommunicoCatalogFetcher(user_agent="test", transport=httpx.MockTransport(handler))
+
+    with pytest.raises(CommunicoFetchError) as raised:
+        await fetcher.fetch(_source())
+    assert _source().source_key in str(raised.value)
+    assert "requested_url=<unapproved URL redacted>" in str(raised.value)
+    assert "secret-path" not in str(raised.value)
+    assert "secret-query" not in str(raised.value)

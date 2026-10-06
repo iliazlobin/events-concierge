@@ -52,13 +52,30 @@ export interface DateRangeFilter {
   label?: string;
 }
 
+export interface ConsumerIdentityConfig {
+  project_id: string;
+  api_key: string;
+  auth_domain: string;
+  providers: Array<"google.com" | "apple.com">;
+}
+
+export interface SignupLegalPolicy {
+  terms_version: string;
+  terms_url: string;
+  privacy_version: string;
+  privacy_url: string;
+}
+
 export interface UiConfig {
   release_profile?: "full" | "discovery";
   product_name: string;
   local_demo: boolean;
   auth_mode: "local_demo" | "deployment_session";
   /** Absent on older deployments; provider-specific UI must fail back to a generic label. */
-  auth_provider?: "google" | "custom_claim" | null;
+  auth_provider?: "google" | "custom_claim" | "identity_platform" | null;
+  anonymous_browsing?: boolean;
+  identity_platform?: ConsumerIdentityConfig | null;
+  legal_policy?: SignupLegalPolicy | null;
   auth_start_url: string | null;
   reauth_url: string | null;
   logout_url: string | null;

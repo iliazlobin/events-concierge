@@ -63,7 +63,7 @@ export function AccountPanel() {
     } catch (eraseError) {
       if (eraseError instanceof ApiError && eraseError.status === 428 && config?.reauth_url) {
         try {
-          const hop = await startReauthentication(config.reauth_url, "/app#/settings/account");
+          const hop = await startReauthentication(config.reauth_url, "/settings/account");
           window.location.assign(hop.authorization_url);
           return;
         } catch (hopError) {

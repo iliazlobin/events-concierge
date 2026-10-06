@@ -132,6 +132,34 @@ async def test_unsigned_headers_and_consumer_bearer_never_grant_operator_authori
     assert response.status_code == 401
 
 
+@pytest.mark.parametrize("email", [None, "other@example.test", "iliazlobin27@gmail.com"])
+async def test_owner_only_operator_rejects_every_other_verified_email(email: str | None) -> None:
+    app, _ = _app()
+    app.state.operator_identity_verifier = IapOperatorIdentityVerifier(
+        audience=_AUDIENCE,
+        subject_roles={_SUBJECT: "reviewer"},
+        allowed_email="iliazlobin91@gmail.com",
+        key_resolver=_key,
+    )
+    async with AsyncClient(transport=ASGITransport(app=app), base_url=_ORIGIN) as client:
+        headers = _headers(_token(email=email)) | {
+            "x-goog-authenticated-user-email": "accounts.google.com:iliazlobin91@gmail.com",
+        }
+        assert (await client.get("/admin/v1/operator/session", headers=headers)).status_code == 403
+        assert (
+            await client.get(
+                "/admin/v1/operator/session",
+                headers=_headers(_token(email="iliazlobin91@gmail.com")),
+            )
+        ).status_code == 200
+        assert (
+            await client.get(
+                "/admin/v1/operator/session",
+                headers=_headers(_token(email="iliazlobin91@gmail.com", sub="unassigned-subject")),
+            )
+        ).status_code == 403
+
+
 @pytest.mark.parametrize(
     "claims",
     [

@@ -12,7 +12,7 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 from ..config import Settings
-from ..operations.network_safety import is_non_remote_host
+from ..operations.network_safety import is_remote_dependency_host
 
 _MAX_PORT = 65535
 
@@ -49,7 +49,7 @@ def validate_operator_database_url(settings: Settings, url: str | None) -> str:
         if settings.database_connection_mode == "cloud_sql_proxy":
             valid = parsed.hostname == "127.0.0.1" and port is not None and sslmodes == ["disable"]
         else:
-            valid = not is_non_remote_host(parsed.hostname) and sslmodes == ["verify-full"]
+            valid = is_remote_dependency_host(parsed.hostname) and sslmodes == ["verify-full"]
         if not valid:
             raise ValueError("operator database requires verified TLS or loopback Cloud SQL Proxy")
         if settings.database_max_overflow != 0:

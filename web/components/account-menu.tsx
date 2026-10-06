@@ -15,12 +15,14 @@ import { useCallback, useEffect, useRef, useState } from "react";
 
 import { useAvatarSource } from "@/components/use-avatar-source";
 import { releaseProfile, releaseSettingsAllowed } from "@/lib/release-profile";
+import { signInFailurePath } from "@/lib/sign-in";
 import type { Me, UiConfig } from "@/lib/types";
 
 interface AccountMenuProps {
   me: Me | null;
   config: UiConfig | null;
   tenantId?: string | null;
+  returnTo?: string;
   signingOut: boolean;
   onSignOut: () => void;
 }
@@ -33,9 +35,9 @@ interface MenuLink {
 }
 
 const LINKS: MenuLink[] = [
-  { href: "/settings", label: "Profile", hint: "Name, photo, zone", icon: Settings2 },
-  { href: "/settings/taste", label: "Interests", hint: "What it looks for", icon: Sparkles },
-  { href: "/settings/saved-filters", label: "Saved filters", hint: "Selections you kept", icon: Bookmark },
+  { href: "/settings", label: "Profile", hint: "Name, photo, time zone", icon: Settings2 },
+  { href: "/settings/taste", label: "Interests", hint: "Topics you enjoy", icon: Sparkles },
+  { href: "/settings/saved-filters", label: "Saved filters", hint: "Your saved searches", icon: Bookmark },
   { href: "/settings/activity", label: "Activity", hint: "Asks, registrations", icon: SlidersHorizontal },
   { href: "/settings/api-keys", label: "API keys", hint: "Development key records", icon: KeyRound },
   { href: "/settings/security", label: "Security", hint: "Password, two-factor", icon: ShieldCheck },
@@ -53,7 +55,7 @@ const LINKS: MenuLink[] = [
  * Navigation entries are real anchors so a middle-click or Cmd-click opens a tab, which is how the
  * administration affordance this menu absorbs has always behaved.
  */
-export function AccountMenu({ me, config, tenantId = null, signingOut, onSignOut }: AccountMenuProps) {
+export function AccountMenu({ me, config, tenantId = null, returnTo = "/", signingOut, onSignOut }: AccountMenuProps) {
   const [open, setOpen] = useState(false);
   const [activeIndex, setActiveIndex] = useState(0);
   const wrapperRef = useRef<HTMLDivElement | null>(null);
@@ -143,6 +145,12 @@ export function AccountMenu({ me, config, tenantId = null, signingOut, onSignOut
     cursor += 1;
     return cursor;
   };
+
+  if (!me) return (
+    <div className="account-menu">
+      <a className="button button-quiet" href={signInFailurePath(401, returnTo)}>Sign in</a>
+    </div>
+  );
 
   return (
     <div className="account-menu" ref={wrapperRef} onBlur={handleBlur} onKeyDown={handleKeyDown}>
@@ -246,11 +254,7 @@ export function AccountMenu({ me, config, tenantId = null, signingOut, onSignOut
                 >
                   <LogOut className="account-menu__icon" aria-hidden="true" />
                   <span className="account-menu__label">
-                    {signingOut
-                      ? "Signing out…"
-                      : config?.auth_mode === "deployment_session"
-                        ? "Sign out"
-                        : "Leave this session"}
+                    {signingOut ? "Signing out…" : "Sign out"}
                   </span>
                 </button>
               );

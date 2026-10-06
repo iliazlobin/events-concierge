@@ -6,6 +6,7 @@ namespace:
   labels: {}
 
 global:
+  deploymentProfile: managed
   # Safe bootstrap default: render only migration infrastructure, and still reject placeholders.
   releasePhase: migration
   # Set true only after full non-structural production validation succeeds with deployed secrets.
@@ -58,6 +59,7 @@ applicationConfig:
   EC_GCS_CLAIM_CHECK_PREFIX: events-concierge/claim-check/v1
   EC_ADMIN_INGESTION_ENABLED: "false"
   EC_CATALOG_INGESTION_SCHEDULER_ENABLED: "false"
+  EC_IDENTITY_PLATFORM_ENABLED: "false"
   EC_OIDC_BFF_ENABLED: "true"
   EC_OIDC_ISSUER: https://identity.example.com/
   EC_OIDC_AUTHORIZATION_URL: https://identity.example.com/authorize
@@ -151,6 +153,16 @@ developmentCatalog:
   cadenceEnabled: false
   claimCheckPrefix: events-concierge/catalog/v1
   executorSecrets: []
+
+# Authenticated discovery with the existing in-cluster stores. Values hold references only.
+privateRuntime:
+  postgresCASecretName: ""
+  redisCASecretName: ""
+  temporalCASecretName: ""
+  processSecrets: {}
+  temporalClientSecretNames: {}
+  cadenceEnabled: false
+  controllerSecrets: []
 
 serviceAccounts:
   development-admin:
@@ -427,6 +439,23 @@ gateway:
   className: gke-l7-global-external-managed
   hostname: staging.concierge.example
   tlsSecretName: ""
+
+publicTunnel:
+  enabled: false
+  hostname: events.iliazlobin.com
+  # An externally provisioned, immutable Secret containing one key: token.
+  tokenSecretName: ""
+  replicas: 2
+  cloudflaredImage:
+    repository: cloudflare/cloudflared
+    # Official multi-platform 2026.10.0 image.
+    digest: sha256:9b49eed8f62806d5d45ddf59ecefb5710429598ea6d3fcccd2af938f621b2b07
+    pullPolicy: IfNotPresent
+  proxyImage:
+    repository: caddy
+    # Official multi-platform 2.11.6-alpine image.
+    digest: sha256:d44355d3c2149dc580ce2cac735955d1c08d3d00882c30489c241aa51a5c10d9
+    pullPolicy: IfNotPresent
 
 podMonitoring:
   enabled: true

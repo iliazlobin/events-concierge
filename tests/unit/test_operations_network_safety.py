@@ -7,6 +7,7 @@ import pytest
 from events_concierge.operations.network_safety import (
     is_loopback_host,
     is_non_remote_host,
+    is_remote_dependency_host,
 )
 
 
@@ -59,3 +60,35 @@ def test_loopback_hosts_are_accepted_for_local_canaries(host: str) -> None:
 )
 def test_private_managed_network_hosts_remain_remote_eligible(host: str) -> None:
     assert is_non_remote_host(host) is False
+
+
+@pytest.mark.parametrize(
+    "service",
+    [
+        "ec-dev-application-postgres",
+        "ec-dev-temporal-postgres",
+        "ec-dev-redis",
+        "ec-dev-temporal-frontend",
+    ],
+)
+def test_reviewed_cluster_dependencies_do_not_become_browser_origin_candidates(service):
+    host = f"{service}.events-concierge-dev.svc.cluster.local"
+    assert is_remote_dependency_host(host)
+    assert is_non_remote_host(host)
+
+
+@pytest.mark.parametrize(
+    "host",
+    [
+        None,
+        "localhost",
+        "127.0.0.1",
+        "169.254.169.254",
+        "db.local",
+        "other.events-concierge-dev.svc.cluster.local",
+        "ec-dev-redis.other.svc.cluster.local",
+        "ec-dev-redis.events-concierge-dev.svc.cluster.local.evil.local",
+    ],
+)
+def test_cluster_dependency_exception_keeps_other_local_and_special_hosts_rejected(host):
+    assert not is_remote_dependency_host(host)
