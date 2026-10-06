@@ -25,6 +25,7 @@ dependencies = [
     # Avatar uploads are decoded and re-encoded server side; the re-encode is what strips
     # EXIF and neutralizes polyglots, so this is request-path security code.
     "pillow>=11.0,<13",
+    "firebase-admin>=7,<8",
 ]
 
 [project.optional-dependencies]

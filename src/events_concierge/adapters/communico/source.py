@@ -30,11 +30,14 @@ from ...domain.catalog_window import (
 from ...domain.enums import CatalogSourceMode, PriceStatus, Source
 from ...domain.events import CandidateEvent
 from ...infra.logging import get_logger
+from ...ports.sources import SourceTransientError
 
 _log = get_logger("communico.source")
 
 _FETCH_TIMEOUT_S = 15.0
-_MAX_RESPONSE_BYTES = 2_000_000
+_MAX_RESPONSE_BYTES = 3_000_000
+_RESPONSE_CHUNK_BYTES = 64_000
+_TRANSIENT_RETRY_DELAY_S = 15.0
 _MAX_ITEMS = 600
 _HORIZON_DAYS = 90
 _REQUEST_DAYS = _HORIZON_DAYS + 1
@@ -97,7 +100,8 @@ class CommunicoCatalogFetcher:
         now = _as_local_time(collection_reference_time(source, self._now()))
         horizon_start = datetime.combine(now.date(), datetime.min.time(), _LOCAL_TIME_ZONE)
         horizon_end = collection_end_at(
-            source, horizon_start + timedelta(days=source.collection_horizon_days),
+            source,
+            horizon_start + timedelta(days=source.collection_horizon_days),
         ).astimezone(_LOCAL_TIME_ZONE)
         response = await self._response_or_error(source, publisher, horizon_start)
         events = _events_from_response(response, source.source_key)
@@ -115,12 +119,16 @@ class CommunicoCatalogFetcher:
     ) -> httpx.Response:
         """Request only the exact public list endpoint; redirects are source failures (FR-10.3)."""
         request_days = (
-            (collection_end_day(source, horizon_start.date(), _LOCAL_TIME_ZONE) - horizon_start.date()).days
-            if source.collection_window is not None else source.collection_horizon_days + 1
+            (
+                collection_end_day(source, horizon_start.date(), _LOCAL_TIME_ZONE)
+                - horizon_start.date()
+            ).days
+            if source.collection_window is not None
+            else source.collection_horizon_days + 1
         )
         url = _request_url(source.seed_url, horizon_start, request_days)
         if not _is_approved_endpoint_url(source, publisher, url):
-            raise CommunicoFetchError("Communico request left the approved endpoint")
+            raise CommunicoFetchError(_endpoint_violation_context(source, publisher, url))
         headers = {"User-Agent": self._user_agent}
         async with httpx.AsyncClient(
             headers=headers,
@@ -130,26 +138,64 @@ class CommunicoCatalogFetcher:
         ) as client:
             try:
                 await self._wait_for_host_slot(url, source.min_interval_ms)
-                response = await client.get(url, follow_redirects=False)
+                async with client.stream("GET", url, follow_redirects=False) as response:
+                    if response.is_redirect or not _is_approved_endpoint_url(
+                        source, publisher, str(response.url)
+                    ):
+                        raise CommunicoFetchError(
+                            _endpoint_violation_context(source, publisher, url, response)
+                        )
+                    if response.is_server_error:
+                        raise SourceTransientError(
+                            f"Communico source {source.source_key} returned HTTP {response.status_code}",
+                            retry_after_seconds=_TRANSIENT_RETRY_DELAY_S,
+                        )
+                    response.raise_for_status()
+                    content = bytearray()
+                    async for chunk in response.aiter_bytes(chunk_size=_RESPONSE_CHUNK_BYTES):
+                        attempted_bytes = len(content) + len(chunk)
+                        if attempted_bytes > _MAX_RESPONSE_BYTES:
+                            raise CommunicoFetchError(
+                                f"Communico source {source.source_key} exceeded its reviewed "
+                                f"response-size limit: {attempted_bytes} decoded bytes "
+                                f"exceeded {_MAX_RESPONSE_BYTES} bytes"
+                            )
+                        content.extend(chunk)
+                    # aiter_bytes has already decoded any Content-Encoding.
+                    decoded_headers = response.headers.copy()
+                    connection_headers = {
+                        name.strip().lower()
+                        for name in response.headers.get("connection", "").split(",")
+                        if name.strip()
+                    }
+                    for name in connection_headers | {
+                        "connection",
+                        "content-encoding",
+                        "keep-alive",
+                        "proxy-authenticate",
+                        "proxy-authorization",
+                        "te",
+                        "trailer",
+                        "transfer-encoding",
+                        "upgrade",
+                    }:
+                        decoded_headers.pop(name, None)
+                    decoded_headers["content-length"] = str(len(content))
+                    return httpx.Response(
+                        response.status_code,
+                        headers=decoded_headers,
+                        content=bytes(content),
+                        request=response.request,
+                    )
+            except httpx.TransportError as exc:
+                raise SourceTransientError(
+                    f"Communico source {source.source_key} transient transport failure: {exc}",
+                    retry_after_seconds=_TRANSIENT_RETRY_DELAY_S,
+                ) from exc
             except httpx.HTTPError as exc:
                 raise CommunicoFetchError(
                     f"Communico source {source.source_key} request failed: {exc}"
                 ) from exc
-        if response.is_redirect or not _is_approved_endpoint_url(
-            source, publisher, str(response.url)
-        ):
-            raise CommunicoFetchError("Communico request left the approved endpoint")
-        try:
-            response.raise_for_status()
-        except httpx.HTTPError as exc:
-            raise CommunicoFetchError(
-                f"Communico source {source.source_key} request failed: {exc}"
-            ) from exc
-        if len(response.content) > _MAX_RESPONSE_BYTES:
-            raise CommunicoFetchError(
-                "Communico response exceeded its reviewed response-size limit"
-            )
-        return response
 
     async def _wait_for_host_slot(self, url: str, min_interval_ms: int) -> None:
         """Apply the reviewed per-host floor before the anonymous source-list GET (FR-10.4)."""
@@ -195,6 +241,42 @@ def _is_approved_endpoint_url(
         and parsed.netloc.casefold() == publisher.api_host
         and parsed.path == publisher.api_path
     )
+
+
+def _redacted_endpoint_url(publisher: _CommunicoPublisher, url: str) -> str:
+    """Describe only the closed publisher endpoint; never expose unreviewed URL values."""
+    try:
+        parsed = urlsplit(url)
+    except ValueError:
+        return "<invalid URL redacted>"
+    if parsed.scheme.casefold() != "https" or parsed.netloc.casefold() != publisher.api_host:
+        return "<unapproved URL redacted>"
+    path = (
+        publisher.api_path if parsed.path == publisher.api_path else "/<unapproved path redacted>"
+    )
+    return (
+        f"https://{publisher.api_host}{path}"
+        + ("?<redacted>" if parsed.query else "")
+        + ("#<redacted>" if parsed.fragment else "")
+    )
+
+
+def _endpoint_violation_context(
+    source: CatalogSource,
+    publisher: _CommunicoPublisher,
+    requested_url: str,
+    response: httpx.Response | None = None,
+) -> str:
+    message = (
+        f"Communico source {source.source_key} request left the approved endpoint; "
+        f"requested_url={_redacted_endpoint_url(publisher, requested_url)}"
+    )
+    if response is not None:
+        message += (
+            f"; response_url={_redacted_endpoint_url(publisher, str(response.url))}"
+            f"; response_status={response.status_code}"
+        )
+    return message
 
 
 def _request_url(seed_url: str, horizon_start: datetime, request_days: int = _REQUEST_DAYS) -> str:

@@ -17,8 +17,10 @@ from tests.support.run_isolated_integration import _create_database, _drop_datab
 pytestmark = pytest.mark.integration
 
 
+@pytest.mark.parametrize("published_revision", ["0201", "0205"])
 def test_upgrade_from_published_head_preserves_measured_usage_and_budget_audit(
     monkeypatch: pytest.MonkeyPatch,
+    published_revision: str,
 ) -> None:
     owner_url = os.environ.get("EC_MIGRATION_URL")
     if not owner_url:
@@ -28,13 +30,14 @@ def test_upgrade_from_published_head_preserves_measured_usage_and_budget_audit(
     root = Path(__file__).resolve().parents[2]
     config = Config(str(root / "alembic.ini"))
     config.set_main_option("script_location", str(root / "migrations"))
+    expected_head = ScriptDirectory.from_config(config).get_current_head()
     created = False
     engine = create_engine(url, hide_parameters=True)
     try:
         _create_database(owner_url, database)
         created = True
         monkeypatch.setenv("EC_MIGRATION_URL", url)
-        command.upgrade(config, "0201")
+        command.upgrade(config, published_revision)
         call_id = uuid4()
         with engine.begin() as connection:
             connection.execute(
@@ -66,7 +69,7 @@ def test_upgrade_from_published_head_preserves_measured_usage_and_budget_audit(
         with engine.connect() as connection:
             assert (
                 connection.execute(text("SELECT version_num FROM alembic_version")).scalar_one()
-                == ScriptDirectory.from_config(config).get_current_head()
+                == expected_head
             )
             assert _accounting_snapshot(connection) == before
             assert (

@@ -571,6 +571,250 @@ def test_model_usage_definer_restore_has_no_login_elevation_or_membership(schema
     assert "m.member=r.oid OR m.roleid=r.oid" in query
 
 
+@pytest.fixture
+def private_recording(recording):
+    events, copies = recording
+    deployments = [deployment(name) for name in sorted(backup.PRIVATE_WRITERS)]
+    deployments += [deployment("ec-dev-redis"), deployment(backup.PUBLIC_TUNNEL, 2)]
+    original_k = backup.k.side_effect
+
+    def cluster(*args, **kwargs):
+        if args[:2] == ("get", "deployments"):
+            events.append(args)
+            return SimpleNamespace(stdout=json.dumps({"items": deployments}))
+        if args[0] == "get" and args[1].startswith("deployment/"):
+            events.append(args)
+            name = args[1].split("/", 1)[1]
+            return SimpleNamespace(
+                stdout=json.dumps(next(d for d in deployments if d["metadata"]["name"] == name))
+            )
+        if args[0] in ("scale", "rollout"):
+            events.append(args)
+            if args[0] == "scale":
+                name = args[1].split("/", 1)[1]
+                item = next(d for d in deployments if d["metadata"]["name"] == name)
+                count = int(args[2].split("=", 1)[1])
+                item["spec"]["replicas"] = count
+                item["status"] = {
+                    "observedGeneration": 1,
+                    "replicas": count,
+                    "updatedReplicas": count,
+                    "availableReplicas": count,
+                    "readyReplicas": count,
+                }
+            return SimpleNamespace(stdout=b"")
+        return original_k(*args, **kwargs)
+
+    backup.k.side_effect = cluster
+    return events, copies, deployments
+
+
+def test_private_backup_quiesces_public_edge_first_and_records_bounded_recovery(private_recording):
+    events, copies, _ = private_recording
+    backup.backup(profile="private", hold_stopped=True)
+    scales = [event for event in events if event[0] == "scale"]
+    assert scales[0] == ("scale", "deployment/" + backup.PUBLIC_TUNNEL, "--replicas=0")
+    edge_wait = next(
+        i
+        for i, event in enumerate(events)
+        if event[0] == "wait" and backup.PUBLIC_TUNNEL in event[4]
+    )
+    first_writer = next(
+        i
+        for i, event in enumerate(events)
+        if event[0] == "scale" and event[1] != "deployment/" + backup.PUBLIC_TUNNEL
+    )
+    assert edge_wait < first_writer
+    assert all(event[1] != "deployment/ec-dev-redis" for event in scales)
+    metadata = json.loads(copies["recovery.json"])
+    assert metadata["version"] == 2
+    assert metadata["deployment_profile"] == "private"
+    assert metadata["replicas"][backup.PUBLIC_TUNNEL] == 2
+    assert (
+        metadata["deployment_uids"][backup.PUBLIC_TUNNEL]
+        == deployment(backup.PUBLIC_TUNNEL)["metadata"]["uid"]
+    )
+    assert metadata["template_sha256"][backup.PUBLIC_TUNNEL] == backup._template_hash(
+        deployment(backup.PUBLIC_TUNNEL)
+    )
+    backup._validate_recovery(metadata, backup.BACKUP_ROOT + metadata["id"])
+
+
+def test_private_regular_backup_restores_edge_only_after_temporal_and_writers_ready(
+    private_recording,
+):
+    events, copies, _ = private_recording
+    backup.backup(profile="private")
+    scales = [event for event in events if event[0] == "scale"]
+    restored = [event for event in scales if event[2] != "--replicas=0"]
+    assert restored[0][1].startswith("deployment/ec-dev-temporal-")
+    assert restored[-1][1:3] == ("deployment/" + backup.PUBLIC_TUNNEL, "--replicas=2")
+    edge_index = events.index(restored[-1])
+    waited = {event[2] for event in events[:edge_index] if event[0] == "rollout"}
+    assert waited == {"deployment/" + name for name in backup.PRIVATE_WRITERS}
+    assert json.loads(copies["manifest.json"])["resume_required"] is False
+
+
+@pytest.mark.parametrize(
+    "name,count",
+    [
+        ("unknown-process", 1),
+        ("events-concierge-admin", 1),
+        ("events-concierge-operator-api", 1),
+        ("events-concierge-api", 2),
+        (backup.PUBLIC_TUNNEL, 1),
+        (backup.PUBLIC_TUNNEL, True),
+    ],
+)
+def test_private_invalid_inventory_or_capacity_fails_before_cloud_or_scale(
+    private_recording, name, count
+):
+    events, copies, deployments = private_recording
+    deployments[:] = [d for d in deployments if d["metadata"]["name"] != name]
+    deployments.append(deployment(name, count))
+    with pytest.raises(SystemExit):
+        backup.backup(profile="private")
+    assert not copies
+    assert all(event[0] != "scale" for event in events)
+
+
+@pytest.mark.parametrize("failure", ["scale", "readiness"])
+def test_private_failed_writer_recovery_keeps_edge_stopped(private_recording, failure):
+    events, _, deployments = private_recording
+    original = backup.k.side_effect
+
+    def cluster(*args, **kwargs):
+        if failure == "scale" and args[:3] == (
+            "scale",
+            "deployment/events-concierge-api",
+            "--replicas=1",
+        ):
+            raise subprocess.CalledProcessError(1, args, stderr=b"Forbidden")
+        if failure == "readiness" and args[:3] == (
+            "rollout",
+            "status",
+            "deployment/events-concierge-api",
+        ):
+            raise subprocess.TimeoutExpired(args, 190)
+        return original(*args, **kwargs)
+
+    backup.k.side_effect = cluster
+    with pytest.raises(ExceptionGroup):
+        backup.backup(profile="private")
+    edge = next(d for d in deployments if d["metadata"]["name"] == backup.PUBLIC_TUNNEL)
+    assert edge["spec"]["replicas"] == 0
+    assert not any(
+        event[:3] == ("scale", "deployment/" + backup.PUBLIC_TUNNEL, "--replicas=2")
+        for event in events
+    )
+    assert any(
+        event[:3] == ("scale", "deployment/events-concierge-temporal-catalog", "--replicas=1")
+        for event in events
+    )
+
+
+@pytest.mark.parametrize(
+    "change", ["edge_uid", "edge_template", "schema", "new_writer", "new_known_writer"]
+)
+def test_private_resume_refuses_changed_release_before_any_scale(private_recording, change):
+    events, copies, deployments = private_recording
+    backup.backup(profile="private", hold_stopped=True)
+    metadata = json.loads(copies["recovery.json"])
+    uri = backup.BACKUP_ROOT + metadata["id"]
+    edge = next(d for d in deployments if d["metadata"]["name"] == backup.PUBLIC_TUNNEL)
+    if change == "edge_uid":
+        edge["metadata"]["uid"] = str(uuid.uuid4())
+    elif change == "edge_template":
+        edge["spec"]["template"]["spec"]["containers"][0]["image"] = "new-edge"
+    elif change == "new_writer":
+        deployments.append(deployment("events-concierge-admin"))
+    elif change == "new_known_writer":
+        # A saved private inventory without an edge must not resume after adding one.
+        metadata["replicas"].pop(backup.PUBLIC_TUNNEL)
+        metadata["deployment_uids"].pop(backup.PUBLIC_TUNNEL)
+        metadata["template_sha256"].pop(backup.PUBLIC_TUNNEL)
+        copies["recovery.json"] = json.dumps(metadata).encode()
+    events.clear()
+    with (
+        patch.object(
+            backup,
+            "_read_schema",
+            return_value="0207" if change == "schema" else metadata["schema"],
+        ),
+        pytest.raises((RuntimeError, SystemExit)),
+    ):
+        backup.resume(uri)
+    assert all(event[0] != "scale" for event in events)
+
+
+def test_private_backup_preserves_stopped_worker_and_edge_counts(private_recording):
+    events, copies, deployments = private_recording
+    stopped = {backup.PUBLIC_TUNNEL, "events-concierge-account-erasure"}
+    for item in deployments:
+        if item["metadata"]["name"] in stopped:
+            item["spec"]["replicas"] = 0
+    backup.backup(profile="private")
+    metadata = json.loads(copies["recovery.json"])
+    assert all(metadata["replicas"][name] == 0 for name in stopped)
+    assert all(d["spec"]["replicas"] == 0 for d in deployments if d["metadata"]["name"] in stopped)
+    assert not any(event[0] == "rollout" for event in events)
+
+
+@pytest.mark.parametrize("edge_mode", ["absent", "stopped"])
+def test_private_automatic_recovery_checks_inventory_without_a_running_edge(
+    private_recording, edge_mode
+):
+    events, _, deployments = private_recording
+    if edge_mode == "absent":
+        deployments[:] = [d for d in deployments if d["metadata"]["name"] != backup.PUBLIC_TUNNEL]
+    else:
+        edge = next(d for d in deployments if d["metadata"]["name"] == backup.PUBLIC_TUNNEL)
+        edge["spec"]["replicas"] = 0
+    original = backup.gc.side_effect
+    injected = False
+
+    def cloud(*args, **kwargs):
+        nonlocal injected
+        if args[0] == "cp" and args[-1].endswith(".dump") and not injected:
+            injected = True
+            name = backup.PUBLIC_TUNNEL if edge_mode == "absent" else "events-concierge-admin"
+            deployments.append(deployment(name, 2 if edge_mode == "absent" else 1))
+        return original(*args, **kwargs)
+
+    backup.gc.side_effect = cloud
+    with pytest.raises(RuntimeError, match="inventory changed"):
+        backup.backup(profile="private")
+    assert injected
+    assert all(event[2] == "--replicas=0" for event in events if event[0] == "scale")
+
+
+@pytest.mark.parametrize("change", ["replicas", "template", "schema"])
+def test_public_resume_rechecks_exact_recovery_after_rollout_wait(private_recording, change):
+    _, _, deployments = private_recording
+    original = backup.k.side_effect
+    api = next(d for d in deployments if d["metadata"]["name"] == "events-concierge-api")
+
+    def cluster(*args, **kwargs):
+        result = original(*args, **kwargs)
+        if args[:3] == ("rollout", "status", "deployment/events-concierge-api"):
+            if change == "replicas":
+                api["spec"]["replicas"] = 2
+            elif change == "template":
+                api["spec"]["template"]["spec"]["containers"][0]["image"] = "new-image"
+            else:
+                backup._read_schema.return_value = "0207"
+        return result
+
+    backup.k.side_effect = cluster
+    with (
+        patch.object(backup, "_read_schema", return_value="0193"),
+        pytest.raises(ExceptionGroup),
+    ):
+        backup.backup(profile="private")
+    edge = next(d for d in deployments if d["metadata"]["name"] == backup.PUBLIC_TUNNEL)
+    assert edge["spec"]["replicas"] == 0
+
+
 def test_model_usage_definer_restore_rejects_missing_or_unsafe_role():
     with (
         patch.object(backup, "run", return_value="0") as sql,

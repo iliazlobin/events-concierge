@@ -1,0 +1,29 @@
+{{- if eq .Values.global.deploymentProfile "private" }}
+# The separate data chart supplies only the reviewed store, DNS, ADC and HTTPS routes.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "events-concierge.fullname" . }}-private-default-deny
+spec:
+  podSelector:
+    matchLabels: {app.kubernetes.io/part-of: events-concierge}
+  policyTypes: [Ingress, Egress]
+{{- if and .Values.publicTunnel.enabled (eq .Values.global.releasePhase "application") }}
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "events-concierge.fullname" . }}-private-frontend-ingress
+spec:
+  podSelector:
+    matchLabels:
+      {{- include "events-concierge.selectorLabels" (dict "root" . "component" "frontend") | nindent 6 }}
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              {{- include "events-concierge.selectorLabels" (dict "root" . "component" "public-tunnel") | nindent 14 }}
+      ports: [{port: 3000, protocol: TCP}]
+{{- end }}
+{{- end }}

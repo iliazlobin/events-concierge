@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { accountDeletionUnavailable, signInFailurePath, signInHref, signInMessage, signInReason } from "../lib/sign-in.ts";
+import { accountDeletionUnavailable, signInFailurePath, signInHref, signInMessage, signInReason, signInReturnTo } from "../lib/sign-in.ts";
 
 const config = { local_demo: false, auth_mode: "deployment_session", auth_provider: "google", auth_start_url: "/auth/login" };
 const origin = "https://events.example.test";
@@ -55,4 +55,18 @@ test("Google deletion is unavailable without affecting local demo or custom clai
   assert.equal(accountDeletionUnavailable({ ...config, auth_provider: null }), false);
   assert.equal(accountDeletionUnavailable({ ...config, auth_mode: "local_demo" }), false);
   assert.equal(accountDeletionUnavailable(null), false);
+  assert.equal(accountDeletionUnavailable({ ...config, auth_provider: "identity_platform" }), false);
+});
+
+test("personal destinations survive sign-in without open redirects", () => {
+  for (const path of ["/settings", "/settings/account", "/settings/saved-filters", "/settings/taste", "/?view=calendar"]) {
+    assert.equal(signInReturnTo(path), path);
+  }
+  for (const path of ["https://evil.test", "//evil.test", "/\\evil.test", "/admin", "/auth/login", "/unknown"]) {
+    assert.equal(signInReturnTo(path), "/");
+  }
+  assert.equal(signInFailurePath(401, "/settings/saved-filters"), "/sign-in?return_to=%2Fsettings%2Fsaved-filters");
+  assert.equal(signInFailurePath(428, "/settings"), "/sign-in?reason=terms_updated&return_to=%2Fsettings");
+  assert.equal(signInFailurePath(401, "https://evil.test"), "/sign-in");
+  assert.equal(signInReason("terms_updated"), "terms_updated");
 });

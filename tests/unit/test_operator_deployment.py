@@ -414,3 +414,25 @@ def test_credential_profiles_reject_missing_broad_or_unpinned_secrets(
     assert result.returncode != 0, (
         f"Unsafe {profile} secret profile ({mutation}) rendered successfully"
     )
+
+
+def test_managed_consumer_identity_does_not_mount_provider_secrets(helm_binary, tmp_path):
+    values = yaml.safe_load((CHART / "values-consumer-identity.example.yaml").read_text())
+    values["global"] = {"runtimeProviderReady": True}
+    result = invoke_helm(helm_binary, tmp_path, values)
+    assert result.returncode == 0, result.stderr
+    resources = list(yaml.safe_load_all(result.stdout))
+    config = next(item for item in resources if item["kind"] == "ConfigMap")
+    assert config["data"]["EC_IDENTITY_PLATFORM_ENABLED"] == "true"
+    assert "EC_OIDC_CLIENT_SECRET_FILE" not in config["data"]
+    secret_text = "\n".join(
+        item["spec"]["parameters"]["secrets"]
+        for item in resources if item["kind"] == "SecretProviderClass"
+    )
+    assert "EC_OIDC_CLIENT_SECRET" not in secret_text
+    assert "ec-consumer-google" not in secret_text and "ec-consumer-apple" not in secret_text
+    # ADC comes from the existing per-process Workload Identity accounts.
+    for role in ("api", "account-erasure"):
+        deployment = next(item for item in resources if item["kind"] == "Deployment"
+                          and item["metadata"]["labels"][COMPONENT] == role)
+        assert deployment["spec"]["template"]["spec"]["automountServiceAccountToken"] is True

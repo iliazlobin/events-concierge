@@ -25,6 +25,7 @@ BACKUP_ROOT = "gs://" + TARGETS["shared"].backup_bucket + "/"
 PAYLOAD_ROOT = "gs://" + TARGETS["shared"].payload_bucket
 TARGET_NAME = "shared"
 RECOVERY_FILE = "recovery.json"
+PRIVATE_RECOVERY_VERSION = 2
 WRITERS = {
     "events-concierge-" + name
     for name in (
@@ -40,6 +41,17 @@ WRITERS = {
         "change-delivery",
     )
 } | {"ec-dev-temporal-" + name for name in ("frontend", "history", "matching", "worker")}
+PRIVATE_WRITERS = WRITERS - {
+    "events-concierge-" + name
+    for name in (
+        "admin",
+        "temporal-transactional",
+        "request-starter",
+        "notifier",
+        "change-delivery",
+    )
+}
+PUBLIC_TUNNEL = "events-concierge-public-tunnel"
 RESUME_RETRY_DELAYS = (2, 4, 8)
 OPERATOR_ROLE_SCHEMA = 182
 MODEL_USAGE_ROLE_SCHEMA = 201
@@ -69,15 +81,17 @@ def gc(*args, **kw):
 
 
 def _check_context():
-    context = subprocess.check_output([K, "config", "current-context"], text=True).strip()
+    context = subprocess.check_output(
+        [K, "config", "current-context"], text=True, timeout=10
+    ).strip()
     if context != CONTEXT:
         raise SystemExit("Wrong cluster context")
 
 
 def _check_scheduled_writers_quiet():
-    resources = json.loads(k("get", "cronjobs,jobs", "-o", "json", capture_output=True).stdout)[
-        "items"
-    ]
+    resources = json.loads(
+        k("get", "cronjobs,jobs", "-o", "json", capture_output=True, timeout=30).stdout
+    )["items"]
     for resource in resources:
         name = resource["metadata"]["name"]
         if resource["kind"] == "CronJob":
@@ -106,13 +120,19 @@ def _backup_id(uri):
     return match[1]
 
 
-def _validate_replicas(desired):
-    if not isinstance(desired, dict) or not desired or set(desired) - WRITERS:
+def _validate_replicas(desired, *, profile="development"):
+    if profile not in ("development", "private"):
+        raise SystemExit("Unknown deployment profile")
+    allowed = PRIVATE_WRITERS | {PUBLIC_TUNNEL} if profile == "private" else WRITERS
+    if not isinstance(desired, dict) or not desired or set(desired) - allowed:
         raise SystemExit("Recovery contains unknown or missing writer deployment names")
-    # This development profile has at most one replica per process. Do not allow
-    # recovery metadata to silently change the agreed capacity.
-    if any(type(count) is not int or count not in (0, 1) for count in desired.values()):
-        raise SystemExit("Recovery replica counts must be integers equal to 0 or 1")
+    # Writers remain singletons; only the explicitly owned public edge has two
+    # replicas. Recovery metadata cannot silently change the agreed capacity.
+    if any(
+        type(count) is not int or count not in (0, 2 if name == PUBLIC_TUNNEL else 1)
+        for name, count in desired.items()
+    ):
+        raise SystemExit("Recovery requires bounded integer replicas: writers 0/1, public edge 0/2")
 
 
 def _read_schema():
@@ -137,12 +157,12 @@ def _read_schema():
     )
 
 
-def _recovery_metadata(ident, writers, schema):
+def _recovery_metadata(ident, writers, schema, *, profile="development"):
     desired = {d["metadata"]["name"]: d["spec"]["replicas"] for d in writers}
-    _validate_replicas(desired)
+    _validate_replicas(desired, profile=profile)
     uids = {d["metadata"]["name"]: d["metadata"]["uid"] for d in writers}
     metadata = {
-        "version": 1,
+        "version": PRIVATE_RECOVERY_VERSION if profile == "private" else 1,
         "id": ident,
         "context": CONTEXT,
         "project": PROJECT,
@@ -152,12 +172,16 @@ def _recovery_metadata(ident, writers, schema):
         "deployment_uids": uids,
         "template_sha256": {d["metadata"]["name"]: _template_hash(d) for d in writers},
     }
+    if profile == "private":
+        metadata["deployment_profile"] = profile
     _validate_recovery(metadata, BACKUP_ROOT + ident)
     return metadata
 
 
 def _validate_recovery(metadata, uri):
-    if not isinstance(metadata, dict) or set(metadata) != {
+    if not isinstance(metadata, dict):
+        raise SystemExit("Invalid recovery metadata fields")
+    fields = {
         "version",
         "id",
         "context",
@@ -167,11 +191,18 @@ def _validate_recovery(metadata, uri):
         "replicas",
         "deployment_uids",
         "template_sha256",
-    }:
+    }
+    if metadata.get("version") == PRIVATE_RECOVERY_VERSION:
+        fields.add("deployment_profile")
+    if set(metadata) != fields:
         raise SystemExit("Invalid recovery metadata fields")
     if (
         type(metadata["version"]) is not int
-        or metadata["version"] != 1
+        or metadata["version"] not in (1, PRIVATE_RECOVERY_VERSION)
+        or (
+            metadata["version"] == PRIVATE_RECOVERY_VERSION
+            and metadata["deployment_profile"] != "private"
+        )
         or metadata["id"] != _backup_id(uri)
         or metadata["context"] != CONTEXT
         or metadata["project"] != PROJECT
@@ -180,7 +211,9 @@ def _validate_recovery(metadata, uri):
         raise SystemExit("Recovery metadata does not match this development backup and cluster")
     if not isinstance(metadata["schema"], str) or not re.fullmatch(r"[0-9]{4}", metadata["schema"]):
         raise SystemExit("Invalid recovery schema version")
-    _validate_replicas(metadata["replicas"])
+    _validate_replicas(
+        metadata["replicas"], profile=metadata.get("deployment_profile", "development")
+    )
     uids = metadata["deployment_uids"]
     if not isinstance(uids, dict) or set(uids) != set(metadata["replicas"]):
         raise SystemExit("Recovery deployment identities do not match replica records")
@@ -225,6 +258,22 @@ def _validate_current_deployment(deployment, name, recovery):
     return version
 
 
+def _validate_private_inventory(current, desired):
+    if set(current) - {"ec-dev-redis"} != set(desired):
+        raise RuntimeError("Recovery refused: private deployment inventory changed")
+
+
+def _preflight_private_recovery(desired, recovery):
+    items = json.loads(
+        k("get", "deployments", "-o", "json", capture_output=True, timeout=30).stdout
+    )["items"]
+    current = {d["metadata"]["name"]: d for d in items}
+    _validate_private_inventory(current, desired)
+    for name in desired:
+        _validate_current_deployment(current[name], name, recovery)
+    return current
+
+
 def resume(uri):
     """Recover a stopped backup attempt, never restore data or older images."""
     _backup_id(uri)
@@ -233,8 +282,12 @@ def resume(uri):
     _validate_recovery(metadata, uri)
     # Validate all identities before the first write. Migration/rollout may have
     # replaced a Deployment; stale recovery must not start its replacement.
-    items = json.loads(k("get", "deployments", "-o", "json", capture_output=True).stdout)["items"]
+    items = json.loads(
+        k("get", "deployments", "-o", "json", capture_output=True, timeout=30).stdout
+    )["items"]
     current = {d["metadata"]["name"]: d for d in items}
+    if metadata.get("deployment_profile") == "private":
+        _validate_private_inventory(current, metadata["replicas"])
     for name in metadata["replicas"]:
         if name not in current:
             raise SystemExit("Recovery refused: a saved deployment is missing: " + name)
@@ -245,20 +298,17 @@ def resume(uri):
 
 
 def _quiesce(deployments):
-    # Let application shutdown finish while Temporal is still available. PostgreSQL
-    # StatefulSets and Redis stay running: restarting ephemeral Redis loses state.
-    for temporal in (False, True):
-        phase = [
-            d
-            for d in deployments
-            if d["metadata"]["name"].startswith("ec-dev-temporal") == temporal
-        ]
+    # Close the public edge before writers; let application shutdown finish while
+    # Temporal remains available. PostgreSQL and Redis stay running.
+    for phase_name in ("edge", "application", "temporal"):
+        phase = [d for d in deployments if _resume_phase(d["metadata"]["name"]) == phase_name]
         for d in phase:
             k(
                 "scale",
                 "deployment/" + d["metadata"]["name"],
                 "--replicas=0",
                 stdout=subprocess.DEVNULL,
+                timeout=30,
             )
         for d in phase:
             # Deployment readiness can report success before terminating pods exit.
@@ -273,6 +323,7 @@ def _quiesce(deployments):
                 selector,
                 "--timeout=180s",
                 stdout=subprocess.DEVNULL,
+                timeout=190,
             )
 
 
@@ -326,14 +377,82 @@ def _check_recovery_schema(recovery):
             time.sleep(delay)
 
 
+def _resume_phase(name):
+    if name == PUBLIC_TUNNEL:
+        return "edge"
+    return "temporal" if name.startswith("ec-dev-temporal-") else "application"
+
+
+def _wait_before_public_resume(desired, recovery):
+    if any(desired.get("events-concierge-" + name) != 1 for name in ("api", "frontend")):
+        raise RuntimeError("Public edge recovery requires running API and frontend replicas")
+    for name, count in sorted(desired.items()):
+        if count and name != PUBLIC_TUNNEL:
+            k(
+                "rollout",
+                "status",
+                "deployment/" + name,
+                "--timeout=180s",
+                "--request-timeout=20s",
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.PIPE,
+                timeout=190,
+            )
+    items = json.loads(
+        k("get", "deployments", "-o", "json", capture_output=True, timeout=30).stdout
+    )["items"]
+    current = {d["metadata"]["name"]: d for d in items}
+    _validate_private_inventory(current, desired)
+    # Recheck identity, exact replicas and readiness after waiting, before opening
+    # the edge. Rollout status alone could accept an independently changed count.
+    for name, count in desired.items():
+        if name == PUBLIC_TUNNEL:
+            continue
+        deployment = current.get(name)
+        if deployment is None:
+            raise RuntimeError("Public edge recovery is missing a saved writer: " + name)
+        _validate_current_deployment(deployment, name, recovery)
+        status = deployment.get("status", {})
+        if (
+            deployment["spec"].get("replicas") != count
+            or status.get("observedGeneration", 0) < deployment["metadata"].get("generation", 1)
+            or any(
+                status.get(field, 0) != count
+                for field in ("replicas", "updatedReplicas", "availableReplicas", "readyReplicas")
+            )
+            or status.get("unavailableReplicas", 0)
+        ):
+            raise RuntimeError("Public edge recovery requires exact ready writer replicas: " + name)
+    _check_recovery_schema(recovery)
+
+
 def _resume(desired, *, recovery=None):
-    _validate_replicas(desired)
+    profile = recovery.get("deployment_profile", "development") if recovery else "development"
+    _validate_replicas(desired, profile=profile)
     if recovery is not None:
         _check_recovery_schema(recovery)
+    if profile == "private":
+        _preflight_private_recovery(desired, recovery)
     failures = []
-    # Resume Temporal before processes that connect to it. Try every deployment
-    # even if one scale call fails, then report any incomplete recovery.
-    for name in sorted(desired, key=lambda n: not n.startswith("ec-dev-temporal")):
+    # Resume Temporal, then application writers, then the public edge. Attempt all
+    # writers after a failure, but never reopen public access to incomplete recovery.
+    order = {"temporal": 0, "application": 1, "edge": 2}
+    for name in sorted(desired, key=lambda n: order[_resume_phase(n)]):
+        if name == PUBLIC_TUNNEL and desired[name]:
+            if failures:
+                failures.append(
+                    RuntimeError("Public edge remains stopped after writer recovery failure")
+                )
+                continue
+            try:
+                _wait_before_public_resume(desired, recovery)
+            except (
+                subprocess.CalledProcessError,
+                subprocess.TimeoutExpired,
+                RuntimeError,
+            ) as error:
+                failures.append(error)
+                continue
         for attempt in range(len(RESUME_RETRY_DELAYS) + 1):
             try:
                 preconditions = []
@@ -433,21 +552,22 @@ def _verify_object_inventory(folder, expected):
     return True
 
 
-def backup(*, hold_stopped=False):
+def backup(*, hold_stopped=False, profile="development"):
     _check_backup_target()
     ident = (
         datetime.datetime.now(datetime.UTC).strftime("%Y%m%dT%H%M%SZ") + "-" + uuid.uuid4().hex[:8]
     )
     dest = BACKUP_ROOT + ident
-    deployments = json.loads(k("get", "deployments", "-o", "json", capture_output=True).stdout)[
-        "items"
-    ]
-    # This namespace is dedicated to development. Redis is a store, not a writer
-    # to the PostgreSQL/GCS snapshot, and must not be restarted for this backup.
+    deployments = json.loads(
+        k("get", "deployments", "-o", "json", capture_output=True, timeout=30).stdout
+    )["items"]
+    # This namespace is dedicated to the selected profile. Redis is a store, not
+    # a writer to this snapshot. The private public edge is explicitly quiesced;
+    # unknown/demo/operator Deployments fail validation before upload or scaling.
     desired = {d["metadata"]["name"]: d["spec"]["replicas"] for d in deployments}
     writers = [d for d in deployments if d["metadata"]["name"] != "ec-dev-redis"]
     quiesced = {d["metadata"]["name"]: d["spec"]["replicas"] for d in writers}
-    recovery = _recovery_metadata(ident, writers, _read_schema())
+    recovery = _recovery_metadata(ident, writers, _read_schema(), profile=profile)
     with tempfile.TemporaryDirectory(prefix="ec-dev-backup-") as tmp:
         os.chmod(tmp, 0o700)
         folder = pathlib.Path(tmp)
@@ -807,6 +927,7 @@ if __name__ == "__main__":
     p.add_argument("action", choices=["backup", "verify", "resume"])
     p.add_argument("uri", nargs="?")
     p.add_argument("--target", choices=TARGETS, default="shared")
+    p.add_argument("--profile", choices=("development", "private"), default=None)
     p.add_argument(
         "--hold-stopped",
         action="store_true",
@@ -817,10 +938,12 @@ if __name__ == "__main__":
     if a.action == "backup":
         if a.uri:
             p.error("backup creates its own prefix; do not supply a URI")
-        backup(hold_stopped=a.hold_stopped)
+        backup(hold_stopped=a.hold_stopped, profile=a.profile or "development")
     elif a.uri:
         if a.hold_stopped:
             p.error("--hold-stopped applies only to backup")
+        if a.profile:
+            p.error("--profile applies only to backup; resume uses the saved recovery profile")
         if a.action == "verify":
             verify(a.uri)
         else:

@@ -1,7 +1,8 @@
 """Promote the release profile's ready workers from the private development API pod."""
 
+import argparse
 import asyncio
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
 from temporalio.api.enums.v1 import TaskQueueType, WorkerVersioningMode
 from temporalio.api.taskqueue.v1 import TaskQueue
@@ -10,26 +11,56 @@ from temporalio.api.workflowservice.v1 import (
     DescribeWorkerDeploymentRequest,
     SetWorkerDeploymentCurrentVersionRequest,
 )
-from temporalio.client import Client
 
 from events_concierge.config import get_settings
+from events_concierge.runtime import load_runtime_ports
+from events_concierge.workflows.temporal_client import connect_temporal, validate_temporal_settings
 
 MAX_POLLER_AGE_SECONDS = 120
 
 
-async def main():
+async def main(*, profile="development"):
     s = get_settings()
-    if (
-        s.env != "development"
-        or not s.mock_cloud
-        or s.temporal_namespace != "events-development"
-        or not s.temporal_worker_versioning_enabled
+    if profile == "private":
+        permitted = (
+            s.env == "staging"
+            and not s.mock_cloud
+            and s.release_profile == "discovery"
+            and s.database_connection_mode == "direct_tls"
+            and s.identity_platform_enabled
+            and not s.oidc_bff_enabled
+            and s.temporal_tls_enabled
+            and s.temporal_target
+            == "ec-dev-temporal-frontend.events-concierge-dev.svc.cluster.local:7233"
+            and s.temporal_tls_domain
+            == "ec-dev-temporal-frontend.events-concierge-dev.svc.cluster.local"
+            and s.runtime_provider_factory
+            == "events_concierge.deployment.gcp_runtime:build_runtime_ports"
+            and all(
+                (
+                    s.temporal_tls_server_ca_file,
+                    s.temporal_tls_client_cert_file,
+                    s.temporal_tls_client_key_file,
+                )
+            )
+        )
+    elif profile == "development":
+        permitted = s.env == "development" and s.mock_cloud
+    else:
+        raise SystemExit("Unknown deployment profile")
+    if not permitted or (
+        s.temporal_namespace != "events-development" or not s.temporal_worker_versioning_enabled
     ):
         raise SystemExit(
-            "Only versioned workers in the explicit development namespace may be promoted"
+            "Only versioned workers in the selected development/private profile and namespace may be promoted"
         )
+    validate_temporal_settings(s)
     roles = ("catalog",) if s.release_profile == "discovery" else ("transactional", "catalog")
-    client = await Client.connect(s.temporal_target, namespace=s.temporal_namespace)
+    ports = load_runtime_ports(s)
+    client = await connect_temporal(
+        s, ports.object_store, catalog_only=s.release_profile == "discovery"
+    )
+    rpc_timeout = timedelta(seconds=s.temporal_rpc_timeout_seconds)
     candidates = []
     # Check every enabled role before changing routing for any of them. A registered deployment
     # alone can be stale; both workflow and activity pollers must advertise this exact build.
@@ -37,7 +68,8 @@ async def main():
         name = s.temporal_worker_deployment_name + "-" + role
         queue = s.temporal_catalog_queue if role == "catalog" else s.temporal_transactional_queue
         description = await client.workflow_service.describe_worker_deployment(
-            DescribeWorkerDeploymentRequest(namespace=s.temporal_namespace, deployment_name=name)
+            DescribeWorkerDeploymentRequest(namespace=s.temporal_namespace, deployment_name=name),
+            timeout=rpc_timeout,
         )
         for kind in (
             TaskQueueType.TASK_QUEUE_TYPE_WORKFLOW,
@@ -51,7 +83,8 @@ async def main():
                     namespace=s.temporal_namespace,
                     task_queue=TaskQueue(name=queue),
                     task_queue_type=kind,
-                )
+                ),
+                timeout=rpc_timeout,
             )
             now = datetime.now(UTC).timestamp()
             if not any(
@@ -75,11 +108,14 @@ async def main():
                 deployment_name=name,
                 build_id=s.temporal_effective_worker_build_id,
                 conflict_token=conflict_token,
-                identity="ec-development-operator",
-            )
+                identity="ec-" + profile + "-operator",
+            ),
+            timeout=rpc_timeout,
         )
         print("Promoted", name, s.temporal_effective_worker_build_id)
 
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--profile", choices=("development", "private"), default="development")
+    asyncio.run(main(profile=parser.parse_args().profile))

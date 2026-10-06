@@ -239,9 +239,7 @@ def run_canary(
             _expect(
                 checks,
                 "metrics_content_type",
-                metrics.headers.get("content-type", "").startswith(
-                    "text/plain; version=0.0.4"
-                ),
+                metrics.headers.get("content-type", "").startswith("text/plain; version=0.0.4"),
                 "metrics use the Prometheus text content type",
                 "metrics returned an unexpected content type",
             )
@@ -412,7 +410,9 @@ def _check_readiness(
         checks,
         "temporal_ready",
         temporal_ready or not require_temporal,
-        "Temporal reports ready" if temporal_ready else "Temporal degradation was explicitly allowed",
+        "Temporal reports ready"
+        if temporal_ready
+        else "Temporal degradation was explicitly allowed",
         "Temporal does not report ready",
     )
     _expect(
@@ -467,6 +467,7 @@ def _check_ui_config(
         return
     expected_mode = "local_demo" if options.allow_local_mode else "deployment_session"
     private_google_pilot = options.profile == "private_google_pilot"
+    managed_identity = isinstance(body, dict) and body.get("auth_provider") == "identity_platform"
     expected_reauth = None if private_google_pilot else "/auth/reauth"
     passed = (
         isinstance(body, dict)
@@ -476,7 +477,7 @@ def _check_ui_config(
         and (
             options.allow_local_mode
             or (
-                body.get("auth_start_url") == "/auth/login"
+                body.get("auth_start_url") == ("/sign-in" if managed_identity else "/auth/login")
                 and "reauth_url" in body
                 and body["reauth_url"] == expected_reauth
                 and (not private_google_pilot or body.get("auth_provider") == "google")
