@@ -24,6 +24,7 @@ def ready_deployments(*, include_deferred=False):
             "spec": {"replicas": 1},
             "status": {
                 "observedGeneration": 2,
+                "replicas": 1,
                 "updatedReplicas": 1,
                 "availableReplicas": 1,
                 "readyReplicas": 1,
@@ -59,6 +60,8 @@ def test_other_ready_deployments_cannot_hide_a_missing_executor():
         ("status", "availableReplicas", 0),
         ("status", "readyReplicas", 0),
         ("status", "observedGeneration", 1),
+        ("status", "replicas", 2),
+        ("status", "unavailableReplicas", 1),
     ],
 )
 def test_executor_must_be_running_the_observed_ready_revision(section, field, value):
@@ -76,7 +79,9 @@ def test_waits_for_executor_and_pins_cluster_on_every_read(monkeypatch, capsys):
 
     def output(args, **kwargs):
         if args[1:] == ["config", "current-context"]:
+            assert kwargs["timeout"] == 10
             return readiness.CONTEXT
+        assert kwargs["timeout"] == 30
         reads.append(args)
         return json.dumps({"items": next(snapshots)}).encode()
 
@@ -93,6 +98,7 @@ def test_waits_for_executor_and_pins_cluster_on_every_read(monkeypatch, capsys):
                 readiness.CONTEXT,
                 "-n",
                 "events-concierge-dev",
+                "--request-timeout=20s",
                 "get",
                 "deployments",
                 "-o",
@@ -128,3 +134,62 @@ def test_shared_discovery_requires_active_catalog_and_no_deferred_deployments():
     )
     missing = [d for d in items if d["metadata"]["name"] != EXECUTOR]
     assert readiness.pending_deployments(missing) == [EXECUTOR]
+
+
+def private_deployments(*, public=False):
+    items = [d for d in ready_deployments() if d["metadata"]["name"] != "events-concierge-admin"]
+    if public:
+        tunnel = deepcopy(items[0])
+        tunnel["metadata"]["name"] = readiness.PUBLIC_TUNNEL
+        tunnel["spec"]["replicas"] = 2
+        for field in ("replicas", "updatedReplicas", "availableReplicas", "readyReplicas"):
+            tunnel["status"][field] = 2
+        items.append(tunnel)
+    return items
+
+
+def test_private_readiness_requires_five_apps_and_explicit_public_edge():
+    items = private_deployments()
+    assert readiness.pending_deployments(items, profile="private") == []
+    assert readiness.pending_deployments(items, profile="private", public_tunnel=True) == [
+        readiness.PUBLIC_TUNNEL
+    ]
+    public = private_deployments(public=True)
+    assert readiness.pending_deployments(public, profile="private", public_tunnel=True) == []
+    assert readiness.pending_deployments(public, profile="private") == [readiness.PUBLIC_TUNNEL]
+
+
+@pytest.mark.parametrize(
+    "name", ["events-concierge-admin", "events-concierge-notifier", "unknown-operator"]
+)
+def test_private_readiness_rejects_unapproved_deployments_even_when_stopped(name):
+    items = private_deployments()
+    unexpected = deepcopy(items[0])
+    unexpected["metadata"]["name"] = name
+    unexpected["spec"]["replicas"] = 0
+    items.append(unexpected)
+    assert readiness.pending_deployments(items, profile="private") == [name]
+
+
+@pytest.mark.parametrize(
+    "section,field,value",
+    [
+        ("spec", "replicas", 1),
+        ("status", "replicas", 3),
+        ("status", "updatedReplicas", 1),
+        ("status", "availableReplicas", 1),
+        ("status", "readyReplicas", 1),
+        ("status", "observedGeneration", 1),
+    ],
+)
+def test_public_readiness_needs_both_current_tunnel_replicas(section, field, value):
+    items = private_deployments(public=True)
+    items[-1][section][field] = value
+    assert readiness.pending_deployments(items, profile="private", public_tunnel=True) == [
+        readiness.PUBLIC_TUNNEL
+    ]
+
+
+def test_development_cannot_request_a_public_edge_before_any_cluster_read(monkeypatch):
+    with pytest.raises(SystemExit, match="authenticated private"):
+        readiness.main(public_tunnel=True)

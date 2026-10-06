@@ -49,6 +49,7 @@ def settings(**overrides):
             "temporal_worker_deployment_name": "events-concierge",
             "temporal_effective_worker_build_id": "abc1234",
             "temporal_worker_versioning_enabled": True,
+            "temporal_rpc_timeout_seconds": 10,
             "temporal_catalog_queue": "catalog",
             "temporal_transactional_queue": "transactional",
             "database_url": "synthetic",
@@ -74,7 +75,8 @@ def poller(role, *, build="abc1234", age=0, versioned=True):
 def promotion_service(monkeypatch, profile="discovery", bad_role=None, **bad_poller):
     observed = []
 
-    async def describe_queue(request):
+    async def describe_queue(request, **kwargs):
+        assert kwargs["timeout"] == timedelta(seconds=10)
         observed.append(request)
         role = request.task_queue.name
         result = poller(role, **(bad_poller if role == bad_role else {}))
@@ -88,9 +90,13 @@ def promotion_service(monkeypatch, profile="discovery", bad_role=None, **bad_pol
         set_worker_deployment_current_version=AsyncMock(),
     )
     monkeypatch.setattr(promotion, "get_settings", lambda: settings(release_profile=profile))
+    monkeypatch.setattr(promotion, "validate_temporal_settings", Mock())
     monkeypatch.setattr(
-        promotion.Client,
-        "connect",
+        promotion, "load_runtime_ports", Mock(return_value=SimpleNamespace(object_store=object()))
+    )
+    monkeypatch.setattr(
+        promotion,
+        "connect_temporal",
         AsyncMock(return_value=SimpleNamespace(workflow_service=service)),
     )
     return service, observed
@@ -114,6 +120,10 @@ async def test_promotes_only_enabled_roles_after_both_candidate_pollers(
         and r.conflict_token == b"optimistic-lock"
         and r.namespace == "events-development"
         for r in requests
+    )
+    assert all(
+        call.kwargs["timeout"] == timedelta(seconds=10)
+        for call in service.set_worker_deployment_current_version.await_args_list
     )
 
 
@@ -146,12 +156,102 @@ async def test_development_guard_precedes_any_io(monkeypatch, override, helper):
     monkeypatch.setattr(helper, "get_settings", lambda: settings(**override))
     connect = AsyncMock()
     http = Mock(side_effect=AssertionError("must not connect"))
-    monkeypatch.setattr(promotion.Client, "connect", connect)
+    monkeypatch.setattr(promotion, "connect_temporal", connect)
     monkeypatch.setattr(smoke.httpx, "AsyncClient", http)
     with pytest.raises(SystemExit, match="development"):
         await helper.main()
     connect.assert_not_called()
     http.assert_not_called()
+
+
+def private_settings(**overrides):
+    return settings(
+        **{
+            "env": "staging",
+            "mock_cloud": False,
+            "database_connection_mode": "direct_tls",
+            "identity_platform_enabled": True,
+            "oidc_bff_enabled": False,
+            "runtime_provider_factory": "events_concierge.deployment.gcp_runtime:build_runtime_ports",
+            "temporal_target": "ec-dev-temporal-frontend.events-concierge-dev.svc.cluster.local:7233",
+            "temporal_tls_enabled": True,
+            "temporal_tls_domain": "ec-dev-temporal-frontend.events-concierge-dev.svc.cluster.local",
+            "temporal_tls_server_ca_file": "/mounted/ca.crt",
+            "temporal_tls_client_cert_file": "/mounted/client.crt",
+            "temporal_tls_client_key_file": "/mounted/client.key",
+            **overrides,
+        }
+    )
+
+
+async def test_private_promotion_uses_runtime_tls_connector_and_only_catalog(monkeypatch):
+    service, observed = promotion_service(monkeypatch)
+    configured = private_settings()
+    monkeypatch.setattr(promotion, "get_settings", lambda: configured)
+    await promotion.main(profile="private")
+    promotion.validate_temporal_settings.assert_called_once_with(configured)
+    ports = promotion.load_runtime_ports.return_value
+    promotion.connect_temporal.assert_awaited_once_with(
+        configured, ports.object_store, catalog_only=True
+    )
+    assert [r.task_queue.name for r in observed] == ["catalog", "catalog"]
+    request = service.set_worker_deployment_current_version.await_args.args[0]
+    assert request.build_id == "abc1234"
+    assert request.conflict_token == b"optimistic-lock"
+    assert request.identity == "ec-private-operator"
+
+
+@pytest.mark.parametrize(
+    "overrides",
+    [
+        {"env": "production"},
+        {"mock_cloud": True},
+        {"release_profile": "full"},
+        {"identity_platform_enabled": False},
+        {"oidc_bff_enabled": True},
+        {"database_connection_mode": "development_plaintext"},
+        {"temporal_namespace": "default"},
+        {"temporal_target": "other:7233"},
+        {"temporal_tls_domain": "other"},
+        {"temporal_tls_enabled": False},
+        {"temporal_tls_client_key_file": None},
+        {"temporal_worker_versioning_enabled": False},
+        {
+            "runtime_provider_factory": "events_concierge.deployment.development_runtime:build_runtime_ports"
+        },
+    ],
+)
+async def test_private_promotion_refuses_wrong_profile_before_runtime_io(monkeypatch, overrides):
+    service, _ = promotion_service(monkeypatch)
+    monkeypatch.setattr(promotion, "get_settings", lambda: private_settings(**overrides))
+    with pytest.raises(SystemExit, match="selected development/private"):
+        await promotion.main(profile="private")
+    promotion.load_runtime_ports.assert_not_called()
+    promotion.connect_temporal.assert_not_awaited()
+    service.set_worker_deployment_current_version.assert_not_awaited()
+
+
+async def test_private_invalid_tls_preflight_precedes_credentials_and_mutation(monkeypatch):
+    service, _ = promotion_service(monkeypatch)
+    monkeypatch.setattr(promotion, "get_settings", private_settings)
+    promotion.validate_temporal_settings.side_effect = ValueError("invalid TLS material")
+    with pytest.raises(ValueError, match="TLS material"):
+        await promotion.main(profile="private")
+    promotion.load_runtime_ports.assert_not_called()
+    promotion.connect_temporal.assert_not_awaited()
+    service.set_worker_deployment_current_version.assert_not_awaited()
+
+
+async def test_private_missing_candidate_activity_poller_never_promotes(monkeypatch):
+    service, _ = promotion_service(monkeypatch)
+    monkeypatch.setattr(promotion, "get_settings", private_settings)
+    service.describe_task_queue.side_effect = [
+        DescribeTaskQueueResponse(pollers=[poller("catalog")]),
+        DescribeTaskQueueResponse(),
+    ]
+    with pytest.raises(SystemExit, match="no recent versioned"):
+        await promotion.main(profile="private")
+    service.set_worker_deployment_current_version.assert_not_awaited()
 
 
 @pytest.fixture
@@ -332,7 +432,7 @@ async def test_unversioned_promotion_fails_before_connect(monkeypatch):
         promotion, "get_settings", lambda: settings(temporal_worker_versioning_enabled=False)
     )
     connect = AsyncMock()
-    monkeypatch.setattr(promotion.Client, "connect", connect)
+    monkeypatch.setattr(promotion, "connect_temporal", connect)
     with pytest.raises(SystemExit, match="Only versioned"):
         await promotion.main()
     connect.assert_not_awaited()
@@ -365,7 +465,8 @@ async def test_default_query_selects_candidate_from_mixed_pollers_not_current_ro
 ):
     service, _ = promotion_service(monkeypatch)
 
-    async def mixed_response(request):
+    async def mixed_response(request, **kwargs):
+        assert kwargs["timeout"] == timedelta(seconds=10)
         # SDK 1.30 / server 1.31.2 return top-level pollers with deployment_options.
         # Model an unpromoted candidate alongside a different currently routed version.
         assert request.api_mode == 0 and not request.HasField("versions")

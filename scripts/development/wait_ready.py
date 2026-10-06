@@ -27,32 +27,53 @@ DEFERRED = {
     "events-concierge-" + name
     for name in ("temporal-transactional", "request-starter", "notifier", "change-delivery")
 }
+PRIVATE_EXPECTED = EXPECTED - {"events-concierge-admin"}
+STORES = {"ec-dev-redis"} | {
+    "ec-dev-temporal-" + name for name in ("frontend", "history", "matching", "worker")
+}
+PUBLIC_TUNNEL = "events-concierge-public-tunnel"
 
 
-def pending_deployments(items):
+def expected_replicas(profile, public_tunnel=False):
+    if profile not in ("development", "private"):
+        raise SystemExit("Unknown deployment profile")
+    if public_tunnel and profile != "private":
+        raise SystemExit("Public tunnel requires the authenticated private profile")
+    expected = dict.fromkeys(PRIVATE_EXPECTED if profile == "private" else EXPECTED, 1)
+    if public_tunnel:
+        expected[PUBLIC_TUNNEL] = 2
+    return expected
+
+
+def pending_deployments(items, *, profile="development", public_tunnel=False):
     """Require every expected process, including the command executor, to finish rollout."""
     by_name = {x["metadata"]["name"]: x for x in items}
-    pending = []
-    pending.extend(sorted(name for name in DEFERRED if name in by_name))
-    for name in sorted(EXPECTED):
+    expected = expected_replicas(profile, public_tunnel)
+    unexpected = set(by_name) - set(expected) - STORES if profile == "private" else DEFERRED
+    pending = sorted(name for name in unexpected if name in by_name)
+    for name, replicas in sorted(expected.items()):
         d = by_name.get(name, {})
         status = d.get("status", {})
         if (
-            d.get("spec", {}).get("replicas") != 1
+            d.get("spec", {}).get("replicas") != replicas
             or status.get("observedGeneration", 0) < d.get("metadata", {}).get("generation", 1)
             or any(
-                status.get(k, 0) != 1
-                for k in ["updatedReplicas", "availableReplicas", "readyReplicas"]
+                status.get(k, 0) != replicas
+                for k in ["replicas", "updatedReplicas", "availableReplicas", "readyReplicas"]
             )
+            or status.get("unavailableReplicas", 0) != 0
         ):
             pending.append(name)
     return pending
 
 
-def main(*, target="shared"):
+def main(*, target="shared", profile="development", public_tunnel=False):
+    expected = expected_replicas(profile, public_tunnel)
     expected_context = TARGETS[target].context
     kubectl = os.environ.get("KUBECTL", "kubectl")
-    context = subprocess.check_output([kubectl, "config", "current-context"], text=True).strip()
+    context = subprocess.check_output(
+        [kubectl, "config", "current-context"], text=True, timeout=10
+    ).strip()
     if context != expected_context:
         raise SystemExit("Wrong cluster context")
     for _ in range(120):
@@ -64,17 +85,19 @@ def main(*, target="shared"):
                     expected_context,
                     "-n",
                     NAMESPACE,
+                    "--request-timeout=20s",
                     "get",
                     "deployments",
                     "-o",
                     "json",
-                ]
+                ],
+                timeout=30,
             )
         )["items"]
-        pending = pending_deployments(items)
+        pending = pending_deployments(items, profile=profile, public_tunnel=public_tunnel)
         if not pending:
-            count = len(EXPECTED)
-            print(f"All {count} expected deployments have one updated, available, ready replica")
+            count = len(expected)
+            print(f"All {count} expected deployments have their updated, available, ready replicas")
             return
         print("Waiting:", ", ".join(pending), flush=True)
         time.sleep(5)
@@ -84,4 +107,7 @@ def main(*, target="shared"):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--target", choices=TARGETS, default="shared")
-    main(target=parser.parse_args().target)
+    parser.add_argument("--profile", choices=("development", "private"), default="development")
+    parser.add_argument("--public-tunnel", action="store_true")
+    args = parser.parse_args()
+    main(target=args.target, profile=args.profile, public_tunnel=args.public_tunnel)

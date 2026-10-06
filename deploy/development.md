@@ -166,7 +166,7 @@ mkdir -p .local
 
 **Release — after authorization and rehearsal**
 
-- These commands retain the current demo overlays; authenticated private composition remains pending.
+- These commands use the demo overlays. Authenticated private releases use the [encrypted dependency profile](#authenticated-discovery-and-encrypted-dependencies) and its explicit gates.
 
 1. [Quiesce and verify backup](#manual-recovery) with `--hold-stopped`; preserve cadence state and original replicas.
 2. Apply approved credentials/infrastructure changes; run migration with writers stopped:
@@ -294,6 +294,22 @@ EC_HELM_BINARY=helm .venv/bin/python -m pytest tests/deployment/test_authenticat
    Verify real Google login/consent, reload, personal-data writes, logout and rejection of the revoked session on the trusted deployed origin. Keep signup disabled until approved legal pages and the provider project/client are configured; browser fixtures are not IdP acceptance.
 7. Rollback: stop writers; restore listener/client configuration together; retain certificates/PVCs; verify readiness and queues before resume.
 
+Authenticated private release gates select the profile explicitly; keep cadence disabled until promotion and acceptance:
+
+```bash
+.venv/bin/python scripts/development/wait_ready.py --target shared --profile private
+kubectl -n events-concierge-dev exec -i deployment/events-concierge-api -- python - --profile private < scripts/development/promote_workers.py
+```
+
+- The private gate requires five singleton application Deployments and rejects demo, deferred or unknown Deployments. Promotion uses runtime mTLS and requires recent workflow and activity pollers for the exact candidate build. `smoke.py` remains a synthetic demo check; use the authenticated browser acceptance above.
+- After installing the public tunnel, run `wait_ready.py --target shared --profile private --public-tunnel`; it also requires both updated, available, ready connector replicas before publishing the route.
+- For an authenticated private backup, add `--hold-stopped` to the following creation command for cutover. Replace `SET_ID` with its exact completed prefix; verification uses the saved data, and interrupted recovery selects the saved profile. The demo examples below retain their default profile.
+
+```bash
+.venv/bin/python scripts/development/backup.py backup --target shared --profile private
+.venv/bin/python scripts/development/backup.py verify gs://iz27-platform-dev-ec-backups/SET_ID --target shared
+```
+
 - Cadence's 90-second deadline includes scheduling.
 - Local TLS tests do not prove GKE delivery/authorization; [Temporal authorization limits](../docs/production-operations.md#temporal).
 
@@ -351,6 +367,7 @@ kubectl -n events-concierge-dev patch cronjob events-concierge-ingestion-cadence
 - Held-stopped path: run readiness only after migration and application restart; follow [release](#shared-release-and-access).
 - Replace `SET_ID` with exact completed prefix printed by backup.
 - **Normal backup:** stop app writers then Temporal; retain PostgreSQL/Redis; save three databases, payloads and image/schema metadata.
+- **Private profile:** stop/wait for the public edge first, then writers and Temporal; restore the edge last after guarded writer/Temporal recovery and exact readiness. Only its approved two replicas are allowed; unknown/operator Deployments block backup. Failed writer recovery leaves the edge stopped. Recovery metadata records the private profile; `resume` selects it from the saved record.
 - `recovery.json`: saved/read back before stopping writers; completion marker last; normal backup restores original replicas.
 - Verification: disposable Docker restore and checksums; only completed sets qualify. Recreate schema-required password-free roles only in the disposable container; preserve owners/ACLs and verify privilege and tenant isolation.
 - Retain at least three successful sets; no automatic deletion; same project boundary, no independent project-loss protection.
@@ -366,7 +383,7 @@ kubectl -n events-concierge-dev patch cronjob events-concierge-ingestion-cadence
 
 - Restore connectivity first; exact prefix printed before quiescing.
 - Repeatable; Temporal first; restores replicas only, not data/images/schema.
-- Refuses unknown names, replicas outside 0/1, changed schema/Deployment identities/pod templates; investigate, never force.
+- Refuses unknown names, writer replicas outside 0/1 (private public edge 0/2), changed schema/Deployment identities/pod templates; private recovery also refuses a changed Deployment inventory. Investigate, never force.
 - Preserve incomplete prefixes as evidence; never restore their data.
 - Older sets without `recovery.json`: reviewed manual recovery from saved manifest.
 - After migration starts: compatible-image/coordinated-data recovery; `resume` is not rollback.
