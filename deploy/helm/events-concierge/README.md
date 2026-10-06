@@ -80,9 +80,10 @@ The worker liveness probe proves only that PID 1 is alive. Temporal poller count
 schedule-to-start latency, and workflow compatibility remain release and monitoring gates; a
 healthy process probe is not evidence that a worker is consuming work.
 
-The optional Gateway expects a TLS Secret created by the chosen certificate controller. Keep it
-disabled until the external DNS/certificate/Cloud Armor design is provisioned. PodMonitoring
-requires GKE Managed Service for Prometheus, which the Terraform cluster enables.
+The selected `publicEdge` uses GCP Certificate Manager and a certificate map; it rejects
+TLS Secret references and requires the private authenticated profile. The legacy managed
+`gateway`/operator Gateway uses TLS Secrets and remains disabled in that profile.
+PodMonitoring requires GKE Managed Service for Prometheus; verify its controller before enabling it.
 
 Bootstrap and label the namespace before the first Helm release as shown above; do not replace that
 step with `--create-namespace`, which would omit Pod Security Admission policy labels.
@@ -99,7 +100,8 @@ rolling back only Helm values cannot restore database access.
 
 ## Hosted operator profile
 
-`operator.enabled` is disabled by default. The managed profile below uses Cloud SQL and a GKE IAP Gateway.
+`operator.enabled` is disabled by default. The managed Cloud SQL profile below is an alternative;
+the selected shared in-cluster deployment uses [Private operator](#private-operator) and the public edge.
 
 Prepare the [Terraform foundation](../../../infra/terraform/README.md) with its separate
 `operator_enabled = true` opt-in. After authorized provisioning, `tofu output -json

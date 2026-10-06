@@ -1,15 +1,17 @@
-# Private GKE development
+# GKE release and recovery
 
-Application release, private access and recovery.
+Application release, private operator access and recovery on shared GKE.
 
 - **Platform:** [gcp-foundation](https://github.com/iliazlobin/gcp-foundation) owns projects, network, GKE, access VM and `shared-retain`.
 - **Application:** releases, workload identities, secrets, registry, data and backups.
+- **Public edge:** [GCP Gateway HTTPS and admin IAP](public-access.md); consumer accounts use [Identity Platform](../deployment/consumer-identity.md).
 - **Deployment:** manual; separate approval required; [production acceptance](../docs/production-operations.md#first-release-acceptance).
 
 ## Current deployment
 
-Recheck runtime state before operating. [Collection and release record](https://github.com/iliazlobin/events-concierge/issues/26)
-owns deployed revisions, image digests, backup evidence and open coverage inputs.
+**Recorded snapshot: October 5, 2026, 23:24 UTC.** Recheck runtime state before operating.
+[Collection and release record](https://github.com/iliazlobin/events-concierge/issues/26)
+owns deployed revisions, image digests and recovery evidence; [release preparation](https://github.com/iliazlobin/events-concierge/issues/24) owns activation and acceptance work.
 
 | Item | Recorded state |
 | --- | --- |
@@ -21,7 +23,7 @@ owns deployed revisions, image digests, backup evidence and open coverage inputs
 | Identity / transport | `not_configured`; demo identity; internal plaintext |
 
 - **Real:** PostgreSQL, Redis, Temporal, GCS, public collection; no real email, booking or Calendar actions.
-- **Pending activation:** Google sign-in, datastore TLS and Temporal mTLS; merged preparation is not encrypted or authenticated runtime acceptance.
+- **Prepared source:** authenticated private composition, Google/optional Apple accounts, datastore TLS, Temporal mTLS and GCP Gateway/IAP. This snapshot does not establish their activation or public availability.
 - **Recovery:** manual quiesced backups and disposable restore rehearsals; [freshness alerts](https://github.com/iliazlobin/events-concierge/issues/23) remain open.
 
 ### Public collection
@@ -43,15 +45,14 @@ Symphony owns task stages; GitHub holds the engineering records below. These pre
 
 | Prerequisite | Engineering record |
 | --- | --- |
-| In-cluster authenticated composition; per-process Secret/IAM and certificate mounts | [Private runtime](https://github.com/iliazlobin/events-concierge/issues/22) |
 | Health/freshness alerts and scheduled recovery evidence | [Observability](https://github.com/iliazlobin/events-concierge/issues/23) |
-| Combined candidate, migration/transport rollback, capacity and immutable artifacts | [Release rehearsal](https://github.com/iliazlobin/events-concierge/issues/24) |
+| Provider/legal-mode configuration, scoped Secrets/IAM, transport/migration rehearsal, immutable artifacts and public/browser acceptance | [Release preparation](https://github.com/iliazlobin/events-concierge/issues/24) |
 
 Configure Google Identity Platform, the approved legal mode and trusted HTTPS. [Consumer accounts](../deployment/consumer-identity.md) defines signup, reauthentication and erasure checks. After deployment approval, suspend cadence, drain writers, verify a fresh backup, coordinate migration/rollout, then verify identity, TLS/mTLS, CSRF, isolation, discovery and worker recovery.
 
-- **Profile gap:** development requires mock/plaintext/OIDC-off; managed requires Cloud SQL Proxy. Neither supports the intended composition.
-- **Erasure worker:** preserve session revocation and cleanup when narrowing its full application/BFF credentials.
-- **Identity:** dedicated consumer credentials; [managed signup/erasure activation](../deployment/consumer-identity.md). The deployed mock profile remains unchanged until a reviewed production composition is released.
+- **Selected composition:** [authenticated private values](#authenticated-discovery-and-encrypted-dependencies) use retained in-cluster stores and per-process credentials; [#22](https://github.com/iliazlobin/events-concierge/issues/22) records source completion. Demo development and managed Cloud SQL values are separate profiles.
+- **Erasure worker:** preserve consumer identity-deletion, application cleanup and Redis session-revocation authority; never grant migration-owner access.
+- **Identity and edge:** [consumer setup](../deployment/consumer-identity.md), then [controlled public activation](public-access.md#activate). Complete private readiness before publishing hostnames; changing source does not change the serving release.
 - **Deferred:** independent project-loss recovery. CI and healthy pods do not prove deployed acceptance.
 
 ## Shared application landing
@@ -63,7 +64,7 @@ Configure Google Identity Platform, the approved legal mode and trusted HTTPS. [
 | State | Fresh app state → `iz27-platform-dev-ec-state`; [backend setup](../infra/terraform/environments/shared-development/backend.tf.example) |
 | Storage | Platform-installed `shared-retain`; data chart `createStorageClass=false`, `storageClass=shared-retain` |
 | Helpers | Default to shared; retired target rejected; `--target shared` remains accepted |
-| Values | Development defaults → shared overlay → generated release values |
+| Values | Authenticated release: chart defaults → private authenticated values → generated image/identity bindings → reviewed consumer/edge overrides. Demo only: development → shared overlay → generated bindings |
 | Workers | Catalog/erasure active; transactional, request-start, notification and change-delivery disabled |
 
 - Keep state/plans/credentials outside Git; never initialize the retired target's backend for this destination.
@@ -205,9 +206,9 @@ kubectl -n events-concierge-dev exec -i deployment/events-concierge-api -- pytho
 - Migration `0187` has no downgrade. No schema-0180 images after schema-0193 migration; no incompatible Helm-only rollback.
 - Recovery requires verified coordinated backup and compatible images; overwriting new writes needs separate approval.
 
-**Access**
+**Demo access**
 
-The owner's Mac has login-started LaunchAgents for IAP, consumer and admin forwards; they restart after connection loss or pod replacement. Another machine needs its own authenticated platform access. Loopback links work only on the forwarding machine; they do not expose a public service.
+The recorded demo uses Mac LaunchAgents for IAP, consumer and admin forwards. These loopback links work only on the forwarding machine. Authenticated consumer/admin access follows the [public edge](public-access.md); another machine needs its own platform authentication for private operations.
 
 Without supervised access, keep IAP running and use one forward per terminal:
 
@@ -333,12 +334,15 @@ kubectl -n events-concierge-dev exec -i deployment/events-concierge-api -- pytho
 - Avatar access: API, private admin and erasure worker; adapter validates deletion policy.
 - Restore can require avatar reupload; verify upload, cross-replica read, deletion and erasure separately.
 
-## Private admin
+<a id="private-admin"></a>
+
+## Demo admin
 
 - `events-concierge-admin`: frontend/API on pod loopback; no Service; Kubernetes port-forward permission required.
 - Ordinary API: administration disabled. Cadence uses separate CronJob.
 - Shared live data and immutable images; readiness checks admin overview through API/frontend.
 - [Open via admin forward](#shared-release-and-access).
+- Authenticated releases instead use the isolated operator frontend/API and [owner-only IAP](public-access.md#admin). The demo Deployment is absent from the private authenticated profile.
 
 ## Manual recovery
 

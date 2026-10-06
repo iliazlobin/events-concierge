@@ -1,11 +1,12 @@
 # Public access
 
-- Consumer: **https://events.iliazlobin.com**; anonymous catalog browsing, Google accounts, chat disabled.
-- Admin: **https://admin-events.iliazlobin.com/admin**; Google IAP allows only `iliazlobin91@gmail.com`.
+- Consumer target: [events.iliazlobin.com](https://events.iliazlobin.com); anonymous catalog browsing, Google accounts, chat disabled.
+- Admin target: [admin-events.iliazlobin.com/admin](https://admin-events.iliazlobin.com/admin); Google IAP restricts access to `iliazlobin91@gmail.com` and its configured subject/role.
 - Consumer `/admin` and `/admin/` accept browser GET/HEAD navigation only: `302` to the fixed admin URL, without query parameters. Admin APIs remain on the protected hostname.
 - One global external Application Load Balancer, reserved IPv4 and managed certificate cover both hosts.
 - GKE nodes, control plane, API and databases stay private. Consumer sign-in grants no admin role.
 - Rendering, healthy Pods and green CI do not establish public or browser acceptance.
+- Hostname publication and acceptance are tracked in the [release record](https://github.com/iliazlobin/events-concierge/issues/24); these target links do not establish availability.
 
 ## Route and ownership
 
@@ -52,7 +53,7 @@ terraform -chdir=infra/terraform/environments/public-access test -no-color
 - Import the approved credential into a pinned `ec-admin-iap` Secret Manager version. The same-namespace Secret referenced by `operator.iapClientSecretName` supplies the credential in data key `key`; application containers never mount it. Google's [Gateway-specific sample](https://docs.cloud.google.com/kubernetes-engine/docs/how-to/configure-gateway-resources?hl=es#configure_iap) documents this format. Require successful policy attachment and backend IAP readback before activation.
 - Grant `roles/iap.httpsResourceAccessor` only to `user:iliazlobin91@gmail.com` on the actual **operator frontend backend service**. Inspect inherited permissions; broader grants invalidate owner-only edge acceptance.
 - Set `operator.iapAudience=/projects/<project-number>/global/backendServices/<operator-frontend-backend-id>` from the created backend. Neither the API ID nor consumer client/backend ID is valid.
-- Record the owner's verified `accounts.google.com:<subject>` as the sole `reviewer` assignment. Never substitute the former Cloudflare UUID, an email header or a test fixture.
+- Record the owner's verified `accounts.google.com:<subject>` as the sole `reviewer` assignment. Never substitute an identity from another provider, an email header or a test fixture.
 - Removing the subject assignment blocks API access. Revoke edge sessions/grants as appropriate; origin signature validation alone does not establish immediate online session revocation.
 
 ## Activate
