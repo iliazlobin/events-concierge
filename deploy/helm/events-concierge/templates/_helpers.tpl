@@ -33,6 +33,18 @@ app.kubernetes.io/component: {{ .component }}
 {{ include "events-concierge.fullname" . }}-runtime
 {{- end -}}
 
+{{- define "events-concierge.operatorIdentityConfig" -}}
+EC_OPERATOR_AUTH_PROVIDER: {{ .Values.operator.authProvider | quote }}
+{{- if eq .Values.operator.authProvider "cloudflare_access" }}
+EC_OPERATOR_CLOUDFLARE_TEAM_DOMAIN: {{ .Values.operator.cloudflareAccess.teamDomain | quote }}
+EC_OPERATOR_CLOUDFLARE_AUDIENCE: {{ .Values.operator.cloudflareAccess.audience | quote }}
+{{- else }}
+EC_OPERATOR_IAP_AUDIENCE: {{ .Values.operator.iapAudience | quote }}
+{{- end }}
+EC_OPERATOR_PUBLIC_ORIGIN: {{ printf "https://%s" .Values.operator.hostname | quote }}
+EC_OPERATOR_SUBJECT_ROLES: {{ .Values.operator.subjectRoles | toJson | quote }}
+{{- end -}}
+
 {{- define "events-concierge.migrationSecretProviderClass" -}}
 {{ include "events-concierge.fullname" . }}-migration
 {{- end -}}
@@ -86,10 +98,29 @@ seccompProfile:
 {{- fail "development disables operator.enabled; use the loopback-only development admin" -}}
 {{- end -}}
 {{- if .Values.operator.enabled -}}
-{{- range $key := list "hostname" "tlsSecretName" "iapAudience" "iapClientId" "iapClientSecretName" -}}
+{{- if not (has .Values.operator.authProvider (list "iap" "cloudflare_access")) -}}{{- fail "operator.authProvider must be iap or cloudflare_access" -}}{{- end -}}
+{{- $identityKeys := list "hostname" -}}
+{{- if eq .Values.operator.authProvider "iap" -}}
+{{- $identityKeys = concat $identityKeys (list "tlsSecretName" "iapAudience" "iapClientId" "iapClientSecretName") -}}
+{{- else -}}
+{{- if not (and $private .Values.publicTunnel.enabled (eq .Values.operator.hostname "admin-events.iliazlobin.com")) -}}
+{{- fail "Cloudflare operator requires the private publicTunnel profile and exact admin-events.iliazlobin.com hostname" -}}
+{{- end -}}
+{{- if or (not (regexMatch "^https://[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?\\.cloudflareaccess\\.com$" .Values.operator.cloudflareAccess.teamDomain)) (not (regexMatch "^[a-f0-9]{64}$" .Values.operator.cloudflareAccess.audience)) -}}
+{{- fail "Cloudflare operator requires an exact HTTPS team domain and application AUD" -}}
+{{- end -}}
+{{- if or .Values.operator.iapAudience .Values.operator.iapClientId .Values.operator.iapClientSecretName .Values.operator.tlsSecretName -}}
+{{- fail "Cloudflare operator cannot retain IAP or Gateway TLS configuration" -}}
+{{- end -}}
+{{- if not .Values.operator.cloudflareAccess.jwksCidrs -}}{{- fail "Cloudflare operator requires reviewed certificate endpoint CIDRs" -}}{{- end -}}
+{{- range .Values.operator.cloudflareAccess.jwksCidrs -}}
+{{- if not (has . (list "104.16.0.0/13" "104.24.0.0/14" "172.64.0.0/13")) -}}{{- fail "Cloudflare certificate CIDRs must be reviewed Cloudflare HTTPS ranges" -}}{{- end -}}
+{{- end -}}
+{{- end -}}
+{{- range $key := $identityKeys -}}
 {{- if not (index $.Values.operator $key) -}}{{- fail (printf "operator.%s is required" $key) -}}{{- end -}}
 {{- end -}}
-{{- if not .Values.operator.subjectRoles -}}{{- fail "operator.subjectRoles must explicitly assign IAP subjects" -}}{{- end -}}
+{{- if not .Values.operator.subjectRoles -}}{{- fail "operator.subjectRoles must explicitly assign verified subjects" -}}{{- end -}}
 {{- if not .Values.networkPolicy.enabled -}}{{- fail "operator requires networkPolicy.enabled" -}}{{- end -}}
 {{- $catalogPrefix := printf "%s/" (trimSuffix "/" .Values.operator.executorClaimCheckPrefix) -}}
 {{- $consumerPrefix := printf "%s/" (trimSuffix "/" .Values.applicationConfig.EC_GCS_CLAIM_CHECK_PREFIX) -}}
@@ -318,12 +349,19 @@ seccompProfile:
 {{- define "events-concierge.validatePrivateOperator" -}}
 {{- $operator := .Values.operator -}}
 {{- if or (eq $operator.hostname .Values.publicTunnel.hostname) (not (regexMatch "^[a-z0-9]([a-z0-9.-]*[a-z0-9])?$" $operator.hostname)) -}}{{- fail "private operator requires a distinct HTTPS hostname" -}}{{- end -}}
+{{- if ne (len $operator.subjectRoles) 1 -}}{{- fail "private operator assigns exactly one stable owner subject" -}}{{- end -}}
+{{- if eq $operator.authProvider "iap" -}}
 {{- if not (regexMatch "^/projects/[0-9]+/global/backendServices/[0-9]+$" $operator.iapAudience) -}}{{- fail "private operator requires the exact signed IAP backend audience" -}}{{- end -}}
-{{- if ne (len $operator.subjectRoles) 1 -}}{{- fail "private operator assigns exactly one stable owner IAP subject" -}}{{- end -}}
 {{- range $subject, $role := $operator.subjectRoles -}}
 {{- if or (not (regexMatch "^accounts\\.google\\.com:[A-Za-z0-9_-]+$" $subject)) (not (has $role (list "viewer" "operator" "reviewer"))) -}}{{- fail "private operator requires a stable Google IAP subject and explicit role" -}}{{- end -}}
 {{- end -}}
 {{- if ne (toJson $operator.frontendIngressCidrs) (toJson (list "130.211.0.0/22" "35.191.0.0/16")) -}}{{- fail "private operator ingress is restricted to Google Front End ranges" -}}{{- end -}}
+{{- else -}}
+{{- range $subject, $role := $operator.subjectRoles -}}
+{{- if or (not (regexMatch "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$" $subject)) (not (has $role (list "viewer" "operator" "reviewer"))) -}}{{- fail "private Cloudflare operator requires the stable Access user UUID and explicit role" -}}{{- end -}}
+{{- end -}}
+{{- if $operator.frontendIngressCidrs -}}{{- fail "Cloudflare operator ingress uses only the tunnel connector, without IP grants" -}}{{- end -}}
+{{- end -}}
 {{- if ne (len $operator.operatorSecrets) 1 -}}{{- fail "private operator requires only its controller database DSN" -}}{{- end -}}
 {{- $secret := first $operator.operatorSecrets -}}
 {{- if or (ne $secret.fileName "EC_OPERATOR_DATABASE_URL") (ne $secret.secretName "ec-dev-operator-database-url") (not (regexMatch "^[1-9][0-9]*$" (toString $secret.version))) -}}{{- fail "private operator requires its numbered controller database secret version" -}}{{- end -}}

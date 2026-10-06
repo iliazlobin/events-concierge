@@ -28,13 +28,13 @@ Inspect catalog collection, investigate failures and submit reviewed commands. U
 uvicorn events_concierge.api.operator:create_operator_app --factory
 ```
 
-- Requires `EC_OPERATOR_API_ENABLED=true`, non-mock composition, exact HTTPS `EC_OPERATOR_PUBLIC_ORIGIN`, `EC_OPERATOR_IAP_AUDIENCE` and `EC_OPERATOR_SUBJECT_ROLES`.
-- The API verifies Google's signed IAP assertion; unsigned headers and consumer cookies confer no authority.
+- Requires `EC_OPERATOR_API_ENABLED=true`, non-mock composition, exact HTTPS `EC_OPERATOR_PUBLIC_ORIGIN` and explicit `EC_OPERATOR_SUBJECT_ROLES`. IAP remains the default and requires `EC_OPERATOR_IAP_AUDIENCE`; Cloudflare mode requires `EC_OPERATOR_AUTH_PROVIDER=cloudflare_access`, the exact team domain and application AUD.
+- The API verifies the selected edge's signed assertion, signed owner email and assigned stable subject; unsigned headers and consumer cookies confer no authority. [Cloudflare routing and acceptance](../deploy/public-access.md#cloudflare-admin).
 - Mutations require JSON and the exact browser Origin. The verified subject supplies the receipt actor.
 - The pool validates `ec_operator_controller` membership and rejects consumer/elevated logins; executor credentials have separate command/publication capabilities.
 - Restricted definer functions expose bounded aggregates and opaque references, never raw queue tables, tenant payloads or lease tokens.
 - Full-profile external entity refresh remains unleased; discovery exposes reads only. Overview counts do not establish safe scaling or worker liveness.
-- [Helm operator profile](../deploy/helm/events-concierge/README.md#hosted-operator-profile) owns IAP, identities, mounts and deployment prerequisites. Rendering does not establish activation.
+- [Helm operator profile](../deploy/helm/events-concierge/README.md#hosted-operator-profile) owns signed identity, mounts and deployment prerequisites. Rendering does not establish activation.
 
 ## Execution model
 

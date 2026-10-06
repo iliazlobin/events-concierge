@@ -84,7 +84,7 @@ def preflight_operator_runtime(settings: Settings) -> None:
     """Validate the controller process without consumer, Redis, Temporal or provider credentials.
 
     The controller only writes durable commands. Its database wrapper separately verifies the
-    connected principal's isolated role before a query; API identity remains the IAP boundary.
+    connected principal's isolated role before a query; API identity uses the configured signed edge.
     """
     if _local_mock(settings):
         return

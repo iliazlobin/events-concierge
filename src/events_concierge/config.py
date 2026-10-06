@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from ipaddress import ip_address
 from typing import Any, Literal
 from urllib.parse import urlsplit
@@ -189,7 +190,10 @@ class Settings(BaseSettings):
     # Hosted operators run a separate entrypoint, identity verifier, and database pool. These
     # settings never install operator routes into the consumer app.
     operator_api_enabled: bool = False
+    operator_auth_provider: Literal["iap", "cloudflare_access"] = "iap"
     operator_iap_audience: str | None = Field(default=None, min_length=1, max_length=512)
+    operator_cloudflare_team_domain: str | None = None
+    operator_cloudflare_audience: str | None = None
     operator_public_origin: str | None = None
     operator_subject_roles: dict[str, Literal["viewer", "operator", "reviewer"]] = Field(
         default_factory=dict,
@@ -541,8 +545,23 @@ class Settings(BaseSettings):
         if self.operator_api_enabled:
             if self.mock_cloud or self.admin_ingestion_enabled:
                 raise ValueError("hosted operator API cannot use the local mock admin profile")
-            if not self.operator_iap_audience or not self.operator_subject_roles:
-                raise ValueError("operator API requires IAP audience and explicit subject roles")
+            if not self.operator_subject_roles:
+                raise ValueError("operator API requires explicit subject roles")
+            if self.operator_auth_provider == "iap":
+                if not self.operator_iap_audience:
+                    raise ValueError("operator API requires IAP audience")
+            elif (
+                not re.fullmatch(
+                    r"https://[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.cloudflareaccess\.com",
+                    self.operator_cloudflare_team_domain or "",
+                )
+                or not re.fullmatch(r"[a-f0-9]{64}", self.operator_cloudflare_audience or "")
+                or self.operator_iap_audience is not None
+            ):
+                raise ValueError(
+                    "Cloudflare operator requires an exact HTTPS team domain and application AUD, "
+                    "without an IAP audience"
+                )
             if not self.operator_database_url:
                 raise ValueError("operator API requires a separate operator database credential")
             origin = urlsplit(self.operator_public_origin or "")

@@ -117,13 +117,19 @@ secretManager:
       version: "1"
 
 operator:
-  # Enable as one reviewed release: IAP edge, isolated API, executor, and queued cadence.
+  # One independently verified operator identity; consumer login never grants this role.
   enabled: false
+  authProvider: iap
   hostname: ""
   tlsSecretName: ""
   iapAudience: ""
   iapClientId: ""
   iapClientSecretName: ""
+  cloudflareAccess:
+    teamDomain: ""
+    audience: ""
+    # Reviewed Cloudflare CIDRs containing this team's certificate endpoint; HTTPS only.
+    jwksCidrs: []
   subjectRoles: {}
   # HTTP IAP edge data-plane and health-check ranges, independent of the consumer edge.
   frontendIngressCidrs: [130.211.0.0/22, 35.191.0.0/16]
