@@ -328,24 +328,30 @@ def resume(uri):
     print("Check deployment readiness before reopening access.")
 
 
-def _quiesce(deployments, *, shared_frontend=False):
+def _quiesce(deployments, *, recovery):
     # Close the public edge before writers; let application shutdown finish while
     # Temporal remains available. PostgreSQL and Redis stay running.
+    if not isinstance(recovery, dict):
+        raise RuntimeError("Backup quiescence requires saved recovery metadata")
+    _validate_recovery(recovery, BACKUP_ROOT + recovery["id"])
+    desired = {d["metadata"]["name"]: d["spec"]["replicas"] for d in deployments}
+    if desired != recovery["replicas"]:
+        raise RuntimeError("Backup quiescence does not match the saved writer inventory")
+    _check_recovery_schema(recovery)
+    current = _preflight_private_recovery(desired, recovery)
+    for name in desired:
+        _validate_stop_replicas(current[name], name, recovery)
+    shared_frontend = recovery.get("shared_frontend", False)
     for phase_name in ("edge", "operator-edge", "application", "temporal"):
         phase = [
             d
             for d in deployments
             if _resume_phase(d["metadata"]["name"], shared_frontend=shared_frontend) == phase_name
         ]
-        for d in phase:
-            k(
-                "scale",
-                "deployment/" + d["metadata"]["name"],
-                "--replicas=0",
-                stdout=subprocess.DEVNULL,
-                timeout=30,
-            )
-        for d in phase:
+        stopped = [
+            _scale_recovery(d["metadata"]["name"], 0, recovery, stopping=True) for d in phase
+        ]
+        for d in stopped:
             # Deployment readiness can report success before terminating pods exit.
             selector = ",".join(
                 f"{key}={val}" for key, val in d["spec"]["selector"]["matchLabels"].items()
@@ -474,9 +480,19 @@ def _wait_before_public_resume(desired, recovery, *, edge=PUBLIC_TUNNEL):
     _check_recovery_schema(recovery)
 
 
-def _scale_recovery(name, count, recovery, *, closing_edge=False):
+def _validate_stop_replicas(deployment, name, recovery):
+    replicas = deployment["spec"].get("replicas")
+    if type(replicas) is not int or replicas not in (0, recovery["replicas"][name]):
+        raise RuntimeError("Backup refused: writer replica count changed: " + name)
+
+
+def _scale_recovery(name, count, recovery, *, closing_edge=False, stopping=False):
+    if stopping and recovery is None:
+        raise RuntimeError("Backup stop requires saved recovery metadata")
     for attempt in range(len(RESUME_RETRY_DELAYS) + 1):
         try:
+            if stopping:
+                _check_recovery_schema(recovery)
             preconditions = []
             deployment = None
             if recovery is not None:
@@ -492,6 +508,8 @@ def _scale_recovery(name, count, recovery, *, closing_edge=False):
                     ).stdout
                 )
                 version = _validate_current_deployment(deployment, name, recovery)
+                if stopping:
+                    _validate_stop_replicas(deployment, name, recovery)
                 if closing_edge and deployment["spec"].get("replicas") not in (
                     0,
                     recovery["replicas"][name],
@@ -707,7 +725,7 @@ def backup(*, hold_stopped=False, profile="development", operator=False, shared_
         _persist_recovery(folder, dest, recovery)
         backup_error = None
         try:
-            _quiesce(writers, shared_frontend=shared_frontend)
+            _quiesce(writers, recovery=recovery)
             _check_scheduled_writers_quiet()
             for store, user, dbs in [
                 ("application", "ec_owner", ["events"]),
