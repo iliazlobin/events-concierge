@@ -1,12 +1,12 @@
 # Public access
 
 - Consumer target: [events.iliazlobin.com](https://events.iliazlobin.com); anonymous catalog browsing, Google accounts, chat disabled.
-- Admin target: [admin-events.iliazlobin.com/admin](https://admin-events.iliazlobin.com/admin); Google IAP restricts access to `iliazlobin91@gmail.com` and its configured subject/role.
+- Admin target: [admin-events.iliazlobin.com/admin](https://admin-events.iliazlobin.com/admin); Google IAP allows only `iliazlobin91@gmail.com`. The API separately requires its configured subject/role.
 - Consumer `/admin` and `/admin/` accept browser GET/HEAD navigation only: `302` to the fixed admin URL, without query parameters. Admin APIs remain on the protected hostname.
 - One global external Application Load Balancer, reserved IPv4 and managed certificate cover both hosts.
 - GKE nodes, control plane, API and databases stay private. Consumer sign-in grants no admin role.
 - Rendering, healthy Pods and green CI do not establish public or browser acceptance.
-- Hostname publication and acceptance are tracked in the [release record](https://github.com/iliazlobin/events-concierge/issues/24); these target links do not establish availability.
+- Hostname publication and acceptance are tracked in [release preparation](https://github.com/iliazlobin/events-concierge/issues/24); these target links do not establish availability.
 
 ## Route and ownership
 

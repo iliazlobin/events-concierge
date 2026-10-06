@@ -16,7 +16,7 @@ Approved product scope. Symphony owns task stages and acceptance; GitHub owns is
 | Deferred | Chat, automated RSVP, managed handoffs, notifications, Calendar synchronization, purchases and programmatic API keys. |
 | Implemented | Guest catalog access, Google accounts and optional Apple support, configured legal acceptance, datastore TLS and Temporal mTLS; GCP Gateway HTTPS and owner-only IAP admin. |
 | Recorded deployment | Private discovery with mock product adapters; the [dated runtime record](deploy/development.md#current-deployment) distinguishes serving configuration from prepared source. |
-| Release acceptance | Provider/legal-mode configuration, transport/recovery checks and real consumer/admin browser acceptance; [release record](https://github.com/iliazlobin/events-concierge/issues/24). |
+| Release acceptance | Provider/legal-mode configuration, transport/recovery checks and real consumer/admin browser acceptance; [release preparation](https://github.com/iliazlobin/events-concierge/issues/24). |
 
 - `EC_RELEASE_PROFILE=discovery` selects product scope; retained full-profile code does not expand it.
 - `EC_MOCK_CLOUD` controls integration behavior independently of product scope.
