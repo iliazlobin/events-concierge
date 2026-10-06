@@ -161,7 +161,9 @@ Consumer signup grants no admin role.
   Set the real backend audience and verified owner subject, check backend IAP/IAM, then enable
   the operator workloads with `bootstrap=false`. Never deploy synthetic test identifiers.
 - The consumer frontend has a credential-free Caddy sidecar on port 8080. It allows consumer
-  pages/API only, strips identity headers and returns 404 for admin/probe paths or wrong hosts.
+  pages/API, strips identity headers and redirects exact `/admin` or `/admin/` GET/HEAD requests
+  to the fixed protected admin URL. Admin pages/APIs are never proxied; admin API/probe routes,
+  other entry methods or wrong hosts return 404. Normalized aliases can reach allowed public pages.
   Health checks use private port 8081. Admin traffic reaches its own frontend on port 3000.
 - GFE/health-check ranges reach only those frontend ports; the operator API accepts only its
   frontend and mounts only its numbered controller DSN/PostgreSQL CA. No direct public API
@@ -169,5 +171,5 @@ Consumer signup grants no admin role.
 - Add `--operator` to private `wait_ready.py` and backup creation only when both operator pods
   are installed. Recovery uses the recorded inventory; no extra resume flag. Verify owner login,
   admin reads/commands, non-owner denial, missing/forged assertion denial, CSRF, credential
-  isolation and backup/recovery before declaring the endpoint usable. Public consumer routing
-  continues to reject `/admin`.
+  isolation and backup/recovery before declaring the endpoint usable. The consumer admin entry
+  redirects navigation; it never proxies an admin page or API.
