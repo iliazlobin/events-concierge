@@ -32,23 +32,28 @@ STORES = {"ec-dev-redis"} | {
     "ec-dev-temporal-" + name for name in ("frontend", "history", "matching", "worker")
 }
 PRIVATE_OPERATORS = {"events-concierge-operator-" + name for name in ("api", "frontend")}
+SHARED_OPERATORS = {"events-concierge-operator-api"}
 
 
-def expected_replicas(profile, *, operator=False):
+def expected_replicas(profile, *, operator=False, shared_frontend=False):
     if profile not in ("development", "private"):
         raise SystemExit("Unknown deployment profile")
     if operator and profile != "private":
         raise SystemExit("Operator readiness requires the authenticated private profile")
+    if shared_frontend and (profile != "private" or not operator):
+        raise SystemExit("Shared frontend readiness requires --operator and --profile private")
     expected = dict.fromkeys(PRIVATE_EXPECTED if profile == "private" else EXPECTED, 1)
     if operator:
-        expected.update(dict.fromkeys(PRIVATE_OPERATORS, 1))
+        expected.update(
+            dict.fromkeys(SHARED_OPERATORS if shared_frontend else PRIVATE_OPERATORS, 1)
+        )
     return expected
 
 
-def pending_deployments(items, *, profile="development", operator=False):
+def pending_deployments(items, *, profile="development", operator=False, shared_frontend=False):
     """Require every expected process, including the command executor, to finish rollout."""
     by_name = {x["metadata"]["name"]: x for x in items}
-    expected = expected_replicas(profile, operator=operator)
+    expected = expected_replicas(profile, operator=operator, shared_frontend=shared_frontend)
     unexpected = set(by_name) - set(expected) - STORES if profile == "private" else DEFERRED
     pending = sorted(name for name in unexpected if name in by_name)
     for name, replicas in sorted(expected.items()):
@@ -67,8 +72,8 @@ def pending_deployments(items, *, profile="development", operator=False):
     return pending
 
 
-def main(*, target="shared", profile="development", operator=False):
-    expected = expected_replicas(profile, operator=operator)
+def main(*, target="shared", profile="development", operator=False, shared_frontend=False):
+    expected = expected_replicas(profile, operator=operator, shared_frontend=shared_frontend)
     expected_context = TARGETS[target].context
     kubectl = os.environ.get("KUBECTL", "kubectl")
     context = subprocess.check_output(
@@ -94,7 +99,9 @@ def main(*, target="shared", profile="development", operator=False):
                 timeout=30,
             )
         )["items"]
-        pending = pending_deployments(items, profile=profile, operator=operator)
+        pending = pending_deployments(
+            items, profile=profile, operator=operator, shared_frontend=shared_frontend
+        )
         if not pending:
             count = len(expected)
             print(f"All {count} expected deployments have their updated, available, ready replicas")
@@ -109,9 +116,13 @@ if __name__ == "__main__":
     parser.add_argument("--target", choices=TARGETS, default="shared")
     parser.add_argument("--profile", choices=("development", "private"), default="development")
     parser.add_argument("--operator", action="store_true")
+    parser.add_argument(
+        "--shared-frontend", action="store_true", help="Use the common consumer/admin frontend"
+    )
     args = parser.parse_args()
     main(
         target=args.target,
         profile=args.profile,
         operator=args.operator,
+        shared_frontend=args.shared_frontend,
     )
