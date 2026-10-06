@@ -1,9 +1,9 @@
 # Production operations
 
-Release gates, incident controls and recovery constraints. [Private GKE runbook](../deploy/development.md) owns environment state, access, rollout and backup commands.
+Release gates, incident controls and recovery constraints. [GKE release and recovery](../deploy/development.md) owns environment state, access, rollout and backup commands.
 
-- **Selected scope:** private discovery; self-hosted PostgreSQL, Redis and Temporal on shared GKE; GCS payload storage.
-- **Pending:** authenticated private Helm composition, identity/transport activation and deployed acceptance. Implemented code, CI and healthy pods do not establish acceptance.
+- **Selected scope:** discovery; private PostgreSQL, Redis and Temporal on shared GKE; GCS payload storage. [Public HTTPS](../deploy/public-access.md) exposes consumer/admin frontends, with IAP on admin.
+- **Implemented composition:** managed consumer identity, per-process credentials, datastore TLS and Temporal mTLS. Provider configuration, rollout and real browser acceptance are separate release gates; use the dated runtime record rather than infer activation from source or healthy Pods.
 - **Ownership:** [gcp-foundation](https://github.com/iliazlobin/gcp-foundation) owns network/cluster/access; this repository owns application identities, releases, data, migrations and backups.
 
 ## First release acceptance
@@ -19,7 +19,7 @@ Release gates, incident controls and recovery constraints. [Private GKE runbook]
 | Discovery | Actual Next.js/API filters, Events/Map/Calendar, entity graphs/profiles without refresh writes, details/provider links, pagination/history, empty/error/loading states, settings, mobile/keyboard |
 | Catalog | Reviewed sources; same-window real counts; last-good preservation; refresh and later scheduled publication; no unexplained loss |
 | Deferred actions | Direct routes rejected; no enqueue/provider effect; workers and credentials disabled |
-| Operations | Private endpoints, isolated process credentials, dependency recovery, monitoring/alerts, current backup and candidate restore evidence |
+| Operations | Private APIs/stores, scoped public routes/IAP, isolated process credentials, dependency recovery, monitoring/alerts, current backup and candidate restore evidence |
 
 Record failed/skipped/unavailable gates. Complete private readiness before approved [first-hostname publication](../deploy/public-access.md#activate); verify the real HTTPS/browser flow before accepting the release. Failed or unavailable acceptance disables the dedicated public routes. Preserve recovery copies before retiring infrastructure through its owning state. Apply the [launch gates](#external-launch-gates) for each enabled capability.
 
@@ -44,7 +44,7 @@ make staging-canary BASE_URL="$BASE_URL" \
   EXPECTED_IMAGE_DIGEST="$EXPECTED_IMAGE_DIGEST"
 ```
 
-- Validation establishes configuration wiring, never `release_eligible=true`. Existing managed validation is not the missing private authenticated Helm profile.
+- Validation establishes configuration wiring, never `release_eligible=true`. Select the [private authenticated profile](../deploy/development.md#authenticated-discovery-and-encrypted-dependencies) for retained in-cluster stores; managed Cloud SQL validation does not verify that deployment.
 - Non-local canary requires exact revision/digest. `EC_CANARY_SESSION_COOKIE` tests session/CSRF; adding `EC_CANARY_CSRF_TOKEN` **logs out that session**. Never send session secrets over HTTP.
 - `python -m events_concierge.operations ... --output PATH` creates sanitized evidence exclusively; no overwrite.
 - Expand/contract schema changes; rehearse on a production-shaped restore. Drain old writers before incompatible lease, role, queue or converter changes.
@@ -74,7 +74,7 @@ make staging-canary BASE_URL="$BASE_URL" \
 | Ingestion-command worker | `python -m events_concierge.workers.ingestion_commands`; claim/lease commands |
 | Catalog Temporal worker | `EC_TEMPORAL_WORKER_ROLE=catalog python -m events_concierge.workflows.worker` |
 | Account-erasure worker | `python -m events_concierge.workers.account_erasure`; fenced cleanup and session revocation |
-| Hosted operator API | Separate Google IAP identity/roles and database role; consumer identity grants no operator access |
+| Operator frontend/API | Separate frontend backend protected by Google IAP; signed assertion, owner role and restricted controller DB login verified by its API; consumer identity grants no operator access |
 
 - Proxy strips untrusted forwarding/hop headers; 64 KiB request cap and bounded body deadline. Secure cookies, exact-Origin CSRF and safe redirects remain required.
 - Local onboarding/tenant-header identity and `EC_ADMIN_INGESTION_ENABLED` are mock-only. Production uses managed consumer accounts or the legacy OIDC BFF; injected identity requires a separate contract.
@@ -231,10 +231,10 @@ Redact server/proxy/audit SQL and bind parameters during rotation; client parame
 
 Required evidence before enabling the corresponding release or capability. Offline tests do not establish these outcomes.
 
-**Private discovery**
+**Discovery release**
 
 - [ ] Protected upstream review, secret scanning and required CI; applicable [owner decisions](../design/owner-decisions.md) and explicit scope deferrals.
-- [ ] Authenticated private Helm profile, per-process credentials/IAM, datastore TLS/mTLS, combined migration/rollback rehearsal and approved rollout; [remaining release work](../deploy/development.md#remaining-release-work).
+- [ ] Configure and verify the implemented private profile: per-process credentials/IAM, datastore TLS/mTLS, combined migration/rollback rehearsal and approved rollout; [remaining release work](../deploy/development.md#remaining-release-work).
 - [ ] Dedicated Google client, trusted HTTPS, real signup/login/logout/expiry/revocation/CSRF/isolation and managed same-account erasure. Only legacy OIDC pilots require an explicit exception for unavailable self-service deletion.
 - [ ] Candidate backup/restore, independent telemetry/canaries/alerts/heartbeats, on-call ownership and scheduled recovery; containment/recovery drill.
 - [ ] Source-specific legal/commercial review and owner activation; disabled/quarantined sources remain disabled.

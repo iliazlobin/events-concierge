@@ -1,14 +1,14 @@
 # Manual discovery acceptance
 
-Validate the running Next.js candidate against the [private discovery scope](../PROJECT.md#current-milestone-private-discovery-candidate).
+Validate the running Next.js candidate against the [discovery scope](../PROJECT.md#current-milestone-discovery).
 Attach sanitized acceptance evidence to the release PR. Source tests and mock runs do not establish deployed acceptance.
 
 ## Prepare
 
 - Use an approved target and disposable account in a private browser window.
-- Follow [local setup](../README.md) or [private deployment access](../deploy/development.md#shared-release-and-access).
+- Follow [local setup](../README.md), [private operations access](../deploy/development.md#shared-release-and-access) or the approved [public consumer/admin edge](../deploy/public-access.md).
 - Record API revision, frontend digest, release/auth profiles, mock/live adapters, browser and viewport.
-- Check `/versionz`, `/healthz`, `/readyz` and `/v1/ui-config` against the selected environment.
+- Check `/versionz`, `/healthz` and `/readyz` through private access; the public consumer edge rejects probes. Check `/v1/ui-config` on the served consumer origin.
   [Readiness meanings](production-operations.md#health-readiness-and-engine-degradation) distinguish liveness, dependency health and identity readiness.
 - Verify required processes through the [process inventory](production-operations.md#required-process-inventory).
   Discovery does not require deferred request/notification workers.

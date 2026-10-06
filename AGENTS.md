@@ -2,19 +2,19 @@
 
 ## Scope and navigation
 
-The current product milestone is private event discovery: search, shared filters,
+The current product milestone is event discovery: search, shared filters,
 Events/Map/Calendar views, read-only entity graphs, event details and provider registration links.
 Guest catalog access and Google/Apple signup through GCP Identity Platform are implemented;
-provider configuration and deployed identity acceptance remain pending. Chat, automated
+verify provider configuration and real browser acceptance for each release. Chat, automated
 RSVP, managed handoffs, notifications, calendar synchronization, purchases and programmatic
 API keys are deferred unless the assigned task explicitly changes their scope.
 
 - [Architecture](ARCHITECTURE.md): code map, runtime boundaries and invariants.
-- [Current milestone](PROJECT.md#current-milestone-private-discovery-candidate): current product scope and priorities.
+- [Current milestone](PROJECT.md#current-milestone-discovery): current product scope and priorities.
 - [README](README.md): dependencies and developer commands.
 - [Development workflow](README.md#development-workflow): `main`, task branches, PRs and release authority.
 - [Release acceptance](docs/production-operations.md#first-release-acceptance): release gates.
-- [Private deployment and recovery](deploy/development.md): application operations.
+- [GKE release and recovery](deploy/development.md): application operations.
 - [Consumer accounts](deployment/consumer-identity.md): signup, legal acceptance and owner-only admin release gates.
 - [Public consumer access](deploy/public-access.md): GCP routing, TLS and owner-only IAP admin.
 - [Symphony workflow](WORKFLOW.md): bounded coding-agent assignment and handoff.

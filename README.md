@@ -4,18 +4,18 @@ Discover events, browse Events/Map/Calendar and entity graphs, and open the prov
 
 - [Architecture](ARCHITECTURE.md): code map, runtime flows and invariants.
 - [Contributor guidance](AGENTS.md): task boundaries and checks.
-- [Current milestone](PROJECT.md#current-milestone-private-discovery-candidate): approved product scope.
+- [Current milestone](PROJECT.md#current-milestone-discovery): approved product scope.
 - [Runtime contracts](design/system-design.md): implementation constraints; [Notion design](https://app.notion.com/p/391d865005a88164a182eabc18fe068f): architecture and rationale.
 
-## Status
+## Runtime
 
-- **Current milestone:** private discovery, profiles and saved filters; `EC_RELEASE_PROFILE=discovery`.
+- **Product scope:** discovery, profiles and saved filters; `EC_RELEASE_PROFILE=discovery`.
 - **Deferred:** chat, automated RSVP, notifications, calendar sync, purchases and API keys.
-- **Private GCP deployment:** shared `platform-dev`; [deployment runbook](deploy/development.md) owns current state.
-- **Release gates:** production identity, recovery and deployed acceptance remain open.
+- **GCP target:** private workloads on shared `platform-dev`; [public access](deploy/public-access.md) defines the consumer HTTPS and owner-only IAP admin edge. The [deployment runbook](deploy/development.md) links the dated runtime record.
+- **Release gates:** provider configuration, transport/recovery checks and deployed browser acceptance; implemented features do not prove activation.
 - **Local defaults:** full development profile; `EC_MOCK_CLOUD=true`. Mock identity is not for public traffic.
 - **Public-source refreshes can make real network requests even in mock mode.**
-- **Non-mock runtime:** requires the configured OIDC BFF and a validated provider factory; missing ports fail closed.
+- **Non-mock discovery:** requires one configured consumer identity authority and a validated provider factory; selected GKE values use Identity Platform with the legacy OIDC BFF disabled. Missing ports fail closed.
   The built-in GCP factory supports the discovery slice; full-profile production bindings remain incomplete.
 
 See [release acceptance](docs/production-operations.md#first-release-acceptance) before treating a build as deployable.
@@ -159,4 +159,4 @@ make catalog-refresh SOURCE_KEY=luma-sf
 - Enforce production OIDC/CSRF, TLS, scoped credentials, bounded pools and shared durable storage.
 - A working provider factory or healthy endpoint does not prove release acceptance.
 - [Production operations](docs/production-operations.md): release gates, process limits, secret rotation and incidents.
-- [Private deployment and recovery](deploy/development.md): application release, access, backup and restore.
+- [GKE release and recovery](deploy/development.md): application release, access, backup and restore.

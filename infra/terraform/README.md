@@ -1,5 +1,27 @@
 # GCP application infrastructure
 
+## Ownership and roots
+
+Each root has separate protected state. Shared platform resources stay in
+[gcp-foundation](https://github.com/iliazlobin/gcp-foundation); review and apply only the affected layer.
+
+| Layer | Owns / operation guide |
+| --- | --- |
+| [Shared platform](https://github.com/iliazlobin/gcp-foundation) | Projects/APIs, VPC/NAT, private GKE, access VM and `shared-retain`; Gateway controller |
+| [Shared application](environments/shared-development) | Workload identities, scoped IAM, registry, data/backup/state buckets and secret containers; [release/recovery](../../deploy/development.md) |
+| [Consumer identity](environments/consumer-identity) | Identity Platform, restricted browser key and scoped identity IAM; [provider setup](../../deployment/consumer-identity.md) |
+| [Public access](environments/public-access) | Global IP, DNS authorizations, managed certificate/map, TLS policy and empty IAP secret container; [edge activation](../../deploy/public-access.md) |
+
+Helm owns workloads, retained-store configuration, namespace policies and Gateway/routes;
+the GKE controller owns load-balancer backends/NEGs. DNS authority owns the two app records
+and certificate-validation CNAMEs. Terraform provisions secret containers, not provider
+credential payloads or DNS records.
+The shared application root also owns three protected CA recovery containers;
+[TLS custody](../../deploy/development.md#authenticated-discovery-and-encrypted-dependencies)
+keeps signing-key payloads outside state and workload grants.
+
+## Shared application
+
 [`environments/shared-development`](environments/shared-development) consumes the shared
 platform's non-secret `platform_contract` for `iz27-platform-dev` / `platform-dev`. It owns the
 application registry, workload identities and scoped resource access, secret containers, payload,
@@ -17,13 +39,14 @@ The shared app's first reviewed plan bootstraps `iz27-platform-dev-ec-state` loc
 only that root's new state moves to the backend in `backend.tf.example`. Never migrate platform
 or legacy state into it. Mocked validation is not evidence of a deployed stack.
 
-## Staging composition
+## Alternate managed staging
 
-This stack provisions the first persistent staging slice: private networking and NAT, a zonal GKE
+The separate [staging root](environments/staging) defines private networking and NAT, a zonal GKE
 control plane with nodes spread across three zones, regional Cloud SQL and Redis, a CMEK-backed GCS
 claim-check bucket, Secret Manager **containers**, Artifact Registry, Workload Identity bindings,
 and baseline monitoring. It deliberately does not create DNS, a public edge, Temporal Cloud, secret
-versions, database passwords, or provider credentials.
+versions, database passwords, or provider credentials. Use it only for a separately approved
+managed-service deployment; it is not the shared in-cluster landing above.
 
 Provider versions are exact and the state backend is GCS. Bootstrap the state bucket once with
 uniform access, public-access prevention, versioning, and retention appropriate for infrastructure
