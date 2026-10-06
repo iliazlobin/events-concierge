@@ -439,6 +439,85 @@ def _wait_before_public_resume(desired, recovery, *, edge=PUBLIC_TUNNEL):
     _check_recovery_schema(recovery)
 
 
+def _scale_recovery(name, count, recovery, *, closing_edge=False):
+    for attempt in range(len(RESUME_RETRY_DELAYS) + 1):
+        try:
+            preconditions = []
+            deployment = None
+            if recovery is not None:
+                deployment = json.loads(
+                    k(
+                        "get",
+                        "deployment/" + name,
+                        "-o",
+                        "json",
+                        "--request-timeout=20s",
+                        capture_output=True,
+                        timeout=30,
+                    ).stdout
+                )
+                version = _validate_current_deployment(deployment, name, recovery)
+                if closing_edge and deployment["spec"].get("replicas") not in (
+                    0,
+                    recovery["replicas"][name],
+                ):
+                    raise RuntimeError("Recovery refused: edge replica count changed: " + name)
+                preconditions = ["--resource-version=" + version]
+            k(
+                "scale",
+                "deployment/" + name,
+                "--replicas=" + str(count),
+                "--request-timeout=20s",
+                *preconditions,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.PIPE,
+                timeout=30,
+            )
+            return deployment
+        except (subprocess.CalledProcessError, subprocess.TimeoutExpired) as error:
+            transient = isinstance(error, subprocess.TimeoutExpired) or _transient_scale_error(
+                error
+            )
+            if not transient or attempt == len(RESUME_RETRY_DELAYS):
+                raise
+            delay = RESUME_RETRY_DELAYS[attempt]
+            print(f"Transient recovery error for {name}; retrying in {delay}s", flush=True)
+            time.sleep(delay)
+
+
+def _close_recovery_edges(desired, recovery, failures):
+    # A previously reopened operator edge must close if the later consumer gate
+    # fails. Recheck ownership and use a fresh resource version for each write.
+    for name in (PUBLIC_TUNNEL, OPERATOR_FRONTEND):
+        if not desired.get(name):
+            continue
+        try:
+            deployment = _scale_recovery(name, 0, recovery, closing_edge=True)
+            selector = ",".join(
+                f"{key}={val}" for key, val in deployment["spec"]["selector"]["matchLabels"].items()
+            )
+            k(
+                "wait",
+                "--for=delete",
+                "pod",
+                "-l",
+                selector,
+                "--timeout=180s",
+                "--request-timeout=20s",
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.PIPE,
+                timeout=190,
+            )
+        except (
+            subprocess.CalledProcessError,
+            subprocess.TimeoutExpired,
+            RuntimeError,
+            ValueError,
+            KeyError,
+        ) as error:
+            failures.append(error)
+
+
 def _resume(desired, *, recovery=None):
     profile = recovery.get("deployment_profile", "development") if recovery else "development"
     _validate_replicas(desired, profile=profile)
@@ -464,48 +543,19 @@ def _resume(desired, *, recovery=None):
             ) as error:
                 failures.append(error)
                 continue
-        for attempt in range(len(RESUME_RETRY_DELAYS) + 1):
-            try:
-                preconditions = []
-                if recovery is not None:
-                    deployment = json.loads(
-                        k(
-                            "get",
-                            "deployment/" + name,
-                            "-o",
-                            "json",
-                            "--request-timeout=20s",
-                            capture_output=True,
-                            timeout=30,
-                        ).stdout
-                    )
-                    version = _validate_current_deployment(deployment, name, recovery)
-                    preconditions = ["--resource-version=" + version]
-                k(
-                    "scale",
-                    "deployment/" + name,
-                    "--replicas=" + str(desired[name]),
-                    "--request-timeout=20s",
-                    *preconditions,
-                    stdout=subprocess.DEVNULL,
-                    stderr=subprocess.PIPE,
-                    timeout=30,
-                )
-                break
-            except (subprocess.CalledProcessError, subprocess.TimeoutExpired) as error:
-                transient = isinstance(error, subprocess.TimeoutExpired) or _transient_scale_error(
-                    error
-                )
-                if not transient or attempt == len(RESUME_RETRY_DELAYS):
-                    failures.append(error)
-                    break
-                delay = RESUME_RETRY_DELAYS[attempt]
-                print(f"Transient recovery error for {name}; retrying in {delay}s", flush=True)
-                time.sleep(delay)
-            except (RuntimeError, ValueError, KeyError) as error:
-                failures.append(error)
-                break
+        try:
+            _scale_recovery(name, desired[name], recovery)
+        except (
+            subprocess.CalledProcessError,
+            subprocess.TimeoutExpired,
+            RuntimeError,
+            ValueError,
+            KeyError,
+        ) as error:
+            failures.append(error)
     if failures:
+        if profile == "private":
+            _close_recovery_edges(desired, recovery, failures)
         raise ExceptionGroup("Could not restore every original replica count", failures)
 
 

@@ -43,6 +43,7 @@ data:
   EC_OPERATOR_IAP_AUDIENCE: {{ $root.Values.operator.iapAudience | quote }}
   EC_OPERATOR_PUBLIC_ORIGIN: {{ printf "https://%s" $root.Values.operator.hostname | quote }}
   EC_OPERATOR_SUBJECT_ROLES: {{ $root.Values.operator.subjectRoles | toJson | quote }}
+  EC_TEMPORAL_CATALOG_TASK_QUEUE: {{ $root.Values.applicationConfig.EC_TEMPORAL_CATALOG_TASK_QUEUE | quote }}
   {{- else }}
   EC_OPERATOR_DATABASE_URL_FILE: /var/run/secrets/events-concierge/EC_OPERATOR_DATABASE_URL
   EC_CATALOG_INGESTION_SCHEDULER_ENABLED: "true"

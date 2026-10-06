@@ -8,29 +8,32 @@ broader additive rule cannot silently restore operator access to unrelated servi
 from __future__ import annotations
 
 import copy
+import importlib.util
 import json
 import os
 import subprocess
+from pathlib import Path
 from typing import Any
 from unittest.mock import patch
 
 import pytest
 import yaml
-from tests.deployment.test_authenticated_private_runtime import (
-    CHART,
-    ROOT,
-    _allows,
-    render,
-)
-from tests.deployment.test_authenticated_private_runtime import (
-    helm as helm,  # noqa: PLC0414 - expose the existing offline pytest fixture
-)
-from tests.deployment.test_authenticated_private_runtime import (
-    values as runtime_values,
-)
 
 from events_concierge.config import Settings
 from events_concierge.deployment.startup import preflight_operator_runtime
+
+SPEC = importlib.util.spec_from_file_location(
+    "private_runtime_contracts", Path(__file__).with_name("test_authenticated_private_runtime.py")
+)
+private_runtime = importlib.util.module_from_spec(SPEC)
+SPEC.loader.exec_module(private_runtime)
+CHART, ROOT = private_runtime.CHART, private_runtime.ROOT
+helm = private_runtime.helm
+render, runtime_values, _allows = (
+    private_runtime.render,
+    private_runtime.values,
+    private_runtime._allows,
+)
 
 NAME = "events-concierge"
 COMPONENT = "app.kubernetes.io/component"
@@ -179,7 +182,8 @@ def test_operator_mounts_only_its_numbered_database_secret_and_postgres_ca(resou
     assert config["EC_IDENTITY_PLATFORM_ENABLED"] == "false"
     assert config["EC_ADMIN_INGESTION_ENABLED"] == config["EC_OIDC_BFF_ENABLED"] == "false"
     assert not any(
-        key.startswith(("EC_REDIS_", "EC_TEMPORAL_", "EC_GCS_", "EC_SIGNUP_"))
+        key.startswith(("EC_REDIS_", "EC_GCS_", "EC_SIGNUP_"))
+        or (key.startswith("EC_TEMPORAL_") and key != "EC_TEMPORAL_CATALOG_TASK_QUEUE")
         or key
         in {
             "EC_DATABASE_URL_FILE",
@@ -191,6 +195,25 @@ def test_operator_mounts_only_its_numbered_database_secret_and_postgres_ca(resou
     )
     assert ("ConfigMap", NAME + "-operator") not in resources
     assert ("ConfigMap", NAME + "-executor") not in resources
+
+
+def test_operator_reports_the_configured_catalog_queue_without_credentials(
+    helm, tmp_path
+):
+    configured = operator_values()
+    queue = "reviewed-private-catalog-v2"
+    configured["applicationConfig"]["EC_TEMPORAL_CATALOG_TASK_QUEUE"] = queue
+    rendered = documents(render(helm, tmp_path, configured))
+    operator = resource(rendered, "ConfigMap", "private-operator-api")["data"]
+    catalog = resource(rendered, "ConfigMap", "private-temporal-catalog")["data"]
+    assert (
+        operator["EC_TEMPORAL_CATALOG_TASK_QUEUE"]
+        == catalog["EC_TEMPORAL_CATALOG_TASK_QUEUE"]
+        == queue
+    )
+    assert {key for key in operator if key.startswith("EC_TEMPORAL_")} == {
+        "EC_TEMPORAL_CATALOG_TASK_QUEUE"
+    }
 
 
 def test_operator_frontend_has_no_backend_identity_or_credentials(resources):

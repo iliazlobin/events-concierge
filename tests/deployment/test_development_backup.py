@@ -962,6 +962,114 @@ def test_failed_operator_recovery_keeps_operator_and_consumer_edges_stopped(
     )
 
 
+@pytest.mark.parametrize(
+    "failure", ["operator-frontend-rollout", "consumer-backend-readiness", "consumer-schema"]
+)
+def test_late_recovery_failure_closes_the_resumed_operator_and_consumer_edges(
+    operator_recording, failure
+):
+    events, copies, deployments = operator_recording
+    original = backup.k.side_effect
+    api_rollouts = 0
+    injected = False
+    operator = next(d for d in deployments if d["metadata"]["name"] == backup.OPERATOR_FRONTEND)
+
+    def cluster(*args, **kwargs):
+        nonlocal api_rollouts, injected
+        if args[:3] == ("rollout", "status", "deployment/events-concierge-api"):
+            api_rollouts += 1
+            if failure == "consumer-backend-readiness" and api_rollouts == 2:
+                injected = True
+                raise subprocess.TimeoutExpired(args, 190)
+        if args[:3] == ("rollout", "status", "deployment/" + backup.OPERATOR_FRONTEND):
+            if failure == "operator-frontend-rollout":
+                injected = True
+                raise subprocess.CalledProcessError(1, args, stderr=b"Forbidden")
+            if failure == "consumer-schema":
+                injected = True
+                backup._read_schema.return_value = "0207"
+        result = original(*args, **kwargs)
+        if args[:3] == ("scale", "deployment/" + backup.OPERATOR_FRONTEND, "--replicas=1"):
+            operator["metadata"]["resourceVersion"] = "124"
+        return result
+
+    backup.k.side_effect = cluster
+    with (
+        patch.object(backup, "_read_schema", return_value="0193"),
+        pytest.raises(ExceptionGroup),
+    ):
+        backup.backup(profile="private", operator=True)
+    assert injected
+    reopened = next(
+        i
+        for i, event in enumerate(events)
+        if event[:3] == ("scale", "deployment/" + backup.OPERATOR_FRONTEND, "--replicas=1")
+    )
+    closure = next(
+        event
+        for event in events[reopened + 1 :]
+        if event[:3] == ("scale", "deployment/" + backup.OPERATOR_FRONTEND, "--replicas=0")
+    )
+    assert "--resource-version=124" in closure
+    closure_index = events.index(closure)
+    assert any(
+        event[0] == "wait" and backup.OPERATOR_FRONTEND in event[4]
+        for event in events[closure_index + 1 :]
+    )
+    for name in (backup.OPERATOR_FRONTEND, backup.PUBLIC_TUNNEL):
+        assert (
+            next(d for d in deployments if d["metadata"]["name"] == name)["spec"]["replicas"] == 0
+        )
+    metadata = json.loads(copies["recovery.json"])
+    assert metadata["replicas"][backup.OPERATOR_FRONTEND] == 1
+    assert metadata["replicas"][backup.PUBLIC_TUNNEL] == 2
+
+
+@pytest.mark.parametrize("change", ["uid", "template"])
+def test_failed_recovery_closure_refuses_replaced_operator_and_preserves_saved_counts(
+    operator_recording, change
+):
+    events, copies, deployments = operator_recording
+    original = backup.k.side_effect
+    operator = next(d for d in deployments if d["metadata"]["name"] == backup.OPERATOR_FRONTEND)
+    original_uid, original_template = operator["metadata"]["uid"], backup._template_hash(operator)
+
+    def cluster(*args, **kwargs):
+        if args[:3] == ("rollout", "status", "deployment/" + backup.OPERATOR_FRONTEND):
+            if change == "uid":
+                operator["metadata"]["uid"] = str(uuid.uuid4())
+            else:
+                operator["spec"]["template"]["spec"]["containers"][0]["image"] = "replacement-image"
+            raise subprocess.CalledProcessError(1, args, stderr=b"Forbidden")
+        return original(*args, **kwargs)
+
+    backup.k.side_effect = cluster
+    with pytest.raises(ExceptionGroup) as caught:
+        backup.backup(profile="private", operator=True)
+    reopened = next(
+        i
+        for i, event in enumerate(events)
+        if event[:3] == ("scale", "deployment/" + backup.OPERATOR_FRONTEND, "--replicas=1")
+    )
+    assert not any(
+        event[:3] == ("scale", "deployment/" + backup.OPERATOR_FRONTEND, "--replicas=0")
+        for event in events[reopened + 1 :]
+    )
+    assert operator["spec"]["replicas"] == 1
+    assert (
+        next(d for d in deployments if d["metadata"]["name"] == backup.PUBLIC_TUNNEL)["spec"][
+            "replicas"
+        ]
+        == 0
+    )
+    assert any(isinstance(error, RuntimeError) for error in caught.value.exceptions)
+    metadata = json.loads(copies["recovery.json"])
+    assert metadata["replicas"][backup.OPERATOR_FRONTEND] == 1
+    assert metadata["replicas"][backup.PUBLIC_TUNNEL] == 2
+    assert metadata["deployment_uids"][backup.OPERATOR_FRONTEND] == original_uid
+    assert metadata["template_sha256"][backup.OPERATOR_FRONTEND] == original_template
+
+
 def test_operator_recovery_preserves_originally_stopped_edges_and_workers(operator_recording):
     _, copies, deployments = operator_recording
     stopped = PRIVATE_OPERATORS | {backup.PUBLIC_TUNNEL, "events-concierge-account-erasure"}
