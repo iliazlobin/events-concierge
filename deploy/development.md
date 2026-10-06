@@ -197,6 +197,7 @@ kubectl -n events-concierge-dev exec -i deployment/events-concierge-api -- pytho
 - Promotion requires candidate catalog pollers. Smoke covers discovery plus Temporal/GCS echo; erasure completes synthetic cleanup.
 - Collection acceptance: real reviewed refresh; command → successful run → publication. Schedule success alone is insufficient.
 - Compare `fn_report_catalog_source_coverage_v1()` at matching times/windows; investigate failures and freshness; exclude fixtures.
+- **Read-only coverage:** set `EC_DATABASE_URL` or `EC_DATABASE_URL_FILE` for an existing prepared database, then run `make catalog-coverage` (or `python -m events_concierge.quality.catalog_coverage`). It starts no services and applies no migrations. Missing/failed publication, pagination caps and freshness older than three cadences fail the check. Totals sum source-event memberships, not unique events across sources; empty feeds, retractions and city-listing depth remain diagnostics, not proof of complete platform coverage.
 - Moves: preserve source metadata/revisions and old environment until parity/recovery acceptance; never replay historical source toggles.
 - `refresh_due` projection lacks flattened release fields; inspect linked command revision/digest and actual workers.
 - After acceptance, restore prior cadence/replica settings; `developmentCatalog.cadenceEnabled=true` queues due work every five minutes.
