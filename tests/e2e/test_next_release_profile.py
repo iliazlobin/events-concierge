@@ -1263,6 +1263,94 @@ def _map_catalog_event(event_id: str, title: str, *, mapped: bool = False) -> di
 
 
 @pytest.mark.parametrize("width", [1440, 390])
+def test_catalog_count_distinguishes_loaded_pages_from_calendar_range(release_page, tmp_path, width):
+    harness, api = release_page
+    page = harness.page
+    page.set_viewport_size({"width": width, "height": 900})
+    page.emulate_media(reduced_motion="reduce")
+    events = [
+        _map_catalog_event(f"10000000-0000-4000-8000-{index:012d}", f"Coverage event {index}")
+        for index in range(73)
+    ]
+    queries = _install_map_catalog(page, api, [events[:72], events[72:]])
+    summary_queries: list[dict[str, list[str]]] = []
+
+    def summary(route: Route) -> None:
+        summary_queries.append(parse_qs(urlsplit(route.request.url).query))
+        api.respond(route, {
+            "days": [{"start_day": "2030-06-14", "event_count": 1588, "topics": []}],
+            "total_event_count": 1588, "time_zone": "America/Los_Angeles",
+        })
+
+    page.route(re.compile(r"/v1/catalog/events/summary(?:\?.*)?$"), summary)
+    page.goto(f"{BASE}/?view=events&source=fixture-techweek&city=sanfrancisco&when=custom&start=2030-06-01&end=2030-06-30&price=any")
+    count = page.locator(".filter-bar__actions [aria-live]")
+    expect(count).to_have_text("72 loaded · more available")
+    page.screenshot(path=str(tmp_path / f"catalog-loaded-count-{width}.png"))
+    filters = {key: value for key, value in parse_qs(urlsplit(page.url).query).items() if key != "view"}
+    nav = page.locator(".site-nav" if width > 700 else ".mobile-nav")
+    nav.get_by_role("button", name="Map", exact=True).click()
+    expect(count).to_have_text("72 loaded · more available")
+    assert not summary_queries, "Paged views must not add a range-count request"
+    page.get_by_role("button", name="Load more", exact=True).click()
+    expect(count).to_have_text("73 loaded")
+    expect(page.get_by_role("button", name="Load more", exact=True)).to_have_count(0)
+
+    nav.get_by_role("button", name="Calendar", exact=True).click()
+    expect(count).to_have_text("1,588 events in range")
+    assert {key: value for key, value in parse_qs(urlsplit(page.url).query).items() if key not in {"view", "calendar"}} == filters
+    page_query = next(query for query in queries if query.get("limit") == ["72"])
+    assert {key: value for key, value in page_query.items() if key not in {"limit", "sort", "cursor"}} == {
+        key: value for key, value in summary_queries[-1].items() if key != "time_zone"
+    }
+    assert page.evaluate("document.documentElement.scrollWidth <= window.innerWidth")
+    page.screenshot(path=str(tmp_path / f"catalog-range-count-{width}.png"))
+
+
+def test_calendar_count_does_not_claim_retained_uncovered_totals(release_page):
+    harness, api = release_page
+    page = harness.page
+    held: list[Route] = []
+
+    def hold_summary(route: Route) -> None:
+        held.append(route)
+
+    summary_pattern = re.compile(r"/v1/catalog/events/summary(?:\?.*)?$")
+    page.route(summary_pattern, hold_summary)
+    with page.expect_request(summary_pattern):
+        page.goto(f"{BASE}/?view=calendar&when=custom&start=2030-06-01&end=2030-06-30")
+    count = page.locator(".filter-bar__actions [aria-live]")
+    expect(count).to_have_text("Loading count")
+    assert held
+    for route in held:
+        api.respond(route, {
+            "days": [{"start_day": "2030-06-14", "event_count": 1588, "topics": []}],
+            "total_event_count": 1588, "time_zone": "America/Los_Angeles",
+        })
+    held.clear()
+    expect(count).to_have_text("1,588 events in range")
+
+    with page.expect_request(summary_pattern):
+        page.get_by_role("button", name="Next month", exact=True).click()
+    expect(count).to_have_text("Loading count")
+    assert held
+    harness.allowed_console_error_fragments.append("503 (Service Unavailable)")
+    for route in held:
+        api.respond(route, {"detail": "Summary unavailable"}, 503)
+    held.clear()
+    expect(count).to_have_text("Count unavailable")
+    expect(page.locator(".calendar-view").get_by_role("alert")).to_contain_text("Summary unavailable")
+
+    with page.expect_request(summary_pattern):
+        page.get_by_role("button", name="Next month", exact=True).click()
+    expect(count).to_have_text("Loading count")
+    assert held
+    for route in held:
+        api.respond(route, {"days": [], "total_event_count": 0, "time_zone": "America/Los_Angeles"})
+    expect(count).to_have_text("0 events in range")
+
+
+@pytest.mark.parametrize("width", [1440, 390])
 @pytest.mark.parametrize("mapped_second", [False, True])
 def test_map_retains_unlocated_events_filters_details_and_pagination(release_page, width, mapped_second):
     harness, api = release_page

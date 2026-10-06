@@ -1308,8 +1308,10 @@ export function ConciergeApp() {
           topics={topicFacets}
           cities={knownCities}
           resultCount={view === "calendar"
-            ? summary?.total_event_count ?? 0
+            ? summaryCovered ? summary?.total_event_count ?? null : null
             : events.length}
+          countKind={view === "calendar" ? "range" : "loaded"}
+          hasMore={view !== "calendar" && nextCursor !== null}
           loading={view === "calendar" ? summaryLoading : catalogLoading}
           savedFilters={savedFilters}
           savedFiltersBusy={savedFiltersBusy}

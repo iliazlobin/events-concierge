@@ -142,13 +142,6 @@ test("a day agenda lists the day the grid counted, not yesterday's leftovers", (
   );
 });
 
-test("the filter rail counts the summarized range while the calendar is open", () => {
-  assert.match(
-    conciergeApp,
-    /resultCount=\{view === "calendar"\s*\?\s*summary\?\.total_event_count \?\? 0/,
-  );
-});
-
 test("a cached summary paints the calendar before revalidation replaces it", () => {
   assert.match(
     conciergeApp,
