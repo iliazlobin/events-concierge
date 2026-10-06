@@ -162,7 +162,8 @@ Consumer signup grants no admin role.
   the operator workloads with `bootstrap=false`. Never deploy synthetic test identifiers.
 - The consumer frontend has a credential-free Caddy sidecar on port 8080. It allows consumer
   pages/API, strips identity headers and redirects exact `/admin` or `/admin/` GET/HEAD requests
-  to the fixed protected admin URL. Other admin/probe paths, methods or wrong hosts return 404.
+  to the fixed protected admin URL. Admin pages/APIs are never proxied; admin API/probe routes,
+  other entry methods or wrong hosts return 404. Normalized aliases can reach allowed public pages.
   Health checks use private port 8081. Admin traffic reaches its own frontend on port 3000.
 - GFE/health-check ranges reach only those frontend ports; the operator API accepts only its
   frontend and mounts only its numbered controller DSN/PostgreSQL CA. No direct public API
