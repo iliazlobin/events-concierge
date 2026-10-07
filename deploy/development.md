@@ -2,6 +2,8 @@
 
 Application release, private operator access and recovery on shared GKE.
 
+For an incident, start with [application support](support.md) for diagnosis and the matching recovery procedure.
+
 - **Platform:** [gcp-foundation](https://github.com/iliazlobin/gcp-foundation) owns projects, network, GKE, access VM and `shared-retain`.
 - **Application:** releases, workload identities, secrets, registry, data and backups.
 - **Public edge:** [GCP Gateway HTTPS and admin IAP](public-access.md); consumer accounts use [Identity Platform](../deployment/consumer-identity.md).
