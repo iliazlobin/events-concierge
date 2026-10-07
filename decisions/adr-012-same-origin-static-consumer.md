@@ -186,4 +186,4 @@ repository product gate, but deterministic fixtures are not production identity 
 complete WCAG conformance.
 
 This ADR records the implemented local architecture and does not claim that the broader production
-launch gates in the [operations runbook](../docs/production-operations.md) are closed.
+launch gates in the [operations runbook](../docs/operations/README.md) are closed.

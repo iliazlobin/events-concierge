@@ -73,7 +73,7 @@ make catalog-refresh SOURCE_KEY=meetup-nyc
 4. After approved recovery, perform one guarded refresh and verify publication before normal scheduling resumes.
 
 - Migration `0137` downgrade restores the one-city contract with new source revisions; `0126` disables/reclassifies the rows.
-- Neither deletes catalog evidence. [Migration/recovery controls](production-operations.md#rollback-and-migration-safety).
+- Neither deletes catalog evidence. [Migration/recovery controls](operations/release.md#rollback-and-migration-safety).
 
 ## Privacy incident guardrail
 

@@ -3,7 +3,7 @@
 - **Product:** event discovery and provider registration links.
 - **Current surface:** search, filters, profiles, Events/Map/Calendar and read-only entity graphs.
 - **Deferred lifecycle:** registration, notifications and calendar synchronization remain gated.
-- [Current milestone](PROJECT.md#current-milestone-discovery) and [release acceptance](docs/production-operations.md#first-release-acceptance) define scope.
+- [Current milestone](PROJECT.md#current-milestone-discovery) and [release acceptance](docs/operations/release.md#first-release-acceptance) define scope.
 
 ## Code map
 
@@ -26,7 +26,7 @@ Ports and adapters: domain logic has no external I/O; application services use t
 - **Discovery change:** web route → API → application service/port → PostgreSQL adapter.
 - **Source change:** registered adapter → guarded catalog refresh.
 - **Runtime change:** `composition.py` or `catalog_runtime.py`; provider selection stays outside domain code.
-- **Consumer identity:** `web/lib/consumer-identity.ts` → `api/app.py` → `adapters/identity_platform.py`; `adapters/postgres/consumer_accounts.py` and migration `0207` bind accounts/legal receipts; `0208` adds account creation without consent when legal acceptance is deferred. Redis stores sessions. The selected operator edge uses Google IAP; the API independently verifies its signed assertion and configured owner role. [Release contract](deployment/consumer-identity.md).
+- **Consumer identity:** `web/lib/consumer-identity.ts` → `api/app.py` → `adapters/identity_platform.py`; `adapters/postgres/consumer_accounts.py` and migration `0207` bind accounts/legal receipts; `0208` adds account creation without consent when legal acceptance is deferred. Redis stores sessions. The selected operator edge uses Google IAP; the API independently verifies its signed assertion and configured owner role. [Release contract](docs/operations/consumer-identity.md).
 
 ## Runtime flows
 
@@ -77,7 +77,7 @@ discovery reads persisted facts without contacting social providers.
 ## Development and ownership
 
 - **Local:** Docker Compose. Fixed project/ports and test endpoints; source worktrees do not isolate runtime state.
-- **GCP:** private application/data Helm workloads; one hostname and shared Next.js process, separate consumer/operator APIs. A global GCP Gateway and Certificate Manager expose consumer paths and IAP-protected `/admin`. [Public access](deploy/public-access.md) owns routing; the [runbook](deploy/development.md) owns release and recovery.
+- **GCP:** private application/data Helm workloads; one hostname and shared Next.js process, separate consumer/operator APIs. A global GCP Gateway and Certificate Manager expose consumer paths and IAP-protected `/admin`. [Public access](docs/operations/public-access.md) owns routing; the [runbook](docs/operations/README.md) owns release and recovery.
 - **Shared platform:** [gcp-foundation](https://github.com/iliazlobin/gcp-foundation) owns foundation, network and GKE cluster.
 - **Application:** this repository owns application resources, identities and data.
 - **Agent work:** isolated source, dependencies and outputs; initial Symphony service-backed checks run in CI.

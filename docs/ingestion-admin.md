@@ -1,6 +1,6 @@
 # Ingestion administration
 
-Inspect catalog collection, investigate failures and submit reviewed commands. Use an existing authorized runtime; deployment procedures belong to the [private runbook](../deploy/development.md).
+Inspect catalog collection, investigate failures and submit reviewed commands. Use an existing authorized runtime; deployment procedures belong to the [private runbook](operations/README.md).
 
 ## Access and controls
 
@@ -29,7 +29,7 @@ uvicorn events_concierge.api.operator:create_operator_app --factory
 ```
 
 - Requires `EC_OPERATOR_API_ENABLED=true`, non-mock composition, exact HTTPS `EC_OPERATOR_PUBLIC_ORIGIN`, `EC_OPERATOR_AUTH_PROVIDER=iap`, the actual backend's `EC_OPERATOR_IAP_AUDIENCE` and a pinned `EC_OPERATOR_POLICY_VERSION`.
-- The API verifies Google's signed assertion, backend audience and private [RBAC binding](../deploy/operator-access.md); unsigned headers and consumer cookies confer no authority. [Admin routing and acceptance](../deploy/public-access.md#admin).
+- The API verifies Google's signed assertion, backend audience and private [RBAC binding](operations/operator-access.md); unsigned headers and consumer cookies confer no authority. [Admin routing and acceptance](operations/public-access.md#admin).
 - Mutations require JSON and the exact browser Origin. The verified subject supplies the receipt actor.
 - The pool validates `ec_operator_controller` membership and rejects consumer/elevated logins; executor credentials have separate command/publication capabilities.
 - Restricted definer functions expose bounded aggregates and opaque references, never raw queue tables, tenant payloads or lease tokens.
@@ -56,7 +56,7 @@ Cadence/operator → durable command → ingestion-command worker
 - Source publication has its own lease fence; failed refreshes preserve the last successful catalog.
 - A successful manual refresh newer than a parked cadence failure restores the next scheduled slot. Failed manual retries leave the cadence backoff and attempt history intact.
 - Catalog Temporal workers use the executor role, catalog queue and catalog payload namespace; transactional workers cannot substitute.
-- Drain old catalog workflows before queue/converter changes. [Migration sequence](production-operations.md#entity-profile-pacer-and-command-lease-migration-rollout).
+- Drain old catalog workflows before queue/converter changes. [Migration sequence](operations/release.md#entity-profile-pacer-and-command-lease-migration-rollout).
 
 **Collection windows**
 
@@ -185,4 +185,17 @@ docker exec events-concierge-postgres-1 \
       );"
 ```
 
-Production policy changes require owner/legal review and the [audited incident controls](production-operations.md#incident-controls). Use the [Meetup runbook](meetup-ingestion-runbook.md) for its narrower source contract.
+Production policy changes require owner/legal review and the [audited incident controls](operations/maintenance.md#incident-controls). Use the [Meetup runbook](meetup-ingestion-runbook.md) for its narrower source contract.
+
+## Public source coverage
+
+- **Tech Week 2026:** [official SF](https://www.tech-week.com/calendar/sf) October 5–11 and [LA](https://www.tech-week.com/calendar/la) October 12–18. `tech_week_mcp` reads only the anonymous [official calendar search](https://www.tech-week.com/mcp), at most 40 × 75 events per city, 2 MB and 20 seconds per page, paced at 1.5 seconds. Totals, dates and unique IDs must reconcile before atomic publication; a changed or incomplete calendar retains the prior catalog.
+- Migration `0205` registers two official sources (`tech-week-sf-2026`, `tech-week-la-2026`) and two [Luma SF](https://luma.com/sftw) / [LA](https://luma.com/latw) community calendars, all disabled and unreviewed. Owner activation uses the audited source-configuration API: 180-minute refresh, 15-day horizon, review expiry October 20, 07:00 UTC. Only the official profiles freeze October 5–19 inclusive, preserving earlier starts; Luma uses its reviewed public future cursor, identity-checked details and 30-page cap. Other sources keep rolling windows. Source admission/pacing/publication and handoff-only authority still apply.
+- Review through the Sources filter and custom dates October 5–19 with **Any price**. Missing prices, end times and coordinates stay unknown; closed/invite-only registration retains its provider state and never becomes open. Official city scope is not an exact street address; events without public coordinates do not appear on the map. Distinct official event IDs remain separate; cross-publisher merging requires exact title, time and known venue agreement. Keep compatible code/schema after registration; downgrade does not delete source history.
+- The five-minute cadence CronJob queues only due, reviewed sources. Luma and Meetup sources use a six-hour refresh interval; other admitted sources refresh at least daily.
+- Luma Discover supplies a city listing; separately reviewed organizer calendars walk their future-event cursor. Discover alone does not contain each organizer's full program.
+- Meetup city JSON-LD supplies a limited public listing. `meetup_group_ics` adds the [official public group calendar export](https://help.meetup.com/hc/en-us/articles/39237118960013-Exporting-an-event-to-your-calendar), plus identity-checked public event details. Export coverage is provider-limited; neither feed proves complete city/platform search.
+- Group exports accept only explicit public dated occurrences: at most 100 events, 2 MB, one feed plus 100 detail requests, 1.5 seconds minimum pacing and a 90-day maximum horizon. No member/RSVP feeds, attendee data, login or redirect following.
+- Register new groups disabled and unreviewed through the owner control plane; activate via the audited source-configuration API. Retain handoff-only mode, the exact `/GROUP/events/ical/` URL and `https://www.meetup.com` as the sole origin.
+- Malformed or incomplete feeds preserve the last successful catalog. Access denial stops collection; throttling respects backoff. Keep rights-held, paused and retired sources disabled.
+- Schema rollback to `0195` is blocked once group sources exist. Disable those sources and roll back compatible application code while retaining registry/history.
