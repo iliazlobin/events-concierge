@@ -51,11 +51,11 @@ def test_filter_migration_is_independent_reversible_and_merges_at_head() -> None
                 connection.execute(text("SELECT version_num FROM alembic_version")).scalar_one()
                 == "0208"
             )
-        _migrate(child, "upgrade", "0210")
+        _migrate(child, "upgrade", "0211")
         with engine.connect() as connection:
             assert (
                 connection.execute(text("SELECT version_num FROM alembic_version")).scalar_one()
-                == "0210"
+                == "0211"
             )
             assert (
                 connection.execute(
@@ -107,16 +107,16 @@ def test_filter_migration_is_independent_reversible_and_merges_at_head() -> None
                 ).scalar_one()
                 assert "> coalesce(p_window_start, statement_timestamp())" in definition
         _migrate(child, "upgrade", "0209")
-        _migrate(child, "upgrade", "0210")
+        _migrate(child, "upgrade", "0211")
         with engine.connect() as connection:
             assert set(
                 connection.execute(text("SELECT version_num FROM alembic_version")).scalars()
-            ) == {"0209", "0210"}
+            ) == {"0209", "0211"}
         _migrate(child, "upgrade", "head")
         with engine.connect() as connection:
             assert (
                 connection.execute(text("SELECT version_num FROM alembic_version")).scalar_one()
-                == "0211"
+                == "0212"
             )
             assert (
                 connection.execute(

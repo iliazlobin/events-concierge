@@ -1,6 +1,6 @@
 """Select event starts inside explicit catalog date ranges.
 
-Revision ID: 0210
+Revision ID: 0211
 Revises: 0208
 Create Date: 2026-10-07
 
@@ -17,7 +17,7 @@ from collections.abc import Sequence
 from alembic import op
 from sqlalchemy import text
 
-revision: str = "0210"
+revision: str = "0211"
 down_revision: str | None = "0208"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
