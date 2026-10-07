@@ -126,6 +126,49 @@ def connected_entity_graph(entity_id: str):
     }
 
 
+def populated_graph_events():
+    """Distinct catalog occurrences, so graph session folding preserves all eight nodes."""
+    event = catalog_event()
+    return [event | {
+        "canonical_event_id": f"e{index:07x}-3333-4333-8333-333333333333",
+        "title": f"Jazz gathering {index + 1}",
+        "start_at": f"2030-06-{index + 11:02d}T19:00:00-07:00",
+        "end_at": f"2030-06-{index + 11:02d}T21:00:00-07:00",
+        "topics": ["jazz", "networking"],
+    } for index in range(8)]
+
+
+def populated_entity_graph():
+    """A bounded neighborhood large enough to require fitting below the former 50% floor."""
+    graph = connected_entity_graph(ENTITY_ID)
+    event_template = graph["nodes"][2]
+    peer_template = graph["nodes"][1]
+    events = [event_template | {
+        "node_id": f"event:{event['canonical_event_id']}",
+        "canonical_event_id": event["canonical_event_id"], "label": event["title"],
+        "start_at": event["start_at"], "end_at": event["end_at"], "topics": event["topics"],
+    } for event in populated_graph_events()]
+    peers = [peer_template | {
+        "node_id": f"entity:d{index:07x}-4444-4444-8444-444444444444",
+        "entity_id": f"d{index:07x}-4444-4444-8444-444444444444",
+        "label": f"Jazz host {index + 1}", "degree": 1, "shared_event_count": 1,
+    } for index in range(8)]
+    topics = [{"node_id": f"topic:{topic}", "node_kind": "topic", "ring": 3,
+               "label": topic, "degree": 8} for topic in ["jazz", "networking"]]
+    edges = [graph["edges"][0] | {"b": event["node_id"]} for event in events]
+    edges.extend(graph["edges"][1] | {"a": peer["node_id"], "b": event["node_id"]}
+                 for peer, event in zip(peers, events, strict=True))
+    edges.extend({"a": graph["focus_id"], "b": topic["node_id"], "kind": "topic",
+                  "roles": [], "source_labels": [], "observed_at": None} for topic in topics)
+    return graph | {
+        "nodes": [graph["nodes"][0] | {"degree": 8}, *events, *peers, *topics],
+        "edges": edges,
+        "counts": {"events": 8, "events_total": 8, "peers": 8, "peers_total": 8,
+                   "topics": 2, "edges": 18, "mention_edges": 16, "edges_total": 18},
+        "truncated": {"events": False, "peers": False, "edges": False},
+    }
+
+
 @dataclass
 class ReleaseApi:
     profile: str | None = "discovery"
@@ -454,6 +497,26 @@ def _assert_graph_detail_does_not_cover_frame(page: Page, *, stacked: bool) -> N
         assert abs(detail_bounds["y"] - frame_bounds["y"]) <= 1
 
 
+def _assert_all_node_discs_fit(page: Page, node_count: int) -> None:
+    expect(page.locator(".entity-graph-node")).to_have_count(node_count)
+    page.wait_for_function("""count => {
+        const frame = document.querySelector('.entity-graph-frame');
+        const zoom = document.querySelector('.entity-graph-zoom');
+        const nodes = [...document.querySelectorAll('.entity-graph-node')];
+        if (!frame || !zoom || nodes.length !== count) return false;
+        const drawing = frame.getBoundingClientRect();
+        const controls = zoom.getBoundingClientRect();
+        return nodes.every(node => {
+            const bounds = node.getBoundingClientRect();
+            const overlaps = bounds.left < controls.right && bounds.right > controls.left
+                && bounds.top < controls.bottom && bounds.bottom > controls.top;
+            return bounds.left >= drawing.left + 1 && bounds.right <= drawing.right - 1
+                && bounds.top >= drawing.top + 1 && bounds.bottom <= drawing.bottom - 1
+                && !overlaps;
+        });
+    }""", arg=node_count)
+
+
 @pytest.mark.parametrize("width,height", [(393, 722), (320, 568), (820, 900), (1440, 900)])
 def test_focused_graph_keeps_the_full_drawing_clear_of_its_default_details(release_page, width, height):
     harness, api = release_page
@@ -482,6 +545,43 @@ def test_focused_graph_keeps_the_full_drawing_clear_of_its_default_details(relea
                 bounds.y + bounds.height / 2)?.closest('button') === node;
         });
     }""")
+
+
+@pytest.mark.parametrize("scope,node_count", [("entity", 19), ("topic", 9)])
+def test_populated_mobile_graph_fit_keeps_every_node_inside_the_drawing(release_page, scope, node_count):
+    harness, api = release_page
+    page = harness.page
+    page.set_viewport_size({"width": 320, "height": 568})
+    page.emulate_media(reduced_motion="reduce")
+    if scope == "entity":
+        graph = populated_entity_graph()
+        page.route(f"**/v1/catalog/entities/{ENTITY_ID}/graph*",
+                   lambda route: api.respond(route, graph))
+        query = f"view=entities&entity={ENTITY_ID}"
+    else:
+        events = populated_graph_events()
+        page.route(re.compile(r"/v1/catalog/events(?:\?|$)"), lambda route: api.respond(route, {
+            "items": events, "next_cursor": None, "providers": [], "city_facets": [],
+            "topic_facets": [{"topic": "jazz", "label": "Jazz", "event_count": 8}],
+        }))
+        query = "view=entities&topic=jazz"
+    page.goto(f"{BASE}/?{query}")
+    _assert_graph_frame_is_reachable(page, touch_controls=True)
+    _assert_all_node_discs_fit(page, node_count)
+    controls = page.get_by_role("group", name="Graph zoom", exact=True)
+    zoom_label = controls.locator("span")
+    fitted_zoom = int(zoom_label.inner_text().removesuffix("%"))
+    controls.get_by_role("button", name="Zoom in", exact=True).click()
+    expect(zoom_label).not_to_have_text(f"{fitted_zoom}%")
+    assert int(zoom_label.inner_text().removesuffix("%")) > fitted_zoom
+    controls.get_by_role("button", name="Fit", exact=True).click()
+    expect(zoom_label).to_have_text(f"{fitted_zoom}%")
+    _assert_all_node_discs_fit(page, node_count)
+    controls.get_by_role("button", name="Zoom out", exact=True).click()
+    # Reduced motion updates the camera immediately; await its paint before reading the scale.
+    page.evaluate("() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))")
+    assert int(zoom_label.inner_text().removesuffix("%")) <= fitted_zoom
+    _assert_all_node_discs_fit(page, node_count)
 
 
 @pytest.mark.parametrize("width,height", [(393, 722), (320, 568)])
