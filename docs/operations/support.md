@@ -7,6 +7,7 @@ Common incidents on shared GKE. Use the deployed profile and [release record](ht
 | Page unavailable, loopback connection refused, public gateway error | [Access and routing](#access-and-routing) |
 | Google sign-in fails or admin access is denied | [Sign-in and operator access](#sign-in-and-operator-access) |
 | Missing events, stale sources or stuck refresh | [Collection](#collection) |
+| Events load but have no map markers | [Map locations](#events-missing-from-the-map) |
 | API not ready, database/Redis/Temporal failure | [Stores and background workers](#stores-and-background-workers) |
 | Failed rollout or interrupted backup | [Release and recovery](#release-and-recovery) |
 | Certificate warning or transport failure | [Certificates](#certificates) |
