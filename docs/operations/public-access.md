@@ -14,7 +14,7 @@ Browser → GCP HTTPS load balancer → consumer/admin Services → shared Caddy
 | Route | Service / Pod port | Authentication |
 | --- | --- | --- |
 | `/admin`, `/admin/*` | `operator-frontend` / Caddy `8082` | Configured IAP access; operator API verifies the assertion. |
-| Consumer pages, `/v1/*`, `/auth/*`, `/_next/static/*` | `frontend` / Caddy `8080` | Guest or consumer account. |
+| Consumer pages, `/v1/*`, `/auth/*`, named `/__/auth` helpers, `/_next/static/*` | `frontend` / Caddy `8080` | Guest or consumer account; [helper setup](consumer-identity.md#gcp-setup). |
 | Health checks | Both backend health policies / `8081` | No browser route; consumer readiness only. Verify operator API readiness separately. |
 
 Next.js `3000` accepts only Pod-local proxy traffic. `/administrator` is not an admin route. HTTP redirects preserve path/query, including IAP's return to `/admin?gcp-iap-mode=AUTHENTICATING`.

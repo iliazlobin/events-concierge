@@ -63,11 +63,12 @@ export function SignIn({ reason, returnTo = "/", reauthenticationState }: {
     setError(null);
     let stage: "provider" | "session" = "provider";
     try {
-      const token = await identity.signIn(provider);
+      const tokens = await identity.signIn(provider);
       stage = "session";
       const result = await api<{ return_to: string }>("/auth/identity/session", {
         method: "POST", cache: "no-store", bodyJson: {
-          id_token: token, state: challenge,
+          id_token: tokens.idToken, state: challenge,
+          ...(tokens.googleIdToken ? { google_id_token: tokens.googleIdToken } : {}),
           ...(legalRequired && config.legal_policy ? {
             accepted_terms: reauthenticationState ? false : accepted,
             terms_version: config.legal_policy.terms_version,

@@ -11,6 +11,7 @@ import pytest
 from httpx import ASGITransport, AsyncClient
 from sqlalchemy.exc import DBAPIError
 from tests.unit.test_consumer_identity import (
+    _GOOGLE_CLIENT,
     _ORIGIN,
     _PROJECT,
     _PROVIDERS,
@@ -19,6 +20,7 @@ from tests.unit.test_consumer_identity import (
     _api,
     _claims,
     _deferred,
+    _google_claims,
     _settings,
     identity_module,
 )
@@ -70,7 +72,15 @@ def test_claim_rejection_category_preserves_security_predicates_and_generic_mess
 ) -> None:
     monkeypatch.setattr(identity_module, "time", lambda: _VALIDATION_NOW)
     with pytest.raises(ConsumerSignInRejectedError) as caught:
-        verified_identity(_claims(auth_time=_VALIDATION_NOW) | changes, _PROJECT, _PROVIDERS)
+        verified_identity(
+            _claims(auth_time=_VALIDATION_NOW) | changes,
+            _PROJECT,
+            _PROVIDERS,
+            google_claims=_google_claims(
+                email=changes.get("email", "consumer@example.test"),
+                email_verified=changes.get("email_verified", True),
+            ),
+        )
     assert caught.value.reason is reason
     assert str(caught.value) == "sign-in could not be verified"
 
@@ -80,7 +90,9 @@ def test_valid_claim_freshness_boundaries_remain_accepted(
     monkeypatch: pytest.MonkeyPatch, authenticated_at: int
 ) -> None:
     monkeypatch.setattr(identity_module, "time", lambda: _VALIDATION_NOW)
-    assert verified_identity(_claims(auth_time=authenticated_at), _PROJECT, _PROVIDERS)
+    assert verified_identity(
+        _claims(auth_time=authenticated_at), _PROJECT, _PROVIDERS, google_claims=_google_claims()
+    )
 
 
 @pytest.mark.parametrize(
@@ -163,7 +175,7 @@ async def test_replayed_challenge_has_its_own_category_and_never_reverifies_toke
 async def test_sdk_rejections_are_bounded_and_outages_remain_unavailable(
     monkeypatch: pytest.MonkeyPatch, failure: str
 ) -> None:
-    verifier = IdentityPlatformVerifier(_PROJECT, tuple(_PROVIDERS))
+    verifier = IdentityPlatformVerifier(_PROJECT, tuple(_PROVIDERS), _GOOGLE_CLIENT)
     exception = {"ValueError": ValueError, "TypeError": TypeError}.get(failure)
     if exception is None:
         exception = getattr(identity_module.auth, failure)
@@ -205,7 +217,7 @@ async def test_account_denial_is_distinct_from_database_outage(
 
     monkeypatch.setattr(accounts_module, "system_session_scope", session_scope)
     repository = accounts_module.PostgresConsumerAccountRepository()
-    identity = verified_identity(_claims(), _PROJECT, _PROVIDERS)
+    identity = verified_identity(_claims(), _PROJECT, _PROVIDERS, google_claims=_google_claims())
     policy = _settings().consumer_legal_policy
     assert policy is not None
     operation = (

@@ -1,7 +1,8 @@
 """GCP Identity Platform sign-in with application-owned, revocable browser sessions.
 
-Only the official Admin SDK verifies project-bound tokens. The web SDK uses memory persistence;
-the API exchanges one fresh verified token and browser-bound challenge for an opaque cookie.
+The official Admin SDK verifies project-bound tokens. Google sign-in also verifies its signed
+OAuth ID token, bound to the Firebase provider ID. The web SDK uses memory persistence;
+the API exchanges the fresh proof and browser-bound challenge for a session cookie.
 Provider credentials and refresh tokens are never retained by this application.
 """
 
@@ -11,6 +12,7 @@ import asyncio
 import hmac
 import json
 import os
+import re
 from collections.abc import Awaitable, Callable, Mapping
 from contextlib import suppress
 from dataclasses import dataclass
@@ -22,9 +24,12 @@ import firebase_admin  # type: ignore[import-untyped]
 from firebase_admin import auth
 from firebase_admin.exceptions import FirebaseError  # type: ignore[import-untyped]
 from google.auth.exceptions import GoogleAuthError
+from jwt import PyJWKClient, PyJWTError, decode
+from jwt.exceptions import PyJWKClientConnectionError
 
 from ..domain.consumer_identity import VerifiedConsumerIdentity
 from ..domain.credentials import Tenant
+from ..domain.oidc import GOOGLE_ISSUER_ALIASES, GOOGLE_JWKS_URL
 from ..ports.auth import (
     AuthenticationFailedError,
     BrowserIdentity,
@@ -34,6 +39,7 @@ from ..ports.auth import (
     ConsumerSignInFailureReason,
     ConsumerSignInRejectedError,
 )
+from .oidc.auth import _BoundedJwksResolver
 from .oidc.session import (
     OpaqueBrowserSessionAdapter,
     _digest,
@@ -47,6 +53,9 @@ from .oidc.session import (
 
 _MAX_TOKEN_BYTES = 16 * 1024
 _MAX_UID_LENGTH = 128
+_MAX_GOOGLE_SUB_LENGTH = 255
+_MAX_GOOGLE_CLIENT_ID_LENGTH = 256
+_GOOGLE_CLIENT_ID = re.compile(r"[0-9]+-[A-Za-z0-9_-]+\.apps\.googleusercontent\.com")
 _MIN_EMAIL_LENGTH = 3
 _MAX_EMAIL_LENGTH = 320
 _MAX_SIGN_IN_AGE = 300
@@ -59,13 +68,25 @@ _T = TypeVar("_T")
 class IdentityPlatformVerifier:
     """Fixed project, revoked/disabled-user checks, and bounded off-loop SDK requests."""
 
-    def __init__(self, project_id: str, providers: tuple[str, ...]) -> None:
+    def __init__(
+        self, project_id: str, providers: tuple[str, ...], google_client_id: str | None = None
+    ) -> None:
         if os.environ.get("FIREBASE_AUTH_EMULATOR_HOST"):
             raise ValueError("Identity Platform cannot use an authentication emulator")
         self.project_id = project_id
         self.providers = frozenset(providers)
         if not self.providers or not self.providers <= {"google.com", "apple.com"}:
             raise ValueError("only Google and Apple consumer identities are allowed")
+        if "google.com" in self.providers and (
+            not google_client_id
+            or len(google_client_id) > _MAX_GOOGLE_CLIENT_ID_LENGTH
+            or not _GOOGLE_CLIENT_ID.fullmatch(google_client_id)
+        ):
+            raise ValueError("Google consumer identity requires its configured web OAuth client ID")
+        self._google_client_id = google_client_id
+        self._google_keys = _BoundedJwksResolver(
+            PyJWKClient(GOOGLE_JWKS_URL, cache_keys=False, lifespan=300, timeout=5)
+        )
         name = f"events-concierge-{project_id}"
         try:
             self._app = firebase_admin.get_app(name)
@@ -101,8 +122,15 @@ class IdentityPlatformVerifier:
         except (TimeoutError, OSError, FirebaseError, GoogleAuthError) as error:
             raise BrowserSessionUnavailableError("identity service unavailable") from error
 
-    async def verify(self, token: str) -> VerifiedConsumerIdentity:
-        if not token or len(token.encode("utf-8")) > _MAX_TOKEN_BYTES:
+    async def verify(
+        self, token: str, *, google_id_token: str | None = None
+    ) -> VerifiedConsumerIdentity:
+        if (
+            not isinstance(token, str)
+            or not token
+            or not token.isascii()
+            or len(token) > _MAX_TOKEN_BYTES
+        ):
             raise ConsumerSignInRejectedError(ConsumerSignInFailureReason.TOKEN_VERIFICATION)
         try:
             claims = await self._call(
@@ -127,7 +155,57 @@ class IdentityPlatformVerifier:
             raise ConsumerSignInRejectedError(
                 ConsumerSignInFailureReason.TOKEN_VERIFICATION
             ) from error
-        return verified_identity(claims, self.project_id, self.providers)
+        firebase = claims.get("firebase")
+        provider = firebase.get("sign_in_provider") if isinstance(firebase, dict) else None
+        google_claims = None
+        if provider == "google.com" and provider in self.providers:
+            google_claims = await self._verify_google(google_id_token)
+        elif google_id_token is not None:
+            raise ConsumerSignInRejectedError(ConsumerSignInFailureReason.CLAIM_PROVIDER)
+        return verified_identity(
+            claims, self.project_id, self.providers, google_claims=google_claims
+        )
+
+    async def _verify_google(self, token: str | None) -> Mapping[str, Any]:
+        # The public OAuth client ID and Google key endpoint are deployment-owned; neither
+        # audience nor key URL can be supplied by the browser or an unverified token.
+        if (
+            not isinstance(token, str)
+            or not token
+            or not token.isascii()
+            or len(token) > _MAX_TOKEN_BYTES
+        ):
+            raise ConsumerSignInRejectedError(ConsumerSignInFailureReason.TOKEN_VERIFICATION)
+        try:
+            key = await self._google_keys.resolve(token)
+            claims = decode(
+                token,
+                key,
+                algorithms=["RS256"],
+                audience=self._google_client_id,
+                issuer=GOOGLE_ISSUER_ALIASES,
+                leeway=_CLOCK_SKEW,
+                options={"require": ["iss", "aud", "sub", "exp", "iat"], "strict_aud": True},
+            )
+        except (PyJWKClientConnectionError, OSError) as error:
+            raise BrowserSessionUnavailableError("Google identity service unavailable") from error
+        except (PyJWTError, ValueError, TypeError) as error:
+            raise ConsumerSignInRejectedError(
+                ConsumerSignInFailureReason.TOKEN_VERIFICATION
+            ) from error
+        now = int(time())
+        if claims.get("aud") != self._google_client_id or (
+            "azp" in claims and claims["azp"] != self._google_client_id
+        ):
+            raise ConsumerSignInRejectedError(ConsumerSignInFailureReason.CLAIM_AUTHORITY)
+        if (
+            type(claims.get("iat")) is not int
+            or type(claims.get("exp")) is not int
+            or not now - _MAX_SIGN_IN_AGE <= claims["iat"] <= now + _CLOCK_SKEW
+            or claims["exp"] <= claims["iat"]
+        ):
+            raise ConsumerSignInRejectedError(ConsumerSignInFailureReason.CLAIM_FRESHNESS)
+        return cast(Mapping[str, Any], claims)
 
     async def check_session(self, uid: str, authenticated_at: int) -> None:
         cached = self._revocation_cache.get(uid)
@@ -172,9 +250,13 @@ class IdentityPlatformVerifier:
 
 
 def verified_identity(
-    claims: Mapping[str, Any], project_id: str, providers: frozenset[str]
+    claims: Mapping[str, Any],
+    project_id: str,
+    providers: frozenset[str],
+    *,
+    google_claims: Mapping[str, Any] | None = None,
 ) -> VerifiedConsumerIdentity:
-    """Validate the application contract after the Admin SDK verifies the signature and lifetime."""
+    """Bind accounts after the Admin SDK and Google verifier authenticate their claims."""
     firebase = claims.get("firebase")
     uid, email, authenticated_at = claims.get("sub"), claims.get("email"), claims.get("auth_time")
     provider = firebase.get("sign_in_provider") if isinstance(firebase, dict) else None
@@ -196,21 +278,57 @@ def verified_identity(
         or any(char.isspace() for char in uid)
     ):
         raise ConsumerSignInRejectedError(ConsumerSignInFailureReason.CLAIM_UID)
-    if (
-        claims.get("email_verified") is not True
-        or not isinstance(email, str)
-        or not _MIN_EMAIL_LENGTH <= len(email) <= _MAX_EMAIL_LENGTH
-        or email.count("@") != 1
-        or not email.isprintable()
-        or any(char.isspace() for char in email)
-    ):
+    if provider == "google.com":
+        if google_claims is None:
+            raise ConsumerSignInRejectedError(ConsumerSignInFailureReason.TOKEN_VERIFICATION)
+        identities = firebase.get("identities")
+        google_ids = identities.get("google.com") if isinstance(identities, dict) else None
+        google_sub = google_claims.get("sub")
+        if (
+            not isinstance(google_sub, str)
+            or not 1 <= len(google_sub) <= _MAX_GOOGLE_SUB_LENGTH
+            or not google_sub.isascii()
+            or not google_sub.isprintable()
+            or any(char.isspace() for char in google_sub)
+            or not isinstance(google_ids, list)
+            or len(google_ids) != 1
+            or google_ids[0] != google_sub
+        ):
+            raise ConsumerSignInRejectedError(ConsumerSignInFailureReason.CLAIM_UID)
+        google_email = google_claims.get("email")
+        if (
+            google_claims.get("email_verified") is not True
+            or not _valid_email(google_email)
+            or (email is not None and email != google_email)
+            or (
+                claims.get("email_verified") is not None
+                and type(claims["email_verified"]) is not bool
+            )
+        ):
+            raise ConsumerSignInRejectedError(ConsumerSignInFailureReason.CLAIM_EMAIL)
+        # Multi-account Identity Platform leaves primary email unset. Only the signed Google
+        # email supplies contact metadata; the verified Firebase project/UID selects the account.
+        email = google_email
+    elif google_claims is not None:
+        raise ConsumerSignInRejectedError(ConsumerSignInFailureReason.CLAIM_PROVIDER)
+    elif claims.get("email_verified") is not True or not _valid_email(email):
         raise ConsumerSignInRejectedError(ConsumerSignInFailureReason.CLAIM_EMAIL)
     if (
         type(authenticated_at) is not int
         or not now - _MAX_SIGN_IN_AGE <= authenticated_at <= now + _CLOCK_SKEW
     ):
         raise ConsumerSignInRejectedError(ConsumerSignInFailureReason.CLAIM_FRESHNESS)
-    return VerifiedConsumerIdentity(project_id, uid, provider, email, authenticated_at)
+    return VerifiedConsumerIdentity(project_id, uid, provider, cast(str, email), authenticated_at)
+
+
+def _valid_email(email: Any) -> bool:
+    return (
+        isinstance(email, str)
+        and _MIN_EMAIL_LENGTH <= len(email) <= _MAX_EMAIL_LENGTH
+        and email.count("@") == 1
+        and email.isprintable()
+        and not any(char.isspace() for char in email)
+    )
 
 
 @dataclass(frozen=True, slots=True)
@@ -305,7 +423,12 @@ class IdentityPlatformBrowserSessionAdapter(OpaqueBrowserSessionAdapter):
         raise BrowserSessionUnavailableError("could not allocate sign-in challenge")
 
     async def complete_identity_login(
-        self, headers: Mapping[str, str], *, token: str, state: str
+        self,
+        headers: Mapping[str, str],
+        *,
+        token: str,
+        state: str,
+        google_id_token: str | None = None,
     ) -> IdentityLoginCompletion:
         if _one_header(headers, "origin") != self._trusted_origin:
             raise ConsumerSignInRejectedError(ConsumerSignInFailureReason.ORIGIN)
@@ -329,7 +452,7 @@ class IdentityPlatformBrowserSessionAdapter(OpaqueBrowserSessionAdapter):
             return_to = _safe_return_path(record["return_to"])
         except (ValueError, TypeError, KeyError) as error:
             raise ConsumerSignInRejectedError(ConsumerSignInFailureReason.CHALLENGE) from error
-        identity = await self.verifier.verify(token)
+        identity = await self.verifier.verify(token, google_id_token=google_id_token)
         reauthenticated = record["purpose"] == "identity-reauth"
         if reauthenticated:
             try:

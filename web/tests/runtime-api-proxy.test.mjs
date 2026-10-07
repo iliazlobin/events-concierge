@@ -5,6 +5,62 @@ import test from "node:test";
 
 import { proxyRuntimeApiRequest } from "../lib/runtime-api-proxy.ts";
 
+test("Firebase helper mode strips credentials, preserves callback bytes and CSP, and bounds output", async (t) => {
+  const originalFetch = global.fetch;
+  const originalOrigin = process.env.EC_API_ORIGIN;
+  process.env.EC_API_ORIGIN = "http://api.internal:8000";
+  t.after(() => { global.fetch = originalFetch; process.env.EC_API_ORIGIN = originalOrigin; });
+  let calls = 0;
+  global.fetch = async (url, options) => {
+    calls++;
+    assert.equal(String(url), "http://api.internal:8000/__/auth/handler?state=fixture&code=one%2Btwo");
+    assert.equal(options.redirect, "manual");
+    assert.equal(options.method, "POST");
+    assert.equal(new TextDecoder().decode(options.body), "code=fixture&state=one");
+    assert.equal(options.headers.get("content-type"), "application/x-www-form-urlencoded");
+    for (const name of ["cookie", "authorization", "x-goog-iap-jwt-assertion", "cf-access-jwt-assertion", "origin", "referer", "x-forwarded-host", "x-middleware-subrequest"]) {
+      assert.equal(options.headers.get(name), null);
+    }
+    return new Response("<script>fixture</script>", { headers: {
+      "Content-Type": "text/html", "Content-Security-Policy": "script-src 'self'", "Set-Cookie": "__Host-ec_session=untrusted",
+      "Cache-Control": "public", "X-Debug": "untrusted",
+    } });
+  };
+  const result = await proxyRuntimeApiRequest(new Request("https://events.example/__/auth/handler?state=fixture&code=one%2Btwo", {
+    method: "POST", body: "code=fixture&state=one", headers: {
+      "Content-Type": "application/x-www-form-urlencoded", Cookie: "__Host-ec_session=consumer; GCP_IAP_AUTH_TOKEN=admin",
+      Authorization: "Bearer consumer", "X-Goog-IAP-JWT-Assertion": "signed.jwt.bytes", "Cf-Access-Jwt-Assertion": "signed.jwt.bytes",
+      Origin: "https://events.example", Referer: "https://events.example/admin?secret=fixture", "X-Middleware-Subrequest": "untrusted",
+    },
+  }), "/__/auth", ["handler"]);
+  assert.equal(calls, 1);
+  assert.equal(result.status, 200);
+  assert.equal(await result.text(), "<script>fixture</script>");
+  assert.equal(result.headers.get("content-security-policy"), "script-src 'self'");
+  assert.equal(result.headers.get("cache-control"), "no-store, max-age=0");
+  assert.equal(result.headers.get("set-cookie"), null);
+  assert.equal(result.headers.get("x-debug"), null);
+  global.fetch = async () => new Response(new Uint8Array(2 * 1024 * 1024 + 1));
+  assert.equal((await proxyRuntimeApiRequest(new Request("https://events.example/__/auth/iframe"), "/__/auth", ["iframe"])).status, 502);
+});
+
+test("Firebase helper mode refuses unlisted, encoded and extra paths before fetch", async (t) => {
+  const originalFetch = global.fetch;
+  const originalOrigin = process.env.EC_API_ORIGIN;
+  process.env.EC_API_ORIGIN = "http://api.internal:8000";
+  t.after(() => { global.fetch = originalFetch; process.env.EC_API_ORIGIN = originalOrigin; });
+  global.fetch = async () => assert.fail("unexpected upstream call");
+  for (const [path, segments] of [
+    ["/__/auth/%68andler", ["handler"]], ["/__/auth/handler/", ["handler"]],
+    ["/__/auth/credential", ["credential"]], ["/__/auth/handler/extra", ["handler", "extra"]],
+    ["/__/auth/iframe%2f", ["iframe/"]], ["/__/auth/action", ["action"]],
+  ]) assert.equal((await proxyRuntimeApiRequest(new Request("https://events.example" + path), "/__/auth", segments)).status, 404);
+  for (const method of ["PUT", "DELETE", "HEAD", "OPTIONS", "PATCH"]) {
+    assert.equal((await proxyRuntimeApiRequest(new Request("https://events.example/__/auth/handler", { method }), "/__/auth", ["handler"])).status, 405);
+  }
+  assert.equal((await proxyRuntimeApiRequest(new Request("https://events.example/__/auth/iframe", { method: "POST" }), "/__/auth", ["iframe"])).status, 405);
+});
+
 async function listen(handler) {
   const server = http.createServer(handler);
   server.listen(0, "127.0.0.1");

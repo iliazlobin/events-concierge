@@ -17,7 +17,8 @@ Implementation is available; provider setup and deployed acceptance remain relea
 - The owner may explicitly select `EC_CONSUMER_LEGAL_MODE=deferred` for a release and unset all four `EC_SIGNUP_TERMS_*`/`EC_SIGNUP_PRIVACY_*` fields. Signup/login/logout remain available with managed identity, sessions, CSRF, tenant isolation and erasure checks. No legal checkbox, document links or acceptance receipts are created; this setting is deployment-owned, never caller-selected.
 - To restore `required`, publish real versioned HTTPS documents and configure their versions/URLs. Existing accounts and sessions must accept them before personal data access resumes; logout still works. Preserve account IDs and genuine receipts; never backfill acceptance for deferred accounts.
 - Accounts bind the verified Identity Platform project/UID, never email. Different provider identities stay separate; account linking is not implemented. Apple private-relay addresses are supported.
-- ID tokens exist briefly in SDK memory. The API verifies issuer, audience, provider, verified email, freshness and revocation using the [Admin SDK](https://firebase.google.com/docs/auth/admin/verify-id-tokens).
+- ID tokens exist briefly in SDK memory. The [Admin SDK](https://firebase.google.com/docs/auth/admin/verify-id-tokens) checks the Firebase project/UID, provider, freshness and revocation. Google login also requires its signed OAuth ID token, checked against [Google’s verification contract](https://developers.google.com/identity/gsi/web/guides/verify-google-id-token): Google signature, issuer, exact configured client audience, authorized party when present, recent issuance and verified email. Its `sub` must equal the sole Google ID in [Firebase's signed provider identities](https://firebase.google.com/docs/rules/rules-and-auth).
+- Identity Platform keeps multiple accounts per email, so [social accounts may have no primary email](https://firebase.google.com/docs/auth/admin/manage-users#retrieve_user_data). The signed Google email supplies contact metadata; it never selects or links an account. A conflicting primary email rejects sign-in. Apple retains the verified Firebase email requirement and rejects an extra Google token. Sessions, reauthentication and erasure remain bound to the Firebase project/UID; an existing account's stored contact email is not automatically rewritten.
 - The browser receives an opaque Secure/HttpOnly session and CSRF cookie. Default session: eight hours; managed disable/revocation checks cache for at most 60 seconds, with no stale fallback.
 - Erasure requires a fresh, same-account provider login. The erasure worker fences sessions, removes the managed identity and completes application cleanup; failed identity deletion keeps erasure incomplete.
 - Changing legal content requires a new version and immutable URL. Existing accounts must accept it again. Acceptance receipts are tenant-scoped and removed during account erasure.
@@ -45,6 +46,10 @@ the protected application state bucket; never adopt shared foundation/network/cl
 For the existing `iz27-platform-dev` project, `foundation_owned_services` excludes its foundation-owned IAM and Secret Manager APIs from this state. The identity APIs, restricted browser key, provider containers and narrow IAM remain application-owned; never import shared resources or another product's OAuth clients/branding.
 The provider and bootstrap requests use the selected identity project for quota; the caller needs `serviceusage.services.use` there.
 
+- Set `EC_IDENTITY_PLATFORM_GOOGLE_CLIENT_ID` to the **enabled consumer Google provider's web OAuth client ID**, not the admin IAP client. It is a public identifier; enabled Google login cannot start without it.
+- Google sign-in and reauthentication post `id_token` (Firebase) and `google_id_token` (Google), obtained through [the SDK credential](https://firebase.google.com/docs/reference/js/auth.googleauthprovider#googleauthprovidercredentialfromresult). Missing, invalid or mixed-account proof fails closed. Deploy the matching API, frontend and client-ID configuration together; no schema or email-linking policy change is required.
+- The existing Google JWKS resolver uses the fixed Google HTTPS endpoint and RS256, with a five-second fetch timeout, five-minute cache and 30-second refresh cooldown. No new secret is needed. Native datastore/Temporal checks do not verify this provider flow; real signup, repeat login, reauthentication and logout remain browser acceptance gates.
+
 Configure `EC_IDENTITY_PLATFORM_PROVIDERS='["google.com"]'` for the initial release.
 Guests see **Sign in**; the same Google flow signs in existing users or creates a new account.
 The selected catalog view and filters survive sign-in. Personal settings require an account.
@@ -62,8 +67,23 @@ terraform -chdir=infra/terraform/environments/consumer-identity apply identity.t
 The [OAuth consent brand](https://support.google.com/cloud/answer/15549049) belongs to its
 Google project; a second client does not give it a separate app name. Keep other products'
 existing clients and branding intact when choosing the Events Concierge identity project.
-`events.iliazlobin.com` is the application domain; the SDK auth domain stays
-`<project-id>.firebaseapp.com` unless a separate custom auth-domain setup is completed.
+For same-origin helpers, add `https://events.iliazlobin.com/__/auth/handler` to that
+client's authorized callbacks, then set `EC_IDENTITY_PLATFORM_AUTH_DOMAIN=events.iliazlobin.com`.
+The [Firebase reverse-proxy approach](https://firebase.google.com/docs/auth/web/redirect-best-practices#option_3_proxy_auth_requests_to_firebaseappcom)
+keeps the SDK popup and helper iframe on the application origin; SDK tokens remain in memory.
+The callback and runtime setting must be coordinated with the deployed proxy; browser acceptance
+remains required. Keep the Firebase callback during rollback.
+
+- Public Caddy admits only the seven named `/__/auth` helpers. Next.js forwards them to the
+  consumer API; it fetches the fixed project Firebase host through existing HTTPS egress.
+- GET serves the helpers; POST is restricted to `handler`. Query: 8 KiB; request: 64 KiB;
+  decoded response: 2 MiB; upstream deadline: 20 seconds. No redirect following or arbitrary upstream.
+- Application cookies, bearer tokens and operator headers never enter the helper transport.
+  Provider cookies are discarded; responses retain content type, CSP and frame restrictions,
+  with no-store and origin-only cross-site referrers. HTTP client tracing is disabled; errors
+  expose no OAuth query/body values. No new Service, IAM binding or frontend egress is required.
+- Rollback the auth domain to `<project-id>.firebaseapp.com` with a tested compatible release.
+  The same-origin proxy then returns `404`; existing identities and account state remain.
 
 **Apple:** requires Apple Developer membership, a Sign in with Apple-enabled app,
 Services ID, Team ID, Key ID and private key. Register the same auth-domain callback

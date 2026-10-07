@@ -91,6 +91,12 @@ Complete [Connect](access.md#connect) first. These commands change the approved 
 - Verify the current Helm revision, exact workload identities/templates, old digests, retained state and fresh private TLS/readiness before applying; refuse concurrent changes. Record API, worker, chart and frontend provenance separately without rewriting earlier receipts.
 - Allow a brief API interruption. Recheck native TLS/mTLS, anonymous search, sign-in, generic rejection responses and private counters after rollout. If necessary, restore only the prior API image/build environment and optional frontend digest; preserve schema/data, held cadence and access restrictions.
 
+### Same-origin Firebase helpers
+
+- The [helper rollout](consumer-identity.md#gcp-setup) changes three resources through a reviewed, persisted post-renderer: API Deployment image/build metadata/auth-domain/client ID; frontend Deployment image and `checksum/public-edge`; public-edge ConfigMap.
+- Compare all 46 resources. Preserve the retained chart, TLS, schema `0208`, workers and admin/cadence holds; reject every other change.
+- Register the OAuth callback before changing the runtime auth domain. Verify Chrome/Safari popup signup, cancellation and callback headers before acceptance; rollback restores the prior three-resource configuration together.
+
 ### Publish the tested package
 
 Publication authorization is required. Set `CI_RUN` and `BACKEND_REVISION` to the successful CI run and its full `main` commit. Download into a new directory:

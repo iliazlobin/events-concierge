@@ -4,6 +4,8 @@ import {
   setPersistence, signInWithPopup, signOut,
 } from "firebase/auth";
 
+import type { UserCredential } from "firebase/auth";
+
 import type { ConsumerIdentityConfig } from "./types.ts";
 
 export type ConsumerProvider = "google.com" | "apple.com";
@@ -15,6 +17,21 @@ export function consumerOAuthProvider(provider: ConsumerProvider) {
   if (provider === "google.com") oauth.setCustomParameters({ prompt: "select_account" });
   else oauth.addScope("name");
   return oauth;
+}
+
+export type ConsumerIdentityTokens = { idToken: string; googleIdToken?: string };
+
+/** Return only the signed proof needed by our API, never the credential/error object. */
+export async function consumerIdentityTokens(
+  result: UserCredential, provider: ConsumerProvider,
+): Promise<ConsumerIdentityTokens> {
+  const googleIdToken = provider === "google.com"
+    ? GoogleAuthProvider.credentialFromResult(result)?.idToken : undefined;
+  if (provider === "google.com" && (typeof googleIdToken !== "string" || !googleIdToken)) {
+    throw new Error("Google identity proof is unavailable.");
+  }
+  const idToken = await result.user.getIdToken();
+  return { idToken, ...(googleIdToken ? { googleIdToken } : {}) };
 }
 
 /** The SDK exists only on the sign-in page. Refresh/identity tokens never enter browser storage. */
@@ -35,11 +52,11 @@ export async function prepareConsumerIdentity(config: ConsumerIdentityConfig) {
   await setPersistence(auth, inMemoryPersistence);
   await signOut(auth);
   return {
-    async signIn(provider: ConsumerProvider): Promise<string> {
+    async signIn(provider: ConsumerProvider): Promise<ConsumerIdentityTokens> {
       if (!config.providers.includes(provider)) throw new Error("This sign-in option is unavailable.");
       const oauth = consumerOAuthProvider(provider);
       const result = await signInWithPopup(auth, oauth);
-      return result.user.getIdToken();
+      return consumerIdentityTokens(result, provider);
     },
     clear() { return signOut(auth); },
   };

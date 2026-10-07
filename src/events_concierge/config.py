@@ -296,6 +296,11 @@ class Settings(BaseSettings):
         default=None, pattern=r"^[a-z][a-z0-9-]{4,28}[a-z0-9]$"
     )
     identity_platform_api_key: str | None = Field(default=None, min_length=20, max_length=256)
+    identity_platform_google_client_id: str | None = Field(
+        default=None,
+        max_length=256,
+        pattern=r"^[0-9]+-[A-Za-z0-9_-]+\.apps\.googleusercontent\.com$",
+    )
     identity_platform_auth_domain: str | None = None
     identity_platform_providers: tuple[Literal["google.com", "apple.com"], ...] = ("google.com",)
     # Only deployment configuration can defer legal acceptance; account/session authority remains.
@@ -473,15 +478,15 @@ class Settings(BaseSettings):
             raise ValueError(
                 "Identity Platform requires project ID and its restricted browser API key"
             )
-        if (
-            self.identity_platform_auth_domain
-            != f"{self.identity_platform_project_id}.firebaseapp.com"
-        ):
-            raise ValueError("Identity Platform requires the project-owned Firebase auth domain")
         if not self.identity_platform_providers or len(
             set(self.identity_platform_providers)
         ) != len(self.identity_platform_providers):
             raise ValueError("Identity Platform requires a unique Google/Apple provider allowlist")
+        if (
+            "google.com" in self.identity_platform_providers
+            and not self.identity_platform_google_client_id
+        ):
+            raise ValueError("Google consumer identity requires its web OAuth client ID")
         if self.ui_auth_start_url not in {None, "/sign-in"}:
             raise ValueError("Identity Platform starts at the same-origin sign-in page")
         origin = urlsplit(self.public_base_url)
@@ -495,6 +500,15 @@ class Settings(BaseSettings):
             or origin.fragment
         ):
             raise ValueError("Identity Platform requires an exact HTTPS application origin")
+        if self.identity_platform_auth_domain not in {
+            f"{self.identity_platform_project_id}.firebaseapp.com",
+            origin.hostname,
+        }:
+            raise ValueError(
+                "Identity Platform requires the project-owned Firebase or exact application auth domain"
+            )
+        if self.identity_platform_auth_domain == origin.hostname and origin.port not in {None, 443}:
+            raise ValueError("Same-origin Firebase helpers require the standard HTTPS port")
         return self
 
     @field_validator(

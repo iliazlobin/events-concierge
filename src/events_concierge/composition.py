@@ -866,7 +866,9 @@ def _build_identity_boundaries(
         assert settings.identity_platform_project_id
         configured_identity = IdentityPlatformBrowserSessionAdapter(
             verifier=IdentityPlatformVerifier(
-                settings.identity_platform_project_id, settings.identity_platform_providers
+                settings.identity_platform_project_id,
+                settings.identity_platform_providers,
+                settings.identity_platform_google_client_id,
             ),
             tenant_lookup=PostgresTenantRepository().get,
             trusted_origin=settings.public_base_url.rstrip("/"),
