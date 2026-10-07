@@ -86,8 +86,8 @@ Complete [Connect](access.md#connect) first. These commands change the approved 
 ### Consumer API diagnostics repair
 
 - Use a reviewed, CI-tested immutable API digest; no schema changes or migrations. Keep schema `0208`, operator disabled and cadence held.
-- Retain the deployed chart, complete values, global backend image/revision and all other worker/store images. Set only `workloads.api.env.EC_RELEASE_REVISION` and `workloads.api.env.EC_IMAGE_DIGEST` to the API's truthful build identity.
-- Use an independently reviewed, persisted Helm post-renderer that changes only the API container image and rejects any other render delta. An optional tested frontend repair follows the image-only exception above.
+- Retain the deployed `aa79f8c` chart, complete values, global backend image/revision and all other worker/store images. Keep `workloads.api.env` empty; its private profile rejects API environment overrides.
+- Use an independently reviewed, persisted Helm post-renderer to change only the API container image and set its `EC_RELEASE_REVISION` and `EC_IMAGE_DIGEST` to the API's truthful build identity. An optional tested frontend repair follows the image-only exception above. Compare all 46 rendered resources and reject every other change.
 - Verify the current Helm revision, exact workload identities/templates, old digests, retained state and fresh private TLS/readiness before applying; refuse concurrent changes. Record API, worker, chart and frontend provenance separately without rewriting earlier receipts.
 - Allow a brief API interruption. Recheck native TLS/mTLS, anonymous search, sign-in, generic rejection responses and private counters after rollout. If necessary, restore only the prior API image/build environment and optional frontend digest; preserve schema/data, held cadence and access restrictions.
 
