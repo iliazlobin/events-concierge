@@ -41,7 +41,7 @@ export function SignIn({ reason, returnTo = "/", reauthenticationState }: {
         const sdk = await import("@/lib/consumer-identity");
         const prepared = await sdk.prepareConsumerIdentity(next.identity_platform);
         const transaction = reauthenticationState ? { state: reauthenticationState }
-          : await api<{ state: string }>(`/auth/identity/start?return_to=${encodeURIComponent(returnTo)}`);
+          : await api<{ state: string }>(`/auth/identity/start?return_to=${encodeURIComponent(returnTo)}`, { cache: "no-store" });
         if (cancelled) { await prepared.clear(); return; }
         setIdentity(prepared);
         setChallenge(transaction.state);
@@ -66,7 +66,7 @@ export function SignIn({ reason, returnTo = "/", reauthenticationState }: {
       const token = await identity.signIn(provider);
       stage = "session";
       const result = await api<{ return_to: string }>("/auth/identity/session", {
-        method: "POST", bodyJson: {
+        method: "POST", cache: "no-store", bodyJson: {
           id_token: token, state: challenge,
           ...(legalRequired && config.legal_policy ? {
             accepted_terms: reauthenticationState ? false : accepted,
