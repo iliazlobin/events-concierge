@@ -161,6 +161,16 @@ export interface EventEntityReference {
   name: string;
 }
 
+export type CatalogNameKind =
+  | "event" | "venue" | "organizer" | "host" | "speaker" | "partner"
+  | "person" | "organization";
+
+export interface CatalogNameSuggestion {
+  name: string;
+  kinds: CatalogNameKind[];
+  event_count: number;
+}
+
 export type CatalogEntityKind = "person" | "organization" | "unknown";
 
 export interface CatalogEntity {

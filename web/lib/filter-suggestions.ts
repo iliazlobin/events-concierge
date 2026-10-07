@@ -8,6 +8,7 @@ import { formatCity } from "./presentation.ts";
 import type {
   AvailabilityFilter,
   CatalogProvider,
+  CatalogNameSuggestion,
   CatalogTopic,
   DatePreset,
   LocationScope,
@@ -76,7 +77,46 @@ export interface SavedFilterSuggestion {
   score: number;
 }
 
-export type SmartFilterSuggestion = AtomicSmartFilterSuggestion | SavedFilterSuggestion | {
+export interface NameFilterSuggestion {
+  kind: "name";
+  value: string;
+  label: string;
+  nameKind: string;
+  description: string;
+  score: number;
+}
+
+export function getCatalogNameFilterSuggestions(
+  query: string,
+  names: CatalogNameSuggestion[],
+): NameFilterSuggestion[] {
+  const labels = {
+    organization: "Organization", person: "Person", organizer: "Organizer", host: "Host",
+    speaker: "Speaker", partner: "Partner", venue: "Venue", event: "Event",
+  };
+  const term = query.trim().toLowerCase();
+  if (!term) return [];
+  return names.flatMap((entry) => {
+    // Names may contain non-Latin letters or punctuation (for example C++). Keep them
+    // literal, as the catalog search does, instead of using the facet alias normalizer.
+    const name = entry.name.toLowerCase();
+    const position = name.indexOf(term);
+    if (position < 0) return [];
+    const score = name === term ? 140 : position === 0 ? 120 : 85;
+    const kinds = Object.keys(labels).filter((kind) => entry.kinds.includes(
+      kind as keyof typeof labels,
+    )) as Array<keyof typeof labels>;
+    const count = `${entry.event_count} event${entry.event_count === 1 ? "" : "s"}`;
+    return [{
+      kind: "name" as const, value: entry.name, label: entry.name,
+      nameKind: labels[kinds[0]] ?? "Name",
+      description: [...kinds.slice(1).map((kind) => labels[kind]), count].join(" · "),
+      score,
+    }];
+  });
+}
+
+export type SmartFilterSuggestion = AtomicSmartFilterSuggestion | SavedFilterSuggestion | NameFilterSuggestion | {
   kind: "combination";
   value: string;
   label: string;

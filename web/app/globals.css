@@ -558,6 +558,10 @@ textarea:focus-visible {
   text-align: left;
 }
 
+.filter-suggestions button[data-kind="name"] {
+  grid-template-columns: 84px minmax(0, 1fr) auto;
+}
+
 .filter-suggestions button:hover {
   background: var(--panel-raised);
 }
@@ -6150,6 +6154,10 @@ textarea:focus-visible {
 
   .filter-suggestions button {
     grid-template-columns: 52px minmax(0, 1fr);
+  }
+
+  .filter-suggestions button[data-kind="name"] {
+    grid-template-columns: 84px minmax(0, 1fr);
   }
 
   .filter-suggestions button > small {

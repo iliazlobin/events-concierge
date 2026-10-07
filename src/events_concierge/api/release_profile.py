@@ -24,6 +24,7 @@ _DISCOVERY_ROUTES = {
     "/v1/me/saved-filters/{saved_filter_id}",
     "/v1/me/saved-filters/{saved_filter_id}/applied",
     "/v1/catalog/events",
+    "/v1/catalog/name-suggestions",
     "/v1/catalog/events/summary",
     "/v1/catalog/events/{canonical_event_id}",
     "/v1/catalog/entities",

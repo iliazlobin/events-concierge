@@ -4,6 +4,7 @@ import test from "node:test";
 import { semanticDateRangeKeys } from "../lib/date.ts";
 import {
   filterSmartFilterSuggestionsByContext,
+  getCatalogNameFilterSuggestions,
   getPopularSmartFilterSuggestions,
   getSmartFilterSuggestions,
   getStarterFilterSuggestions,
@@ -54,6 +55,30 @@ const TOPICS = [
   { topic: "volleyball", label: "Volleyball", event_count: 8 },
 ];
 const NOW = new Date(2026, 6, 28, 12, 0, 0);
+
+test("catalog names retain their known types and are separate from facet composition", () => {
+  const names = getCatalogNameFilterSuggestions("nebius", [
+    { name: "Nebius", kinds: ["host", "organization"], event_count: 3 },
+    { name: "Nebius Studio", kinds: ["venue"], event_count: 1 },
+    { name: "Unrelated", kinds: ["speaker"], event_count: 4 },
+  ]);
+  assert.deepEqual(names.map(({ label, nameKind, description }) => ({ label, nameKind, description })), [
+    { label: "Nebius", nameKind: "Organization", description: "Host · 3 events" },
+    { label: "Nebius Studio", nameKind: "Venue", description: "1 event" },
+  ]);
+  assert.ok(names[0].score > names[1].score);
+  for (const context of ["place", "source", "topic", "date", "price", "availability"]) {
+    assert.deepEqual(filterSmartFilterSuggestionsByContext(names, context), []);
+  }
+});
+
+test("catalog name matching preserves non-Latin names and meaningful punctuation", () => {
+  for (const [query, name] of [["東京", "東京 Community"], ["++", "C++ Builders"], ["%_", "A%_B Collective"]]) {
+    assert.equal(getCatalogNameFilterSuggestions(query, [
+      { name, kinds: ["organizer"], event_count: 1 },
+    ])[0].value, name);
+  }
+});
 
 test("category-first expressions separate the filter kind from its term", () => {
   assert.deepEqual(

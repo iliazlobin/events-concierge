@@ -18,6 +18,20 @@ from .enums import Source
 from .events import CanonicalEvent
 
 CatalogBrowseSort = Literal["soonest", "latest"]
+MIN_CATALOG_NAME_QUERY_LENGTH = 2
+MAX_CATALOG_NAME_SUGGESTIONS = 20
+CatalogNameKind = Literal[
+    "event", "venue", "organizer", "host", "speaker", "partner", "person", "organization"
+]
+
+
+@dataclass(frozen=True, slots=True)
+class CatalogNameSuggestion:
+    """A public name and its roles in matching events; not a resolved entity identity."""
+
+    name: str
+    kinds: tuple[CatalogNameKind, ...]
+    event_count: int
 
 
 @dataclass(frozen=True, slots=True)

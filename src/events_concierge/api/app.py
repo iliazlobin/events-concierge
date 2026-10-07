@@ -53,7 +53,12 @@ from ..composition import Container, build_container
 from ..config import Settings, get_settings
 from ..deployment.startup import preflight_application_runtime
 from ..domain.account_erasure import AccountErasureStatus
-from ..domain.catalog_browse import CatalogBrowseCursor, CatalogBrowseEvent
+from ..domain.catalog_browse import (
+    MIN_CATALOG_NAME_QUERY_LENGTH,
+    CatalogBrowseCursor,
+    CatalogBrowseEvent,
+    CatalogNameKind,
+)
 from ..domain.consumer import (
     ConsumerRegistrationSummary,
     ConsumerRequestSummary,
@@ -483,6 +488,12 @@ class CatalogBrowsePageOut(BaseModel):
     providers: list[CatalogBrowseProviderOut]
     city_facets: list[CatalogBrowseCityOut]
     topic_facets: list[CatalogBrowseTopicOut]
+
+
+class CatalogNameSuggestionOut(BaseModel):
+    name: str
+    kinds: list[CatalogNameKind]
+    event_count: int
 
 
 class CatalogDayTopicOut(BaseModel):
@@ -3644,6 +3655,84 @@ def create_app() -> FastAPI:
                 for facet in topic_facets
             ],
         )
+
+    @app.get("/v1/catalog/name-suggestions", response_model=list[CatalogNameSuggestionOut])
+    async def suggest_catalog_names(
+        source_key: Annotated[
+            list[
+                Annotated[
+                    str,
+                    Field(min_length=2, max_length=80, pattern=_CATALOG_SOURCE_KEY_PATTERN),
+                ]
+            ]
+            | None,
+            Query(),
+        ] = None,
+        starts_after: Annotated[datetime | None, Query()] = None,
+        starts_before: Annotated[datetime | None, Query()] = None,
+        date_range: Annotated[list[str] | None, Query()] = None,
+        q: str = Query(min_length=2, max_length=_MAX_CATALOG_FILTER_LENGTH),
+        city: Annotated[list[str] | None, Query()] = None,
+        location_scope: Annotated[
+            list[Literal["bay_area", "manhattan", "los_angeles_area"]] | None,
+            Query(),
+        ] = None,
+        price: Literal["free", "paid", "unknown"] | None = Query(default=None),
+        price_max_cents: int | None = Query(default=None, ge=1, le=100_000_000),
+        price_min_cents: int | None = Query(default=None, ge=1, le=100_000_000),
+        topic: Annotated[list[str] | None, Query()] = None,
+        availability: Literal["available", "sold_out"] | None = Query(default=None),
+        limit: int = Query(default=8, ge=1, le=20),
+    ) -> list[CatalogNameSuggestionOut]:
+        """Suggest names across the filtered public catalog, independently of event pagination."""
+        source_keys = tuple(dict.fromkeys(source_key or []))
+        if len(source_keys) > _MAX_CATALOG_SOURCE_SELECTIONS:
+            raise HTTPException(status_code=422, detail="too many catalog sources")
+        if starts_after is not None or starts_before is not None:
+            if (starts_after is None) != (starts_before is None):
+                raise HTTPException(status_code=422, detail="both catalog date bounds are required")
+            if (
+                starts_after is not None
+                and starts_before is not None
+                and (
+                    starts_after.tzinfo is None
+                    or starts_after.utcoffset() is None
+                    or starts_before.tzinfo is None
+                    or starts_before.utcoffset() is None
+                )
+            ):
+                raise HTTPException(status_code=422, detail="catalog dates require a timezone")
+            starts_after = cast(datetime, starts_after).astimezone(UTC)
+            starts_before = cast(datetime, starts_before).astimezone(UTC)
+        try:
+            date_ranges = _normalize_catalog_date_ranges(
+                date_range or [],
+                starts_after=starts_after,
+                starts_before=starts_before,
+                source_keys=source_keys,
+            )
+        except (OverflowError, ValueError):
+            raise HTTPException(status_code=422, detail="catalog date range is invalid") from None
+        selection = _normalized_catalog_filters(
+            q=q,
+            city=city,
+            location_scope=location_scope,
+            topic=topic,
+            price=price,
+            price_max_cents=price_max_cents,
+            price_min_cents=price_min_cents,
+        )
+        if selection.query is None or len(selection.query) < MIN_CATALOG_NAME_QUERY_LENGTH:
+            raise HTTPException(status_code=422, detail="catalog name query is too short")
+        rows = await app.state.container.catalog.suggest_names(
+            query=selection.query, source_keys=source_keys, date_ranges=date_ranges,
+            cities=selection.cities, location_scopes=selection.location_scopes,
+            price=price, price_max_cents=price_max_cents, price_min_cents=price_min_cents,
+            topics=selection.topics, availability=availability, limit=limit,
+        )
+        return [CatalogNameSuggestionOut(
+            name=row.name, kinds=list(row.kinds), event_count=row.event_count,
+        ) for row in rows]
 
     @app.get("/v1/catalog/events/summary", response_model=CatalogDaySummaryOut)
     async def summarize_catalog_events(

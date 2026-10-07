@@ -43,6 +43,18 @@ registration state requires structured provider evidence.
 
 ## Browse and facets
 
+`GET /v1/catalog/name-suggestions` searches public event titles, venues, organizers, hosts,
+speakers and partners across every admitted event matching the active filters. It accepts the
+same source, place, date, topic, price and registration filters as event browsing, a literal
+2–160-character `q`, and a limit of 1–20 (default 8). Matching names are grouped and ranked
+before limiting; chronological event pagination does not restrict autocomplete. Profile evidence
+adds Person or Organization labels when known. Grouping equal names does not merge identities.
+
+The search box combines these names with existing filter and saved-selection suggestions.
+Selecting a name sets the text query and preserves active filters; URL navigation and saved
+filters retain it. Requests are debounced and cancelled when the query or filters change. Browsing
+and autocomplete read published data without starting collection or requiring sign-in.
+
 `GET /v1/catalog/events` accepts repeated `topic` parameters. Multiple topics have AND semantics:
 an event must contain every selected topic. The selected topics are bound into the keyset cursor
 scope, and filtering happens before page selection. The response includes `topic_facets` counts

@@ -69,27 +69,163 @@ def discovery_filters_page(page_factory, request):
                                 "preference_revision": 1, "local_demo": False, "is_admin": False,
                                 "relay_inbox": None})
 
-        def saved_filters(route: Route):
-            api.calls.append((route.request.method, "/v1/me/saved-filters"))
-            api.respond(route, [{
+        entries = [{
                 "saved_filter_id": f"92000000-0000-4000-8000-{index:012d}",
                 "name": f"My saved selection {index}",
-                "filters": {"query": "", "sort": "soonest", "datePreset": "all",
-                            "customStart": "", "customEnd": "", "dateRanges": [],
-                            "sourceKeys": [], "city": "", "cities": [], "locationScopes": [],
+                "filters": {"query": "Mira AI in San Francisco this week" if index == 2 else "",
+                            "sort": "soonest", "datePreset": "custom" if index == 2 else "all",
+                            "customStart": "2030-10-01" if index == 2 else "",
+                            "customEnd": "2030-10-31" if index == 2 else "", "dateRanges": [],
+                            "sourceKeys": ["tech-week-sf-2026"] if index == 2 else [],
+                            "city": "", "cities": [], "locationScopes": [],
                             "topics": [], "price": "any", "priceComparison": "any",
                             "priceMinDollars": "", "priceMaxDollars": "", "availability": "any"},
                 "created_at": None, "updated_at": None, "last_used_at": None,
-            } for index in range(3)])
+            } for index in range(3)]
+
+        def saved_filters(route: Route):
+            api.calls.append((route.request.method, "/v1/me/saved-filters"))
+            api.respond(route, entries)
+
+        def applied(route: Route):
+            path = urlsplit(route.request.url).path
+            assert route.request.method == "POST"
+            assert path == f"/v1/me/saved-filters/{entries[2]['saved_filter_id']}/applied"
+            api.calls.append(("POST", path))
+            api.respond(route, entries[2])
 
         harness.page.route("**/v1/me", account)
         harness.page.route("**/v1/me/saved-filters", saved_filters)
+        harness.page.route("**/v1/me/saved-filters/*/applied", applied)
     yield harness, api, queries
     assert not api.unexpected
-    assert all(method == "GET" for method, _ in api.calls)
+    assert all(method == "GET" or (
+        signed_in and method == "POST"
+        and path == "/v1/me/saved-filters/92000000-0000-4000-8000-000000000002/applied"
+    ) for method, path in api.calls)
     assert not any(path.startswith(("/auth/", "/v1/preferences")) for _, path in api.calls)
     if not signed_in:
         assert not any(path.startswith("/v1/me/") for _, path in api.calls)
+
+
+@pytest.mark.parametrize("width", [1440, 390])
+def test_catalog_names_autocomplete_select_and_reload_preserve_filters(discovery_filters_page, tmp_path, width):
+    harness, api, queries = discovery_filters_page
+    page = harness.page
+    page.set_viewport_size({"width": width, "height": 900})
+    name_queries = []
+
+    def names(route: Route):
+        query = parse_qs(urlsplit(route.request.url).query)
+        name_queries.append(query)
+        api.calls.append((route.request.method, "/v1/catalog/name-suggestions"))
+        term = query["q"][0].lower()
+        items = [{"name": "Nebius", "kinds": ["host", "organization"], "event_count": 3},
+                 {"name": "Nebius Studio", "kinds": ["venue"], "event_count": 1},
+                 {"name": "Nebius Builders Night", "kinds": ["event"], "event_count": 1}]
+        if term == "mira":
+            items = [{"name": "Mira AI in San Francisco this week", "kinds": ["event"], "event_count": 1}]
+        api.respond(route, items)
+
+    page.route("**/v1/catalog/name-suggestions?*", names)
+    page.goto(f"{BASE}/?view=events&source=tech-week-sf-2026&city=sanfrancisco&when=custom&start=2030-10-01&end=2030-10-31&availability=available")
+    # None of the initially loaded event fixtures contains any of the requested names.
+    expect(page.locator(".event-card").filter(has_text="Nebius")).to_have_count(0)
+    search = page.get_by_role("combobox", name=SEARCH_NAME)
+    search.fill("nebius")
+    options = page.get_by_role("listbox", name="Suggested filters").get_by_role("option")
+    expect(options).to_have_count(3)
+    expect(options.first).to_contain_text("Organization")
+    expect(options.nth(1)).to_contain_text("Venue")
+    expect(options.nth(2)).to_contain_text("Event")
+    page.screenshot(path=str(tmp_path / f"catalog-name-suggestions-{width}.png"), animations="disabled")
+    search.press("ArrowDown")
+    search.press("Enter")
+    expect(search).to_have_value("Nebius")
+    expect(page.get_by_role("listbox", name="Suggested filters")).not_to_be_visible()
+    expect(page.locator(".active-filter-chip").filter(has_text="SF Tech Week 2026")).to_be_visible()
+    page.wait_for_function("new URL(location.href).searchParams.get('q') === 'Nebius'")
+    for query in (name_queries[-1], queries[-1]):
+        assert query["source_key"] == ["tech-week-sf-2026"]
+        assert query["city"] == ["sanfrancisco"]
+        assert query["availability"] == ["available"]
+        assert "starts_after" in query and "starts_before" in query
+    page.reload()
+    expect(page.get_by_role("combobox", name=SEARCH_NAME)).to_have_value("Nebius")
+    assert parse_qs(urlsplit(page.url).query)["source"] == ["tech-week-sf-2026"]
+    assert page.evaluate("document.documentElement.scrollWidth <= innerWidth")
+
+    # An event name can contain filter words. Selecting/reloading it must keep the literal name.
+    search.fill("mira")
+    option = page.get_by_role("option").filter(has_text="Mira AI in San Francisco this week")
+    expect(option).to_be_visible()
+    option.click()
+    expect(search).to_have_value("Mira AI in San Francisco this week")
+    page.reload()
+    expect(page.get_by_role("combobox", name=SEARCH_NAME)).to_have_value("Mira AI in San Francisco this week")
+    page.get_by_role("combobox", name=SEARCH_NAME).press("Enter")
+    query = parse_qs(urlsplit(page.url).query)
+    assert query["when"] == ["custom"] and query["start"] == ["2030-10-01"]
+    assert query["q"] == ["Mira AI in San Francisco this week"]
+    assert "topic" not in query
+
+
+@pytest.mark.parametrize("discovery_filters_page", [True], indirect=True)
+def test_restored_saved_name_stays_literal_after_history_and_enter(discovery_filters_page):
+    harness, _, _ = discovery_filters_page
+    page = harness.page
+    page.goto(f"{BASE}/?view=events")
+    expect(page.get_by_role("button", name="Saved · 3", exact=True)).to_be_visible()
+    search = page.get_by_role("combobox", name=SEARCH_NAME)
+    search.fill("My saved selection 2")
+    page.get_by_role("option").filter(has_text="My saved selection 2").click()
+    expect(search).to_have_value("Mira AI in San Francisco this week")
+    search.press("Enter")
+    query = parse_qs(urlsplit(page.url).query)
+    assert query["q"] == ["Mira AI in San Francisco this week"]
+    assert query["source"] == ["tech-week-sf-2026"] and query["when"] == ["custom"]
+    assert query["start"] == ["2030-10-01"] and "topic" not in query
+    page.go_back()
+    page.go_forward()
+    expect(page.get_by_role("combobox", name=SEARCH_NAME)).to_have_value("Mira AI in San Francisco this week")
+    page.get_by_role("combobox", name=SEARCH_NAME).press("Enter")
+    query = parse_qs(urlsplit(page.url).query)
+    assert query["q"] == ["Mira AI in San Francisco this week"]
+    assert query["start"] == ["2030-10-01"] and "topic" not in query
+
+
+def test_catalog_name_failure_and_old_response_do_not_replace_current_suggestions(discovery_filters_page):
+    harness, api, _ = discovery_filters_page
+    page = harness.page
+    held = []
+
+    def names(route: Route):
+        term = parse_qs(urlsplit(route.request.url).query)["q"][0]
+        api.calls.append((route.request.method, "/v1/catalog/name-suggestions"))
+        if term == "nebius":
+            held.append(route)
+        elif term == "mira":
+            api.respond(route, [{"name": "Mira Developer", "kinds": ["speaker", "person"], "event_count": 2}])
+        else:
+            api.respond(route, {"detail": "temporarily unavailable"}, 503)
+
+    page.route("**/v1/catalog/name-suggestions?*", names)
+    page.goto(f"{BASE}/?view=events")
+    search = page.get_by_role("combobox", name=SEARCH_NAME)
+    with page.expect_request("**/v1/catalog/name-suggestions?*q=nebius*"):
+        search.fill("nebius")
+    search.fill("mira")
+    expect(page.get_by_role("option").filter(has_text="Mira Developer")).to_be_visible()
+    api.respond(held[0], [{"name": "Nebius", "kinds": ["organization"], "event_count": 3}])
+    expect(page.get_by_role("option").filter(has_text="Nebius")).to_have_count(0)
+    search.fill("SF Tech")
+    # A failed names request leaves existing source suggestions and normal text search usable.
+    expect(page.get_by_role("option").filter(has_text="SF Tech Week").first).to_be_visible()
+    expect(page.get_by_role("option").filter(has_text="Mira Developer")).to_have_count(0)
+    search.fill("")
+    options = page.get_by_role("listbox", name="Useful starting points").get_by_role("option")
+    expect(options.nth(0)).to_contain_text("SF Tech Week 2026")
+    expect(options.nth(1)).to_contain_text("LA Tech Week 2026")
 
 
 @pytest.mark.parametrize("width", [1440, 390])
