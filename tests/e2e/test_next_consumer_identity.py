@@ -103,15 +103,15 @@ def test_guest_signin_keeps_the_selected_view_and_filters(identity_page):
     page.goto(f"{BASE}/?view=events&when=week&price=free&city=oakland")
     expect(page.get_by_role("heading", name="Friday Night Jazz", exact=True)).to_be_visible()
     page.get_by_role("link", name="Sign in", exact=True).click()
-    expect(page.get_by_role("heading", name="Sign in or create an account", exact=True)).to_be_visible()
+    expect(page.get_by_role("heading", name="Sign in", exact=True)).to_be_visible()
     destination = parse_qs(urlsplit(page.url).query)["return_to"][0]
     filters = parse_qs(urlsplit(destination).query)
     assert filters["view"] == ["events"]
     assert filters["when"] == ["week"]
     assert filters["price"] == ["free"]
     assert filters["city"] == ["oakland"]
-    expect(page.get_by_role("link", name="Browse without signing in")).to_have_attribute("href", destination)
-    page.get_by_role("link", name="Browse without signing in").click()
+    expect(page.get_by_role("link", name="Browse events")).to_have_attribute("href", destination)
+    page.get_by_role("link", name="Browse events").click()
     expect(page.get_by_role("heading", name="Friday Night Jazz", exact=True)).to_be_visible()
     assert parse_qs(urlsplit(page.url).query)["price"] == ["free"]
 
@@ -124,8 +124,7 @@ def test_google_apple_actions_require_unchecked_legal_consent_without_token_stor
     google = page.get_by_role("button", name="Continue with Google", exact=True)
     apple = page.get_by_role("button", name="Continue with Apple", exact=True)
     consent = page.get_by_role("checkbox")
-    expect(page.get_by_role("heading", name="Sign in or create an account", exact=True)).to_be_visible()
-    expect(page.get_by_text("New here? Continuing creates your account.", exact=True)).to_be_visible()
+    expect(page.get_by_role("heading", name="Sign in", exact=True)).to_be_visible()
     expect(google).to_be_disabled()
     expect(apple).to_be_disabled()
     expect(consent).not_to_be_checked()
@@ -177,7 +176,7 @@ def test_failed_signin_challenge_cannot_enable_provider_actions(identity_page):
     page.goto(f"{BASE}/sign-in")
     expect(page.get_by_role("main").get_by_role("alert")).to_contain_text("We couldn\u2019t load sign-in options")
     expect(page.get_by_role("button", name="Continue with Google", exact=True)).to_have_count(0)
-    expect(page.get_by_role("link", name="Browse without signing in")).to_be_visible()
+    expect(page.get_by_role("link", name="Browse events")).to_be_visible()
 
 
 def test_google_only_pilot_shows_only_its_enabled_provider(identity_page):
@@ -201,9 +200,6 @@ def test_explicit_legal_deferral_enables_signup_without_claiming_acceptance(iden
     expect(page.get_by_role("checkbox")).to_have_count(0)
     expect(page.get_by_role("link", name="Terms of Service")).to_have_count(0)
     expect(page.get_by_role("link", name="Privacy Policy")).to_have_count(0)
-    expect(
-        page.get_by_text("New here? Continuing creates your account.", exact=True)
-    ).to_be_visible()
     assert api.calls.count(("GET", "/auth/identity/start")) == 1
     assert (
         page.evaluate("Object.keys(localStorage).filter(key => key.startsWith('firebase:'))") == []
@@ -232,5 +228,4 @@ def test_account_confirmation_does_not_offer_signup_or_start_a_new_challenge(ide
     expect(page.get_by_text("Sign in with the same account to confirm this change.", exact=True)).to_be_visible()
     expect(page.get_by_role("button", name="Continue with Google", exact=True)).to_be_enabled()
     expect(page.get_by_role("checkbox")).to_have_count(0)
-    expect(page.get_by_text("New here? Continuing creates your account.", exact=True)).to_have_count(0)
     assert not any(path == "/auth/identity/start" for _, path in api.calls)

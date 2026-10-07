@@ -148,7 +148,7 @@ def test_generic_or_unconfigured_authentication_is_not_labelled_google(sign_in_p
         )
     else:
         expect(page.get_by_role("button", name="Check again", exact=True)).to_be_visible()
-        expect(page.get_by_role("link", name="Browse without signing in")).to_have_attribute("href", "/")
+        expect(page.get_by_role("link", name="Browse events")).to_have_attribute("href", "/")
         expect(page.get_by_role("link", name="Continue to sign in", exact=True)).to_have_count(0)
     expect(page.get_by_role("main")).not_to_contain_text("Google")
 

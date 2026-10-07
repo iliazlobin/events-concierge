@@ -96,8 +96,7 @@ export function SignIn({ reason, returnTo = "/", reauthenticationState }: {
   };
 
   const message = signInMessage(reason);
-  const title = reauthenticationState ? "Confirm your account"
-    : config?.auth_provider === "identity_platform" && reason === null ? "Sign in or create an account" : message.title;
+  const title = reauthenticationState ? "Confirm your account" : message.title;
   const description = reauthenticationState ? "Sign in with the same account to confirm this change." : message.description;
   const action = config?.local_demo ? "Continue to local demo"
     : config?.auth_provider === "google" ? "Continue with Google" : "Continue to sign in";
@@ -105,13 +104,11 @@ export function SignIn({ reason, returnTo = "/", reauthenticationState }: {
   return (
     <main className={styles.page}>
       <section className={styles.card} aria-labelledby="sign-in-title">
-        <span className="brand-symbol" aria-hidden="true"><i /><i /></span>
-        <p className={styles.brand}>Events Concierge</p>
         <h1 id="sign-in-title">{title}</h1>
-        <p className={styles.description}>{description}</p>
+        {description ? <p className={styles.description}>{description}</p> : null}
         <div className={styles.actions}>
           {loading ? (
-            <p className={styles.loading} role="status"><LoaderCircle className="spin" aria-hidden="true" />Loading sign-in options…</p>
+            <p className={styles.loading} role="status"><LoaderCircle className="spin" aria-hidden="true" />Loading…</p>
           ) : config?.auth_provider === "identity_platform" ? (
             <>
               {config.legal_policy && !reauthenticationState ? (
@@ -122,7 +119,7 @@ export function SignIn({ reason, returnTo = "/", reauthenticationState }: {
               ) : null}
               <div className={styles.providers}>
                 {config.identity_platform?.providers.map(provider => (
-                  <button key={provider} className={`button ${styles.continue}`} type="button"
+                  <button key={provider} className={styles.continue} type="button"
                     disabled={busy || !identity || !challenge || (legalRequired && !reauthenticationState && !accepted)}
                     onClick={() => void signIn(provider)}>
                     {busy ? "Signing in…" : `Continue with ${provider === "apple.com" ? "Apple" : "Google"}`}
@@ -134,13 +131,13 @@ export function SignIn({ reason, returnTo = "/", reauthenticationState }: {
               {reauthenticationState && !challenge ? <a href="/settings/account">Return to account settings and try again</a> : null}
             </>
           ) : href ? (
-            <a className={`button ${styles.continue}`} href={href} referrerPolicy="no-referrer">{action}</a>
+            <a className={styles.continue} href={href} referrerPolicy="no-referrer">{action}</a>
           ) : (
             <>
               <p className={styles.notice} role="alert">
                 {failed ? "We couldn’t load sign-in options. Please try again." : "Sign-in isn’t available here yet. Please check again later."}
               </p>
-              <button className={`button ${styles.continue}`} type="button" onClick={() => setAttempt((value) => value + 1)}>
+              <button className={styles.continue} type="button" onClick={() => setAttempt((value) => value + 1)}>
                 {failed ? "Try again" : "Check again"}
               </button>
             </>
@@ -149,10 +146,7 @@ export function SignIn({ reason, returnTo = "/", reauthenticationState }: {
         {config?.auth_provider === "google" && !config.local_demo ? (
           <p className={styles.footnote}>Use the Google account invited to Events Concierge.</p>
         ) : null}
-        {config?.auth_provider === "identity_platform" && !reauthenticationState ? (
-          <p className={styles.footnote}>New here? Continuing creates your account.</p>
-        ) : null}
-        <p className={styles.footnote}><a href={returnTo}>Browse without signing in</a></p>
+        <p className={styles.footnote}><a href={returnTo}>Browse events</a></p>
       </section>
     </main>
   );
