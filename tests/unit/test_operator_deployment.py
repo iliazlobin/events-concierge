@@ -36,7 +36,7 @@ def operator_values() -> dict[str, Any]:
             "iapAudience": "/projects/123456789/global/backendServices/987654321",
             "iapClientId": "validation.apps.googleusercontent.com",
             "iapClientSecretName": "validation-iap-oauth",
-            "subjectRoles": {OPERATOR_SUBJECT: "reviewer"},
+            "policyVersion": "projects/123456789/locations/global/parameters/ec-operator-rbac/versions/release-1",
         },
         "serviceAccounts": {
             "operator-api": {
@@ -229,7 +229,9 @@ def test_controller_cannot_mount_executor_or_consumer_credentials(rendered):
         executor["EC_GCS_CLAIM_CHECK_PREFIX"]
         != resource(resources, "ConfigMap", "runtime")["data"]["EC_GCS_CLAIM_CHECK_PREFIX"]
     )
-    assert json.loads(controller["EC_OPERATOR_SUBJECT_ROLES"]) == {OPERATOR_SUBJECT: "reviewer"}
+    assert controller["EC_OPERATOR_POLICY_VERSION"] == operator_values()["operator"]["policyVersion"]
+    assert controller["EC_OPERATOR_POLICY_CACHE_SECONDS"] == "30"
+    assert "EC_OPERATOR_SUBJECT_ROLES" not in controller
 
 
 def test_iap_gateway_and_frontend_proxy_share_the_same_origin(rendered):
@@ -326,12 +328,12 @@ def test_only_deployment_owned_cadence_can_enqueue_in_production(rendered):
         "iapAudience",
         "iapClientId",
         "iapClientSecretName",
-        "subjectRoles",
+        "policyVersion",
     ],
 )
 def test_operator_identity_configuration_fails_closed(helm_binary, tmp_path, field):
     values = operator_values()
-    values["operator"][field] = {} if field == "subjectRoles" else ""
+    values["operator"][field] = ""
     result = invoke_helm(helm_binary, tmp_path, values)
     assert result.returncode != 0, f"Missing operator.{field} rendered successfully"
     assert f"operator.{field}" in result.stderr
@@ -364,6 +366,16 @@ def test_operator_identity_configuration_fails_closed(helm_binary, tmp_path, fie
         (("serviceAccounts", "operator-api", "name"), "events-concierge-api"),
         (("serviceAccounts", "operator-api", "name"), ""),
         (("operator", "subjectRoles", OPERATOR_SUBJECT), "admin"),
+        (("operator", "subjectRoles"), {OPERATOR_SUBJECT: "reviewer"}),
+        (("operator", "policyVersion"), "projects/events-test/locations/global/parameters/ec-operator-rbac/versions/release-1"),
+        (("operator", "policyVersion"), "projects/123456789/locations/global/parameters/ec-operator-rbac/versions/latest"),
+        (("operator", "policyVersion"), "projects/123456789/locations/global/parameters/ec-operator-rbac/versions/LATEST"),
+        (("operator", "policyVersion"), "projects/123456789/locations/global/parameters/-rbac/versions/release-1"),
+        (("operator", "policyVersion"), "projects/123456789/locations/global/parameters/ec-operator-rbac/versions/-release"),
+        (("operator", "policyVersion"), "projects/123456789/locations/us-west1/parameters/ec-operator-rbac/versions/release-1"),
+        (("operator", "policyCacheSeconds"), 0),
+        (("operator", "policyCacheSeconds"), 61),
+        (("operator", "policyCacheSeconds"), 1.5),
         (("operator", "operatorSecrets"), []),
         (("operator", "executorSecrets"), []),
         (("operator", "executorClaimCheckPrefix"), "events-concierge/claim-check/v1"),

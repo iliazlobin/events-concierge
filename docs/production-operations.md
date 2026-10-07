@@ -74,7 +74,7 @@ make staging-canary BASE_URL="$BASE_URL" \
 | Ingestion-command worker | `python -m events_concierge.workers.ingestion_commands`; claim/lease commands |
 | Catalog Temporal worker | `EC_TEMPORAL_WORKER_ROLE=catalog python -m events_concierge.workflows.worker` |
 | Account-erasure worker | `python -m events_concierge.workers.account_erasure`; fenced cleanup and session revocation |
-| Operator API | Separate FastAPI process and restricted controller DB login; verifies IAP signature/audience/owner. Shared Next.js `/admin` enters through its IAP backend Service; consumer identity grants no operator access |
+| Operator API | Separate FastAPI process and restricted controller DB login; verifies IAP signature/audience and [configured RBAC](../deploy/operator-access.md). Shared Next.js `/admin` enters through its IAP backend Service; consumer identity grants no operator access |
 
 - Proxy strips untrusted forwarding/hop headers; 64 KiB request cap and bounded body deadline. Secure cookies, exact-Origin CSRF and safe redirects remain required.
 - Public `8080` and IAP `8082` share a credential-free web Pod; Next.js `3000` is not reachable from GFE. Public assets contain no private data. Consumer/IAP sessions are separate; same-origin XSS can act as a signed-in owner. [Route and activation gates](../deploy/public-access.md).
@@ -98,8 +98,8 @@ make staging-canary BASE_URL="$BASE_URL" \
 
 Use [GCP Identity Platform](../deployment/consumer-identity.md) for Google/Apple signup,
 required legal acceptance or explicit owner-configured deferral, protected personal data and same-account erasure. Guests
-read the published catalog. Admin access separately requires Google IAP with signed owner
-email `iliazlobin91@gmail.com` and its configured subject/role. Deployment remains gated
+read the published catalog. Admin access separately requires Google IAP and a matching
+private [RBAC policy](../deploy/operator-access.md). Deployment remains gated
 on domain/provider setup, the approved legal mode and real browser acceptance.
 
 ### Built-in OIDC BFF activation

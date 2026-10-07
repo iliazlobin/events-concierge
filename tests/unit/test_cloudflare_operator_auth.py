@@ -41,7 +41,7 @@ def claims(**overrides: object) -> dict[str, object]:
         "exp": now + 600,
         "nbf": now,
         "sub": SUBJECT,
-        "email": "iliazlobin91@gmail.com",
+        "email": "operator@example.test",
         "type": "app",
         **overrides,
     }
@@ -59,14 +59,18 @@ async def key(assertion: str) -> PyJWK:
 
 def verifier() -> CloudflareAccessOperatorIdentityVerifier:
     return CloudflareAccessOperatorIdentityVerifier(
-        team_domain=TEAM, audience=AUD, subject_roles={SUBJECT: "reviewer"}, key_resolver=key
+        team_domain=TEAM,
+        audience=AUD,
+        subject_roles={SUBJECT: "reviewer"},
+        allowed_email="operator@example.test",
+        key_resolver=key,
     )
 
 
 def settings(**overrides: object) -> Settings:
     values = {
         "_env_file": None,
-        "env": "staging",
+        "env": "test",
         "mock_cloud": False,
         "operator_api_enabled": True,
         "operator_auth_provider": "cloudflare_access",
@@ -74,6 +78,7 @@ def settings(**overrides: object) -> Settings:
         "operator_cloudflare_audience": AUD,
         "operator_public_origin": ORIGIN,
         "operator_subject_roles": {SUBJECT: "reviewer"},
+        "operator_allowed_email": "operator@example.test",
         "operator_database_url": "postgresql+psycopg://operator_login:secret@db.example.test/ec?sslmode=verify-full",
         **overrides,
     }
@@ -135,7 +140,7 @@ async def test_all_required_application_claims_are_signed(missing: str) -> None:
     "override",
     [
         {"email": "attacker@example.test"},
-        {"email": "ILIAZLOBIN91@gmail.com"},
+        {"email": "OPERATOR@example.test"},
         {"sub": "another-verified-user"},
     ],
 )
@@ -174,7 +179,10 @@ async def test_key_endpoint_is_derived_only_from_the_configured_team() -> None:
 
     with patch("events_concierge.api.operator_auth.PyJWKClient", return_value=Keys()) as client:
         identity = CloudflareAccessOperatorIdentityVerifier(
-            team_domain=TEAM, audience=AUD, subject_roles={SUBJECT: "reviewer"}
+            team_domain=TEAM,
+            audience=AUD,
+            subject_roles={SUBJECT: "reviewer"},
+            allowed_email="operator@example.test",
         )
         assertion = jwt.encode(
             claims(),
@@ -203,7 +211,7 @@ async def test_api_selects_only_the_configured_signed_assertion() -> None:
             {},
             {"authorization": "Bearer " + token()},
             {"x-goog-iap-jwt-assertion": token()},
-            {"cf-access-authenticated-user-email": "iliazlobin91@gmail.com"},
+            {"cf-access-authenticated-user-email": "operator@example.test"},
         ]:
             assert (
                 await client.get("/admin/v1/operator/session", headers=headers)

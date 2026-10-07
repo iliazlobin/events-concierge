@@ -159,7 +159,7 @@ def public_values(*, bootstrap=False):
         "iapAudience": "/projects/123456789/global/backendServices/987654321",
         "iapClientId": "validation.apps.googleusercontent.com",
         "iapClientSecretName": "validation-iap-oauth",
-        "subjectRoles": {"accounts.google.com:private-validation-owner": "reviewer"},
+        "policyVersion": "projects/123456789/locations/global/parameters/ec-operator-rbac/versions/release-1",
         "operatorSecrets": [
             {
                 "fileName": "EC_OPERATOR_DATABASE_URL",
@@ -182,7 +182,7 @@ def public_values(*, bootstrap=False):
         "sslPolicy": "ec-public-tls",
     }
     if bootstrap:
-        values["operator"].update({"enabled": False, "iapAudience": "", "subjectRoles": {}})
+        values["operator"].update({"enabled": False, "iapAudience": "", "policyVersion": "", "subjectRoles": {}})
         for name in ("operator-frontend", "operator-api"):
             values["workloads"][name]["enabled"] = False
     return values
@@ -388,7 +388,10 @@ def test_public_filter_is_a_credential_free_sidecar_in_existing_frontend(resourc
         {"publicEdge": {"proxyImage": {"repository": "unknown"}}},
         {"operator": {"enabled": False}},
         {"operator": {"iapAudience": ""}},
-        {"operator": {"subjectRoles": {}}},
+        {"operator": {"policyVersion": ""}},
+        {"operator": {"subjectRoles": {"accounts.google.com:fixture": "reviewer"}}},
+        {"operator": {"policyVersion": "projects/123456789/locations/global/parameters/ec-operator-rbac/versions/latest"}},
+        {"operator": {"policyCacheSeconds": 61}},
         {"operator": {"tlsSecretName": "old-tls"}},
         {"operator": {"iapClientSecretName": "ec-consumer-google"}},
         {"operator": {"authProvider": "cloudflare_access"}},

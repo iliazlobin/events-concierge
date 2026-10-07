@@ -15,8 +15,9 @@ API keys are deferred unless the assigned task explicitly changes their scope.
 - [Development workflow](README.md#development-workflow): `main`, task branches, PRs and release authority.
 - [Release acceptance](docs/production-operations.md#first-release-acceptance): release gates.
 - [GKE release and recovery](deploy/development.md): application operations.
-- [Consumer accounts](deployment/consumer-identity.md): signup, legal acceptance and owner-only admin release gates.
-- [Public consumer access](deploy/public-access.md): GCP routing, TLS and owner-only IAP admin.
+- [Consumer accounts](deployment/consumer-identity.md): signup and legal acceptance.
+- [Operator access](deploy/operator-access.md): RBAC configuration and separate IAP access.
+- [Public consumer access](deploy/public-access.md): GCP routing, TLS and admin release gates.
 - [Symphony workflow](WORKFLOW.md): bounded coding-agent assignment and handoff.
 - [CI](.github/workflows/ci.yml) and [deployment checks](.github/workflows/deployment-validation.yml):
   authoritative check definitions. Read the relevant design and tests before changing a component.

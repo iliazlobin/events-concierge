@@ -10,6 +10,7 @@ from urllib.parse import urlsplit
 from pydantic import Field, SecretStr, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+from .adapters.operator_policy import validate_operator_policy_version
 from .domain.consumer_identity import LegalPolicy
 from .domain.oidc import (
     GOOGLE_AUTHORIZATION_URL,
@@ -195,6 +196,10 @@ class Settings(BaseSettings):
     operator_cloudflare_team_domain: str | None = None
     operator_cloudflare_audience: str | None = None
     operator_public_origin: str | None = None
+    operator_policy_version: str | None = Field(default=None, repr=False)
+    operator_policy_cache_seconds: int = Field(default=30, ge=1, le=60)
+    # Local test compatibility only; hosted production uses the versioned policy above.
+    operator_allowed_email: str | None = Field(default=None, repr=False)
     operator_subject_roles: dict[str, Literal["viewer", "operator", "reviewer"]] = Field(
         default_factory=dict,
         repr=False,
@@ -564,6 +569,26 @@ class Settings(BaseSettings):
         return self
 
     @model_validator(mode="after")
+    def validate_operator_policy_source(self) -> Settings:
+        """Keep local static fixtures separate from hosted managed authorization."""
+        if self.operator_policy_version is not None:
+            validate_operator_policy_version(self.operator_policy_version)
+            if self.operator_subject_roles or self.operator_allowed_email is not None:
+                raise ValueError("operator policy sources cannot be combined")
+        if self.operator_api_enabled and self.operator_policy_version is None:
+            if self.env not in {"local", "development", "test"}:
+                raise ValueError("hosted operator API requires a Parameter Manager policy")
+            if not self.operator_subject_roles or not self.operator_allowed_email:
+                raise ValueError("local operator requires explicit subjects and email")
+            if (
+                not re.fullmatch(r"[^\s@]+@[^\s@]+", self.operator_allowed_email)
+                or not self.operator_allowed_email.isascii()
+                or not self.operator_allowed_email.isprintable()
+            ):
+                raise ValueError("local operator requires a valid configured email")
+        return self
+
+    @model_validator(mode="after")
     def validate_operator_configuration(self) -> Settings:
         """Keep a partially provisioned operator process from accepting any request."""
         if (
@@ -580,8 +605,6 @@ class Settings(BaseSettings):
         if self.operator_api_enabled:
             if self.mock_cloud or self.admin_ingestion_enabled:
                 raise ValueError("hosted operator API cannot use the local mock admin profile")
-            if not self.operator_subject_roles:
-                raise ValueError("operator API requires explicit subject roles")
             if self.operator_auth_provider == "iap":
                 if not self.operator_iap_audience:
                     raise ValueError("operator API requires IAP audience")

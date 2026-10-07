@@ -55,6 +55,8 @@ operator:
   iapClientId: ""
   iapClientSecretName: ""
   subjectRoles: {}
+  policyVersion: ""
+  policyCacheSeconds: 30
   operatorSecrets:
     - {fileName: EC_OPERATOR_DATABASE_URL, secretName: ec-dev-operator-database-url, version: "2"}
 secretManager:

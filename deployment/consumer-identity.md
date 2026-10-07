@@ -11,7 +11,7 @@ Implementation is available; provider setup and deployed acceptance remain relea
 | --- | --- |
 | Guest | Events, Map, Calendar, Entities/Graph, event details and provider links. |
 | Signed-in user | Own profile, preferences, saved filters and account erasure. PostgreSQL RLS and CSRF protect writes. |
-| Admin | `/admin` routes; Google IAP admits only `iliazlobin91@gmail.com`; the operator API verifies the signed owner and stable subject/role. Consumer login grants no admin role. |
+| Admin | `/admin` routes; Google IAP admits the configured member; the operator API checks the verified identity against [configured RBAC](../deploy/operator-access.md). Consumer login grants no admin role. |
 
 - Default `EC_CONSUMER_LEGAL_MODE=required`: publish approved, versioned HTTPS Terms of Service and Privacy Policy pages. The checkbox starts unchecked; the API records account binding and acceptance atomically.
 - The owner may explicitly select `EC_CONSUMER_LEGAL_MODE=deferred` for a release and unset all four `EC_SIGNUP_TERMS_*`/`EC_SIGNUP_PRIVACY_*` fields. Signup/login/logout remain available with managed identity, sessions, CSRF, tenant isolation and erasure checks. No legal checkbox, document links or acceptance receipts are created; this setting is deployment-owned, never caller-selected.
@@ -36,7 +36,7 @@ the protected application state bucket; never adopt shared foundation/network/cl
 | API Workload Identity | `firebaseauth.users.get`; no provider secrets or identity deletion. |
 | Erasure Workload Identity | `firebaseauth.users.get` and `firebaseauth.users.delete`. |
 | Provider secrets | `ec-consumer-google`, `ec-consumer-apple`; numbered Secret Manager versions, operator access only. Values never enter Terraform state or containers. |
-| Admin access | Google IAP on the `/admin` backend Service; shared Next.js, separate operator API verifying signed owner email and subject. |
+| Admin access | Google IAP on the `/admin` backend Service; shared Next.js, separate operator API checking the private RBAC policy. |
 
 1. Use `https://events.iliazlobin.com` as the consumer origin in `iz27-platform-dev`. [Public routing](../deploy/public-access.md) admits guests and protects `/admin` with Google IAP. Verify the active CLI account independently of the [Identity console](https://console.cloud.google.com/customer-identity/providers?project=iz27-platform-dev&authuser=4).
 2. Prepare the [backend example](../infra/terraform/environments/consumer-identity/backend.tf.example) and [variables](../infra/terraform/environments/consumer-identity/identity.tfvars.example). Initialize this new app-owned state, review a saved plan, then apply only after deployment authorization.

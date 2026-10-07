@@ -16,8 +16,13 @@ from fastapi import HTTPException, Request
 from jwt import PyJWK, PyJWKClient, PyJWTError, decode, get_unverified_header
 
 from ..adapters.oidc.auth import _BoundedJwksResolver
+from ..adapters.operator_policy import (
+    OperatorPolicySource,
+    OperatorPolicyUnavailableError,
+    OperatorRole,
+    StaticOperatorPolicy,
+)
 
-OperatorRole = Literal["viewer", "operator", "reviewer"]
 IAP_ISSUER = "https://cloud.google.com/iap"
 IAP_JWKS_URL = "https://www.gstatic.com/iap/verify/public_key-jwk"
 IAP_HEADER = "x-goog-iap-jwt-assertion"
@@ -65,15 +70,17 @@ class IapOperatorIdentityVerifier:
         self,
         *,
         audience: str,
-        subject_roles: Mapping[str, OperatorRole],
+        subject_roles: Mapping[str, OperatorRole] | None = None,
         allowed_email: str | None = None,
+        policy: OperatorPolicySource | None = None,
         key_resolver: Callable[[str], Awaitable[PyJWK]] | None = None,
     ) -> None:
-        if not audience or not subject_roles:
+        if not audience or (policy is None and not subject_roles):
             raise ValueError("operator identity requires audience and subject roles")
+        if policy is not None and (subject_roles or allowed_email is not None):
+            raise ValueError("operator policy sources cannot be combined")
         self._audience = audience
-        self._roles = dict(subject_roles)
-        self._allowed_email = allowed_email
+        self.policy = policy or StaticOperatorPolicy(subject_roles or {}, allowed_email)
         self._key_resolver = (
             key_resolver
             or _BoundedJwksResolver(
@@ -114,9 +121,7 @@ class IapOperatorIdentityVerifier:
                 raise _unauthenticated()
         except (PyJWTError, ValueError, TypeError, KeyError, OSError) as error:
             raise _unauthenticated() from error
-        if self._allowed_email is not None and claims.get("email") != self._allowed_email:
-            raise HTTPException(403, "operator access is not assigned", headers=_NO_STORE)
-        role = self._roles.get(subject)
+        role = await _policy_role(self.policy, subject, claims.get("email"))
         if role is None:
             raise HTTPException(403, "operator access is not assigned", headers=_NO_STORE)
         return OperatorPrincipal(subject, role)
@@ -135,7 +140,9 @@ class CloudflareAccessOperatorIdentityVerifier:
         *,
         team_domain: str,
         audience: str,
-        subject_roles: Mapping[str, OperatorRole],
+        subject_roles: Mapping[str, OperatorRole] | None = None,
+        allowed_email: str | None = None,
+        policy: OperatorPolicySource | None = None,
         key_resolver: Callable[[str], Awaitable[PyJWK]] | None = None,
     ) -> None:
         if (
@@ -144,15 +151,20 @@ class CloudflareAccessOperatorIdentityVerifier:
                 team_domain,
             )
             or not re.fullmatch(r"[a-f0-9]{64}", audience)
-            or not subject_roles
+            or (policy is None and not subject_roles)
         ):
             raise ValueError("Cloudflare operator requires a fixed team, AUD and subject roles")
+        if policy is not None and (subject_roles or allowed_email is not None):
+            raise ValueError("operator policy sources cannot be combined")
         self._issuer = team_domain
         self._audience = audience
-        self._roles = dict(subject_roles)
-        self._key_resolver = key_resolver or _BoundedJwksResolver(
-            PyJWKClient(team_domain + "/cdn-cgi/access/certs", timeout=5, cache_jwk_set=True)
-        ).resolve
+        self.policy = policy or StaticOperatorPolicy(subject_roles or {}, allowed_email)
+        self._key_resolver = (
+            key_resolver
+            or _BoundedJwksResolver(
+                PyJWKClient(team_domain + "/cdn-cgi/access/certs", timeout=5, cache_jwk_set=True)
+            ).resolve
+        )
 
     async def verify(self, token: str) -> OperatorPrincipal:
         if not token or len(token.encode("utf-8")) > _MAX_ASSERTION_BYTES:
@@ -191,10 +203,19 @@ class CloudflareAccessOperatorIdentityVerifier:
                 raise _unauthenticated()
         except (PyJWTError, ValueError, TypeError, KeyError, OSError) as error:
             raise _unauthenticated() from error
-        role = self._roles.get(subject)
-        if claims["email"] != "iliazlobin91@gmail.com" or role is None:
+        role = await _policy_role(self.policy, subject, claims.get("email"))
+        if role is None:
             raise HTTPException(403, "operator access is not assigned", headers=_NO_STORE)
         return OperatorPrincipal(subject, role, "cloudflare_access")
+
+
+async def _policy_role(
+    policy: OperatorPolicySource, subject: str, email: object
+) -> OperatorRole | None:
+    try:
+        return await policy.role_for(subject, email)
+    except OperatorPolicyUnavailableError:
+        raise HTTPException(503, "operator authorization unavailable", headers=_NO_STORE) from None
 
 
 def _unauthenticated() -> HTTPException:

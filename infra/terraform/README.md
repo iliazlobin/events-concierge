@@ -9,13 +9,13 @@ Each root has separate protected state. Shared platform resources stay in
 | --- | --- |
 | [Shared platform](https://github.com/iliazlobin/gcp-foundation) | Projects/APIs, VPC/NAT, private GKE, access VM and `shared-retain`; Gateway controller |
 | [Shared application](environments/shared-development) | Workload identities, scoped IAM, registry, data/backup/state buckets and secret containers; [release/recovery](../../deploy/development.md) |
-| [Consumer identity](environments/consumer-identity) | Identity Platform, restricted browser key and scoped identity IAM; [provider setup](../../deployment/consumer-identity.md) |
+| [Consumer identity](environments/consumer-identity) | Identity Platform, restricted browser key, scoped identity IAM and empty RBAC parameter; [accounts](../../deployment/consumer-identity.md) / [operator setup](../../deploy/operator-access.md) |
 | [Public access](environments/public-access) | Global IP, DNS authorizations, managed certificate/map, TLS policy and empty IAP secret container; [edge activation](../../deploy/public-access.md) |
 
 Helm owns workloads, retained-store configuration, namespace policies and Gateway/routes;
-the GKE controller owns load-balancer backends/NEGs. DNS authority owns the two app records
-and certificate-validation CNAMEs. Terraform provisions secret containers, not provider
-credential payloads or DNS records.
+the GKE controller owns load-balancer backends/NEGs. DNS authority owns the app A record
+and certificate-validation CNAMEs. Terraform provisions secret/parameter containers, not provider
+credentials, RBAC payloads or DNS records.
 The shared application root also owns three protected CA recovery containers;
 [TLS custody](../../deploy/development.md#authenticated-discovery-and-encrypted-dependencies)
 keeps signing-key payloads outside state and workload grants.

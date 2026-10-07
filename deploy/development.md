@@ -71,7 +71,7 @@ Configure Google Identity Platform, the approved legal mode and trusted HTTPS. [
 - The separate [development root](../infra/terraform/environments/development) manages resources awaiting verified retirement.
 - Remove that root only after data/image/identity dependencies are resolved and its owning state is empty.
 - Existing stores: skip installation below; storage changes require separate rehearsal.
-- The private operator uses the dedicated `ec-dev-operator-api` GSA, bound only to `events-concierge-dev/events-concierge-operator-api` with access only to `ec-dev-operator-database-url`. This root grants it no consumer database, Redis, object or project IAM access. For an existing landing, check the saved plan with `scripts/development/check_shared_plan.py --operator-prerequisite`; only this GSA and its two IAM resources may be added, with all existing resources unchanged. Apply requires separate approval; generated release values then include the operator identity.
+- The private operator uses the dedicated `ec-dev-operator-api` GSA, bound only to `events-concierge-dev/events-concierge-operator-api` with database access only to `ec-dev-operator-database-url`. The application identity root separately grants [RBAC policy reads](operator-access.md). This root grants it no consumer database, Redis, object or project IAM access. For an existing landing, check the saved plan with `scripts/development/check_shared_plan.py --operator-prerequisite`; only this GSA and its two IAM resources may be added, with all existing resources unchanged. Apply requires separate approval; generated release values then include the operator identity.
 
 **New stores / coordinated restoration only**
 
@@ -105,7 +105,7 @@ helm upgrade --install ec-dev-data deploy/helm/events-concierge-dev-data -n even
 
 - Tools: Python 3.12, gcloud, `gke-gcloud-auth-plugin`, kubectl, Helm 3, Terraform 1.16.1 and Docker Buildx.
 - Dependencies: `uv sync --frozen --python 3.12`; use `.venv/bin/python` for operation helpers.
-- Account: `iliazlobin27@gmail.com`; explicit cloud project.
+- Set `APP_GCP_ACCOUNT` privately to the approved deployment account; verify it and the explicit cloud project. Recovery helpers also enforce their approved account.
 - [Platform access](https://github.com/iliazlobin/gcp-foundation#private-access): keep IAP running; export its dedicated kubeconfig.
 - Required context: `gke_iz27-platform-dev_us-west1-a_platform-dev`; Ready nodes.
 
@@ -148,15 +148,15 @@ Publish the loaded images without rebuilding. The host's existing `gcloud` Docke
 
 ```bash
 set -euo pipefail
-test "$(gcloud auth list --filter='status:ACTIVE' --format='value(account)')" = iliazlobin27@gmail.com
+test "$(gcloud auth list --filter='status:ACTIVE' --format='value(account)')" = "${APP_GCP_ACCOUNT:?Set the approved deployment account}"
 test "$(gcloud config get-value project)" = iz27-platform-dev
 REGISTRY=us-west1-docker.pkg.dev/iz27-platform-dev/ec-dev
 docker tag events-concierge:ci "$REGISTRY/events-concierge:$BACKEND_REVISION"
 docker tag events-concierge-web:ci "$REGISTRY/events-concierge-web:$BACKEND_REVISION"
 docker push "$REGISTRY/events-concierge:$BACKEND_REVISION"
 docker push "$REGISTRY/events-concierge-web:$BACKEND_REVISION"
-APP_IMAGE=$(gcloud artifacts docker images describe "$REGISTRY/events-concierge:$BACKEND_REVISION" --project=iz27-platform-dev --account=iliazlobin27@gmail.com --format='value(image_summary.fully_qualified_digest)')
-WEB_IMAGE=$(gcloud artifacts docker images describe "$REGISTRY/events-concierge-web:$BACKEND_REVISION" --project=iz27-platform-dev --account=iliazlobin27@gmail.com --format='value(image_summary.fully_qualified_digest)')
+APP_IMAGE=$(gcloud artifacts docker images describe "$REGISTRY/events-concierge:$BACKEND_REVISION" --project=iz27-platform-dev --account="$APP_GCP_ACCOUNT" --format='value(image_summary.fully_qualified_digest)')
+WEB_IMAGE=$(gcloud artifacts docker images describe "$REGISTRY/events-concierge-web:$BACKEND_REVISION" --project=iz27-platform-dev --account="$APP_GCP_ACCOUNT" --format='value(image_summary.fully_qualified_digest)')
 ```
 
 Record both digests, source revision and CI run in the existing [release record](https://github.com/iliazlobin/events-concierge/issues/26), then generate values below. Private rollout requires [IAP access](#shared-release-and-access) and the **Release** procedure; preserve prior digests/configuration and a compatible backup for [rollback](../docs/production-operations.md#release-and-rollback). Verify serving identity, required processes, discovery and collection after rollout.
@@ -342,7 +342,7 @@ kubectl -n events-concierge-dev exec -i deployment/events-concierge-api -- pytho
 - Ordinary API: administration disabled. Cadence uses separate CronJob.
 - Shared live data and immutable images; readiness checks admin overview through API/frontend.
 - [Open via admin forward](#shared-release-and-access).
-- Authenticated public releases use the shared frontend `/admin`, separate operator API and [owner-only IAP](public-access.md#admin). The demo Deployment is absent from the private authenticated profile.
+- Authenticated public releases use the shared frontend `/admin`, separate operator API and [configured IAP/RBAC](operator-access.md). The demo Deployment is absent from the private authenticated profile.
 
 ## Manual recovery
 

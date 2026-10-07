@@ -28,8 +28,8 @@ Inspect catalog collection, investigate failures and submit reviewed commands. U
 uvicorn events_concierge.api.operator:create_operator_app --factory
 ```
 
-- Requires `EC_OPERATOR_API_ENABLED=true`, non-mock composition, exact HTTPS `EC_OPERATOR_PUBLIC_ORIGIN`, `EC_OPERATOR_AUTH_PROVIDER=iap`, the actual backend's `EC_OPERATOR_IAP_AUDIENCE` and explicit `EC_OPERATOR_SUBJECT_ROLES`.
-- The API verifies Google's signed assertion, backend audience, signed owner email and assigned subject; unsigned headers and consumer cookies confer no authority. [Admin routing and acceptance](../deploy/public-access.md#admin).
+- Requires `EC_OPERATOR_API_ENABLED=true`, non-mock composition, exact HTTPS `EC_OPERATOR_PUBLIC_ORIGIN`, `EC_OPERATOR_AUTH_PROVIDER=iap`, the actual backend's `EC_OPERATOR_IAP_AUDIENCE` and a pinned `EC_OPERATOR_POLICY_VERSION`.
+- The API verifies Google's signed assertion, backend audience and private [RBAC binding](../deploy/operator-access.md); unsigned headers and consumer cookies confer no authority. [Admin routing and acceptance](../deploy/public-access.md#admin).
 - Mutations require JSON and the exact browser Origin. The verified subject supplies the receipt actor.
 - The pool validates `ec_operator_controller` membership and rejects consumer/elevated logins; executor credentials have separate command/publication capabilities.
 - Restricted definer functions expose bounded aggregates and opaque references, never raw queue tables, tenant payloads or lease tokens.

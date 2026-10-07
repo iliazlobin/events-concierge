@@ -24,7 +24,7 @@ The file does not activate the public edge or IAP admin. Follow the runbook's co
 cutover, provider/legal setup and deployed login/logout checks before enabling signup or cadence.
 
 [Public access](../../public-access.md) uses an opt-in GCP Gateway and Certificate Manager
-for the consumer site and owner-only IAP admin. Both use the same reserved global IP.
+for the consumer site and configured IAP admin. Both use the same reserved global IP.
 The selected `publicEdge` serves both from `events.iliazlobin.com` through one Next.js
 Deployment. Separate backend Services target Caddy consumer `8080` and protected admin
 `8082`; health checks use `8081`, never Next.js `3000`.
@@ -111,15 +111,15 @@ Prepare the [Terraform foundation](../../../infra/terraform/README.md) with its 
 operator_helm_values` provides the chart's two GCP identity annotations and catalog claim-check
 prefix; `secret_ids` provides the environment-prefixed database-secret names. Terraform creates
 empty secret containers and restricted IAM bindings. It does not populate passwords or secret
-versions, assign operators in IAP or `operator.subjectRoles`, or enable this chart profile.
+versions, publish RBAC payloads or assign operators in IAP, or enable this chart profile.
 Pin the audited secret versions and keep `operator.executorClaimCheckPrefix` disjoint from the
 consumer `EC_GCS_CLAIM_CHECK_PREFIX`.
 
 The deployment requires:
 
 - A distinct operator hostname and TLS Secret, IAP OAuth client ID and existing client-secret Secret,
-  exact IAP backend audience, and explicit subject-role map. The chart renders a separate Gateway,
-  HTTPRoute, IAP GCPBackendPolicy and health check. IAP IAM access and the application role allowlist
+  exact IAP backend audience, and explicit Parameter Manager policy version. The chart renders a separate Gateway,
+  HTTPRoute, IAP GCPBackendPolicy and health check. IAP IAM access and the application RBAC policy
   must both be assigned. See [GKE Gateway IAP configuration](https://cloud.google.com/kubernetes-engine/docs/how-to/configure-gateway-resources#configure_iap).
 - Separate non-owner PostgreSQL LOGIN principals belonging to `ec_operator_controller` and
   `ec_ingestion_executor`, created by approved provisioning after migration `0182`. Neither login
@@ -148,11 +148,11 @@ these prerequisites or authorize a migration/deployment.
 The [authenticated private values](values-private-authenticated.example.yaml) support a separate
 operator app against the retained PostgreSQL service. Enable `operator.enabled` and both operator
 workloads only with a complete reviewed identity configuration. The API verifies the signed
-Google IAP assertion, backend audience, owner email `iliazlobin91@gmail.com` and stable subject.
+Google IAP assertion, backend audience and private [RBAC policy](../../operator-access.md).
 Consumer signup grants no admin role.
 
-- Supply an isolated operator API GCP identity authorized only for the numbered
-  `ec-dev-operator-database-url` Secret Manager version. Its login must retain only
+- Supply an isolated operator API GCP identity authorized for the numbered
+  `ec-dev-operator-database-url` Secret Manager version and the scoped RBAC parameter GET. Its login must retain only
   `ec_operator_controller`. The API mounts that DSN and the PostgreSQL CA, uses `direct_tls`
   with `sslmode=verify-full`, and has no Redis, Temporal, consumer or migration credentials.
 - Frontend/API are singletons requesting `25m/128Mi` and `100m/192Mi`, with zero surge and no
@@ -164,7 +164,7 @@ Consumer signup grants no admin role.
   `ec-public-cert-map` and TLS policy `ec-public-tls`; Terraform owns those resources.
 - In `publicEdge`, disable the separate `operator-frontend` workload. Bootstrap uses a
   nonmatching admin Service selector, disabled operator API/BFF and admin filter. Set the
-  real backend audience/owner subject only after IAP/IAM readback. Then attest
+  real backend audience/policy version only after IAP/IAM readback. Then attest
   `operatorAccessVerified=true`, disable bootstrap and enable the operator API. Helm checks
   configuration; the attestation is not a cloud-permission query.
 - Consumer filter `8080` strips identity headers and rejects all `/admin` aliases. Protected
@@ -175,5 +175,5 @@ Consumer signup grants no admin role.
   Health checks measure consumer readiness; verify the operator API separately.
 - PublicEdge readiness/backup use `--operator --shared-frontend --profile private`.
   Legacy separate frontend installations use `--operator` alone. Recovery uses the recorded
-  inventory. Verify owner login, non-owner/forged-assertion denial, CSRF and recovery through
+  inventory. Verify assigned login, unassigned/forged-assertion denial, CSRF and recovery through
   [edge acceptance](../../public-access.md) before declaring the endpoint usable.

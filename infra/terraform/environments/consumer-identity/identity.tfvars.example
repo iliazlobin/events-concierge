@@ -2,7 +2,9 @@ project_id              = "iz27-platform-dev"
 public_origin           = "https://events.iliazlobin.com"
 api_service_account     = "ec-dev-api@iz27-platform-dev.iam.gserviceaccount.com"
 erasure_service_account = "ec-dev-account-erasure@iz27-platform-dev.iam.gserviceaccount.com"
+operator_api_service_account = "ec-dev-operator-api@iz27-platform-dev.iam.gserviceaccount.com"
 signup_enabled          = false
 # Existing iz27 foundation owns these enabled APIs; leave its state untouched.
 foundation_owned_services = ["iam.googleapis.com", "secretmanager.googleapis.com"]
 # operator_backend_service = "reviewed-existing-operator-backend"
+# Supply operator_iap_member only in an ignored private input when enabling that grant.

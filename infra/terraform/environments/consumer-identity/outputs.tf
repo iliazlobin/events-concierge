@@ -10,3 +10,7 @@ output "provider_secret_ids" {
 output "identity_console" {
   value = "https://console.cloud.google.com/customer-identity/providers?project=${var.project_id}&authuser=4"
 }
+output "operator_policy_parameter" {
+  value       = local.operator_policy_parameter
+  description = "Create a private RBAC JSON version outside Terraform and pin its explicit version resource in Helm."
+}
