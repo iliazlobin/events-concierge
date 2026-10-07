@@ -90,6 +90,8 @@ async def test_ui_config_distinguishes_local_demo_from_deployment_auth(
     assert local.json() == {
         "product_name": "Events Concierge",
         "release_profile": "full",
+        "muse_enabled": False,
+        "catalog_name_suggestions_enabled": False,
         "local_demo": True,
         "auth_mode": "local_demo",
         "auth_provider": None,
@@ -107,6 +109,8 @@ async def test_ui_config_distinguishes_local_demo_from_deployment_auth(
     assert deployed.json() == {
         "product_name": "Events Concierge",
         "release_profile": "full",
+        "muse_enabled": False,
+        "catalog_name_suggestions_enabled": False,
         "local_demo": False,
         "auth_mode": "deployment_session",
         "auth_provider": None,
