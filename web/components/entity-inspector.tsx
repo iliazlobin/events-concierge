@@ -1,6 +1,7 @@
 "use client";
 
 import {
+  ArrowUp,
   ArrowUpRight,
   AtSign,
   BookOpen,
@@ -479,16 +480,14 @@ export function EntityInspector({
               : ""}
           </span>
         </div>
-        {isEgo ? null : (
-          <button
-            type="button"
-            className="entity-graph-inspector__close"
-            onClick={() => onSelectNode(null)}
-          >
-            <X aria-hidden="true" />
-            <span className="sr-only">{closeLabel}</span>
-          </button>
-        )}
+        <button
+          type="button"
+          className={`entity-graph-inspector__close${isEgo ? " entity-graph-inspector__close--focus" : ""}`}
+          onClick={() => onSelectNode(null)}
+        >
+          {isEgo ? <ArrowUp aria-hidden="true" /> : <X aria-hidden="true" />}
+          <span className="sr-only">{isEgo ? "Back to graph" : closeLabel}</span>
+        </button>
       </header>
 
       {isEgo || !subject.entity_id ? null : (

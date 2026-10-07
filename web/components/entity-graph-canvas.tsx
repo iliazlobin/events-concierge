@@ -17,7 +17,8 @@ import type {
   EntityGraphScene,
 } from "@/lib/entity-graph";
 import { chooseRestingLabels, screenRadius } from "@/lib/entity-graph-labels";
-import { NODE_MAX_RADIUS } from "@/lib/entity-graph-layout";
+import { fitGraphCamera as fitCamera, MAX_GRAPH_ZOOM as MAX_ZOOM, minimumGraphZoom } from "@/lib/entity-graph-camera";
+import type { GraphCamera as Camera } from "@/lib/entity-graph-camera";
 
 /**
  * Edges on one `<canvas>`, nodes as real DOM `<button>`s.
@@ -31,9 +32,6 @@ import { NODE_MAX_RADIUS } from "@/lib/entity-graph-layout";
  * hit testing.  There is no quadtree and no hand-written hit test in this file.
  */
 
-const MIN_ZOOM = 0.5;
-const MAX_ZOOM = 2.5;
-const FIT_PADDING = NODE_MAX_RADIUS + 26;
 const REFOCUS_DURATION_MS = 320;
 /**
  * The zoom a re-centre pulls up to, when the reader is further out than this.
@@ -74,12 +72,6 @@ const EDGE_BUCKETS: EdgeBucket[] = [
   "organizer",
   "host",
 ];
-
-interface Camera {
-  tx: number;
-  ty: number;
-  k: number;
-}
 
 export interface EntityGraphCanvasProps {
   scene: EntityGraphScene;
@@ -178,19 +170,6 @@ function nodeAriaLabel(node: CatalogEntityGraphNode): string {
 function clockAngle(placement: EntityGraphPlacement): number {
   const angle = Math.atan2(placement.x, -placement.y);
   return angle < 0 ? angle + Math.PI * 2 : angle;
-}
-
-function fitCamera(
-  bounds: EntityGraphScene["bounds"],
-  width: number,
-  height: number,
-): Camera {
-  const spanX = Math.max(bounds.maxX - bounds.minX, 1) + FIT_PADDING * 2;
-  const spanY = Math.max(bounds.maxY - bounds.minY, 1) + FIT_PADDING * 2;
-  const k = Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, Math.min(width / spanX, height / spanY)));
-  const centreX = (bounds.minX + bounds.maxX) / 2;
-  const centreY = (bounds.minY + bounds.maxY) / 2;
-  return { k, tx: width / 2 - centreX * k, ty: height / 2 - centreY * k };
 }
 
 function EntityGraphCanvasImpl({
@@ -462,7 +441,8 @@ function EntityGraphCanvasImpl({
   const zoomBy = useCallback((factor: number, originX?: number, originY?: number) => {
     const { width, height } = sizeRef.current;
     const camera = cameraRef.current;
-    const k = Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, camera.k * factor));
+    const minimum = minimumGraphZoom(scene.bounds, width, height);
+    const k = Math.min(MAX_ZOOM, Math.max(minimum, camera.k * factor));
     if (k === camera.k) return;
     const px = originX ?? width / 2;
     const py = originY ?? height / 2;
@@ -471,7 +451,7 @@ function EntityGraphCanvasImpl({
       tx: px - ((px - camera.tx) / camera.k) * k,
       ty: py - ((py - camera.ty) / camera.k) * k,
     });
-  }, [setCamera]);
+  }, [scene.bounds, setCamera]);
 
   useEffect(() => {
     const preference = window.matchMedia("(prefers-reduced-motion: reduce)");
@@ -573,7 +553,8 @@ function EntityGraphCanvasImpl({
       );
     };
     const onPointerDown = (event: PointerEvent) => {
-      if (event.target instanceof Element && event.target.closest(".entity-graph-node")) return;
+      // Capturing a control's pointer on the frame redirects its click away from the button.
+      if (event.target instanceof Element && event.target.closest("button")) return;
       pointers.set(event.pointerId, { x: event.clientX, y: event.clientY });
       frame.setPointerCapture(event.pointerId);
       if (pointers.size === 2) {
@@ -855,7 +836,7 @@ function EntityGraphCanvasImpl({
           );
         })}
       </div>
-      <div className="entity-graph-zoom" aria-hidden="true">
+      <div className="entity-graph-zoom" role="group" aria-label="Graph zoom">
         <button type="button" onClick={() => zoomBy(1 / 1.2)} aria-label="Zoom out">−</button>
         <span>{zoomLabel}%</span>
         <button type="button" onClick={() => zoomBy(1.2)} aria-label="Zoom in">+</button>

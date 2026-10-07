@@ -126,6 +126,49 @@ def connected_entity_graph(entity_id: str):
     }
 
 
+def populated_graph_events():
+    """Distinct catalog occurrences, so graph session folding preserves all eight nodes."""
+    event = catalog_event()
+    return [event | {
+        "canonical_event_id": f"e{index:07x}-3333-4333-8333-333333333333",
+        "title": f"Jazz gathering {index + 1}",
+        "start_at": f"2030-06-{index + 11:02d}T19:00:00-07:00",
+        "end_at": f"2030-06-{index + 11:02d}T21:00:00-07:00",
+        "topics": ["jazz", "networking"],
+    } for index in range(8)]
+
+
+def populated_entity_graph():
+    """A bounded neighborhood large enough to require fitting below the former 50% floor."""
+    graph = connected_entity_graph(ENTITY_ID)
+    event_template = graph["nodes"][2]
+    peer_template = graph["nodes"][1]
+    events = [event_template | {
+        "node_id": f"event:{event['canonical_event_id']}",
+        "canonical_event_id": event["canonical_event_id"], "label": event["title"],
+        "start_at": event["start_at"], "end_at": event["end_at"], "topics": event["topics"],
+    } for event in populated_graph_events()]
+    peers = [peer_template | {
+        "node_id": f"entity:d{index:07x}-4444-4444-8444-444444444444",
+        "entity_id": f"d{index:07x}-4444-4444-8444-444444444444",
+        "label": f"Jazz host {index + 1}", "degree": 1, "shared_event_count": 1,
+    } for index in range(8)]
+    topics = [{"node_id": f"topic:{topic}", "node_kind": "topic", "ring": 3,
+               "label": topic, "degree": 8} for topic in ["jazz", "networking"]]
+    edges = [graph["edges"][0] | {"b": event["node_id"]} for event in events]
+    edges.extend(graph["edges"][1] | {"a": peer["node_id"], "b": event["node_id"]}
+                 for peer, event in zip(peers, events, strict=True))
+    edges.extend({"a": graph["focus_id"], "b": topic["node_id"], "kind": "topic",
+                  "roles": [], "source_labels": [], "observed_at": None} for topic in topics)
+    return graph | {
+        "nodes": [graph["nodes"][0] | {"degree": 8}, *events, *peers, *topics],
+        "edges": edges,
+        "counts": {"events": 8, "events_total": 8, "peers": 8, "peers_total": 8,
+                   "topics": 2, "edges": 18, "mention_edges": 16, "edges_total": 18},
+        "truncated": {"events": False, "peers": False, "edges": False},
+    }
+
+
 @dataclass
 class ReleaseApi:
     profile: str | None = "discovery"
@@ -407,6 +450,259 @@ def test_discovery_entity_graph_and_profile_are_read_only(release_page):
     expect(page.get_by_role("button", name="Refresh", exact=True)).to_have_count(0)
     expect(page.get_by_role("application")).to_be_visible()
     expect(page.get_by_role("button", name="Show graph", exact=True)).to_have_count(0)
+
+
+def _assert_graph_frame_is_reachable(page: Page, *, touch_controls: bool) -> None:
+    """The whole drawing and its controls must clear the fixed header and mobile navigation."""
+    page.wait_for_function("""() => {
+        const frame = document.querySelector('.entity-graph-frame');
+        const header = document.querySelector('.site-header');
+        const nav = document.querySelector('.mobile-nav');
+        if (!frame || !header) return false;
+        const bounds = frame.getBoundingClientRect();
+        const visibleBottom = nav && nav.getClientRects().length
+            ? nav.getBoundingClientRect().top : innerHeight;
+        return bounds.top >= header.getBoundingClientRect().bottom - 1
+            && bounds.bottom <= visibleBottom + 1;
+    }""")
+    controls = page.get_by_role("group", name="Graph zoom", exact=True)
+    expect(controls).to_be_visible()
+    assert controls.get_by_role("button").evaluate_all("""buttons => buttons.every(button => {
+        const bounds = button.getBoundingClientRect();
+        return document.elementFromPoint(bounds.x + bounds.width / 2,
+            bounds.y + bounds.height / 2)?.closest('button') === button;
+    })""")
+    if touch_controls:
+        assert controls.get_by_role("button").evaluate_all("""buttons => buttons.every(button => {
+            const bounds = button.getBoundingClientRect();
+            return bounds.width >= 44 && bounds.height >= 44;
+        })""")
+    assert page.evaluate("document.documentElement.scrollWidth <= window.innerWidth")
+
+
+def _assert_graph_detail_does_not_cover_frame(page: Page, *, stacked: bool) -> None:
+    frame = page.get_by_role("application")
+    inspector = page.locator(".entity-graph-inspector")
+    expect(frame).to_be_visible()
+    expect(inspector).to_be_visible()
+    frame_bounds = frame.bounding_box()
+    detail_bounds = inspector.bounding_box()
+    assert frame_bounds is not None and detail_bounds is not None
+    if stacked:
+        assert detail_bounds["y"] >= frame_bounds["y"] + frame_bounds["height"] - 1
+        expect(inspector).to_have_css("max-height", "none")
+        assert inspector.evaluate("detail => detail.scrollHeight <= detail.clientHeight + 1")
+    else:
+        assert detail_bounds["x"] >= frame_bounds["x"] + frame_bounds["width"] - 1
+        assert abs(detail_bounds["y"] - frame_bounds["y"]) <= 1
+
+
+def _assert_all_node_discs_fit(page: Page, node_count: int) -> None:
+    expect(page.locator(".entity-graph-node")).to_have_count(node_count)
+    page.wait_for_function("""count => {
+        const frame = document.querySelector('.entity-graph-frame');
+        const zoom = document.querySelector('.entity-graph-zoom');
+        const nodes = [...document.querySelectorAll('.entity-graph-node')];
+        if (!frame || !zoom || nodes.length !== count) return false;
+        const drawing = frame.getBoundingClientRect();
+        const controls = zoom.getBoundingClientRect();
+        return nodes.every(node => {
+            const bounds = node.getBoundingClientRect();
+            const overlaps = bounds.left < controls.right && bounds.right > controls.left
+                && bounds.top < controls.bottom && bounds.bottom > controls.top;
+            return bounds.left >= drawing.left + 1 && bounds.right <= drawing.right - 1
+                && bounds.top >= drawing.top + 1 && bounds.bottom <= drawing.bottom - 1
+                && !overlaps;
+        });
+    }""", arg=node_count)
+
+
+@pytest.mark.parametrize("width,height", [(393, 722), (320, 568), (820, 900), (1440, 900)])
+def test_focused_graph_keeps_the_full_drawing_clear_of_its_default_details(release_page, width, height):
+    harness, api = release_page
+    api.multi_hub_overview = True
+    api.second_event = True
+    page = harness.page
+    page.set_viewport_size({"width": width, "height": height})
+    page.emulate_media(reduced_motion="reduce")
+    page.goto(f"{BASE}/?view=entities&entity={ENTITY_ID}")
+    expect(page.get_by_role("complementary", name="Entity detail", exact=True)).to_be_visible()
+    # A default identity overview must not scroll the graph away on initial navigation.
+    assert page.evaluate("window.scrollY") == 0
+    _assert_graph_detail_does_not_cover_frame(page, stacked=width <= 1100)
+    _assert_graph_frame_is_reachable(page, touch_controls=width <= 1100)
+    expect(page.locator(".entity-graph-node")).to_have_count(4)
+    page.wait_for_function("""() => {
+        const zoom = document.querySelector('.entity-graph-zoom');
+        const nodes = [...document.querySelectorAll('.entity-graph-node')];
+        if (!zoom || nodes.length !== 4) return false;
+        const controls = zoom.getBoundingClientRect();
+        return nodes.every(node => {
+            const bounds = node.getBoundingClientRect();
+            const overlaps = bounds.left < controls.right && bounds.right > controls.left
+                && bounds.top < controls.bottom && bounds.bottom > controls.top;
+            return !overlaps && document.elementFromPoint(bounds.x + bounds.width / 2,
+                bounds.y + bounds.height / 2)?.closest('button') === node;
+        });
+    }""")
+
+
+@pytest.mark.parametrize("scope,node_count", [("entity", 19), ("topic", 9)])
+def test_populated_mobile_graph_fit_keeps_every_node_inside_the_drawing(release_page, scope, node_count):
+    harness, api = release_page
+    page = harness.page
+    page.set_viewport_size({"width": 320, "height": 568})
+    page.emulate_media(reduced_motion="reduce")
+    if scope == "entity":
+        graph = populated_entity_graph()
+        page.route(f"**/v1/catalog/entities/{ENTITY_ID}/graph*",
+                   lambda route: api.respond(route, graph))
+        query = f"view=entities&entity={ENTITY_ID}"
+    else:
+        events = populated_graph_events()
+        page.route(re.compile(r"/v1/catalog/events(?:\?|$)"), lambda route: api.respond(route, {
+            "items": events, "next_cursor": None, "providers": [], "city_facets": [],
+            "topic_facets": [{"topic": "jazz", "label": "Jazz", "event_count": 8}],
+        }))
+        query = "view=entities&topic=jazz"
+    page.goto(f"{BASE}/?{query}")
+    _assert_graph_frame_is_reachable(page, touch_controls=True)
+    _assert_all_node_discs_fit(page, node_count)
+    controls = page.get_by_role("group", name="Graph zoom", exact=True)
+    zoom_label = controls.locator("span")
+    fitted_zoom = int(zoom_label.inner_text().removesuffix("%"))
+    controls.get_by_role("button", name="Zoom in", exact=True).click()
+    expect(zoom_label).not_to_have_text(f"{fitted_zoom}%")
+    assert int(zoom_label.inner_text().removesuffix("%")) > fitted_zoom
+    controls.get_by_role("button", name="Fit", exact=True).click()
+    expect(zoom_label).to_have_text(f"{fitted_zoom}%")
+    _assert_all_node_discs_fit(page, node_count)
+    controls.get_by_role("button", name="Zoom out", exact=True).click()
+    # Reduced motion updates the camera immediately; await its paint before reading the scale.
+    page.evaluate("() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))")
+    assert int(zoom_label.inner_text().removesuffix("%")) <= fitted_zoom
+    _assert_all_node_discs_fit(page, node_count)
+
+
+@pytest.mark.parametrize("width,height", [(393, 722), (320, 568)])
+@pytest.mark.parametrize("selection", [
+    "catalog_entity", "catalog_event", "focused_entity", "focused_event", "focused_topic", "topic_event",
+])
+def test_mobile_graph_selection_scrolls_to_details_and_back_to_the_drawing(release_page, width, height, selection):
+    harness, api = release_page
+    page = harness.page
+    page.set_viewport_size({"width": width, "height": height})
+    page.emulate_media(reduced_motion="reduce")
+    graph = entity_graph()
+    if selection == "focused_topic":
+        graph["nodes"].append({"node_id": "topic:jazz", "node_kind": "topic", "ring": 3,
+                               "label": "jazz", "degree": 1})
+        graph["edges"].append({"a": graph["focus_id"], "b": "topic:jazz", "kind": "topic",
+                               "roles": [], "source_labels": [], "observed_at": None})
+        graph["counts"] |= {"topics": 1, "edges": 2}
+        page.route(f"**/v1/catalog/entities/{ENTITY_ID}/graph*",
+                   lambda route: api.respond(route, graph))
+    query = "view=entities"
+    if selection.startswith("focused_"):
+        query += f"&entity={ENTITY_ID}"
+    elif selection == "topic_event":
+        query += "&topic=jazz"
+    page.goto(f"{BASE}/?{query}")
+    if selection.endswith("entity"):
+        node_id, detail_kind = f"entity:{ENTITY_ID}", "Entity"
+    elif selection.endswith("topic"):
+        node_id, detail_kind = "topic:jazz", "Topic"
+    else:
+        node_id, detail_kind = f"event:{catalog_event()['canonical_event_id']}", "Event"
+    page.locator(f'button[data-node-id="{node_id}"]').click()
+    inspector = page.get_by_role("complementary", name=f"{detail_kind} detail", exact=True)
+    expect(inspector).to_be_visible()
+    # Checking viewport geometry avoids Playwright's click/scroll helpers masking a missing
+    # automatic scroll. Short topic panels may stop above the requested offset at page end.
+    page.wait_for_function("""() => {
+        const detail = document.querySelector('.entity-graph-inspector');
+        const header = document.querySelector('.site-header');
+        const nav = document.querySelector('.mobile-nav');
+        if (!detail || !header || !nav) return false;
+        const bounds = detail.getBoundingClientRect();
+        return bounds.top >= header.getBoundingClientRect().bottom - 1
+            && bounds.top + 80 <= nav.getBoundingClientRect().top;
+    }""")
+    _assert_graph_detail_does_not_cover_frame(page, stacked=True)
+    close_label = {
+        "catalog_entity": "Close details", "catalog_event": "Back to the graph",
+        "focused_entity": "Back to graph", "focused_event": "Back to Lakehouse Music",
+        "focused_topic": "Back to Lakehouse Music", "topic_event": "Back to the graph",
+    }[selection]
+    back = inspector.get_by_role("button", name=close_label, exact=True)
+    assert back.evaluate("""button => {
+        const bounds = button.getBoundingClientRect();
+        return document.elementFromPoint(bounds.x + bounds.width / 2,
+            bounds.y + bounds.height / 2)?.closest('button') === button;
+    }""")
+    back.click()
+    _assert_graph_frame_is_reachable(page, touch_controls=True)
+    if selection.startswith("focused_"):
+        expect(page.get_by_role("complementary", name="Entity detail", exact=True)).to_be_visible()
+        _assert_graph_detail_does_not_cover_frame(page, stacked=True)
+    else:
+        expect(page.locator(".entity-graph-inspector")).to_have_count(0)
+
+
+@pytest.mark.parametrize("width,height", [(393, 722), (320, 568)])
+@pytest.mark.parametrize("gesture", ["double_click", "shift_enter"])
+@pytest.mark.parametrize("selection", ["focused_event", "focused_topic", "topic_event"])
+def test_mobile_camera_gestures_keep_the_selected_node_and_graph_in_view(release_page, width, height, gesture, selection):
+    harness, api = release_page
+    page = harness.page
+    page.set_viewport_size({"width": width, "height": height})
+    page.emulate_media(reduced_motion="reduce")
+    graph = entity_graph()
+    if selection == "focused_topic":
+        graph["nodes"].append({"node_id": "topic:jazz", "node_kind": "topic", "ring": 3,
+                               "label": "jazz", "degree": 1})
+        graph["edges"].append({"a": graph["focus_id"], "b": "topic:jazz", "kind": "topic",
+                               "roles": [], "source_labels": [], "observed_at": None})
+        graph["counts"] |= {"topics": 1, "edges": 2}
+        page.route(f"**/v1/catalog/entities/{ENTITY_ID}/graph*",
+                   lambda route: api.respond(route, graph))
+    query = "view=entities&topic=jazz" if selection == "topic_event" else f"view=entities&entity={ENTITY_ID}"
+    node_id = "topic:jazz" if selection == "focused_topic" else f"event:{catalog_event()['canonical_event_id']}"
+    page.goto(f"{BASE}/?{query}")
+    _assert_graph_frame_is_reachable(page, touch_controls=True)
+    previous_url = page.url
+    node = page.locator(f'button[data-node-id="{node_id}"]')
+    node.click()
+    expect(node).to_have_attribute("aria-pressed", "true")
+    if gesture == "double_click":
+        node.dblclick()
+    else:
+        node.press("Shift+Enter")
+    # A camera gesture must remain effective after pending single-click navigation would run.
+    page.wait_for_timeout(650)
+    expect(page).to_have_url(previous_url)
+    expect(node).to_have_attribute("aria-pressed", "true")
+    _assert_graph_frame_is_reachable(page, touch_controls=True)
+    drawing = page.get_by_role("application").bounding_box()
+    selected = node.bounding_box()
+    assert drawing is not None and selected is not None
+    assert abs(selected["x"] + selected["width"] / 2 - drawing["x"] - drawing["width"] / 2) <= 2
+    assert abs(selected["y"] + selected["height"] / 2 - drawing["y"] - drawing["height"] / 2) <= 2
+    # The node remains selected after a camera gesture. A later single click must still open
+    # its reading position, even though selecting the same ID does not change React state.
+    node.click()
+    page.wait_for_function("""() => {
+        const detail = document.querySelector('.entity-graph-inspector');
+        const header = document.querySelector('.site-header');
+        const nav = document.querySelector('.mobile-nav');
+        if (!detail || !header || !nav) return false;
+        const bounds = detail.getBoundingClientRect();
+        return bounds.top >= header.getBoundingClientRect().bottom - 1
+            && bounds.top + 80 <= nav.getBoundingClientRect().top;
+    }""")
+    expect(page).to_have_url(previous_url)
+    expect(node).to_have_attribute("aria-pressed", "true")
+    _assert_graph_detail_does_not_cover_frame(page, stacked=True)
 
 
 def test_discovery_entities_overview_resolves_an_event_organizer(release_page):
@@ -854,11 +1150,13 @@ def test_graph_event_details_match_map_without_prefetch(release_page, tmp_path, 
     assert page.evaluate("document.documentElement.scrollWidth <= window.innerWidth")
     action = card.get_by_role("link", name="Friday Night Jazz", exact=True)
     action.scroll_into_view_if_needed()
-    assert action.evaluate("""link => {
+    # Detail navigation waits for the double-click window; await actual link reachability,
+    # including fixed navigation that scroll_into_view_if_needed does not account for.
+    page.wait_for_function("""link => {
         const bounds = link.getBoundingClientRect();
         return document.elementFromPoint(bounds.x + bounds.width / 2,
             bounds.y + bounds.height / 2)?.closest('a') === link;
-    }""")
+    }""", arg=action.element_handle(), timeout=5000)
     page.screenshot(path=str(tmp_path / f"graph-event-card-{scope}-{width}.png"), full_page=True)
     inspector.screenshot(path=str(tmp_path / f"graph-event-detail-{scope}-{width}.png"))
 

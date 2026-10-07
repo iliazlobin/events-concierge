@@ -3,6 +3,7 @@
 import { useEffect, useMemo } from "react";
 import { EntityGraphCanvas } from "@/components/entity-graph-canvas";
 import { EntityInspector } from "@/components/entity-inspector";
+import { useGraphDetailNavigation } from "@/components/use-graph-detail-navigation";
 import { deriveEntityGraphDetails } from "@/lib/entity-graph";
 import type { CatalogEntityGraphNode, EntityGraphSceneModel, EntityGraphScene } from "@/lib/entity-graph";
 import type { EventEntityReference } from "@/lib/types";
@@ -34,6 +35,7 @@ export function GraphWorkspace({
 }) {
   const detailModel = useMemo(() => deriveEntityGraphDetails(model), [model]);
   const inspectedNode = selectedNodeId ? model.byId.get(selectedNodeId) : scope === "entity" ? model.ego : null;
+  const { stageRef, selectNode, cancelScroll } = useGraphDetailNavigation(selectedNodeId, onSelectNode);
   useEffect(() => {
     if (scope !== "catalog") return;
     const close = (event: KeyboardEvent) => {
@@ -45,14 +47,16 @@ export function GraphWorkspace({
     return () => window.removeEventListener("keydown", close);
   }, [scope, onSelectNode]);
   return (
-    <div className="entity-graph-stage" data-selection={inspectedNode?.node_kind ?? "none"}>
+    <div className="entity-graph-stage" ref={stageRef} data-selection={inspectedNode?.node_kind ?? "none"}
+      onDoubleClickCapture={cancelScroll}
+      onKeyDownCapture={(event) => { if (event.key === "Enter" && event.shiftKey) cancelScroll(); }}>
       <div className="entity-graph-column" ref={measureColumn}>
         <EntityGraphCanvas scene={scene} selectedNodeId={canvasSelectedNodeId}
-          hoveredNodeId={canvasHoveredNodeId} onSelect={onSelectNode} onFocus={onFocusNode} />
+          hoveredNodeId={canvasHoveredNodeId} onSelect={selectNode} onFocus={onFocusNode} />
       </div>
       {inspectedNode ? <EntityInspector scope={scope} tenantId={tenantId} canRefresh={canRefresh}
         model={model} detailModel={detailModel} eventSessions={eventSessions}
-        selectedNodeId={selectedNodeId} onSelectNode={onSelectNode} onHoverNode={onHoverNode}
+        selectedNodeId={selectedNodeId} onSelectNode={selectNode} onHoverNode={onHoverNode}
         onFocusEntity={onFocusEntity} onEntitySelect={onEntitySelect} onTopicSelect={onTopicSelect} /> : null}
     </div>
   );

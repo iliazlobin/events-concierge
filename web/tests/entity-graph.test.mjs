@@ -48,6 +48,7 @@ import {
   groupEntitySources,
 } from "../lib/entity-inspector-model.ts";
 import { readableGraphError } from "../lib/entity-graph-errors.ts";
+import { fitGraphCamera, minimumGraphZoom, GRAPH_CONTROL_CLEARANCE } from "../lib/entity-graph-camera.ts";
 import { identityLinks } from "../lib/entity-identity-links.ts";
 
 const VIEWPORT = { width: 1200, height: 800 };
@@ -327,6 +328,37 @@ test("a peer's shared events are the drawn events it is joined to", () => {
 /* ------------------------------------------------------------------ *
  * Layout — determinism.
  * ------------------------------------------------------------------ */
+
+test("Fit keeps sparse and populated phone graphs above controls, including minimum disc sizes", () => {
+  const width = 286;
+  const height = 266;
+  for (const workload of [
+    { events: 2, peers: 1, topics: 0 },
+    { events: 8, peers: 8, topics: 2 },
+    { events: 24, peers: 48, topics: 6 },
+  ]) {
+    const scene = layoutCatalogEntityGraph(buildGraph(workload), { width, height });
+    const camera = fitGraphCamera(scene.bounds, width, height);
+    assert.ok(camera.k > 0);
+    assert.ok(minimumGraphZoom(scene.bounds, width, height) <= camera.k);
+    for (const node of scene.placements) {
+      const x = camera.tx + node.x * camera.k;
+      const y = camera.ty + node.y * camera.k;
+      const radius = screenRadius(node.radius, camera.k);
+      assert.ok(x - radius >= 0 && x + radius <= width, `${node.node_id} fits horizontally`);
+      assert.ok(y - radius >= 0 && y + radius <= height - GRAPH_CONTROL_CLEARANCE,
+        `${node.node_id} fits above zoom controls`);
+    }
+  }
+});
+
+test("populated phone graphs can fit and zoom out below the old fifty-percent floor", () => {
+  const scene = layoutCatalogEntityGraph(buildGraph({ events: 8, peers: 8, topics: 2 }),
+    { width: 286, height: 266 });
+  const fit = fitGraphCamera(scene.bounds, 286, 266);
+  assert.ok(fit.k < 0.5);
+  assert.equal(minimumGraphZoom(scene.bounds, 286, 266), fit.k);
+});
 
 test("the layout is byte-identical across runs and across parsed copies", () => {
   const graph = buildGraph({ events: 9, peers: 12, topics: 4, upcoming: 4, peerShare: 3 });
