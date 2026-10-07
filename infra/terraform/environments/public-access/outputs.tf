@@ -27,6 +27,21 @@ output "publication_dns_records" {
   } }
 }
 
+# Google assigns these servers. Add this NS RRset only in the existing parent
+# authority, after verifying both child records; do not change registrar servers.
+output "cloud_dns_delegation" {
+  value = var.enable_cloud_dns ? {
+    zone_name = google_dns_managed_zone.events[0].name
+    dns_name  = google_dns_managed_zone.events[0].dns_name
+    parent_ns_record = {
+      name = google_dns_managed_zone.events[0].dns_name
+      type = "NS"
+      ttl  = 300
+      data = google_dns_managed_zone.events[0].name_servers
+    }
+  } : null
+}
+
 output "certificate_console" {
   value = "https://console.cloud.google.com/security/ccm/list/certificates?project=${local.project}&authuser=4"
 }
