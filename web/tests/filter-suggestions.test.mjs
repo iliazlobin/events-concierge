@@ -568,3 +568,14 @@ test("an implausible amount is refused rather than clamped", () => {
     [],
   );
 });
+
+test("a zero-dollar ceiling selects Free instead of an ignored amount", () => {
+  for (const phrase of ["price 0", "$0", "under 0 dollars"]) {
+    const match = (phrase.startsWith("price ")
+      ? priceComposerSuggestions(phrase)
+      : getSmartFilterSuggestions(phrase, CITIES, PROVIDERS))[0];
+    assert.equal(match?.kind, "price", phrase);
+    assert.equal(match?.value, "free", phrase);
+    assert.equal(match?.maximumDollars, undefined, phrase);
+  }
+});

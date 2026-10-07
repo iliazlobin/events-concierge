@@ -353,6 +353,7 @@ export function ConciergeApp() {
   const [onboardingError, setOnboardingError] = useState<string | null>(null);
   const [historyReady, setHistoryReady] = useState(false);
   const catalogGeneration = useRef(0);
+  const catalogRequestTime = useRef(new Date());
   const summaryGeneration = useRef(0);
   /** The filter the rail's inventory was last read for, so it is read once per filter. */
   const facetsSignature = useRef<string | null>(null);
@@ -490,6 +491,8 @@ export function ConciergeApp() {
   const loadCatalog = useCallback(async (nextFilters: CatalogFilters) => {
     if (sessionState !== "ready") return;
     const generation = ++catalogGeneration.current;
+    const requestTime = new Date();
+    catalogRequestTime.current = requestTime;
     loadingCursor.current = null;
     setCatalogLoading(true);
     setLoadingMore(false);
@@ -503,7 +506,7 @@ export function ConciergeApp() {
       setExpandedId(null);
     }
     try {
-      const page = await getCatalogPage(tenantId, nextFilters);
+      const page = await getCatalogPage(tenantId, nextFilters, null, requestTime);
       if (generation !== catalogGeneration.current) return;
       setEvents(dedupeEvents(page.items));
       setNextCursor(page.next_cursor);
@@ -858,7 +861,7 @@ export function ConciergeApp() {
     loadingCursor.current = cursor;
     setLoadingMore(true);
     try {
-      const page = await getCatalogPage(tenantId, requestFilters, cursor);
+      const page = await getCatalogPage(tenantId, requestFilters, cursor, catalogRequestTime.current);
       if (generation !== catalogGeneration.current) return;
       setEvents((current) => dedupeEvents([...current, ...page.items]));
       setNextCursor(page.next_cursor);

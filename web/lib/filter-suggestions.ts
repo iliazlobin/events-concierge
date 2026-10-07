@@ -659,6 +659,7 @@ function maximumPriceSuggestion(
 
   const amount = Number(rawAmount);
   if (!Number.isFinite(amount) || amount < 0 || amount > 1_000_000) return null;
+  if (amount === 0) return { kind: "price", value: "free", label: "Free", score: 180 };
   const maximumDollars = amount.toFixed(2).replace(/\.00$/, "").replace(/(\.\d)0$/, "$1");
   return {
     kind: "price",
@@ -800,9 +801,10 @@ export function getSmartFilterSuggestions(
   { context = null }: { context?: SmartFilterContext | null } = {},
 ): SmartFilterSuggestion[] {
   // A one-character term is noise everywhere except a price ceiling, where "5"
-  // is a complete answer.
+  // is a complete answer. An explicit currency amount is also complete.
+  const maximumPrice = maximumPriceSuggestion(query, { allowBareAmount: context === "price" });
   const minimumTermLength = context === "price" ? 1 : 2;
-  if (normalized(query).length < minimumTermLength) return [];
+  if (normalized(query).length < minimumTermLength && !maximumPrice) return [];
 
   const suggestions: SmartFilterSuggestion[] = [];
   const cityCandidates = new Map<string, {
@@ -940,9 +942,6 @@ export function getSmartFilterSuggestions(
     });
   }
 
-  const maximumPrice = maximumPriceSuggestion(query, {
-    allowBareAmount: context === "price",
-  });
   if (maximumPrice) suggestions.push(maximumPrice);
 
   return suggestions

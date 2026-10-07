@@ -255,10 +255,25 @@ test("clearing the cache removes every range", () => {
 test("a corrupt entry is ignored rather than thrown", () => {
   clearCatalogCache();
   window.sessionStorage.setItem(
-    "events-concierge.catalog-summary.v3:tenant-a:broken",
+    "events-concierge.catalog-summary.v4:tenant-a:broken",
     "{not json",
   );
   assert.equal(readCatalogSummary("tenant-a", "broken", "2026-08-01", "2026-08-31", 1_000), null);
+});
+
+test("counts saved before inclusive start-time filtering are not reused", () => {
+  clearCatalogCache();
+  writeCatalogSummary("tenant-a", "boundary", "2026-10-07", "2026-10-11", summary([]), 1_000);
+  const key = window.sessionStorage.key(0);
+  const previousKey = key.replace(".v4:", ".v3:");
+  const saved = window.sessionStorage.getItem(key);
+  clearCatalogCache();
+  window.sessionStorage.setItem(previousKey, saved);
+  try {
+    assert.equal(readCatalogSummary("tenant-a", "boundary", "2026-10-07", "2026-10-11", 1_000), null);
+  } finally {
+    window.sessionStorage.removeItem(previousKey);
+  }
 });
 
 test("the cache is bounded so a long session cannot exhaust storage", () => {

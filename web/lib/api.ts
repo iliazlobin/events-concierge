@@ -153,7 +153,11 @@ export function onboard(email: string): Promise<{ tenant_id: string }> {
  *
  * ``dayKey`` replaces every composed range with that one local calendar day.
  */
-function catalogFilterQuery(filters: CatalogFilters, dayKey?: string): URLSearchParams {
+function catalogFilterQuery(
+  filters: CatalogFilters,
+  dayKey?: string,
+  requestTime = new Date(),
+): URLSearchParams {
   const query = new URLSearchParams();
   if (dayKey) {
     query.append(
@@ -169,7 +173,7 @@ function catalogFilterQuery(filters: CatalogFilters, dayKey?: string): URLSearch
     } else if (filters.datePreset !== "all") {
       // Legacy presets and singular custom links keep their established API
       // representation until a user explicitly composes additive date ranges.
-      const window = filterWindow(filters);
+      const window = filterWindow(filters, requestTime);
       query.set("starts_after", window.start.toISOString());
       query.set("starts_before", window.end.toISOString());
     }
@@ -209,8 +213,11 @@ export function getCatalogPage(
   tenantId: string | null,
   filters: CatalogFilters,
   cursor: string | null = null,
+  requestTime = new Date(),
 ): Promise<CatalogPage> {
-  const query = catalogFilterQuery(filters);
+  // A continuation cursor is bound to the first page's exact date interval.
+  // Reuse that page's clock anchor when a rolling preset is paginated.
+  const query = catalogFilterQuery(filters, undefined, requestTime);
   query.set("limit", "72");
   query.set("sort", filters.sort ?? "soonest");
   if (cursor) query.set("cursor", cursor);
