@@ -52,7 +52,8 @@ export function CollectionTrends({ refreshVersion = 0, sources, onOpenSource, on
   };
   const closeExpansion = () => {
     updateExpansion(null);
-    window.requestAnimationFrame(() => expansionTrigger.current?.focus({ preventScroll: true }));
+    // The chart trigger remains mounted; return focus before the next keyboard action.
+    expansionTrigger.current?.focus({ preventScroll: true });
   };
   const openRuns = (scope: AdminRunFilters, trigger: HTMLButtonElement, kind: CollectionRunExpansion["kind"] = "interval") => {
     if (!scope.startedAfter || !scope.startedBefore) return;

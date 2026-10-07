@@ -1006,6 +1006,38 @@ def test_mobile_keyboard_trends_and_background_records_fit_viewport(operating_pa
     assert page.evaluate("document.body.scrollWidth <= innerWidth")
 
 
+def test_collapsing_runs_does_not_steal_the_next_navigation_focus(operating_page) -> None:
+    page, _, base = operating_page
+    page.set_viewport_size({"width": 390, "height": 844})
+    page.goto(f"{base}/admin?tab=run-stats")
+    trigger = _bars(page).first
+    expect(trigger).to_be_visible()
+    trigger.press("Enter")
+    expanded = page.get_by_role("region", name="Runs in selected interval", exact=True)
+    expect(expanded).to_be_visible()
+    # Hold animation frames so a late focus-return callback cannot hide behind timing.
+    page.evaluate("""() => {
+        window.__originalFrame = window.requestAnimationFrame;
+        window.__deferredFrames = [];
+        window.requestAnimationFrame = callback => window.__deferredFrames.push(callback);
+    }""")
+    expanded.get_by_role("button", name="Collapse runs", exact=True).click()
+    expect(expanded).to_have_count(0)
+    expect(trigger).to_be_focused()
+    overview = page.get_by_role(
+        "navigation", name="Administration navigation", exact=True
+    ).get_by_role("button", name="Overview", exact=True)
+    overview.focus()
+    page.evaluate("""() => {
+        window.requestAnimationFrame = window.__originalFrame;
+        window.__deferredFrames.splice(0).forEach(callback => callback(performance.now()));
+    }""")
+    expect(overview).to_be_focused()
+    overview.press("Enter")
+    expect(_summary(page)).to_be_visible()
+    expect(expanded).to_have_count(0)
+
+
 def test_activity_table_is_open_hides_empty_intervals_and_keeps_runs_without_output(
     operating_page,
 ) -> None:
