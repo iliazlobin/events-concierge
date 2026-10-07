@@ -13,12 +13,14 @@ import pytest
 from events_concierge.adapters.google_calendar.calendar import GoogleCalendarAdapter
 from events_concierge.adapters.mock.calendar import MockCalendar
 from events_concierge.adapters.mock.ranking_feedback import InMemoryRankingFeedback
+from events_concierge.adapters.postgres.muse import PostgresMuseRepository
 from events_concierge.adapters.ranking.cohere import CohereRerankCrossEncoder
 from events_concierge.adapters.ranking.ranker import (
     DeterministicCrossEncoder,
     InMemoryRankingProfiles,
     PersonalizedRanker,
 )
+from events_concierge.application.muse import MuseSignupService
 from events_concierge.composition import build_container
 from events_concierge.config import Settings
 from events_concierge.domain.events import CanonicalEvent
@@ -84,6 +86,23 @@ def test_default_composition_keeps_deterministic_ranking_and_mock_calendar(
     assert isinstance(container.calendar, MockCalendar)
     assert isinstance(container.ranker, PersonalizedRanker)
     assert isinstance(container.ranker._cross_encoder, DeterministicCrossEncoder)
+    assert container.muse is None
+
+
+@pytest.mark.parametrize("enabled", [False, True])
+def test_muse_composition_requires_explicit_enablement(monkeypatch, enabled):
+    _without_engine(monkeypatch)
+    if not enabled:
+        def forbidden_repository():
+            raise AssertionError("Disabled Muse instantiated persistence")
+
+        monkeypatch.setattr("events_concierge.composition.PostgresMuseRepository", forbidden_repository)
+    container = build_container(Settings(_env_file=None, discovery_sources="", muse_enabled=enabled))
+    if enabled:
+        assert isinstance(container.muse, MuseSignupService)
+        assert isinstance(container.muse.repository, PostgresMuseRepository)
+    else:
+        assert container.muse is None
 
 
 async def test_explicit_provider_settings_wire_real_adapters_with_fake_transports(

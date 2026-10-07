@@ -642,23 +642,26 @@ function maximumPriceSuggestion(
   { allowBareAmount = false }: { allowBareAmount?: boolean } = {},
 ): Extract<AtomicSmartFilterSuggestion, { kind: "price" }> | null {
   const bareAmount = allowBareAmount
-    ? query.trim().match(/^(\d+(?:\.\d{1,2})?)$/)
+    ? query.trim().match(/^(\d+(?:\.\d+)?)$/)
     : null;
-  const currencyAmount = query.match(/\$\s*(\d+(?:\.\d{1,2})?)/i);
+  // Capture the complete number before validating cents precision. Otherwise
+  // an unsupported amount such as $0.001 can become a zero-dollar ceiling.
+  const currencyAmount = query.match(/\$\s*(\d+(?:\.\d+)?)(?![\d.])/i);
   const qualifiedAmount = query.match(
-    /\b(?:under|below|up\s+to|at\s+most|less\s+than|no\s+more\s+than|max(?:imum)?(?:\s+of)?)\s*\$?\s*(\d+(?:\.\d{1,2})?)\s*(?:dollars?|usd)?\b/i,
+    /\b(?:under|below|up\s+to|at\s+most|less\s+than|no\s+more\s+than|max(?:imum)?(?:\s+of)?)\s*\$?\s*(\d+(?:\.\d+)?)(?![\d.])\s*(?:dollars?|usd)?\b/i,
   );
   const namedCurrencyAmount = query.match(
-    /\b(\d+(?:\.\d{1,2})?)\s*(?:dollars?|usd|bucks?)\b/i,
+    /(?<![\d.])\b(\d+(?:\.\d+)?)\s*(?:dollars?|usd|bucks?)\b/i,
   );
   const rawAmount = qualifiedAmount?.[1]
     ?? currencyAmount?.[1]
     ?? namedCurrencyAmount?.[1]
     ?? bareAmount?.[1];
-  if (!rawAmount) return null;
+  if (!rawAmount || !/^\d+(?:\.\d{1,2})?$/.test(rawAmount)) return null;
 
   const amount = Number(rawAmount);
   if (!Number.isFinite(amount) || amount < 0 || amount > 1_000_000) return null;
+  if (amount === 0) return { kind: "price", value: "free", label: "Free", score: 180 };
   const maximumDollars = amount.toFixed(2).replace(/\.00$/, "").replace(/(\.\d)0$/, "$1");
   return {
     kind: "price",
@@ -800,9 +803,10 @@ export function getSmartFilterSuggestions(
   { context = null }: { context?: SmartFilterContext | null } = {},
 ): SmartFilterSuggestion[] {
   // A one-character term is noise everywhere except a price ceiling, where "5"
-  // is a complete answer.
+  // is a complete answer. An explicit currency amount is also complete.
+  const maximumPrice = maximumPriceSuggestion(query, { allowBareAmount: context === "price" });
   const minimumTermLength = context === "price" ? 1 : 2;
-  if (normalized(query).length < minimumTermLength) return [];
+  if (normalized(query).length < minimumTermLength && !maximumPrice) return [];
 
   const suggestions: SmartFilterSuggestion[] = [];
   const cityCandidates = new Map<string, {
@@ -940,9 +944,6 @@ export function getSmartFilterSuggestions(
     });
   }
 
-  const maximumPrice = maximumPriceSuggestion(query, {
-    allowBareAmount: context === "price",
-  });
   if (maximumPrice) suggestions.push(maximumPrice);
 
   return suggestions

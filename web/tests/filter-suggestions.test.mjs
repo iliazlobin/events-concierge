@@ -568,3 +568,42 @@ test("an implausible amount is refused rather than clamped", () => {
     [],
   );
 });
+
+test("a zero-dollar ceiling selects Free instead of an ignored amount", () => {
+  for (const phrase of ["price 0", "$0", "under 0 dollars"]) {
+    const match = (phrase.startsWith("price ")
+      ? priceComposerSuggestions(phrase)
+      : getSmartFilterSuggestions(phrase, CITIES, PROVIDERS))[0];
+    assert.equal(match?.kind, "price", phrase);
+    assert.equal(match?.value, "free", phrase);
+    assert.equal(match?.maximumDollars, undefined, phrase);
+  }
+});
+
+test("unsupported monetary precision is rejected without a partial price match", () => {
+  for (const amount of ["0.001", "10.255", "12.3456"]) {
+    for (const phrase of [
+      `$${amount}`, `under ${amount}`, `up to $${amount}`, `${amount} dollars`,
+      `${amount} usd`, `${amount} bucks`,
+    ]) {
+      assert.deepEqual(
+        getSmartFilterSuggestions(phrase, CITIES, PROVIDERS).filter(({ kind }) => kind === "price"),
+        [],
+        phrase,
+      );
+      assert.deepEqual(priceComposerSuggestions(`price ${phrase}`), [], `price ${phrase}`);
+    }
+    assert.deepEqual(priceComposerSuggestions(`price ${amount}`), [], `price ${amount}`);
+  }
+});
+
+test("supported cents precision remains exact for each monetary phrase", () => {
+  for (const [amount, expected] of [["0.01", "0.01"], ["10.25", "10.25"], ["12.50", "12.5"]]) {
+    for (const phrase of [`$${amount}`, `under ${amount}`, `${amount} dollars`]) {
+      const match = getSmartFilterSuggestions(phrase, CITIES, PROVIDERS)
+        .find(({ kind }) => kind === "price");
+      assert.equal(match?.maximumDollars, expected, phrase);
+      assert.equal(priceComposerSuggestions(`price ${phrase}`)[0]?.maximumDollars, expected, phrase);
+    }
+  }
+});

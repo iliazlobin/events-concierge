@@ -4,7 +4,7 @@ Discover events, browse Events/Map/Calendar and entity graphs, and open provider
 
 ## Runtime
 
-- **Selected scope:** discovery, profiles, saved filters and [Muse signup handoffs](docs/operations/muse-signups.md); `EC_RELEASE_PROFILE=discovery`. Chat, internal automated RSVP, notifications, calendar sync, purchases and general API keys remain deferred.
+- **Selected scope:** discovery, profiles and saved filters; `EC_RELEASE_PROFILE=discovery`. [Muse signup handoffs](docs/operations/muse-signups.md) require explicit enablement. Chat, internal automated RSVP, notifications, calendar sync, purchases and general API keys remain deferred.
 - **Local:** full development profile with `EC_MOCK_CLOUD=true`. Public-source refreshes can still make real network requests. Mock identity is unsuitable for public traffic.
 - **GCP:** private workloads on shared `platform-dev`. The application owns releases, identities, collection and stores; [gcp-foundation](https://github.com/iliazlobin/gcp-foundation) owns projects, network, cluster and access VM.
 - **Authenticated discovery:** selected values use Identity Platform with legacy OIDC disabled. Missing production bindings fail closed; full-profile production bindings remain incomplete.

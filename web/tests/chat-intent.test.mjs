@@ -203,7 +203,7 @@ test("preset windows expose the exact dates used by the API", () => {
   const weekend = interpretChatRequest("events this weekend", CITIES, PROVIDERS, context());
 
   assert.deepEqual(filterDateKeys(week.filters, NOW), {
-    start: "2026-07-27",
+    start: "2026-07-28",
     end: "2026-08-02",
   });
   assert.deepEqual(filterDateKeys(weekend.filters, NOW), {
@@ -212,7 +212,7 @@ test("preset windows expose the exact dates used by the API", () => {
   });
 });
 
-test("AI chat intent uses a structured topic, full semantic week, and active city", () => {
+test("AI chat intent uses a structured topic, remaining week, and active city", () => {
   const sundayBoundary = new Date(2026, 7, 2, 12, 0, 0);
   const result = interpretChatRequest(
     "An AI meetup this week",
@@ -223,9 +223,9 @@ test("AI chat intent uses a structured topic, full semantic week, and active cit
 
   assert.equal(result.filters.query, "");
   assert.deepEqual(result.filters.topics, ["ai"]);
-  assert.equal(result.filters.datePreset, "custom");
+  assert.equal(result.filters.datePreset, "week");
   assert.deepEqual(filterDateKeys(result.filters, sundayBoundary), {
-    start: "2026-07-27",
+    start: "2026-08-02",
     end: "2026-08-02",
   });
   assert.equal(result.filters.city, "sanfrancisco");
@@ -250,8 +250,8 @@ test("catalog composer commits topic and date clauses as independent filters", (
   assert.equal(result.filters.query, "");
   assert.deepEqual(result.filters.topics, ["music"]);
   assert.deepEqual(result.filters.cities, ["sanfrancisco"]);
-  assert.equal(result.filters.datePreset, "custom");
-  assert.equal(result.filters.customStart, "2026-07-27");
+  assert.equal(result.filters.datePreset, "week");
+  assert.equal(result.filters.customStart, "2026-07-28");
   assert.equal(result.filters.customEnd, "2026-08-02");
   assert.deepEqual(result.filters.dateRanges, []);
 });

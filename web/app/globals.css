@@ -6143,7 +6143,25 @@ textarea:focus-visible {
   .active-filter-strip:has(.date-range-picker__popover),
   .active-filter-strip:has(.filter-chip-editor__popover),
   .active-filter-strip:has(.saved-filter-picker__popover) {
+    flex-wrap: wrap;
+    margin-right: 0;
     overflow: visible;
+    padding-right: 0;
+    position: relative;
+  }
+
+  .active-filter-strip .date-range-picker:has(.date-range-picker__popover),
+  .active-filter-strip .filter-chip-editor:has(.filter-chip-editor__popover),
+  .active-filter-strip .saved-filter-picker:has(.saved-filter-picker__popover) {
+    position: static;
+  }
+
+  .active-filter-strip .date-range-picker__popover,
+  .active-filter-strip .filter-chip-editor__popover,
+  .active-filter-strip .saved-filter-picker__popover {
+    left: 0;
+    max-width: 100%;
+    right: auto;
   }
 
   .active-filter-chip,

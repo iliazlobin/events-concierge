@@ -56,6 +56,11 @@ Mark checks requiring unavailable catalog data **NOT EXERCISED**.
 - [ ] Source changes in the filter bar preserve explicit places. Incompatible selections show an honest empty state recoverable through chips or Reset.
 - [ ] Unknown place text does not invent a city, coordinates or geocode.
 - [ ] Date presets send bounded windows. Two custom ranges send repeated `date_range`; deleting one preserves the other.
+- [ ] On Wednesday, This week excludes Monday/Tuesday starts, including multi-day events that are
+  still ongoing. Custom bounds include starts exactly at the lower bound and exclude starts at the
+  upper bound. Source/topic/day counts follow the same date eligibility.
+- [ ] More events reuses the first page's exact date bounds even after the clock advances. Changing
+  a filter or refreshing starts a new page scope. Test both Soonest and Latest.
 - [ ] Reset clears date/place constraints. Reload preserves an explicitly cleared city; Back/Forward restores the selection.
 - [ ] Changing filters or Calendar month does not reuse a stale cursor. Month bounds use local month start through next month start, end-exclusive.
 
@@ -66,6 +71,8 @@ Mark checks requiring unavailable catalog data **NOT EXERCISED**.
 - [ ] `25.50` sends `2550` cents. Minimum, maximum, exact and range comparisons work; invalid/reversed amounts do not commit.
 - [ ] A maximum allows free or known USD prices within the bound; adding Paid excludes free events.
   Free/Price unlisted clears amount bounds; unknown or non-USD prices do not satisfy USD comparisons.
+- [ ] A zero-dollar maximum selects free events. Values above the supported $1,000,000 ceiling
+  do not commit or silently remove the previously selected price constraint.
 - [ ] Past-range rows and source counts use the same interval. Retained past observations may survive crawl rolloff; future entries require the current projection.
 - [ ] Empty history means no eligible retained events, not proof the provider had none. Latest-known event state is not an as-of archive.
 

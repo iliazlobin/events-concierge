@@ -33,12 +33,12 @@ const COMPARISONS: ReadonlyArray<{ value: PriceComparison; label: string }> = [
   { value: "between", label: "Between" },
 ];
 
-/** The same shape the API accepts: up to seven dollars and two cents. */
+/** The same precision and maximum the catalog API accepts. */
 const AMOUNT = /^\d{1,7}(?:\.\d{1,2})?$/;
 
 function amountIsUsable(value: string): boolean {
   const trimmed = value.trim();
-  return AMOUNT.test(trimmed) && Number(trimmed) > 0;
+  return AMOUNT.test(trimmed) && Number(trimmed) > 0 && Number(trimmed) <= 1_000_000;
 }
 
 /** An amount is only meaningful for a category that can carry one. */

@@ -526,10 +526,10 @@ async def test_explicit_history_window_is_authoritative_through_repository_and_a
     assert [item["title"] for item in live_response.json()["items"]] == [future.title]
 
 
-async def test_browse_window_includes_ongoing_excludes_ended_and_preserves_cursor(
+async def test_unbounded_browse_includes_ongoing_excludes_ended_and_preserves_cursor(
     db: None,
 ) -> None:
-    """Window eligibility uses interval overlap; pages remain ordered by event start."""
+    """Unbounded live discovery includes ongoing events and pages by event start."""
     tag = uuid4().hex
     source_key = f"browse-overlap-{tag}"
     now = datetime.now(UTC).replace(microsecond=0)
@@ -592,13 +592,10 @@ async def test_browse_window_includes_ongoing_excludes_ended_and_preserves_curso
         is not None
     )
 
-    window_end = now + timedelta(hours=3)
     first_page, providers = await catalog.browse_current(
         source_keys=(source_key,),
         after=None,
         limit=1,
-        starts_after=now,
-        starts_before=window_end,
     )
     assert [item.canonical_event.title for item in first_page] == [ongoing.title]
     assert ended.title not in {item.canonical_event.title for item in first_page}
@@ -615,13 +612,210 @@ async def test_browse_window_includes_ongoing_excludes_ended_and_preserves_curso
             canonical_event_id=page_tail.canonical_event_id,
         ),
         limit=1,
-        starts_after=now,
-        starts_before=window_end,
     )
     assert [item.canonical_event.title for item in second_page] == [future.title]
     assert first_page[0].canonical_event.canonical_event_id != (
         second_page[0].canonical_event.canonical_event_id
     )
+
+
+async def _publish_current_events(
+    source_key: str,
+    catalog: PostgresCatalogRepository,
+    candidates: list[CandidateEvent],
+) -> None:
+    run_key = f"manual:filter-regression-{uuid4().hex}"
+    claim = await PostgresCatalogSourceRepository().claim_refresh(
+        source_key, run_key, lease_seconds=300
+    )
+    assert claim.lease_token is not None
+    assert (
+        await PostgresCatalogRefreshCommitter(
+            catalog, PostgresCatalogObservationRepository()
+        ).commit_refresh(source_key, run_key, lease_token=claim.lease_token, candidates=candidates)
+        is not None
+    )
+
+
+async def test_explicit_dates_select_starts_and_keep_recommendation_overlap(db: None) -> None:
+    """A multi-day event started before today must not leak into today's date selection."""
+    source_key, _, _, catalog = await _source_with_current_events(event_count=1)
+    tag = uuid4().hex
+    zone = ZoneInfo("America/Los_Angeles")
+    lower = (datetime.now(zone) + timedelta(days=1)).replace(
+        hour=0, minute=0, second=0, microsecond=0
+    )
+    upper = lower + timedelta(days=5)
+    prior_multiday = replace(
+        _candidate(f"tech-week:multiday-{tag}", f"Monday chess {tag}", lower - timedelta(days=2)),
+        end_at=upper + timedelta(days=1),
+        description="Chess tournament.",
+    )
+    before_lower = _candidate(
+        f"tech-week:before-lower-{tag}",
+        f"Just before lower {tag}",
+        lower - timedelta(microseconds=1),
+    )
+    at_lower = replace(
+        _candidate(f"tech-week:at-lower-{tag}", f"At lower {tag}", lower),
+        end_at=None,
+        description="Generative AI workshop.",
+    )
+    before_upper = replace(
+        _candidate(
+            f"tech-week:before-upper-{tag}", f"Before upper {tag}", upper - timedelta(seconds=1)
+        ),
+        description="Beach volleyball.",
+    )
+    at_upper = _candidate(f"tech-week:at-upper-{tag}", f"At upper {tag}", upper)
+    await _publish_current_events(
+        source_key, catalog, [prior_multiday, before_lower, at_lower, before_upper, at_upper]
+    )
+    ranges = ((lower, upper),)
+    items, providers = await catalog.browse_current(
+        source_keys=(source_key,), after=None, limit=10, date_ranges=ranges
+    )
+    assert [item.canonical_event.title for item in items] == [at_lower.title, before_upper.title]
+    assert (
+        next(provider.event_count for provider in providers if provider.source_key == source_key)
+        == 2
+    )
+    topics = await catalog.list_topic_facets(
+        source_keys=(source_key,),
+        starts_after=None,
+        starts_before=None,
+        date_ranges=ranges,
+        query=None,
+        cities=(),
+        location_scopes=(),
+        price=None,
+        price_max_cents=None,
+    )
+    counts = {topic.topic: topic.event_count for topic in topics}
+    assert counts["chess"] == 0
+    assert counts["ai"] == counts["volleyball"] == 1
+    days = await catalog.list_day_facets(
+        source_keys=(source_key,),
+        starts_after=None,
+        starts_before=None,
+        date_ranges=ranges,
+        query=None,
+        cities=(),
+        location_scopes=(),
+        price=None,
+        price_max_cents=None,
+        time_zone=zone.key,
+    )
+    assert [(day.start_day, day.event_count) for day in days] == [
+        (lower.date(), 1),
+        ((upper - timedelta(seconds=1)).date(), 1),
+    ]
+    recommended = await catalog.retrieve(
+        RequestConstraints(time_window=TimeWindow(lower, upper)), None, 10_000
+    )
+    assert {event.title for event in recommended if tag in event.title} == {
+        prior_multiday.title,
+        before_lower.title,
+        before_upper.title,
+    }
+
+    app = create_app()
+    async with (
+        app.router.lifespan_context(app),
+        AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client,
+    ):
+        params = [
+            ("source_key", source_key),
+            ("starts_after", lower.isoformat()),
+            ("starts_before", upper.isoformat()),
+            ("limit", "1"),
+        ]
+        paged = await _paged_catalog_events(client, {}, params)
+        summary = await client.get(
+            "/v1/catalog/events/summary", params=[*params, ("time_zone", zone.key)]
+        )
+    assert [item["title"] for item in paged] == [at_lower.title, before_upper.title]
+    assert summary.status_code == 200, summary.text
+    assert summary.json()["total_event_count"] == 2
+    assert all(day["start_day"] >= lower.date().isoformat() for day in summary.json()["days"])
+
+
+async def test_disjoint_same_day_ranges_sum_distinct_events_and_merge_overlaps(db: None) -> None:
+    source_key, _, _, catalog = await _source_with_current_events(event_count=1)
+    tag = uuid4().hex
+    zone = ZoneInfo("America/Los_Angeles")
+    morning = (datetime.now(zone) + timedelta(days=1)).replace(
+        hour=9, minute=0, second=0, microsecond=0
+    )
+    evening = morning + timedelta(hours=8)
+    candidates = [
+        replace(
+            _candidate(f"morning-{tag}", f"Morning {tag}", morning),
+            description="Generative AI workshop.",
+        ),
+        replace(
+            _candidate(f"evening-{tag}", f"Evening {tag}", evening), description="Beach volleyball."
+        ),
+    ]
+    await _publish_current_events(source_key, catalog, candidates)
+    ranges = (
+        (evening, evening + timedelta(hours=1)),
+        (morning, morning + timedelta(hours=1)),
+        (morning, morning + timedelta(minutes=30)),
+    )
+    items, providers = await catalog.browse_current(
+        source_keys=(source_key,), after=None, limit=10, date_ranges=ranges
+    )
+    assert [item.canonical_event.title for item in items] == [event.title for event in candidates]
+    assert (
+        next(provider.event_count for provider in providers if provider.source_key == source_key)
+        == 2
+    )
+    topics = await catalog.list_topic_facets(
+        source_keys=(source_key,),
+        starts_after=None,
+        starts_before=None,
+        date_ranges=ranges,
+        query=None,
+        cities=(),
+        location_scopes=(),
+        price=None,
+        price_max_cents=None,
+    )
+    assert {topic.topic: topic.event_count for topic in topics}["ai"] == 1
+    days = await catalog.list_day_facets(
+        source_keys=(source_key,),
+        starts_after=None,
+        starts_before=None,
+        date_ranges=ranges,
+        query=None,
+        cities=(),
+        location_scopes=(),
+        price=None,
+        price_max_cents=None,
+        time_zone=zone.key,
+    )
+    assert len(days) == 1
+    assert days[0].event_count == 2
+    assert {topic.topic: topic.event_count for topic in days[0].topics}["ai"] == 1
+    assert {topic.topic: topic.event_count for topic in days[0].topics}["volleyball"] == 1
+    app = create_app()
+    async with (
+        app.router.lifespan_context(app),
+        AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client,
+    ):
+        params = [
+            ("source_key", source_key),
+            *(("date_range", f"{start.isoformat()}..{end.isoformat()}") for start, end in ranges),
+        ]
+        paged = await _paged_catalog_events(client, {}, [*params, ("limit", "1")])
+        summary = await client.get(
+            "/v1/catalog/events/summary", params=[*params, ("time_zone", zone.key)]
+        )
+    assert len(paged) == 2
+    assert summary.status_code == 200, summary.text
+    assert summary.json()["total_event_count"] == 2
+    assert summary.json()["days"][0]["event_count"] == 2
 
 
 @dataclass(frozen=True, slots=True)
@@ -807,6 +1001,56 @@ async def test_retained_past_rolloff_is_visible_without_weakening_future_or_face
             starts_after=archive_start,
             starts_before=archive_end,
         )
+
+
+async def test_multi_source_wide_archive_preserves_pages_providers_and_facets(db: None) -> None:
+    left = await _retained_history_scenario()
+    right = await _retained_history_scenario()
+    lower = min(left.ancient.start_at, right.ancient.start_at) - timedelta(days=1)
+    upper = lower + timedelta(days=400)
+    selected = (left.source_key, right.source_key)
+    items, providers = await left.catalog.browse_current(
+        source_keys=selected, after=None, limit=10, starts_after=lower, starts_before=upper
+    )
+    assert {item.canonical_event.title for item in items} == {
+        left.ancient.title,
+        right.ancient.title,
+    }
+    assert {(provider.source_key, provider.event_count) for provider in providers} == {
+        (left.source_key, 1),
+        (right.source_key, 1),
+    }
+    days = await left.catalog.list_day_facets(
+        source_keys=selected,
+        starts_after=lower,
+        starts_before=upper,
+        query=None,
+        cities=(),
+        location_scopes=(),
+        price=None,
+        price_max_cents=None,
+        time_zone="America/Los_Angeles",
+    )
+    assert sum(day.event_count for day in days) == 2
+    app = create_app()
+    async with (
+        app.router.lifespan_context(app),
+        AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client,
+    ):
+        response = await client.get(
+            "/v1/catalog/events",
+            params=[
+                *(("source_key", source_key) for source_key in selected),
+                ("starts_after", lower.isoformat()),
+                ("starts_before", upper.isoformat()),
+            ],
+        )
+    assert response.status_code == 200, response.text
+    assert len(response.json()["items"]) == 2
+    assert {
+        (provider["source_key"], provider["event_count"])
+        for provider in response.json()["providers"]
+    } == {(left.source_key, 1), (right.source_key, 1)}
 
 
 async def test_source_archive_range_is_available_through_api_but_unscoped_range_is_bounded(
@@ -1241,6 +1485,148 @@ async def test_registration_availability_filters_before_paging_and_facets(db: No
         time_zone="America/Los_Angeles",
     )
     assert sum(day.event_count for day in sold_out_days) == 1
+
+
+async def test_combined_catalog_filters_agree_between_api_pages_and_calendar(db: None) -> None:
+    """Each filter narrows the same admitted events before paging or day aggregation."""
+    source_key, current, _, catalog = await _source_with_current_events(event_count=5)
+    candidates = [
+        replace(
+            current[0],
+            price_status=PriceStatus.PAID,
+            price_min_cents=1_000,
+            price_max_cents=1_000,
+            price_currency="USD",
+            registration_status=RegistrationStatus.OPEN,
+            description="Generative AI workshop.",
+        ),
+        replace(
+            current[1],
+            city="New York",
+            geo=GeoPoint(40.7505, -73.9934),
+            price_status=PriceStatus.PAID,
+            price_min_cents=2_000,
+            price_max_cents=2_000,
+            price_currency="USD",
+            registration_status=RegistrationStatus.SOLD_OUT,
+            description="Indie gaming showcase.",
+        ),
+        replace(
+            current[2],
+            city="Oakland",
+            geo=GeoPoint(37.8044, -122.2712),
+            price_status=PriceStatus.FREE,
+            registration_status=RegistrationStatus.OPEN,
+            description="Beach volleyball.",
+        ),
+        replace(
+            current[3],
+            registration_status=RegistrationStatus.WAITLIST,
+            description="Generative AI workshop.",
+        ),
+        replace(
+            current[4],
+            price_status=PriceStatus.PAID,
+            price_min_cents=3_000,
+            price_max_cents=4_000,
+            price_currency="USD",
+            registration_status=RegistrationStatus.OPEN,
+            description="Generative AI workshop.",
+        ),
+    ]
+    await _publish_current_events(source_key, catalog, candidates)
+    cases: list[tuple[list[tuple[str, str]], list[int]]] = [
+        (
+            [
+                ("q", "event 2"),
+                ("city", "Oakland"),
+                ("location_scope", "bay_area"),
+                ("price", "free"),
+                ("availability", "available"),
+                ("topic", "volleyball"),
+            ],
+            [2],
+        ),
+        (
+            [
+                ("city", "San Francisco"),
+                ("location_scope", "bay_area"),
+                ("price", "paid"),
+                ("price_min_cents", "2500"),
+                ("price_max_cents", "4000"),
+                ("availability", "available"),
+                ("topic", "ai"),
+            ],
+            [4],
+        ),
+        (
+            [
+                ("city", "New York"),
+                ("location_scope", "manhattan"),
+                ("price", "paid"),
+                ("availability", "sold_out"),
+                ("topic", "gaming"),
+            ],
+            [1],
+        ),
+        (
+            [
+                ("city", "San Francisco"),
+                ("city", "New York"),
+                ("price", "unknown"),
+                ("topic", "ai"),
+            ],
+            [3],
+        ),
+        (
+            [
+                ("city", "San Francisco"),
+                ("location_scope", "manhattan"),
+                ("availability", "sold_out"),
+            ],
+            [1],
+        ),
+        ([("topic", "ai"), ("topic", "workshop"), ("availability", "available")], [0, 4]),
+        ([("price_max_cents", "1000"), ("availability", "available")], [0, 2]),
+        ([("price", "free"), ("availability", "sold_out")], []),
+    ]
+    lower = current[0].start_at
+    upper = current[-1].start_at + timedelta(seconds=1)
+    shared = [
+        ("source_key", source_key),
+        ("starts_after", lower.isoformat()),
+        ("starts_before", upper.isoformat()),
+    ]
+    app = create_app()
+    async with (
+        app.router.lifespan_context(app),
+        AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client,
+    ):
+        for filters, selected in cases:
+            paged = await _paged_catalog_events(client, {}, [*shared, *filters, ("limit", "1")])
+            assert [item["title"] for item in paged] == [
+                candidates[index].title for index in selected
+            ], filters
+            summary = await client.get(
+                "/v1/catalog/events/summary",
+                params=[*shared, *filters, ("time_zone", "America/Los_Angeles")],
+            )
+            assert summary.status_code == 200, summary.text
+            assert summary.json()["total_event_count"] == len(selected), filters
+            assert sum(day["event_count"] for day in summary.json()["days"]) == len(selected), (
+                filters
+            )
+        for field in ("q", "city"):
+            for path in ("/v1/catalog/events", "/v1/catalog/events/summary"):
+                rejected = await client.get(
+                    path,
+                    params=[
+                        *shared,
+                        (field, "Invalid\x7fvalue"),
+                        ("time_zone", "America/Los_Angeles"),
+                    ],
+                )
+                assert rejected.status_code == 422, rejected.text
 
 
 async def test_source_selection_is_a_union_and_price_bounds_describe_a_band(db: None) -> None:

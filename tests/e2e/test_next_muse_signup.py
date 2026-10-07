@@ -24,6 +24,9 @@ class MuseApi(ReleaseApi):
         super().__init__(local_demo=False)
         self.harness = harness
         self.signed_in = True
+        self.muse_enabled = True
+        self.muse_calls = []
+        self.event_detail_calls = []
         self.connected = False
         self.batches = []
         self.prepared = []
@@ -54,6 +57,7 @@ class MuseApi(ReleaseApi):
             {
                 "product_name": "Events Concierge",
                 "release_profile": "discovery",
+                **({"muse_enabled": self.muse_enabled} if self.muse_enabled is not None else {}),
                 "local_demo": False,
                 "auth_mode": "deployment_session",
                 "anonymous_browsing": True,
@@ -74,6 +78,8 @@ class MuseApi(ReleaseApi):
 
     def handle(self, route: Route):
         path, method = urlsplit(route.request.url).path, route.request.method
+        if path.startswith(("/v1/me/muse/", "/v1/muse/")):
+            self.muse_calls.append((method, path))
         if method not in {"GET", "HEAD"}:
             self.writes.append((method, path, route.request.headers))
         if path == "/v1/me" and not self.signed_in:
@@ -91,6 +97,7 @@ class MuseApi(ReleaseApi):
                 },
             )
         elif path.startswith("/v1/catalog/events/") and not path.endswith("/summary"):
+            self.event_detail_calls.append(path)
             event_id = path.rsplit("/", 1)[1]
             self.respond(
                 route,
@@ -175,6 +182,37 @@ def install(page_factory, width=1440):
         }});
     """)
     return harness, api
+
+
+@pytest.mark.parametrize("muse_enabled", [False, None])
+def test_disabled_muse_has_no_controls_restore_or_settings_requests(page_factory, muse_enabled):
+    harness, api = install(page_factory)
+    api.muse_enabled = muse_enabled
+    event_id = api.events[0]["canonical_event_id"]
+    harness.context.add_init_script(
+        f"sessionStorage.setItem('ec:muse:selection', JSON.stringify({{"
+        f"eventIds: ['{event_id}'], savedAt: Date.now() }}));"
+    )
+    page = harness.page
+    page.goto(BASE + "/?view=events&when=all&city=")
+    expect(page.get_by_role("heading", name="Friday Night Jazz", exact=True)).to_be_visible()
+    expect(page.get_by_role("button", name="Sign up with Muse", exact=True)).to_have_count(0)
+    expect(page.get_by_role("checkbox", name=re.compile("for Muse$"))).to_have_count(0)
+    expect(page.get_by_role("complementary", name="Selected Muse events")).to_have_count(0)
+    expect(page.get_by_role("dialog", name="Sign up with Muse", exact=True)).to_have_count(0)
+    page.get_by_role("button", name=re.compile(r"^Account menu")).click()
+    expect(page.get_by_role("menuitem", name=re.compile("Muse signups"))).to_have_count(0)
+    assert page.evaluate("sessionStorage.getItem('ec:muse:selection')") is not None
+    assert api.event_detail_calls == []
+    page.goto(BASE + "/settings/muse")
+    expect(page.get_by_text("Muse signups are not enabled for this release.", exact=True)).to_be_visible()
+    expect(page.get_by_role("navigation", name="Settings sections").get_by_role(
+        "link", name="Muse signups", exact=True,
+    )).to_have_count(0)
+    expect(page.get_by_role("button", name="Create connection key", exact=True)).to_have_count(0)
+    assert api.muse_calls == []
+    assert api.writes == []
+    assert api.unexpected == []
 
 
 @pytest.mark.parametrize("width", [1440, 320])

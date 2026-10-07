@@ -10,6 +10,14 @@ import {
 import styles from "@/components/muse.module.css";
 
 export function MusePanel() {
+  const { config } = useSession();
+  if (config?.muse_enabled !== true) return <section className={styles.panel}>
+    <header><h1>Muse signups</h1><p>Muse signups are not enabled for this release.</p></header>
+  </section>;
+  return <EnabledMusePanel />;
+}
+
+function EnabledMusePanel() {
   const { tenantId } = useSession();
   const [connection, setConnection] = useState<MuseConnection | null>(null);
   const [token, setToken] = useState<string | null>(null);

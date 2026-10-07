@@ -239,6 +239,7 @@ export function ConciergeApp() {
   const [config, setConfig] = useState<UiConfig | null>(null);
   const profile = releaseProfile(config);
   const fullRelease = profile === "full";
+  const museEnabled = config?.muse_enabled === true;
   const navItems = NAV_ITEMS.filter(item => releaseViewAllowed(item.value, profile));
   const [tenantId, setTenantId] = useState<string | null>(null);
   const [me, setMe] = useState<Me | null>(null);
@@ -278,6 +279,7 @@ export function ConciergeApp() {
   const [museOpen, setMuseOpen] = useState(false);
   const [museError, setMuseError] = useState<string | null>(null);
   function toggleMuse(event: EventItem) {
+    if (!museEnabled) return;
     setMuseError(null);
     if (!museEvents.has(event.canonical_event_id) && (museEvents.size >= MAX_MUSE_EVENTS || museEligibility(event))) {
       setMuseError("Select up to five upcoming free Luma or Meetup events.");
@@ -291,6 +293,7 @@ export function ConciergeApp() {
     });
   }
   function openMuse(event: EventItem) {
+    if (!museEnabled) return;
     if (!museEvents.has(event.canonical_event_id)) {
       if (museEvents.size >= MAX_MUSE_EVENTS || museEligibility(event)) {
         setMuseError("Select up to five upcoming free Luma or Meetup events.");
@@ -302,7 +305,7 @@ export function ConciergeApp() {
     setMuseOpen(true);
   }
   useEffect(() => {
-    if (sessionState !== "ready" || !me) return;
+    if (!museEnabled || sessionState !== "ready" || !me) return;
     let ids: string[] = [];
     try { ids = takeMuseSelection(window.sessionStorage); } catch { return; }
     if (!ids.length) return;
@@ -316,7 +319,7 @@ export function ConciergeApp() {
       if (restored.length !== ids.length) setMuseError("Some selected events are no longer eligible for Muse.");
     });
     return () => { active = false; };
-  }, [sessionState, me, tenantId]);
+  }, [museEnabled, sessionState, me, tenantId]);
   const [selectedEntityId, setSelectedEntityId] = useState<string | null>(null);
   const [turns, setTurns] = useState<ChatTurn[]>([]);
   // One id per browser session keeps the server-side transcript and refs together.
@@ -350,6 +353,7 @@ export function ConciergeApp() {
   const [onboardingError, setOnboardingError] = useState<string | null>(null);
   const [historyReady, setHistoryReady] = useState(false);
   const catalogGeneration = useRef(0);
+  const catalogRequestTime = useRef(new Date());
   const summaryGeneration = useRef(0);
   /** The filter the rail's inventory was last read for, so it is read once per filter. */
   const facetsSignature = useRef<string | null>(null);
@@ -487,6 +491,8 @@ export function ConciergeApp() {
   const loadCatalog = useCallback(async (nextFilters: CatalogFilters) => {
     if (sessionState !== "ready") return;
     const generation = ++catalogGeneration.current;
+    const requestTime = new Date();
+    catalogRequestTime.current = requestTime;
     loadingCursor.current = null;
     setCatalogLoading(true);
     setLoadingMore(false);
@@ -500,7 +506,7 @@ export function ConciergeApp() {
       setExpandedId(null);
     }
     try {
-      const page = await getCatalogPage(tenantId, nextFilters);
+      const page = await getCatalogPage(tenantId, nextFilters, null, requestTime);
       if (generation !== catalogGeneration.current) return;
       setEvents(dedupeEvents(page.items));
       setNextCursor(page.next_cursor);
@@ -636,10 +642,8 @@ export function ConciergeApp() {
     try {
       const fetched = await getCatalogSummary(tenantId, nextFilters, timeZone);
       if (generation !== summaryGeneration.current) return;
-      // A range read also returns days before it, for events that began earlier
-      // and run into it. Those counts describe only the overlap, so the calendar
-      // drops them rather than showing a wrong total for a day it did not ask
-      // about — and the cache never stores one to repeat later.
+      // Keep the cache bounded to the requested calendar days, even if a future
+      // response includes additional day keys.
       const nextSummary = start && end ? clipCalendarSummary(fetched, start, end) : fetched;
       setSummary(nextSummary);
       setSummaryCovered(true);
@@ -696,10 +700,9 @@ export function ConciergeApp() {
     setDayLoading(true);
     void (async () => {
       try {
-        // A day window also matches events that began earlier and are still
-        // running. Those sort first and belong to their own start day, so keep
-        // reading until this day's own events appear rather than showing an
-        // empty agenda beside a cell that counts hundreds.
+        // Read starts within the selected local day. Keep the day-key guard
+        // while collecting pages so an unexpected response cannot leak rows
+        // from a different day into the agenda.
         let cursor: string | null = null;
         const collected: EventItem[] = [];
         for (let page = 0; page < MAX_CALENDAR_DAY_SKIP_PAGES; page += 1) {
@@ -766,10 +769,7 @@ export function ConciergeApp() {
   // Week columns preview a few events each; month and six-month cells show only
   // counts, so they need no event read at all.
   //
-  // Each column reads a whole page rather than just the handful it shows: a day
-  // window also matches events that began earlier and are still running, and
-  // those sort first, so a small page can be entirely leftovers and leave a busy
-  // column looking empty.
+  // Each column caches a whole page so opening its day can reuse the same rows.
   useEffect(() => {
     if (sessionState !== "ready" || view !== "calendar" || calendarMode !== "week") {
       setDayPreviews(new Map());
@@ -855,7 +855,7 @@ export function ConciergeApp() {
     loadingCursor.current = cursor;
     setLoadingMore(true);
     try {
-      const page = await getCatalogPage(tenantId, requestFilters, cursor);
+      const page = await getCatalogPage(tenantId, requestFilters, cursor, catalogRequestTime.current);
       if (generation !== catalogGeneration.current) return;
       setEvents((current) => dedupeEvents([...current, ...page.items]));
       setNextCursor(page.next_cursor);
@@ -1359,6 +1359,7 @@ export function ConciergeApp() {
       {view !== "chat" && view !== "entities" ? (
         <FilterBar
           filters={filters}
+          catalogNameSuggestionsEnabled={config?.catalog_name_suggestions_enabled === true}
           providers={providers}
           topics={topicFacets}
           cities={knownCities}
@@ -1398,8 +1399,8 @@ export function ConciergeApp() {
         {view === "events" ? (
           <EventsView
             museSelectedIds={new Set(museEvents.keys())}
-            onMuseToggle={toggleMuse}
-            onMuseSignup={openMuse}
+            onMuseToggle={museEnabled ? toggleMuse : undefined}
+            onMuseSignup={museEnabled ? openMuse : undefined}
             broadDiscovery={!filters.query.trim() && !filters.topics.length && !filters.sourceKeys.length}
             events={events}
             sort={filters.sort}
@@ -1496,15 +1497,15 @@ export function ConciergeApp() {
         ) : null}
       </main>
 
-      {museError ? <p role="alert" className="workspace-error">{museError}</p> : null}
-      {museEvents.size ? <aside className={museStyles.tray} aria-label="Selected Muse events">
+      {museEnabled && museError ? <p role="alert" className="workspace-error">{museError}</p> : null}
+      {museEnabled && museEvents.size ? <aside className={museStyles.tray} aria-label="Selected Muse events">
         <strong>{museEvents.size} selected</strong>
         <div className={museStyles.actions}>
           <button type="button" className="button" onClick={() => setMuseEvents(new Map())}>Clear selection</button>
           <button type="button" className="button button-primary" onClick={() => setMuseOpen(true)}>Sign up with Muse</button>
         </div>
       </aside> : null}
-      {museOpen ? <MuseSignup events={[...museEvents.values()]} tenantId={tenantId}
+      {museEnabled && museOpen ? <MuseSignup events={[...museEvents.values()]} tenantId={tenantId}
         signedIn={Boolean(me)} signInUrl={signInFailurePath(401, typeof window === "undefined" ? "/" : window.location.pathname + window.location.search)}
         onSignIn={() => { try { saveMuseSelection(window.sessionStorage, [...museEvents.keys()]); } catch { setMuseError("This browser could not preserve your selection. Select the events again after signing in."); } }}
         onClose={() => setMuseOpen(false)} onRemove={id => setMuseEvents(current => {

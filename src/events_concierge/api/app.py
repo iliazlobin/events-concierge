@@ -142,6 +142,7 @@ _MAX_CATALOG_TIME_ZONE_LENGTH = 64
 _MAX_CATALOG_DATE_RANGES = 8
 _MAX_CATALOG_DATE_RANGE_LENGTH = 96
 _MIN_PRINTABLE_CODEPOINT = 0x20
+_DELETE_CODEPOINT = 0x7F
 _FEED_CURSOR_PATTERN = rf"^(?:0|[1-9][0-9]{{0,{len(str(_MAX_FEED_CURSOR)) - 1}}})$"
 _CATALOG_SOURCE_KEY_PATTERN = r"^[a-z0-9][a-z0-9-]{1,79}$"
 _CATALOG_CURSOR_PATTERN = r"^[A-Za-z0-9_-]+$"
@@ -758,6 +759,8 @@ class CatalogEntityDirectoryOut(BaseModel):
 class UiConfigOut(BaseModel):
     product_name: str = "Events Concierge"
     release_profile: Literal["full", "discovery"] = "full"
+    muse_enabled: bool = False
+    catalog_name_suggestions_enabled: bool = False
     local_demo: bool
     auth_mode: Literal["local_demo", "deployment_session"]
     auth_provider: Literal["custom_claim", "google", "identity_platform"] | None = None
@@ -1487,7 +1490,7 @@ def _normalized_catalog_filters(
             detail="minimum price cannot exceed the maximum price",
         )
     if any(
-        ord(character) < _MIN_PRINTABLE_CODEPOINT
+        ord(character) < _MIN_PRINTABLE_CODEPOINT or ord(character) == _DELETE_CODEPOINT
         for value in (query, *cities)
         if value is not None
         for character in value
@@ -2603,6 +2606,8 @@ def create_app() -> FastAPI:
         browser_session = getattr(getattr(app.state, "container", None), "browser_session", None)
         return UiConfigOut(
             release_profile=settings.release_profile,
+            muse_enabled=settings.muse_enabled,
+            catalog_name_suggestions_enabled=settings.catalog_name_suggestions_enabled,
             local_demo=settings.mock_cloud,
             auth_mode="local_demo" if settings.mock_cloud else "deployment_session",
             auth_provider=(
@@ -4118,14 +4123,18 @@ def create_app() -> FastAPI:
         response_model=HandoffCompletionAccepted,
     )(_mark_handoff_done)
 
-    app.include_router(muse_router(_authenticated_tenant, _csrf_protected_tenant))
+    if settings.muse_enabled:
+        app.include_router(muse_router(_authenticated_tenant, _csrf_protected_tenant))
     install_ingestion_admin_routes(app)
     install_command_investigation_routes(app)
     install_operator_operations_routes(app)
     install_operator_session_routes(app)
     install_model_usage_routes(app)
     _install_agent_chat(app, settings)
-    apply_release_profile(app, settings.release_profile)
+    apply_release_profile(
+        app, settings.release_profile,
+        catalog_name_suggestions_enabled=settings.catalog_name_suggestions_enabled,
+    )
     return app
 
 

@@ -2,7 +2,6 @@ import {
   addDays,
   filterDateKeys,
   localDateKey,
-  semanticDateRangeKeys,
   startOfLocalDay,
 } from "./date.ts";
 import { formatCity } from "./presentation.ts";
@@ -289,11 +288,10 @@ function interpretDate(text: string, now: Date): DateIntent {
     return customDateIntent(date, date, weekday.label, weekday.label);
   }
   if (/\b(?:this week|week)\b/i.test(text)) {
-    const week = semanticDateRangeKeys("week", "", "", now);
     return {
-      datePreset: "custom",
-      customStart: week.start,
-      customEnd: week.end,
+      datePreset: "week",
+      customStart: "",
+      customEnd: "",
       label: "This week",
       phrase: "week",
       explicit: true,

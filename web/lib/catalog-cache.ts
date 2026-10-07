@@ -30,17 +30,13 @@ import type { CatalogDay, CatalogDaySummary, CatalogFilters, EventItem } from ".
  *   written to storage. The agenda cache below holds them in memory alone, for
  *   the life of the page.
  *
- * One day of every answer is not window-independent. A range read drops events
- * that start exactly at the instant it opens — an all-day event on the range's
- * own first day — so that first day comes back short, and only for that day.
- * (Asked as a month, 2 August counts 145; asked as the first day of a week, 138.)
- * The first day is therefore kept apart from the rest as an "anchor" and reused
- * only for a range that opens on the same day, where a fresh read would answer
- * identically. Without that separation, visiting a few weeks and then switching
- * to the month would paint each week's short Sunday as the month's own count.
+ * A rolling range that opens partway through a day can have a partial first-day
+ * count. The first day is kept apart as an "anchor" so it cannot replace that
+ * day's complete count inside a wider calendar range. Explicit calendar ranges
+ * start at local midnight and include events starting at that exact boundary.
  */
 
-const CACHE_PREFIX = "events-concierge.catalog-summary.v3";
+const CACHE_PREFIX = "events-concierge.catalog-summary.v4";
 const CACHE_TTL_MS = 5 * 60 * 1000;
 /** Bounded so a long browsing session cannot fill the origin's storage quota. */
 const MAX_CACHE_ENTRIES = 12;
@@ -250,8 +246,7 @@ export function readCatalogSummary(
 ): CachedCatalogSummary | null {
   const entry = readEntry(cacheKey(tenantId, signature));
   if (!entry) return null;
-  // The first day is only ever reused for a range that opens on it, because that
-  // is the only range a fresh read would answer identically for.
+  // Keep first-day readings separate from complete interior-day readings.
   const anchor = entry.anchors[start];
   const afterFirst = nextDayKey(start);
   const interior = afterFirst > end ? undefined : coveringRange(entry.ranges, afterFirst, end);
@@ -299,8 +294,8 @@ export function writeCatalogSummary(
     if (dayKey < afterFirst || dayKey > end) days[dayKey] = day;
   }
   for (const day of summary.days) {
-    // The range's own first day is short by construction; it is kept as an
-    // anchor instead, never as an interior reading other ranges may reuse.
+    // A rolling range can open partway through its first day; keep that reading
+    // as an anchor instead of a complete interior reading other ranges may reuse.
     if (day.start_day > start && day.event_count > 0) days[day.start_day] = day;
   }
   const anchors: Record<string, CachedAnchor> = { ...(previous?.anchors ?? {}) };

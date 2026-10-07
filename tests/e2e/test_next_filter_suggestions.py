@@ -108,9 +108,49 @@ def discovery_filters_page(page_factory, request):
         assert not any(path.startswith("/v1/me/") for _, path in api.calls)
 
 
-@pytest.mark.parametrize("width", [1440, 390])
-def test_catalog_names_autocomplete_select_and_reload_preserve_filters(discovery_filters_page, tmp_path, width):
+@pytest.fixture
+def catalog_names_page(discovery_filters_page):
+    discovery_filters_page[1].catalog_name_suggestions_enabled = True
+    return discovery_filters_page
+
+
+@pytest.mark.parametrize("enabled", [False, None])
+def test_disabled_or_older_catalog_names_keep_filters_and_text_search_without_name_requests(
+    discovery_filters_page, enabled,
+):
     harness, api, queries = discovery_filters_page
+    api.catalog_name_suggestions_enabled = enabled
+    page = harness.page
+    name_requests = []
+
+    def unexpected_names(route: Route):
+        name_requests.append(route.request.url)
+        api.respond(route, {"detail": "name schema is held"}, 500)
+
+    page.route("**/v1/catalog/name-suggestions?*", unexpected_names)
+    page.goto(f"{BASE}/?view=events&source=tech-week-sf-2026")
+    expect(page.locator(".event-card")).to_have_count(4)
+    search = page.get_by_role("combobox", name=SEARCH_NAME)
+    search.fill("SF Tech")
+    expect(page.get_by_role("option").filter(has_text="SF Tech Week").first).to_be_visible()
+    page.wait_for_timeout(300)
+    with page.expect_response(lambda response: (
+        urlsplit(response.url).path == "/v1/catalog/events"
+        and parse_qs(urlsplit(response.url).query).get("q") == ["Nebius"]
+    )):
+        search.fill("Nebius")
+    search.press("Enter")
+    page.wait_for_function("new URL(location.href).searchParams.get('q') === 'Nebius'")
+    assert queries[-1]["q"] == ["Nebius"]
+    assert queries[-1]["source_key"] == ["tech-week-sf-2026"]
+    # Leave the composer active beyond its debounce to detect an accidental names request.
+    page.wait_for_timeout(300)
+    assert name_requests == []
+
+
+@pytest.mark.parametrize("width", [1440, 390])
+def test_catalog_names_autocomplete_select_and_reload_preserve_filters(catalog_names_page, tmp_path, width):
+    harness, api, queries = catalog_names_page
     page = harness.page
     page.set_viewport_size({"width": width, "height": 900})
     name_queries = []
@@ -194,8 +234,8 @@ def test_restored_saved_name_stays_literal_after_history_and_enter(discovery_fil
     assert query["start"] == ["2030-10-01"] and "topic" not in query
 
 
-def test_catalog_name_failure_and_old_response_do_not_replace_current_suggestions(discovery_filters_page):
-    harness, api, _ = discovery_filters_page
+def test_catalog_name_failure_and_old_response_do_not_replace_current_suggestions(catalog_names_page):
+    harness, api, _ = catalog_names_page
     page = harness.page
     held = []
 

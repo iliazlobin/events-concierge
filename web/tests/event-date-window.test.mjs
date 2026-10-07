@@ -19,6 +19,32 @@ test("upcoming presets start at the current moment, not local midnight", () => {
   }
 });
 
+test("This week on the reported Wednesday starts October 7 and ends after Sunday", () => {
+  const now = new Date(2026, 9, 7, 9, 30);
+  const window = dateWindow("week", "", "", now);
+  assert.equal(window.start.getTime(), now.getTime());
+  assert.deepEqual([
+    window.start.getDate(), window.end.getDate(), window.end.getDay(), window.end.getHours(),
+  ], [7, 12, 1, 0]);
+});
+
+test("local-day serialization retains both daylight-saving transitions", () => {
+  const previousZone = process.env.TZ;
+  process.env.TZ = "America/Los_Angeles";
+  try {
+    for (const [day, expectedHours] of [["2026-03-08", 23], ["2026-11-01", 25]]) {
+      const [start, end] = serializeDateRangeFilterForApi({ id: day, start: day, end: day })
+        .split("..").map(value => new Date(value));
+      assert.equal(start.getHours(), 0);
+      assert.equal(end.getHours(), 0);
+      assert.equal((end - start) / 3_600_000, expectedHours);
+    }
+  } finally {
+    if (previousZone === undefined) delete process.env.TZ;
+    else process.env.TZ = previousZone;
+  }
+});
+
 test("an active weekend starts now while a future weekend starts on Saturday", () => {
   const friday = dateWindow("weekend", "", "", NOW);
   assert.ok(friday.start > NOW);

@@ -73,7 +73,8 @@ export function AccountMenu({ me, config, tenantId = null, returnTo = "/", signi
   const showAdmin = Boolean(me?.is_admin);
 
   // The rendered order the roving index walks: links, the optional admin hop, then sign out.
-  const links = LINKS.filter(link => releaseSettingsAllowed(link.href, releaseProfile(config)));
+  const links = LINKS.filter(link => releaseSettingsAllowed(link.href, releaseProfile(config))
+    && (link.href !== "/settings/muse" || config?.muse_enabled === true));
   const itemCount = links.length + (showAdmin ? 1 : 0) + 1;
 
   const close = useCallback((restoreFocus: boolean) => {

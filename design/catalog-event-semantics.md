@@ -43,6 +43,12 @@ registration state requires structured provider evidence.
 
 ## Browse and facets
 
+Catalog name autocomplete requires `EC_CATALOG_NAME_SUGGESTIONS_ENABLED=true` after the
+authorized `0210` migration and its `0209` dependency. It defaults to disabled, omits the
+endpoint from HTTP/OpenAPI, and reports the capability through `/v1/ui-config`. When disabled
+or absent on an older API, the search box retains filter and saved-selection suggestions and
+literal event search without requesting catalog names.
+
 `GET /v1/catalog/name-suggestions` searches public event titles, venues, organizers, hosts,
 speakers and partners across every admitted event matching the active filters. It accepts the
 same source, place, date, topic, price and registration filters as event browsing, a literal
