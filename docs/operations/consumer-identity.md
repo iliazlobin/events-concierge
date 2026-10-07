@@ -67,8 +67,23 @@ terraform -chdir=infra/terraform/environments/consumer-identity apply identity.t
 The [OAuth consent brand](https://support.google.com/cloud/answer/15549049) belongs to its
 Google project; a second client does not give it a separate app name. Keep other products'
 existing clients and branding intact when choosing the Events Concierge identity project.
-`events.iliazlobin.com` is the application domain; the SDK auth domain stays
-`<project-id>.firebaseapp.com` unless a separate custom auth-domain setup is completed.
+For same-origin helpers, add `https://events.iliazlobin.com/__/auth/handler` to that
+client's authorized callbacks, then set `EC_IDENTITY_PLATFORM_AUTH_DOMAIN=events.iliazlobin.com`.
+The [Firebase reverse-proxy approach](https://firebase.google.com/docs/auth/web/redirect-best-practices#option_3_proxy_auth_requests_to_firebaseappcom)
+keeps the SDK popup and helper iframe on the application origin; SDK tokens remain in memory.
+The callback and runtime setting must be coordinated with the deployed proxy; browser acceptance
+remains required. Keep the Firebase callback during rollback.
+
+- Public Caddy admits only the seven named `/__/auth` helpers. Next.js forwards them to the
+  consumer API; it fetches the fixed project Firebase host through existing HTTPS egress.
+- GET serves the helpers; POST is restricted to `handler`. Query: 8 KiB; request: 64 KiB;
+  decoded response: 2 MiB; upstream deadline: 20 seconds. No redirect following or arbitrary upstream.
+- Application cookies, bearer tokens and operator headers never enter the helper transport.
+  Provider cookies are discarded; responses retain content type, CSP and frame restrictions,
+  with no-store and origin-only cross-site referrers. HTTP client tracing is disabled; errors
+  expose no OAuth query/body values. No new Service, IAM binding or frontend egress is required.
+- Rollback the auth domain to `<project-id>.firebaseapp.com` with a tested compatible release.
+  The same-origin proxy then returns `404`; existing identities and account state remain.
 
 **Apple:** requires Apple Developer membership, a Sign in with Apple-enabled app,
 Services ID, Team ID, Key ID and private key. Register the same auth-domain callback

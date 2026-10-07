@@ -47,7 +47,12 @@ const supportedMethods = new Set([
   "PUT",
 ]);
 
-export type RuntimeApiBasePath = "/v1" | "/auth" | "/healthz" | "/readyz";
+export type RuntimeApiBasePath = "/v1" | "/auth" | "/healthz" | "/readyz" | "/__/auth";
+
+const firebaseHelpers = new Set([
+  "handler", "handler.js", "iframe", "iframe.js", "experiments.js", "links", "links.js",
+]);
+const helperResponseBytes = 2 * 1_024 * 1_024;
 
 // Identity Platform, hosted OIDC and local session adapters use these fixed names.
 // IAP cookies share the browser origin but must never enter the consumer API.
@@ -118,11 +123,12 @@ function connectionHeaderNames(headers: Headers): Set<string> {
   return names;
 }
 
-function upstreamRequestHeaders(request: Request, bodyLength: number | null): Headers {
+function upstreamRequestHeaders(request: Request, bodyLength: number | null, helper = false): Headers {
   const headers = new Headers();
   const connectionHeaders = connectionHeaderNames(request.headers);
   request.headers.forEach((value, name) => {
     const normalized = name.toLowerCase();
+    if (helper && normalized !== "accept" && normalized !== "content-type") return;
     if (
       hopByHopHeaders.has(normalized)
       || connectionHeaders.has(normalized)
@@ -162,12 +168,16 @@ function sameOriginLocation(value: string, origin: URL): string {
   }
 }
 
-function downstreamResponseHeaders(upstream: Response, origin: URL): Headers {
+function downstreamResponseHeaders(upstream: Response, origin: URL, helper = false): Headers {
   const headers = new Headers();
   const connectionHeaders = connectionHeaderNames(upstream.headers);
   const setCookies = upstream.headers.getSetCookie();
   upstream.headers.forEach((value, name) => {
     const normalized = name.toLowerCase();
+    if (helper && !new Set([
+      "content-type", "content-security-policy", "x-frame-options", "location",
+      "cache-control", "pragma", "referrer-policy", "x-content-type-options",
+    ]).has(normalized)) return;
     if (
       hopByHopHeaders.has(normalized)
       || connectionHeaders.has(normalized)
@@ -190,7 +200,8 @@ function downstreamResponseHeaders(upstream: Response, origin: URL): Headers {
   ) {
     headers.delete("content-length");
   }
-  for (const cookie of setCookies) headers.append("Set-Cookie", cookie);
+  if (!helper) for (const cookie of setCookies) headers.append("Set-Cookie", cookie);
+  if (helper) headers.set("Cache-Control", "no-store, max-age=0");
   return headers;
 }
 
@@ -288,6 +299,9 @@ function targetUrl(
 
   const pathname = `${basePath}${encodedSegments.length ? `/${encodedSegments.join("/")}` : ""}`;
   const source = new URL(request.url);
+  if (basePath === "/__/auth" && (
+    path.length !== 1 || !firebaseHelpers.has(path[0]) || source.pathname !== pathname
+  )) return null;
   if (byteLength(pathname) > maxPathBytes || byteLength(source.search) > maxQueryBytes) {
     return null;
   }
@@ -403,6 +417,10 @@ export async function proxyRuntimeApiRequest(
   options: RuntimeApiProxyOptions = {},
 ): Promise<Response> {
   const method = request.method.toUpperCase();
+  const helper = basePath === "/__/auth";
+  if (helper && method !== "GET" && (method !== "POST" || path[0] !== "handler")) {
+    return jsonError("method not allowed", 405);
+  }
   if (!supportedMethods.has(method)) return jsonError("method not allowed", 405);
 
   const origin = apiOrigin();
@@ -444,11 +462,37 @@ export async function proxyRuntimeApiRequest(
   try {
     const upstream = await fetch(target, {
       method,
-      headers: upstreamRequestHeaders(request, body?.byteLength ?? null),
+      headers: upstreamRequestHeaders(request, body?.byteLength ?? null, helper),
       body,
       redirect: "manual",
       signal: controller.signal,
     });
+    if (helper) {
+      const reader = upstream.body?.getReader();
+      const chunks: Uint8Array[] = [];
+      let total = 0;
+      if (reader) {
+        while (true) {
+          const { value, done } = await reader.read();
+          if (done) break;
+          total += value.byteLength;
+          if (total > helperResponseBytes) {
+            await reader.cancel();
+            cleanup();
+            return jsonError("sign-in helper unavailable", 502);
+          }
+          chunks.push(value);
+        }
+      }
+      const content = new Uint8Array(total);
+      let offset = 0;
+      for (const chunk of chunks) { content.set(chunk, offset); offset += chunk.byteLength; }
+      cleanup();
+      return new Response(new Set([204, 205, 304]).has(upstream.status) ? null : content, {
+        status: upstream.status,
+        headers: downstreamResponseHeaders(upstream, origin, true),
+      });
+    }
     const isStream = (upstream.headers.get("content-type") ?? "").includes("text/event-stream");
     if (isStream) {
       // Headers arrived, so the request itself did not time out. Swap the one-shot deadline for

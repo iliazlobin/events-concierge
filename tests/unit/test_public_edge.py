@@ -182,7 +182,9 @@ def public_values(*, bootstrap=False):
         "sslPolicy": "ec-public-tls",
     }
     if bootstrap:
-        values["operator"].update({"enabled": False, "iapAudience": "", "policyVersion": "", "subjectRoles": {}})
+        values["operator"].update(
+            {"enabled": False, "iapAudience": "", "policyVersion": "", "subjectRoles": {}}
+        )
         for name in ("operator-frontend", "operator-api"):
             values["workloads"][name]["enabled"] = False
     return values
@@ -390,7 +392,11 @@ def test_public_filter_is_a_credential_free_sidecar_in_existing_frontend(resourc
         {"operator": {"iapAudience": ""}},
         {"operator": {"policyVersion": ""}},
         {"operator": {"subjectRoles": {"accounts.google.com:fixture": "reviewer"}}},
-        {"operator": {"policyVersion": "projects/123456789/locations/global/parameters/ec-operator-rbac/versions/latest"}},
+        {
+            "operator": {
+                "policyVersion": "projects/123456789/locations/global/parameters/ec-operator-rbac/versions/latest"
+            }
+        },
         {"operator": {"policyCacheSeconds": 61}},
         {"operator": {"tlsSecretName": "old-tls"}},
         {"operator": {"iapClientSecretName": "ec-consumer-google"}},
@@ -675,7 +681,21 @@ def _native_rehearsal(resources, directory, binary):
             process.wait(timeout=5)
 
 
-@pytest.mark.parametrize("path", ["/", "/sign-in", "/v1/events?city=sanfrancisco"])
+@pytest.mark.parametrize(
+    "path",
+    [
+        "/",
+        "/sign-in",
+        "/v1/events?city=sanfrancisco",
+        "/__/auth/handler?code=one%2Ftwo",
+        "/__/auth/handler.js",
+        "/__/auth/iframe",
+        "/__/auth/iframe.js",
+        "/__/auth/experiments.js",
+        "/__/auth/links",
+        "/__/auth/links.js",
+    ],
+)
 def test_consumer_pages_and_api_remain_available(proxy_rehearsal, path):
     response = proxy_rehearsal(path)
     assert "200 OK" in response.splitlines()[0]
@@ -723,6 +743,14 @@ def test_forwarded_authority_is_rebuilt_and_operator_headers_are_removed(proxy_r
         "/_next/data/build/admin.json",
         "/v1/%252e%252e/admin",
         "/v1/a%5cb",
+        "/__/auth/credentials",
+        "/__/auth/handler/extra",
+        "/__/auth/%68andler",
+        "/__/auth//handler",
+        "/__/auth/handler%2f",
+        "/__/auth/handler/",
+        "/__/auth/action",
+        "/__/firebase/init.json",
     ],
 )
 def test_private_and_probe_paths_never_reach_the_frontend(proxy_rehearsal, path):

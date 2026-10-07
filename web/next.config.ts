@@ -36,6 +36,13 @@ const nextConfig: NextConfig = {
         ],
       },
       {
+        source: "/__/auth/:path*",
+        headers: [
+          { key: "Cache-Control", value: "no-store, max-age=0" },
+          { key: "Referrer-Policy", value: "strict-origin-when-cross-origin" },
+        ],
+      },
+      {
         source: "/admin/:path*",
         headers: [
           { key: "Cache-Control", value: "no-store, max-age=0" },

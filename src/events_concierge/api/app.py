@@ -41,6 +41,7 @@ from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
 from ..adapters.identity_platform import IdentityPlatformBrowserSessionAdapter
 from ..adapters.oidc.session import _safe_return_path
+from ..api.firebase_auth_helper import install_firebase_auth_helper
 from ..api.release_profile import apply_release_profile
 from ..application.discovery_results import lifecycle
 from ..application.feed import MAX_FEED_OFFSET
@@ -2446,6 +2447,7 @@ def create_app() -> FastAPI:
     app = FastAPI(title="Events Concierge", version="0.1.0", lifespan=lifespan)
     app.state.settings = settings
     app.state.ingestion_admin = None
+    install_firebase_auth_helper(app, settings)
 
     @app.exception_handler(RequestValidationError)
     async def redact_auth_validation(request: Request, error: RequestValidationError) -> Response:

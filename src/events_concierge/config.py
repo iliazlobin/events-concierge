@@ -478,11 +478,6 @@ class Settings(BaseSettings):
             raise ValueError(
                 "Identity Platform requires project ID and its restricted browser API key"
             )
-        if (
-            self.identity_platform_auth_domain
-            != f"{self.identity_platform_project_id}.firebaseapp.com"
-        ):
-            raise ValueError("Identity Platform requires the project-owned Firebase auth domain")
         if not self.identity_platform_providers or len(
             set(self.identity_platform_providers)
         ) != len(self.identity_platform_providers):
@@ -505,6 +500,15 @@ class Settings(BaseSettings):
             or origin.fragment
         ):
             raise ValueError("Identity Platform requires an exact HTTPS application origin")
+        if self.identity_platform_auth_domain not in {
+            f"{self.identity_platform_project_id}.firebaseapp.com",
+            origin.hostname,
+        }:
+            raise ValueError(
+                "Identity Platform requires the project-owned Firebase or exact application auth domain"
+            )
+        if self.identity_platform_auth_domain == origin.hostname and origin.port not in {None, 443}:
+            raise ValueError("Same-origin Firebase helpers require the standard HTTPS port")
         return self
 
     @field_validator(

@@ -34,10 +34,15 @@ _QUERY_SECRET = re.compile(
     r"(?i)([?&](?:access[_-]?token|api[_-]?key|code|magic[_-]?link|otp|password|"
     r"secret|token)=)([^&#\s]+)"
 )
+_AUTH_HELPER_QUERY = re.compile(r"(/__/auth/[^?\s\"']+\?)[^\s\"']+")
 
 
 def configure_logging(level: str = "info", *, local: bool = True) -> None:
     logging.basicConfig(level=level.upper(), format="%(message)s")
+    # HTTPX's INFO URLs and httpcore's DEBUG headers bypass structlog redaction and can
+    # contain OAuth codes/state. Application metrics replace transport request tracing.
+    logging.getLogger("httpx").setLevel(logging.WARNING)
+    logging.getLogger("httpcore").setLevel(logging.WARNING)
     processors: list[structlog.typing.Processor] = [
         structlog.contextvars.merge_contextvars,
         redact_sensitive_event,
@@ -98,6 +103,7 @@ def _is_sensitive_key(key: str) -> bool:
 
 def _redact_text(value: str) -> str:
     """Scrub common secret encodings embedded in exception strings and URLs."""
+    value = _AUTH_HELPER_QUERY.sub(rf"\1{_REDACTED}", value)
     value = _URL_USERINFO.sub(rf"\1{_REDACTED}@", value)
     value = _QUERY_SECRET.sub(rf"\1{_REDACTED}", value)
     value = _ASSIGNMENT_SECRET.sub(rf"\1\2{_REDACTED}", value)
