@@ -409,6 +409,146 @@ def test_discovery_entity_graph_and_profile_are_read_only(release_page):
     expect(page.get_by_role("button", name="Show graph", exact=True)).to_have_count(0)
 
 
+def _assert_graph_frame_is_reachable(page: Page, *, touch_controls: bool) -> None:
+    """The whole drawing and its controls must clear the fixed header and mobile navigation."""
+    page.wait_for_function("""() => {
+        const frame = document.querySelector('.entity-graph-frame');
+        const header = document.querySelector('.site-header');
+        const nav = document.querySelector('.mobile-nav');
+        if (!frame || !header) return false;
+        const bounds = frame.getBoundingClientRect();
+        const visibleBottom = nav && nav.getClientRects().length
+            ? nav.getBoundingClientRect().top : innerHeight;
+        return bounds.top >= header.getBoundingClientRect().bottom - 1
+            && bounds.bottom <= visibleBottom + 1;
+    }""")
+    controls = page.get_by_role("group", name="Graph zoom", exact=True)
+    expect(controls).to_be_visible()
+    assert controls.get_by_role("button").evaluate_all("""buttons => buttons.every(button => {
+        const bounds = button.getBoundingClientRect();
+        return document.elementFromPoint(bounds.x + bounds.width / 2,
+            bounds.y + bounds.height / 2)?.closest('button') === button;
+    })""")
+    if touch_controls:
+        assert controls.get_by_role("button").evaluate_all("""buttons => buttons.every(button => {
+            const bounds = button.getBoundingClientRect();
+            return bounds.width >= 44 && bounds.height >= 44;
+        })""")
+    assert page.evaluate("document.documentElement.scrollWidth <= window.innerWidth")
+
+
+def _assert_graph_detail_does_not_cover_frame(page: Page, *, stacked: bool) -> None:
+    frame = page.get_by_role("application")
+    inspector = page.locator(".entity-graph-inspector")
+    expect(frame).to_be_visible()
+    expect(inspector).to_be_visible()
+    frame_bounds = frame.bounding_box()
+    detail_bounds = inspector.bounding_box()
+    assert frame_bounds is not None and detail_bounds is not None
+    if stacked:
+        assert detail_bounds["y"] >= frame_bounds["y"] + frame_bounds["height"] - 1
+        expect(inspector).to_have_css("max-height", "none")
+        assert inspector.evaluate("detail => detail.scrollHeight <= detail.clientHeight + 1")
+    else:
+        assert detail_bounds["x"] >= frame_bounds["x"] + frame_bounds["width"] - 1
+        assert abs(detail_bounds["y"] - frame_bounds["y"]) <= 1
+
+
+@pytest.mark.parametrize("width,height", [(393, 722), (320, 568), (820, 900), (1440, 900)])
+def test_focused_graph_keeps_the_full_drawing_clear_of_its_default_details(release_page, width, height):
+    harness, api = release_page
+    api.multi_hub_overview = True
+    api.second_event = True
+    page = harness.page
+    page.set_viewport_size({"width": width, "height": height})
+    page.emulate_media(reduced_motion="reduce")
+    page.goto(f"{BASE}/?view=entities&entity={ENTITY_ID}")
+    expect(page.get_by_role("complementary", name="Entity detail", exact=True)).to_be_visible()
+    # A default identity overview must not scroll the graph away on initial navigation.
+    assert page.evaluate("window.scrollY") == 0
+    _assert_graph_detail_does_not_cover_frame(page, stacked=width <= 1100)
+    _assert_graph_frame_is_reachable(page, touch_controls=width <= 1100)
+    expect(page.locator(".entity-graph-node")).to_have_count(4)
+    page.wait_for_function("""() => {
+        const zoom = document.querySelector('.entity-graph-zoom');
+        const nodes = [...document.querySelectorAll('.entity-graph-node')];
+        if (!zoom || nodes.length !== 4) return false;
+        const controls = zoom.getBoundingClientRect();
+        return nodes.every(node => {
+            const bounds = node.getBoundingClientRect();
+            const overlaps = bounds.left < controls.right && bounds.right > controls.left
+                && bounds.top < controls.bottom && bounds.bottom > controls.top;
+            return !overlaps && document.elementFromPoint(bounds.x + bounds.width / 2,
+                bounds.y + bounds.height / 2)?.closest('button') === node;
+        });
+    }""")
+
+
+@pytest.mark.parametrize("width,height", [(393, 722), (320, 568)])
+@pytest.mark.parametrize("selection", [
+    "catalog_entity", "catalog_event", "focused_entity", "focused_event", "focused_topic", "topic_event",
+])
+def test_mobile_graph_selection_scrolls_to_details_and_back_to_the_drawing(release_page, width, height, selection):
+    harness, api = release_page
+    page = harness.page
+    page.set_viewport_size({"width": width, "height": height})
+    page.emulate_media(reduced_motion="reduce")
+    graph = entity_graph()
+    if selection == "focused_topic":
+        graph["nodes"].append({"node_id": "topic:jazz", "node_kind": "topic", "ring": 3,
+                               "label": "jazz", "degree": 1})
+        graph["edges"].append({"a": graph["focus_id"], "b": "topic:jazz", "kind": "topic",
+                               "roles": [], "source_labels": [], "observed_at": None})
+        graph["counts"] |= {"topics": 1, "edges": 2}
+        page.route(f"**/v1/catalog/entities/{ENTITY_ID}/graph*",
+                   lambda route: api.respond(route, graph))
+    query = "view=entities"
+    if selection.startswith("focused_"):
+        query += f"&entity={ENTITY_ID}"
+    elif selection == "topic_event":
+        query += "&topic=jazz"
+    page.goto(f"{BASE}/?{query}")
+    if selection.endswith("entity"):
+        node_id, detail_kind = f"entity:{ENTITY_ID}", "Entity"
+    elif selection.endswith("topic"):
+        node_id, detail_kind = "topic:jazz", "Topic"
+    else:
+        node_id, detail_kind = f"event:{catalog_event()['canonical_event_id']}", "Event"
+    page.locator(f'button[data-node-id="{node_id}"]').click()
+    inspector = page.get_by_role("complementary", name=f"{detail_kind} detail", exact=True)
+    expect(inspector).to_be_visible()
+    # Checking viewport geometry avoids Playwright's click/scroll helpers masking a missing
+    # automatic scroll. Short topic panels may stop above the requested offset at page end.
+    page.wait_for_function("""() => {
+        const detail = document.querySelector('.entity-graph-inspector');
+        const header = document.querySelector('.site-header');
+        const nav = document.querySelector('.mobile-nav');
+        if (!detail || !header || !nav) return false;
+        const bounds = detail.getBoundingClientRect();
+        return bounds.top >= header.getBoundingClientRect().bottom - 1
+            && bounds.top + 80 <= nav.getBoundingClientRect().top;
+    }""")
+    _assert_graph_detail_does_not_cover_frame(page, stacked=True)
+    close_label = {
+        "catalog_entity": "Close details", "catalog_event": "Back to the graph",
+        "focused_entity": "Back to graph", "focused_event": "Back to Lakehouse Music",
+        "focused_topic": "Back to Lakehouse Music", "topic_event": "Back to the graph",
+    }[selection]
+    back = inspector.get_by_role("button", name=close_label, exact=True)
+    assert back.evaluate("""button => {
+        const bounds = button.getBoundingClientRect();
+        return document.elementFromPoint(bounds.x + bounds.width / 2,
+            bounds.y + bounds.height / 2)?.closest('button') === button;
+    }""")
+    back.click()
+    _assert_graph_frame_is_reachable(page, touch_controls=True)
+    if selection.startswith("focused_"):
+        expect(page.get_by_role("complementary", name="Entity detail", exact=True)).to_be_visible()
+        _assert_graph_detail_does_not_cover_frame(page, stacked=True)
+    else:
+        expect(page.locator(".entity-graph-inspector")).to_have_count(0)
+
+
 def test_discovery_entities_overview_resolves_an_event_organizer(release_page):
     harness, api = release_page
     page = harness.page
