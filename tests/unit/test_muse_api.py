@@ -188,6 +188,7 @@ async def test_connector_obeys_current_legal_acceptance(monkeypatch, accepted, e
         identity_platform_project_id="events-fixture",
         identity_platform_api_key="restricted-browser-key-fixture",
         identity_platform_auth_domain="events-fixture.firebaseapp.com",
+        identity_platform_google_client_id="123456789-fixture.apps.googleusercontent.com",
         identity_platform_providers=("google.com",),
         signup_terms_version="2026-10-05",
         signup_terms_url=ORIGIN + "/terms",
