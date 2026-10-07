@@ -8,16 +8,16 @@ Each root has separate protected state. Shared platform resources stay in
 | Layer | Owns / operation guide |
 | --- | --- |
 | [Shared platform](https://github.com/iliazlobin/gcp-foundation) | Projects/APIs, VPC/NAT, private GKE, access VM and `shared-retain`; Gateway controller |
-| [Shared application](environments/shared-development) | Workload identities, scoped IAM, registry, data/backup/state buckets and secret containers; [release/recovery](../../deploy/development.md) |
-| [Consumer identity](environments/consumer-identity) | Identity Platform, restricted browser key, scoped identity IAM and empty RBAC parameter; [accounts](../../deployment/consumer-identity.md) / [operator setup](../../deploy/operator-access.md) |
-| [Public access](environments/public-access) | Global IP, DNS authorizations, managed certificate/map, TLS policy and empty IAP secret container; [edge activation](../../deploy/public-access.md) |
+| [Shared application](environments/shared-development) | Workload identities, scoped IAM, registry, data/backup/state buckets and secret containers; [release/recovery](../../docs/operations/README.md) |
+| [Consumer identity](environments/consumer-identity) | Identity Platform, restricted browser key, scoped identity IAM and empty RBAC parameter; [accounts](../../docs/operations/consumer-identity.md) / [operator setup](../../docs/operations/operator-access.md) |
+| [Public access](environments/public-access) | Global IP, DNS authorizations, managed certificate/map, TLS policy and empty IAP secret container; [edge activation](../../docs/operations/public-access.md) |
 
 Helm owns workloads, retained-store configuration, namespace policies and Gateway/routes;
 the GKE controller owns load-balancer backends/NEGs. DNS authority owns the app A record
 and certificate-validation CNAMEs. Terraform provisions secret/parameter containers, not provider
 credentials, RBAC payloads or DNS records.
 The shared application root also owns three protected CA recovery containers;
-[TLS custody](../../deploy/development.md#authenticated-discovery-and-encrypted-dependencies)
+[TLS custody](../../docs/operations/transport.md#authenticated-discovery-and-encrypted-dependencies)
 keeps signing-key payloads outside state and workload grants.
 
 ## Shared application
@@ -33,7 +33,7 @@ The app Helm charts own namespace policies, releases, stores, and PVCs.
 The `shared-development` root owns active application resources and separate state. Operation
 helpers default to this destination and reject retired targets. The separate `development` root
 remains until its retained resources have been removed and its state is empty; it cannot provision
-a running application environment. Use the [deployment and recovery runbook](../../deploy/development.md);
+a running application environment. Use the [deployment and recovery runbook](../../docs/operations/README.md);
 `scripts/development/check_shared_plan.py` accepts only additions within the new app boundary.
 The shared app's first reviewed plan bootstraps `iz27-platform-dev-ec-state` locally, after which
 only that root's new state moves to the backend in `backend.tf.example`. Never migrate platform

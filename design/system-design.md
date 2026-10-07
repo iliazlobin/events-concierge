@@ -81,7 +81,7 @@ Implementation constraints for private discovery. [PROJECT.md](../PROJECT.md#cur
 - Operator/executor database roles are separate from consumer authority. Local admin remains loopback/mock-only.
 - New adapters/source onboarding require reviewed changes. [Operator boundary](../docs/ingestion-admin.md#hosted-operator-boundary).
 - Secrets stay outside prompts, logs and histories; payload references enforce namespace, identity and size checks.
-- [Identity operations](../docs/production-operations.md#built-in-oidc-bff-activation) owns configuration, cookie limits, provisioning and field acceptance.
+- [Identity operations](../docs/operations/consumer-identity.md#built-in-oidc-bff-activation) owns configuration, cookie limits, provisioning and field acceptance.
 
 ## Account erasure
 
@@ -123,5 +123,5 @@ These constraints apply to a separately authorized full-product release; retaine
 - `/healthz`: liveness. `/readyz`: dependencies. `/versionz`: build identity. Healthy processes do not establish user-flow acceptance.
 - Required evidence covers real identity/CSRF, tenant isolation, catalog publication, worker recovery, monitoring and backup restoration.
 - Deferred routes, workers and credentials remain disabled; retained work must not resume prohibited external effects.
-- [Production operations](../docs/production-operations.md#first-release-acceptance) owns release gates; [private deployment](../deploy/development.md) owns release, access and recovery commands.
+- [Production operations](../docs/operations/release.md#first-release-acceptance) owns release gates; [private deployment](../docs/operations/README.md) owns release, access and recovery commands.
 - Deployment requires separate authorization from source integration and migration.

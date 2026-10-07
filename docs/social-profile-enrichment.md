@@ -11,7 +11,7 @@ by event sources. Both adapters are disabled by default; live provider access is
 
 ## Run
 
-Apply the reviewed migration `0200` through the normal [release procedure](../deploy/development.md).
+Apply the reviewed migration `0200` through the normal [release procedure](operations/README.md).
 Mount credentials only into the entity-intelligence worker. Configure its environment:
 
 | Setting | Value |

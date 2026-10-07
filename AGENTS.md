@@ -11,14 +11,15 @@ API keys are deferred unless the assigned task explicitly changes their scope.
 
 - [Architecture](ARCHITECTURE.md): code map, runtime boundaries and invariants.
 - [Current milestone](PROJECT.md#current-milestone-discovery): current product scope and priorities.
-- [README](README.md): dependencies and developer commands.
-- [Development workflow](README.md#development-workflow): `main`, task branches, PRs and release authority.
-- [Release acceptance](docs/production-operations.md#first-release-acceptance): release gates.
-- [GKE release and recovery](deploy/development.md): application operations.
-- [Application support](deploy/support.md): common incidents, safe diagnosis and recovery boundaries.
-- [Consumer accounts](deployment/consumer-identity.md): signup and legal acceptance.
-- [Operator access](deploy/operator-access.md): RBAC configuration and separate IAP access.
-- [Public consumer access](deploy/public-access.md): GCP routing, TLS and admin release gates.
+- [README](README.md): scope and document ownership.
+- [Development](docs/development.md): dependencies and developer commands.
+- [Development workflow](docs/development.md#development-workflow): `main`, task branches, PRs and release authority.
+- [Release acceptance](docs/operations/release.md#first-release-acceptance): release gates.
+- [GKE release and recovery](docs/operations/README.md): application operations.
+- [Application support](docs/operations/support.md): common incidents, safe diagnosis and recovery boundaries.
+- [Consumer accounts](docs/operations/consumer-identity.md): signup and legal acceptance.
+- [Operator access](docs/operations/operator-access.md): RBAC configuration and separate IAP access.
+- [Public consumer access](docs/operations/public-access.md): GCP routing, TLS and admin release gates.
 - [Symphony workflow](WORKFLOW.md): bounded coding-agent assignment and handoff.
 - [CI](.github/workflows/ci.yml) and [deployment checks](.github/workflows/deployment-validation.yml):
   authoritative check definitions. Read the relevant design and tests before changing a component.

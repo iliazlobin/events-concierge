@@ -22,9 +22,9 @@ Next.js `3000` accepts only Pod-local proxy traffic. `/administrator` is not an 
 | Owner | Resources |
 | --- | --- |
 | Shared platform | Private GKE/VPC, standard Gateway controller and HTTP load-balancing dependency. |
-| [Public-access Terraform](../infra/terraform/environments/public-access) | `ec-public-ip`, one DNS authorization, managed certificate/map entry, TLS policy and empty `ec-admin-iap` secret container. |
+| [Public-access Terraform](../../infra/terraform/environments/public-access) | `ec-public-ip`, one DNS authorization, managed certificate/map entry, TLS policy and empty `ec-admin-iap` secret container. |
 | Application Helm | Gateway, exact-host HTTPRoutes, backend/health policies, shared web Deployment and separate API processes. |
-| [Consumer identity](../deployment/consumer-identity.md) | Identity Platform, restricted browser key and backend-scoped IAP grant and private RBAC configuration. |
+| [Consumer identity](consumer-identity.md) | Identity Platform, restricted browser key and backend-scoped IAP grant and private RBAC configuration. |
 | DNS authority | Certificate-validation CNAME and one A record; no tunnel or HTTP proxy. |
 
 - Gateway class: `gke-l7-global-external-managed`. No proxy-only subnet, public node or public Kubernetes endpoint.
@@ -36,17 +36,17 @@ Next.js `3000` accepts only Pod-local proxy traffic. `/administrator` is not an 
 - Consumer and IAP sessions are independent; consumer logout does not log out IAP. Both views share the browser origin and web process: a consumer XSS could act as a signed-in admin. Exact-Origin CSRF does not isolate scripts on the same origin; API processes and credentials remain isolated.
 - Google Front End ranges reach only reviewed frontend/health ports. NetworkPolicy keeps API/store access scoped; review controller-created firewall rules and NEG endpoints.
 - IAP protects only the admin frontend backend. The API verifies the signed assertion independently: Google issuer/keys, backend audience, timestamps, signed identity and its configured RBAC binding.
-- Load balancer → filter/frontend uses HTTP within the restricted VPC/Pod network. This is not application mTLS. [Datastore TLS/mTLS](development.md#authenticated-discovery-and-encrypted-dependencies) remains a separate release gate.
+- Load balancer → filter/frontend uses HTTP within the restricted VPC/Pod network. This is not application mTLS. [Datastore TLS/mTLS](transport.md#authenticated-discovery-and-encrypted-dependencies) remains a separate release gate.
 - Single-node hosting has no node-level HA. [Load-balancer rules, processing and internet egress](https://cloud.google.com/vpc/network-pricing#lb) add cost; a reserved IP is charged while unused. No new application node is required.
 
 ## Prepare
 
 1. Verify CLI account/project, approved commits, immutable images and current state. Target `iz27-platform-dev`; preserve existing data, Symphony OAuth configuration and unrelated DNS.
 2. Review the platform plan: only enable HTTP load balancing and `CHANNEL_STANDARD` on the existing private cluster. Apply under explicit cloud authorization, then verify the GatewayClass/controller.
-3. Configure the [public-access backend](../infra/terraform/environments/public-access/backend.tf.example) in the existing protected application bucket. Review the saved plan before applying. This root must not adopt cluster/network/IAP API state, OAuth payloads or a controller-managed load balancer.
+3. Configure the [public-access backend](../../infra/terraform/environments/public-access/backend.tf.example) in the existing protected application bucket. Review the saved plan before applying. This root must not adopt cluster/network/IAP API state, OAuth payloads or a controller-managed load balancer.
 4. Add only the output certificate-validation CNAME at the current authoritative DNS provider, DNS-only. Wait for authorization and the managed certificate to become active. This record does not route application traffic.
 5. Prepare the separate admin OAuth client below. Provision only its versioned namespace Secret through the approved secret channel; no secret value in Helm/Terraform, logs or command arguments.
-6. Complete [private authenticated rollout](development.md#authenticated-discovery-and-encrypted-dependencies): recovery-key custody, held current backup, coordinated store TLS/Temporal mTLS, migrations through `0208`, consumer identity and private readiness. Preserve rollback and capacity limits.
+6. Complete [private authenticated rollout](transport.md#authenticated-discovery-and-encrypted-dependencies): recovery-key custody, held current backup, coordinated store TLS/Temporal mTLS, migrations through `0208`, consumer identity and private readiness. Preserve rollback and capacity limits.
 
 Offline prerequisites:
 
@@ -69,7 +69,7 @@ terraform -chdir=infra/terraform/environments/public-access test -no-color
 ## Activate
 
 1. Review the complete Helm resources, IP/certificate/IAP configuration and private acceptance before approving the public Gateway. Creating an external load balancer can expose traffic **before DNS is published**; an empty A record is not an access boundary.
-2. Layer [identity values](helm/events-concierge/values-consumer-identity.example.yaml) and [public edge values](helm/events-concierge/values-public-edge.example.yaml) over the approved private release. Set `publicEdge.enabled=true`, `bootstrap=true`, `staticIpName=ec-public-ip`, `certificateMap=ec-public-cert-map`, `sslPolicy=ec-public-tls`; legacy `gateway.enabled=false`.
+2. Layer [identity values](../../deploy/helm/events-concierge/values-consumer-identity.example.yaml) and [public edge values](../../deploy/helm/events-concierge/values-public-edge.example.yaml) over the approved private release. Set `publicEdge.enabled=true`, `bootstrap=true`, `staticIpName=ec-public-ip`, `certificateMap=ec-public-cert-map`, `sslPolicy=ec-public-tls`; legacy `gateway.enabled=false`.
 3. Bootstrap uses an explicitly nonmatching admin Service selector, disabled operator API/BFF, no admin Caddy handler and no GFE ingress on `8082`. Keep audience/policy assignments empty and the separate `operator-frontend` workload disabled. Use the real admin client/Secret; never deploy fixture identities.
 4. Verify programmed Gateway/routes, certificate and healthy consumer backend. Read back the actual admin backend IAP policy and approved IAM grant; configure its real audience and private RBAC version. Only then attest `operatorAccessVerified=true`, set `bootstrap=false` and enable `operator`/`operator-api`. The attestation records a completed human preflight; Helm does not query cloud permissions. The protected Service now selects the shared frontend on `8082`; the separate operator frontend stays disabled.
 5. Require both APIs ready, then run `wait_ready.py --target shared --profile private --operator --shared-frontend`. Check actual NEGs/firewalls, backend IAP, direct-IP/unexpected-Host rejection and consumer exclusions before publishing the output A record, DNS-only. Preserve unrelated DNS.
