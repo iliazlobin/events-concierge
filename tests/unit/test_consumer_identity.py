@@ -27,6 +27,8 @@ from events_concierge.ports.auth import (
     AuthenticationFailedError,
     BrowserIdentity,
     BrowserSessionUnavailableError,
+    ConsumerSignInFailureReason,
+    ConsumerSignInRejectedError,
     RecentAuthenticationRequiredError,
 )
 
@@ -377,7 +379,7 @@ async def test_step_up_cannot_authorize_another_account() -> None:
         identity.tenant_id, headers, return_to="/settings/account"
     )
     verifier.identity = verified_identity(_claims(sub="another-consumer"), _PROJECT, _PROVIDERS)
-    with pytest.raises(AuthenticationFailedError):
+    with pytest.raises(ConsumerSignInRejectedError) as rejected:
         await adapter.complete_identity_login(
             headers
             | {
@@ -387,6 +389,7 @@ async def test_step_up_cannot_authorize_another_account() -> None:
             token="verified-fixture-token",
             state=start.authorization_url.split("state=")[1],
         )
+    assert rejected.value.reason is ConsumerSignInFailureReason.REAUTHENTICATION
     with pytest.raises(RecentAuthenticationRequiredError):
         await adapter.verify_recent_auth(identity.tenant_id, headers, max_age_seconds=300)
 

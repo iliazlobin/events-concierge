@@ -3,9 +3,43 @@
 from __future__ import annotations
 
 from collections.abc import Awaitable, Callable
+from concurrent.futures import ThreadPoolExecutor
 from typing import Any, cast
 
+import pytest
+
 from events_concierge.infra.metrics import ApplicationMetrics, HttpMetricsMiddleware
+from events_concierge.ports.auth import ConsumerSignInFailureReason, ConsumerSignInRejectedError
+
+
+@pytest.mark.parametrize("value", ["claim_email", "private@example.test", None, 1])
+def test_signin_metrics_and_exceptions_reject_non_enum_labels(value: Any) -> None:
+    metrics = ApplicationMetrics(release_revision="dev", image_digest=None)
+    with pytest.raises(ValueError, match=r"^unknown consumer sign-in rejection reason$"):
+        metrics.observe_consumer_sign_in_rejection(value)
+    with pytest.raises(ValueError, match=r"^unknown consumer sign-in rejection reason$"):
+        ConsumerSignInRejectedError(value)
+    assert not any(
+        line.startswith("events_concierge_consumer_sign_in_rejections_total{")
+        for line in metrics.render().splitlines()
+    )
+
+
+def test_signin_counter_preserves_concurrent_increments_and_closed_labels() -> None:
+    metrics = ApplicationMetrics(release_revision="dev", image_digest=None)
+    with ThreadPoolExecutor(max_workers=8) as executor:
+        list(
+            executor.map(
+                lambda _: metrics.observe_consumer_sign_in_rejection(
+                    ConsumerSignInFailureReason.CHALLENGE
+                ),
+                range(1000),
+            )
+        )
+    assert (
+        'events_concierge_consumer_sign_in_rejections_total{reason="challenge"} 1000'
+        in metrics.render()
+    )
 
 
 def test_registry_renders_build_http_histogram_and_readiness_metrics() -> None:

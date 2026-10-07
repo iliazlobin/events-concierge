@@ -29,6 +29,13 @@ const nextConfig: NextConfig = {
         ],
       },
       {
+        // Browser-bound sign-in challenges and session responses must never be cached.
+        source: "/auth/:path*",
+        headers: [
+          { key: "Cache-Control", value: "no-store, max-age=0" },
+        ],
+      },
+      {
         source: "/admin/:path*",
         headers: [
           { key: "Cache-Control", value: "no-store, max-age=0" },

@@ -31,6 +31,8 @@ from ..ports.auth import (
     BrowserLoginCompletion,
     BrowserLoginStart,
     BrowserSessionUnavailableError,
+    ConsumerSignInFailureReason,
+    ConsumerSignInRejectedError,
 )
 from .oidc.session import (
     OpaqueBrowserSessionAdapter,
@@ -101,7 +103,7 @@ class IdentityPlatformVerifier:
 
     async def verify(self, token: str) -> VerifiedConsumerIdentity:
         if not token or len(token.encode("utf-8")) > _MAX_TOKEN_BYTES:
-            raise AuthenticationFailedError("valid sign-in required")
+            raise ConsumerSignInRejectedError(ConsumerSignInFailureReason.TOKEN_VERIFICATION)
         try:
             claims = await self._call(
                 lambda: auth.verify_id_token(token, app=self._app, check_revoked=True)
@@ -117,10 +119,14 @@ class IdentityPlatformVerifier:
                     auth.UserNotFoundError,
                 ),
             ):
-                raise AuthenticationFailedError("valid sign-in required") from error
+                raise ConsumerSignInRejectedError(
+                    ConsumerSignInFailureReason.TOKEN_VERIFICATION
+                ) from error
             raise
         except (ValueError, TypeError) as error:
-            raise AuthenticationFailedError("valid sign-in required") from error
+            raise ConsumerSignInRejectedError(
+                ConsumerSignInFailureReason.TOKEN_VERIFICATION
+            ) from error
         return verified_identity(claims, self.project_id, self.providers)
 
     async def check_session(self, uid: str, authenticated_at: int) -> None:
@@ -178,23 +184,32 @@ def verified_identity(
         or claims.get("aud") != project_id
         or not isinstance(firebase, dict)
         or firebase.get("tenant") is not None
-        or not isinstance(provider, str)
-        or provider not in providers
-        or not isinstance(uid, str)
+    ):
+        raise ConsumerSignInRejectedError(ConsumerSignInFailureReason.CLAIM_AUTHORITY)
+    if not isinstance(provider, str) or provider not in providers:
+        raise ConsumerSignInRejectedError(ConsumerSignInFailureReason.CLAIM_PROVIDER)
+    if (
+        not isinstance(uid, str)
         or not 1 <= len(uid) <= _MAX_UID_LENGTH
         or not uid.isascii()
         or not uid.isprintable()
         or any(char.isspace() for char in uid)
-        or claims.get("email_verified") is not True
+    ):
+        raise ConsumerSignInRejectedError(ConsumerSignInFailureReason.CLAIM_UID)
+    if (
+        claims.get("email_verified") is not True
         or not isinstance(email, str)
         or not _MIN_EMAIL_LENGTH <= len(email) <= _MAX_EMAIL_LENGTH
         or email.count("@") != 1
         or not email.isprintable()
         or any(char.isspace() for char in email)
-        or type(authenticated_at) is not int
+    ):
+        raise ConsumerSignInRejectedError(ConsumerSignInFailureReason.CLAIM_EMAIL)
+    if (
+        type(authenticated_at) is not int
         or not now - _MAX_SIGN_IN_AGE <= authenticated_at <= now + _CLOCK_SKEW
     ):
-        raise AuthenticationFailedError("verified Google or Apple sign-in required")
+        raise ConsumerSignInRejectedError(ConsumerSignInFailureReason.CLAIM_FRESHNESS)
     return VerifiedConsumerIdentity(project_id, uid, provider, email, authenticated_at)
 
 
@@ -292,9 +307,14 @@ class IdentityPlatformBrowserSessionAdapter(OpaqueBrowserSessionAdapter):
     async def complete_identity_login(
         self, headers: Mapping[str, str], *, token: str, state: str
     ) -> IdentityLoginCompletion:
-        if _one_header(headers, "origin") != self._trusted_origin or not _valid_token(state):
-            raise AuthenticationFailedError("same-origin sign-in required")
-        transaction_token = _required_cookie(headers, self.login_cookie_name)
+        if _one_header(headers, "origin") != self._trusted_origin:
+            raise ConsumerSignInRejectedError(ConsumerSignInFailureReason.ORIGIN)
+        if not _valid_token(state):
+            raise ConsumerSignInRejectedError(ConsumerSignInFailureReason.CHALLENGE)
+        try:
+            transaction_token = _required_cookie(headers, self.login_cookie_name)
+        except AuthenticationFailedError as error:
+            raise ConsumerSignInRejectedError(ConsumerSignInFailureReason.LOGIN_COOKIE) from error
         raw = await self._store.consume_login(transaction_token)
         try:
             record = json.loads(raw or "null")
@@ -308,11 +328,16 @@ class IdentityPlatformBrowserSessionAdapter(OpaqueBrowserSessionAdapter):
                 raise ValueError("invalid sign-in challenge")
             return_to = _safe_return_path(record["return_to"])
         except (ValueError, TypeError, KeyError) as error:
-            raise AuthenticationFailedError("valid sign-in challenge required") from error
+            raise ConsumerSignInRejectedError(ConsumerSignInFailureReason.CHALLENGE) from error
         identity = await self.verifier.verify(token)
         reauthenticated = record["purpose"] == "identity-reauth"
         if reauthenticated:
-            session_token, session = await self._session(headers)
+            try:
+                session_token, session = await self._session(headers)
+            except AuthenticationFailedError as error:
+                raise ConsumerSignInRejectedError(
+                    ConsumerSignInFailureReason.REAUTHENTICATION
+                ) from error
             if (
                 record.get("tenant_id") != str(identity.tenant_id)
                 or session["tenant_id"] != identity.tenant_id
@@ -323,7 +348,7 @@ class IdentityPlatformBrowserSessionAdapter(OpaqueBrowserSessionAdapter):
                     session_token, identity.tenant_id, identity.subject, identity.authenticated_at
                 )
             ):
-                raise AuthenticationFailedError("reauthentication must match this account")
+                raise ConsumerSignInRejectedError(ConsumerSignInFailureReason.REAUTHENTICATION)
         return IdentityLoginCompletion(identity, return_to, reauthenticated)
 
     async def start_login(self, return_to: str) -> BrowserLoginStart:

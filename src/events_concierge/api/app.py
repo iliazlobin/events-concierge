@@ -78,6 +78,8 @@ from ..ports.auth import (
     BrowserSessionLifecyclePort,
     BrowserSessionUnavailableError,
     BrowserStepUpUnavailableError,
+    ConsumerSignInFailureReason,
+    ConsumerSignInRejectedError,
     CsrfVerificationFailedError,
     RecentAuthenticationRequiredError,
 )
@@ -2703,7 +2705,12 @@ def create_app() -> FastAPI:
                         )
 
                         async def issue_bound_identity_session() -> BrowserSessionCredentials:
-                            await browser.revoke_session(request.headers)
+                            try:
+                                await browser.revoke_session(request.headers)
+                            except AuthenticationFailedError as error:
+                                raise ConsumerSignInRejectedError(
+                                    ConsumerSignInFailureReason.EXISTING_SESSION_COOKIE
+                                ) from error
                             return await browser.issue_session(identity)
 
                         credentials = await app.state.container.tenant_effect_authority.run(
@@ -2715,6 +2722,12 @@ def create_app() -> FastAPI:
                             issue_bound_identity_session,
                         )
                 except (AuthenticationFailedError, TenantEffectFencedError) as error:
+                    reason = ConsumerSignInFailureReason.UNKNOWN
+                    if isinstance(error, ConsumerSignInRejectedError):
+                        reason = error.reason
+                    elif isinstance(error, TenantEffectFencedError):
+                        reason = ConsumerSignInFailureReason.ACCOUNT_FENCED
+                    metrics.observe_consumer_sign_in_rejection(reason)
                     raise HTTPException(401, "sign-in could not be verified") from error
                 except (
                     BrowserSessionUnavailableError,

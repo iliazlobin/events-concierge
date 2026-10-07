@@ -16,6 +16,8 @@ from typing import Final
 
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
+from ..ports.auth import ConsumerSignInFailureReason
+
 PROMETHEUS_CONTENT_TYPE: Final = "text/plain; version=0.0.4; charset=utf-8"
 _DURATION_BUCKETS: Final = (0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1.0, 2.5, 5.0, 10.0)
 _KNOWN_METHODS: Final = frozenset(
@@ -43,6 +45,9 @@ class ApplicationMetrics:
         self._duration_counts: MutableMapping[HttpKey, int] = defaultdict(int)
         self._duration_sums: MutableMapping[HttpKey, float] = defaultdict(float)
         self._duration_buckets: MutableMapping[tuple[HttpKey, float], int] = defaultdict(int)
+        self._consumer_sign_in_rejections: MutableMapping[ConsumerSignInFailureReason, int] = (
+            defaultdict(int)
+        )
         self._dependency_ready: dict[str, float] = {
             "database": 0.0,
             "identity": 0.0,
@@ -75,6 +80,13 @@ class ApplicationMetrics:
         with self._lock:
             self._dependency_ready[dependency] = 1.0 if ready else 0.0
 
+    def observe_consumer_sign_in_rejection(self, reason: ConsumerSignInFailureReason) -> None:
+        """Count one failed sign-in POST; accept only authored categories, never request data."""
+        if not isinstance(reason, ConsumerSignInFailureReason):
+            raise ValueError("unknown consumer sign-in rejection reason")
+        with self._lock:
+            self._consumer_sign_in_rejections[reason] += 1
+
     def render(self) -> str:
         """Render a consistent Prometheus 0.0.4 snapshot."""
         with self._lock:
@@ -83,6 +95,7 @@ class ApplicationMetrics:
             duration_sums = dict(self._duration_sums)
             duration_buckets = dict(self._duration_buckets)
             dependencies = dict(self._dependency_ready)
+            sign_in_rejections = dict(self._consumer_sign_in_rejections)
 
         lines = [
             "# HELP events_concierge_build_info Immutable serving release identity.",
@@ -111,6 +124,18 @@ class ApplicationMetrics:
         )
         for key, count in sorted(request_counts.items()):
             lines.append(f"events_concierge_http_requests_total{_http_labels(key)} {count}")
+
+        lines.extend(
+            [
+                "# HELP events_concierge_consumer_sign_in_rejections_total Rejected consumer sign-in POSTs by fixed category.",
+                "# TYPE events_concierge_consumer_sign_in_rejections_total counter",
+            ]
+        )
+        for reason, count in sorted(sign_in_rejections.items()):
+            lines.append(
+                "events_concierge_consumer_sign_in_rejections_total"
+                f'{{reason="{reason.value}"}} {count}'
+            )
 
         lines.extend(
             [

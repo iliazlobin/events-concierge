@@ -8,7 +8,11 @@ from sqlalchemy.exc import TimeoutError as SqlAlchemyTimeoutError
 
 from ...domain.consumer_identity import LegalPolicy, VerifiedConsumerIdentity
 from ...infra.db import system_session_scope, tenant_session_scope
-from ...ports.auth import AuthenticationFailedError, BrowserSessionUnavailableError
+from ...ports.auth import (
+    BrowserSessionUnavailableError,
+    ConsumerSignInFailureReason,
+    ConsumerSignInRejectedError,
+)
 
 
 class PostgresConsumerAccountRepository:
@@ -29,7 +33,9 @@ class PostgresConsumerAccountRepository:
                 ).scalar_one()
         except DBAPIError as error:
             if getattr(error.orig, "sqlstate", None) == "42501":
-                raise AuthenticationFailedError("consumer account unavailable") from error
+                raise ConsumerSignInRejectedError(
+                    ConsumerSignInFailureReason.ACCOUNT_UNAVAILABLE
+                ) from error
             raise BrowserSessionUnavailableError("consumer signup unavailable") from error
         except (SqlAlchemyTimeoutError, TimeoutError) as error:
             raise BrowserSessionUnavailableError("consumer signup unavailable") from error
@@ -59,7 +65,9 @@ class PostgresConsumerAccountRepository:
                 ).scalar_one()
         except DBAPIError as error:
             if getattr(error.orig, "sqlstate", None) == "42501":
-                raise AuthenticationFailedError("consumer account unavailable") from error
+                raise ConsumerSignInRejectedError(
+                    ConsumerSignInFailureReason.ACCOUNT_UNAVAILABLE
+                ) from error
             raise BrowserSessionUnavailableError("consumer signup unavailable") from error
         except (SqlAlchemyTimeoutError, TimeoutError) as error:
             raise BrowserSessionUnavailableError("consumer signup unavailable") from error

@@ -133,6 +133,14 @@ kubectl get nodes
 - Before applying, verify the recorded Helm revision, Deployment identity and old image; reject concurrent changes or a pending release.
 - Verify HTTPS, anonymous search, sign-in and protected endpoints after rollout. Restore only the old frontend digest if needed; never roll back the database for this repair.
 
+**Consumer API diagnostics repair**
+
+- Use a reviewed, CI-tested immutable API digest; no schema changes or migrations. Keep schema `0208`, operator disabled and cadence held.
+- Retain the deployed chart, complete values, global backend image/revision and all other worker/store images. Set only `workloads.api.env.EC_RELEASE_REVISION` and `workloads.api.env.EC_IMAGE_DIGEST` to the API's truthful build identity.
+- Use an independently reviewed, persisted Helm post-renderer that changes only the API container image and rejects any other render delta. An optional tested frontend repair follows the image-only exception above.
+- Verify the current Helm revision, exact workload identities/templates, old digests, retained state and fresh private TLS/readiness before applying; refuse concurrent changes. Record API, worker, chart and frontend provenance separately without rewriting earlier receipts.
+- Allow a brief API interruption. Recheck native TLS/mTLS, anonymous search, sign-in, generic rejection responses and private counters after rollout. If necessary, restore only the prior API image/build environment and optional frontend digest; preserve schema/data, held cadence and access restrictions.
+
 **Verify and publish the tested package — after publication authorization**
 
 Set `CI_RUN` and `BACKEND_REVISION` to the successful CI run and its full `main` commit. Download into a new directory:

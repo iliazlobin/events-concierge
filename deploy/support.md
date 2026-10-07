@@ -70,6 +70,8 @@ curl --silent --show-error --max-time 10 --write-out '\nHTTP %{http_code}\n' \
 | Operator API `401` / `403` | Invalid assertion vs. unassigned identity or insufficient capability; check the actual backend audience and pinned policy version. | Follow [RBAC configuration](operator-access.md#configuration); verify the intended role and denied actions. Never copy assertions or private bindings into a ticket. |
 | Operator API `503` | Check its separate readiness: policy access/validity and restricted database readiness. A healthy shared frontend is insufficient. | Restore an enabled, reviewed policy/configuration through [publish and activate](operator-access.md#publish-and-activate). No stale grant fallback; never restore revoked access. |
 
+**Consumer sign-in `401`:** private `/metrics` exposes `events_concierge_consumer_sign_in_rejections_total{reason="..."}`. Fixed categories distinguish origin, cookie/challenge, token/claims, reauthentication and account rejection. Compare counters before/after one controlled attempt on the same Pod and process; they are cumulative and reset on restart. No tokens, cookies, account IDs or provider errors enter these labels. The browser keeps its generic error; `503` dependency failures do not increment this counter.
+
 For operator readiness, forward `service/events-concierge-operator-api 14003:8000` using the scoped command above and inspect `http://127.0.0.1:14003/readyz`. Use only when that service is deployed; it requires no assertion for this private readiness probe.
 
 ## Collection
