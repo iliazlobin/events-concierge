@@ -649,6 +649,47 @@ def test_mobile_graph_selection_scrolls_to_details_and_back_to_the_drawing(relea
         expect(page.locator(".entity-graph-inspector")).to_have_count(0)
 
 
+@pytest.mark.parametrize("width,height", [(393, 722), (320, 568)])
+@pytest.mark.parametrize("gesture", ["double_click", "shift_enter"])
+@pytest.mark.parametrize("selection", ["focused_event", "focused_topic", "topic_event"])
+def test_mobile_camera_gestures_keep_the_selected_node_and_graph_in_view(release_page, width, height, gesture, selection):
+    harness, api = release_page
+    page = harness.page
+    page.set_viewport_size({"width": width, "height": height})
+    page.emulate_media(reduced_motion="reduce")
+    graph = entity_graph()
+    if selection == "focused_topic":
+        graph["nodes"].append({"node_id": "topic:jazz", "node_kind": "topic", "ring": 3,
+                               "label": "jazz", "degree": 1})
+        graph["edges"].append({"a": graph["focus_id"], "b": "topic:jazz", "kind": "topic",
+                               "roles": [], "source_labels": [], "observed_at": None})
+        graph["counts"] |= {"topics": 1, "edges": 2}
+        page.route(f"**/v1/catalog/entities/{ENTITY_ID}/graph*",
+                   lambda route: api.respond(route, graph))
+    query = "view=entities&topic=jazz" if selection == "topic_event" else f"view=entities&entity={ENTITY_ID}"
+    node_id = "topic:jazz" if selection == "focused_topic" else f"event:{catalog_event()['canonical_event_id']}"
+    page.goto(f"{BASE}/?{query}")
+    _assert_graph_frame_is_reachable(page, touch_controls=True)
+    previous_url = page.url
+    node = page.locator(f'button[data-node-id="{node_id}"]')
+    node.click()
+    expect(node).to_have_attribute("aria-pressed", "true")
+    if gesture == "double_click":
+        node.dblclick()
+    else:
+        node.press("Shift+Enter")
+    # A camera gesture must remain effective after pending single-click navigation would run.
+    page.wait_for_timeout(650)
+    expect(page).to_have_url(previous_url)
+    expect(node).to_have_attribute("aria-pressed", "true")
+    _assert_graph_frame_is_reachable(page, touch_controls=True)
+    drawing = page.get_by_role("application").bounding_box()
+    selected = node.bounding_box()
+    assert drawing is not None and selected is not None
+    assert abs(selected["x"] + selected["width"] / 2 - drawing["x"] - drawing["width"] / 2) <= 2
+    assert abs(selected["y"] + selected["height"] / 2 - drawing["y"] - drawing["height"] / 2) <= 2
+
+
 def test_discovery_entities_overview_resolves_an_event_organizer(release_page):
     harness, api = release_page
     page = harness.page
