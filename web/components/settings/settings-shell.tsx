@@ -11,6 +11,7 @@ const TABS = [
   { href: "/settings", label: "Profile" },
   { href: "/settings/taste", label: "Interests" },
   { href: "/settings/saved-filters", label: "Saved filters" },
+  { href: "/settings/muse", label: "Muse signups" },
   { href: "/settings/activity", label: "Activity" },
   { href: "/settings/api-keys", label: "API keys" },
   { href: "/settings/security", label: "Security" },

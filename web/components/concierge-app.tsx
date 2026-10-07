@@ -52,6 +52,9 @@ import { clearEntityGraphCache } from "@/lib/entity-graph-cache";
 import { clipCalendarSummary } from "@/lib/calendar";
 import { streamChatTurn } from "@/lib/agent-stream";
 import type { SelectionEntry } from "@/lib/agent-stream";
+import { MuseSignup } from "@/components/muse-signup";
+import museStyles from "@/components/muse.module.css";
+import { MAX_MUSE_EVENTS, getMuseCatalogEvent, museEligibility, saveMuseSelection, takeMuseSelection } from "@/lib/muse";
 import { catalogFilterKey, initialCatalogFilters } from "@/lib/catalog-filters";
 import { addDays, localDateKey, normalizeDateRangeFilters, parseLocalDate } from "@/lib/date";
 import {
@@ -271,6 +274,49 @@ export function ConciergeApp() {
   const [dayLoadingMore, setDayLoadingMore] = useState(false);
   const [dayPreviews, setDayPreviews] = useState<Map<string, EventItem[]>>(new Map());
   const [expandedId, setExpandedId] = useState<string | null>(null);
+  const [museEvents, setMuseEvents] = useState<Map<string, EventItem>>(() => new Map());
+  const [museOpen, setMuseOpen] = useState(false);
+  const [museError, setMuseError] = useState<string | null>(null);
+  function toggleMuse(event: EventItem) {
+    setMuseError(null);
+    if (!museEvents.has(event.canonical_event_id) && (museEvents.size >= MAX_MUSE_EVENTS || museEligibility(event))) {
+      setMuseError("Select up to five upcoming free Luma or Meetup events.");
+      return;
+    }
+    setMuseEvents(current => {
+      const next = new Map(current);
+      if (next.has(event.canonical_event_id)) next.delete(event.canonical_event_id);
+      else next.set(event.canonical_event_id, event);
+      return next;
+    });
+  }
+  function openMuse(event: EventItem) {
+    if (!museEvents.has(event.canonical_event_id)) {
+      if (museEvents.size >= MAX_MUSE_EVENTS || museEligibility(event)) {
+        setMuseError("Select up to five upcoming free Luma or Meetup events.");
+        return;
+      }
+      setMuseEvents(current => new Map(current).set(event.canonical_event_id, event));
+    }
+    setMuseError(null);
+    setMuseOpen(true);
+  }
+  useEffect(() => {
+    if (sessionState !== "ready" || !me) return;
+    let ids: string[] = [];
+    try { ids = takeMuseSelection(window.sessionStorage); } catch { return; }
+    if (!ids.length) return;
+    let active = true;
+    void Promise.allSettled(ids.map(id => getMuseCatalogEvent(id, tenantId))).then(results => {
+      if (!active) return;
+      const restored = results.flatMap(result => result.status === "fulfilled" && !museEligibility(result.value)
+        ? [result.value] : []);
+      setMuseEvents(new Map(restored.map(event => [event.canonical_event_id, event])));
+      if (restored.length) setMuseOpen(true);
+      if (restored.length !== ids.length) setMuseError("Some selected events are no longer eligible for Muse.");
+    });
+    return () => { active = false; };
+  }, [sessionState, me, tenantId]);
   const [selectedEntityId, setSelectedEntityId] = useState<string | null>(null);
   const [turns, setTurns] = useState<ChatTurn[]>([]);
   // One id per browser session keeps the server-side transcript and refs together.
@@ -1351,6 +1397,9 @@ export function ConciergeApp() {
         ) : null}
         {view === "events" ? (
           <EventsView
+            museSelectedIds={new Set(museEvents.keys())}
+            onMuseToggle={toggleMuse}
+            onMuseSignup={openMuse}
             broadDiscovery={!filters.query.trim() && !filters.topics.length && !filters.sourceKeys.length}
             events={events}
             sort={filters.sort}
@@ -1446,6 +1495,21 @@ export function ConciergeApp() {
           </>
         ) : null}
       </main>
+
+      {museError ? <p role="alert" className="workspace-error">{museError}</p> : null}
+      {museEvents.size ? <aside className={museStyles.tray} aria-label="Selected Muse events">
+        <strong>{museEvents.size} selected</strong>
+        <div className={museStyles.actions}>
+          <button type="button" className="button" onClick={() => setMuseEvents(new Map())}>Clear selection</button>
+          <button type="button" className="button button-primary" onClick={() => setMuseOpen(true)}>Sign up with Muse</button>
+        </div>
+      </aside> : null}
+      {museOpen ? <MuseSignup events={[...museEvents.values()]} tenantId={tenantId}
+        signedIn={Boolean(me)} signInUrl={signInFailurePath(401, typeof window === "undefined" ? "/" : window.location.pathname + window.location.search)}
+        onSignIn={() => { try { saveMuseSelection(window.sessionStorage, [...museEvents.keys()]); } catch { setMuseError("This browser could not preserve your selection. Select the events again after signing in."); } }}
+        onClose={() => setMuseOpen(false)} onRemove={id => setMuseEvents(current => {
+          const next = new Map(current); next.delete(id); return next;
+        })} /> : null}
 
       <nav className="mobile-nav" aria-label="Main navigation">
         {navItems.map(({ value, label, icon: Icon }) => (

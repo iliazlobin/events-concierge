@@ -64,7 +64,7 @@ export function signInReturnTo(value: unknown): string {
   if (typeof value !== "string" || value.length > 2048 || !value.startsWith("/") || value.startsWith("//") || /[\\\s\u0000-\u001f\u007f]/.test(value)) return "/";
   try {
     const url = new URL(value, "https://events.example.test");
-    const allowed = ["/", "/app", "/settings", "/settings/account", "/settings/activity", "/settings/api-keys", "/settings/saved-filters", "/settings/security", "/settings/taste"];
+    const allowed = ["/", "/app", "/settings", "/settings/account", "/settings/activity", "/settings/api-keys", "/settings/saved-filters", "/settings/muse", "/settings/security", "/settings/taste"];
     return url.origin === "https://events.example.test" && allowed.includes(url.pathname)
       ? `${url.pathname}${url.search}${url.hash}` : "/";
   } catch { return "/"; }

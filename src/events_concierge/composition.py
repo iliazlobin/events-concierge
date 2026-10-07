@@ -64,6 +64,7 @@ from .adapters.postgres.discovery_policy import PostgresDiscoveryPolicyReader
 from .adapters.postgres.handoff_expiry import PostgresHandoffExpiryRepository
 from .adapters.postgres.ingestion_admin import PostgresIngestionAdminRepository
 from .adapters.postgres.invariants import PostgresLifecycleInvariantRepository
+from .adapters.postgres.muse import PostgresMuseRepository
 from .adapters.postgres.outbox_wakeup import PostgresOutboxWakeup
 from .adapters.postgres.policy import (
     PostgresPolicySnapshotRepository,
@@ -101,6 +102,7 @@ from .application.discovery import DiscoveryService
 from .application.entity_intelligence import EntityIntelligenceService
 from .application.feed import FeedService, MembershipResolver
 from .application.handoff_reminder import HandoffReminderService
+from .application.muse import MuseSignupService
 from .application.parsing import HeuristicRequestParser
 from .application.ranking_feedback import FeedbackAwareRankingProfiles, RankingFeedbackService
 from .application.reconciliation import LifecycleReconciliationService
@@ -209,6 +211,7 @@ class Container:
     request_terminal: RequestTerminalService
     source_policies: dict[Source, SourcePolicy]
     tenant_effect_authority: TenantEffectAuthority
+    muse: MuseSignupService | None = None
 
 
 def build_container(
@@ -568,6 +571,7 @@ def build_container(
         ),
         tenant_roles=tenant_roles or PostgresTenantRoleRepository(),
         api_keys=api_keys or PostgresApiKeyRepository(),
+        muse=MuseSignupService(PostgresMuseRepository(), catalog),
         saved_catalog_filters=(saved_catalog_filters or PostgresSavedCatalogFilterRepository()),
         ranking_feedback_repo=configured_ranking_feedback_repo,
         ranking_feedback=ranking_feedback,

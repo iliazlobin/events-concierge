@@ -7823,3 +7823,6 @@ textarea:focus-visible {
     padding-right: 16px;
   }
 }
+
+.event-card__muse { display: flex; gap: 16px; align-items: center; justify-content: flex-end; padding: 12px 24px; border-top: 1px solid var(--border, #30332a); flex-wrap: wrap; }
+.event-card__muse label { display: flex; gap: 8px; align-items: center; font-size: .875rem; }

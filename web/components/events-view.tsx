@@ -8,6 +8,9 @@ import { EventList } from "@/components/event-list";
 import type { CatalogSort, EventEntityReference, EventItem } from "@/lib/types";
 
 interface EventsViewProps {
+  museSelectedIds?: ReadonlySet<string>;
+  onMuseToggle?: (event: EventItem) => void;
+  onMuseSignup?: (event: EventItem) => void;
   events: EventItem[];
   broadDiscovery?: boolean;
   sort: CatalogSort;
@@ -28,6 +31,9 @@ interface EventsViewProps {
 }
 
 export function EventsView({
+  museSelectedIds,
+  onMuseToggle,
+  onMuseSignup,
   events,
   broadDiscovery = false,
   sort,
@@ -92,6 +98,9 @@ export function EventsView({
         </div>
       ) : (
         <EventList
+          museSelectedIds={museSelectedIds}
+          onMuseToggle={onMuseToggle}
+          onMuseSignup={onMuseSignup}
           groupSessions
           events={displayedEvents}
           expandedId={expandedId}

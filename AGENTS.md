@@ -8,6 +8,9 @@ Guest catalog access and Google/Apple signup through GCP Identity Platform are i
 verify provider configuration and real browser acceptance for each release. Chat, automated
 RSVP, managed handoffs, notifications, calendar synchronization, purchases and programmatic
 API keys are deferred unless the assigned task explicitly changes their scope.
+The narrow [Muse signup handoff](docs/operations/muse-signups.md) is implemented for explicitly
+selected free Luma/Meetup dates. Muse owns browser execution; verify connection and provider
+acceptance separately from the app release.
 
 - [Architecture](ARCHITECTURE.md): code map, runtime boundaries and invariants.
 - [Current milestone](PROJECT.md#current-milestone-discovery): current product scope and priorities.
@@ -18,6 +21,7 @@ API keys are deferred unless the assigned task explicitly changes their scope.
 - [GKE release and recovery](docs/operations/README.md): application operations.
 - [Application support](docs/operations/support.md): common incidents, safe diagnosis and recovery boundaries.
 - [Consumer accounts](docs/operations/consumer-identity.md): signup and legal acceptance.
+- [Muse signups](docs/operations/muse-signups.md): scoped connector, selection and browser handoff.
 - [Operator access](docs/operations/operator-access.md): RBAC configuration and separate IAP access.
 - [Public consumer access](docs/operations/public-access.md): GCP routing, TLS and admin release gates.
 - [Symphony workflow](WORKFLOW.md): bounded coding-agent assignment and handoff.

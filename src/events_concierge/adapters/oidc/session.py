@@ -993,6 +993,7 @@ def _safe_return_path(value: str) -> str:
             "/settings/activity",
             "/settings/api-keys",
             "/settings/saved-filters",
+            "/settings/muse",
             "/settings/security",
             "/settings/taste",
         }
