@@ -642,20 +642,22 @@ function maximumPriceSuggestion(
   { allowBareAmount = false }: { allowBareAmount?: boolean } = {},
 ): Extract<AtomicSmartFilterSuggestion, { kind: "price" }> | null {
   const bareAmount = allowBareAmount
-    ? query.trim().match(/^(\d+(?:\.\d{1,2})?)$/)
+    ? query.trim().match(/^(\d+(?:\.\d+)?)$/)
     : null;
-  const currencyAmount = query.match(/\$\s*(\d+(?:\.\d{1,2})?)/i);
+  // Capture the complete number before validating cents precision. Otherwise
+  // an unsupported amount such as $0.001 can become a zero-dollar ceiling.
+  const currencyAmount = query.match(/\$\s*(\d+(?:\.\d+)?)(?![\d.])/i);
   const qualifiedAmount = query.match(
-    /\b(?:under|below|up\s+to|at\s+most|less\s+than|no\s+more\s+than|max(?:imum)?(?:\s+of)?)\s*\$?\s*(\d+(?:\.\d{1,2})?)\s*(?:dollars?|usd)?\b/i,
+    /\b(?:under|below|up\s+to|at\s+most|less\s+than|no\s+more\s+than|max(?:imum)?(?:\s+of)?)\s*\$?\s*(\d+(?:\.\d+)?)(?![\d.])\s*(?:dollars?|usd)?\b/i,
   );
   const namedCurrencyAmount = query.match(
-    /\b(\d+(?:\.\d{1,2})?)\s*(?:dollars?|usd|bucks?)\b/i,
+    /(?<![\d.])\b(\d+(?:\.\d+)?)\s*(?:dollars?|usd|bucks?)\b/i,
   );
   const rawAmount = qualifiedAmount?.[1]
     ?? currencyAmount?.[1]
     ?? namedCurrencyAmount?.[1]
     ?? bareAmount?.[1];
-  if (!rawAmount) return null;
+  if (!rawAmount || !/^\d+(?:\.\d{1,2})?$/.test(rawAmount)) return null;
 
   const amount = Number(rawAmount);
   if (!Number.isFinite(amount) || amount < 0 || amount > 1_000_000) return null;
