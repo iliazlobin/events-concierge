@@ -688,6 +688,21 @@ def test_mobile_camera_gestures_keep_the_selected_node_and_graph_in_view(release
     assert drawing is not None and selected is not None
     assert abs(selected["x"] + selected["width"] / 2 - drawing["x"] - drawing["width"] / 2) <= 2
     assert abs(selected["y"] + selected["height"] / 2 - drawing["y"] - drawing["height"] / 2) <= 2
+    # The node remains selected after a camera gesture. A later single click must still open
+    # its reading position, even though selecting the same ID does not change React state.
+    node.click()
+    page.wait_for_function("""() => {
+        const detail = document.querySelector('.entity-graph-inspector');
+        const header = document.querySelector('.site-header');
+        const nav = document.querySelector('.mobile-nav');
+        if (!detail || !header || !nav) return false;
+        const bounds = detail.getBoundingClientRect();
+        return bounds.top >= header.getBoundingClientRect().bottom - 1
+            && bounds.top + 80 <= nav.getBoundingClientRect().top;
+    }""")
+    expect(page).to_have_url(previous_url)
+    expect(node).to_have_attribute("aria-pressed", "true")
+    _assert_graph_detail_does_not_cover_frame(page, stacked=True)
 
 
 def test_discovery_entities_overview_resolves_an_event_organizer(release_page):
