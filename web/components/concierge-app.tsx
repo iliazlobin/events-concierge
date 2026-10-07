@@ -1359,6 +1359,7 @@ export function ConciergeApp() {
       {view !== "chat" && view !== "entities" ? (
         <FilterBar
           filters={filters}
+          catalogNameSuggestionsEnabled={config?.catalog_name_suggestions_enabled === true}
           providers={providers}
           topics={topicFacets}
           cities={knownCities}

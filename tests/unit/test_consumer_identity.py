@@ -697,7 +697,7 @@ async def test_return_to_required_legal_gates_personal_data_until_real_acceptanc
 def test_published_catalog_routes_have_no_consumer_identity_dependency(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    app, _, _ = _api(monkeypatch)
+    app, _, _ = _api(monkeypatch, catalog_name_suggestions_enabled=True)
     public = [
         route for route in app.routes if getattr(route, "path", "").startswith("/v1/catalog/")
     ]

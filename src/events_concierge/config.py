@@ -285,6 +285,8 @@ class Settings(BaseSettings):
     # Muse requires its separately approved persistence migration and connector acceptance.
     # Keep releases that have not enabled that capability free of Muse routes and table access.
     muse_enabled: bool = False
+    # SQL-backed names require the separately authorized 0210 schema migration.
+    catalog_name_suggestions_enabled: bool = False
     # ``module:callable`` deployment hook. The callable receives this immutable settings snapshot
     # and returns ``RuntimePorts``; secrets, browser-session authentication, its matching
     # CsrfProtectionPort, and concrete cloud SDKs remain in deployment-owned code.

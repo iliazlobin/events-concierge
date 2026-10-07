@@ -16,7 +16,7 @@ from events_concierge.domain.catalog_browse import CatalogNameSuggestion
 @pytest.fixture
 def autocomplete_app(monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setattr(app_module, "get_settings", lambda: Settings(
-        release_profile="discovery", mock_cloud=False,
+        release_profile="discovery", mock_cloud=False, catalog_name_suggestions_enabled=True,
     ))
     app = app_module.create_app()
     suggest = AsyncMock(return_value=[CatalogNameSuggestion(
@@ -24,6 +24,24 @@ def autocomplete_app(monkeypatch: pytest.MonkeyPatch):
     )])
     app.state.container = SimpleNamespace(catalog=SimpleNamespace(suggest_names=suggest))
     return app, suggest
+
+
+@pytest.mark.parametrize("release_profile", ["discovery", "full"])
+async def test_disabled_catalog_names_never_require_a_database(
+    monkeypatch: pytest.MonkeyPatch, release_profile: str,
+) -> None:
+    settings = Settings(_env_file=None, release_profile=release_profile)
+    assert settings.catalog_name_suggestions_enabled is False
+    monkeypatch.setattr(app_module, "get_settings", lambda: settings)
+    app = app_module.create_app()
+    # No container is installed: a disabled route must reject before reaching storage.
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        response = await client.get("/v1/catalog/name-suggestions", params={"q": "nebius"})
+        config = await client.get("/v1/ui-config")
+    assert response.status_code == 404
+    assert config.json()["catalog_name_suggestions_enabled"] is False
+    assert "/v1/catalog/name-suggestions" not in app.openapi()["paths"]
+    assert "/v1/catalog/events" in app.openapi()["paths"]
 
 
 async def test_guest_autocomplete_preserves_all_catalog_filters(autocomplete_app) -> None:
@@ -35,7 +53,9 @@ async def test_guest_autocomplete_preserves_all_catalog_filters(autocomplete_app
             ("price", "paid"), ("price_min_cents", "100"), ("price_max_cents", "5000"),
             ("date_range", "2026-10-01..2026-10-31"), ("limit", "6"),
         ])
+        config = await client.get("/v1/ui-config")
     assert response.status_code == 200
+    assert config.json()["catalog_name_suggestions_enabled"] is True
     assert response.json() == [{"name": "Nebius", "kinds": ["host", "organization"],
                                 "event_count": 3}]
     call = suggest.call_args.kwargs

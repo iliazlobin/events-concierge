@@ -36,13 +36,20 @@ _DISCOVERY_ROUTES = {
 }
 
 
-def apply_release_profile(app: FastAPI, profile: str) -> None:
+def apply_release_profile(
+    app: FastAPI, profile: str, *, catalog_name_suggestions_enabled: bool = False,
+) -> None:
     """Remove deferred routes before serving or generating the OpenAPI schema.
 
     This also removes the legacy product shell: discovery is served by Next.js,
     whose navigation consumes the same server-owned /v1/ui-config profile.
     Operator and operational endpoints retain their own independent authorization.
     """
+    if not catalog_name_suggestions_enabled:
+        app.router.routes[:] = [
+            route for route in app.router.routes
+            if not isinstance(route, APIRoute) or route.path != "/v1/catalog/name-suggestions"
+        ]
     if profile != "discovery":
         return
     app.router.routes[:] = [

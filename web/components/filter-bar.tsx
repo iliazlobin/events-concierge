@@ -72,6 +72,7 @@ import type {
 
 interface FilterBarProps {
   signedIn?: boolean;
+  catalogNameSuggestionsEnabled?: boolean;
   filters: CatalogFilters;
   providers: CatalogProvider[];
   topics: CatalogTopic[];
@@ -346,6 +347,7 @@ export function FilterBar({
   hasMore,
   loading,
   signedIn = true,
+  catalogNameSuggestionsEnabled = false,
   savedFilters,
   savedFiltersBusy = false,
   savedFiltersError = null,
@@ -406,7 +408,7 @@ export function FilterBar({
   const effectiveComposerContext = composerContext ?? typedComposer?.context ?? null;
   const composerTerm = composerContext ? query : typedComposer?.term ?? query;
   const nameSearchKey = catalogFilterKey({ ...filters, query: composerTerm.trim(), sort: "soonest" });
-  const searchNames = searchFocused && !suggestionsSuppressed
+  const searchNames = catalogNameSuggestionsEnabled && searchFocused && !suggestionsSuppressed
     && !effectiveComposerContext && composerTerm.trim().length >= 2;
   useEffect(() => {
     if (!searchNames) return;
