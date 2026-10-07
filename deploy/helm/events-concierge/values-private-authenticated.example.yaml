@@ -16,6 +16,7 @@ applicationConfig:
   EC_IDENTITY_PLATFORM_PROJECT_ID: replace-me-identity
   EC_IDENTITY_PLATFORM_API_KEY: replace-me-restricted-browser-key
   EC_IDENTITY_PLATFORM_AUTH_DOMAIN: replace-me-identity.firebaseapp.com
+  EC_IDENTITY_PLATFORM_GOOGLE_CLIENT_ID: 123456789-consumer-web-client.apps.googleusercontent.com # Replace with the enabled Google provider client ID.
   EC_IDENTITY_PLATFORM_PROVIDERS: '["google.com"]'
   EC_SIGNUP_TERMS_VERSION: replace-me-approved-version
   EC_SIGNUP_TERMS_URL: https://events.iliazlobin.com/terms

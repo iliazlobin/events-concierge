@@ -761,7 +761,10 @@ class UiConfigOut(BaseModel):
 
 class IdentitySessionBody(BaseModel):
     model_config = ConfigDict(extra="forbid")
-    id_token: str = Field(min_length=1, max_length=16 * 1024)
+    id_token: str = Field(min_length=1, max_length=16 * 1024, repr=False)
+    google_id_token: str | None = Field(
+        default=None, min_length=1, max_length=16 * 1024, repr=False
+    )
     state: str = Field(min_length=43, max_length=43)
     accepted_terms: bool = Field(default=False, strict=True)
     terms_version: str | None = Field(default=None, min_length=1, max_length=80)
@@ -2674,7 +2677,10 @@ def create_app() -> FastAPI:
                     raise HTTPException(503, "browser identity is unavailable")
                 try:
                     completion = await browser.complete_identity_login(
-                        request.headers, token=body.id_token, state=body.state
+                        request.headers,
+                        token=body.id_token,
+                        state=body.state,
+                        google_id_token=body.google_id_token,
                     )
                     policy = settings.consumer_legal_policy
                     credentials = None

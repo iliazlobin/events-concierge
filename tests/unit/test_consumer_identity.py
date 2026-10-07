@@ -38,6 +38,7 @@ _PROJECT = "events-identity-test"
 _ORIGIN = "https://events.example.test"
 _PROVIDERS = frozenset({"google.com", "apple.com"})
 _VALIDATION_NOW = 1_700_000_000
+_GOOGLE_CLIENT = "123456789-consumer-web.apps.googleusercontent.com"
 
 
 def _claims(**changes: Any) -> dict[str, Any]:
@@ -48,7 +49,19 @@ def _claims(**changes: Any) -> dict[str, Any]:
         "email": "consumer@example.test",
         "email_verified": True,
         "auth_time": int(time()),
-        "firebase": {"sign_in_provider": "google.com"},
+        "firebase": {
+            "sign_in_provider": "google.com",
+            "identities": {"google.com": ["google-123"]},
+        },
+        **changes,
+    }
+
+
+def _google_claims(**changes: Any) -> dict[str, Any]:
+    return {
+        "sub": "google-123",
+        "email": "consumer@example.test",
+        "email_verified": True,
         **changes,
     }
 
@@ -62,6 +75,7 @@ def _settings(**changes: Any) -> Settings:
             "release_profile": "discovery",
             "identity_platform_enabled": True,
             "identity_platform_project_id": _PROJECT,
+            "identity_platform_google_client_id": _GOOGLE_CLIENT,
             "identity_platform_api_key": "restricted-browser-key-fixture",
             "identity_platform_auth_domain": f"{_PROJECT}.firebaseapp.com",
             "identity_platform_providers": ("google.com", "apple.com"),
@@ -104,12 +118,22 @@ def test_unverified_stale_or_different_authority_cannot_select_an_account(
     monkeypatch.setattr(identity_module, "time", lambda: _VALIDATION_NOW)
     claims = _claims(auth_time=_VALIDATION_NOW) | changes
     with pytest.raises(AuthenticationFailedError):
-        verified_identity(claims, _PROJECT, _PROVIDERS)
+        verified_identity(
+            claims,
+            _PROJECT,
+            _PROVIDERS,
+            google_claims=_google_claims(email_verified=claims.get("email_verified")),
+        )
 
 
 def test_apple_verified_relay_email_is_supported_without_email_account_linking() -> None:
-    google = verified_identity(_claims(), _PROJECT, _PROVIDERS)
-    changed_email = verified_identity(_claims(email="another@example.test"), _PROJECT, _PROVIDERS)
+    google = verified_identity(_claims(), _PROJECT, _PROVIDERS, google_claims=_google_claims())
+    changed_email = verified_identity(
+        _claims(email="another@example.test"),
+        _PROJECT,
+        _PROVIDERS,
+        google_claims=_google_claims(email="another@example.test"),
+    )
     apple = verified_identity(
         _claims(
             sub="apple-123",
@@ -119,7 +143,9 @@ def test_apple_verified_relay_email_is_supported_without_email_account_linking()
         _PROJECT,
         _PROVIDERS,
     )
-    same_email = verified_identity(_claims(sub="other-user"), _PROJECT, _PROVIDERS)
+    same_email = verified_identity(
+        _claims(sub="other-user"), _PROJECT, _PROVIDERS, google_claims=_google_claims()
+    )
     assert google.tenant_id == changed_email.tenant_id
     assert google.tenant_id != same_email.tenant_id != apple.tenant_id
     assert google.tenant_id.version == 8
@@ -133,6 +159,8 @@ def test_apple_verified_relay_email_is_supported_without_email_account_linking()
         {"oidc_bff_enabled": True},
         {"identity_platform_project_id": None},
         {"identity_platform_api_key": None},
+        {"identity_platform_google_client_id": None},
+        {"identity_platform_google_client_id": "another-client"},
         {"identity_platform_auth_domain": "attacker.firebaseapp.com"},
         {"identity_platform_providers": ()},
         {"identity_platform_providers": ("google.com", "google.com")},
@@ -151,7 +179,7 @@ def test_incomplete_or_unsafe_production_signup_configuration_cannot_start(chang
 async def test_official_sdk_is_fixed_to_project_and_always_checks_revocation(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    verifier = IdentityPlatformVerifier(_PROJECT, tuple(_PROVIDERS))
+    verifier = IdentityPlatformVerifier(_PROJECT, tuple(_PROVIDERS), _GOOGLE_CLIENT)
     calls = []
 
     def verify(token: str, *, app: Any, check_revoked: bool) -> Any:
@@ -159,11 +187,12 @@ async def test_official_sdk_is_fixed_to_project_and_always_checks_revocation(
         return _claims()
 
     monkeypatch.setattr(identity_module.auth, "verify_id_token", verify)
-    assert (await verifier.verify("opaque-id-token")).tenant_id
+    monkeypatch.setattr(verifier, "_verify_google", AsyncMock(return_value=_google_claims()))
+    assert (await verifier.verify("opaque-id-token", google_id_token="google-proof")).tenant_id
     assert calls == [("opaque-id-token", _PROJECT, True)]
     monkeypatch.setenv("FIREBASE_AUTH_EMULATOR_HOST", "127.0.0.1:9099")
     with pytest.raises(ValueError, match="emulator"):
-        IdentityPlatformVerifier(_PROJECT, tuple(_PROVIDERS))
+        IdentityPlatformVerifier(_PROJECT, tuple(_PROVIDERS), _GOOGLE_CLIENT)
 
 
 @pytest.mark.parametrize(
@@ -173,7 +202,7 @@ async def test_invalid_or_revoked_sdk_results_never_issue_authority(
     monkeypatch: pytest.MonkeyPatch,
     failure: str,
 ) -> None:
-    verifier = IdentityPlatformVerifier(_PROJECT, tuple(_PROVIDERS))
+    verifier = IdentityPlatformVerifier(_PROJECT, tuple(_PROVIDERS), _GOOGLE_CLIENT)
 
     def rejected(*args: Any, **kwargs: Any) -> Any:
         raise getattr(identity_module.auth, failure)("fixture rejection")
@@ -186,7 +215,7 @@ async def test_invalid_or_revoked_sdk_results_never_issue_authority(
 async def test_active_cookie_checks_disabled_user_and_revocation_without_stale_fallback(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    verifier = IdentityPlatformVerifier(_PROJECT, tuple(_PROVIDERS))
+    verifier = IdentityPlatformVerifier(_PROJECT, tuple(_PROVIDERS), _GOOGLE_CLIENT)
     now = int(time())
     user = SimpleNamespace(disabled=False, tokens_valid_after_timestamp=0)
     calls = []
@@ -221,7 +250,7 @@ async def test_active_cookie_checks_disabled_user_and_revocation_without_stale_f
 async def test_missing_cloud_credentials_fail_closed_as_service_unavailable(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    verifier = IdentityPlatformVerifier(_PROJECT, tuple(_PROVIDERS))
+    verifier = IdentityPlatformVerifier(_PROJECT, tuple(_PROVIDERS), _GOOGLE_CLIENT)
 
     def unavailable(*args: Any, **kwargs: Any) -> Any:
         raise identity_module.GoogleAuthError("fixture credentials unavailable")
@@ -234,7 +263,7 @@ async def test_missing_cloud_credentials_fail_closed_as_service_unavailable(
 async def test_managed_erasure_retries_missing_users_but_preserves_outages(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    verifier = IdentityPlatformVerifier(_PROJECT, tuple(_PROVIDERS))
+    verifier = IdentityPlatformVerifier(_PROJECT, tuple(_PROVIDERS), _GOOGLE_CLIENT)
     calls = []
 
     def deleted(uid: str, *, app: Any) -> None:
@@ -260,11 +289,15 @@ class _Verifier:
     project_id = _PROJECT
 
     def __init__(self) -> None:
-        self.identity = verified_identity(_claims(), _PROJECT, _PROVIDERS)
+        self.identity = verified_identity(
+            _claims(), _PROJECT, _PROVIDERS, google_claims=_google_claims()
+        )
         self.checked: list[tuple[str, int]] = []
         self.deleted: list[str] = []
 
-    async def verify(self, token: str) -> VerifiedConsumerIdentity:
+    async def verify(
+        self, token: str, *, google_id_token: str | None = None
+    ) -> VerifiedConsumerIdentity:
         if token != "verified-fixture-token":
             raise AuthenticationFailedError("fixture token rejected")
         return self.identity
@@ -378,7 +411,9 @@ async def test_step_up_cannot_authorize_another_account() -> None:
     start = await adapter.start_reauthentication(
         identity.tenant_id, headers, return_to="/settings/account"
     )
-    verifier.identity = verified_identity(_claims(sub="another-consumer"), _PROJECT, _PROVIDERS)
+    verifier.identity = verified_identity(
+        _claims(sub="another-consumer"), _PROJECT, _PROVIDERS, google_claims=_google_claims()
+    )
     with pytest.raises(ConsumerSignInRejectedError) as rejected:
         await adapter.complete_identity_login(
             headers
