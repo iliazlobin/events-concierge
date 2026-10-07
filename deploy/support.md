@@ -61,6 +61,19 @@ curl --silent --show-error --max-time 10 --write-out '\nHTTP %{http_code}\n' \
 
 **Verify:** the selected page loads, the private API reports the expected revision, and required dependencies are ready. `/healthz` alone proves only that the process responds. If exposure is unsafe, follow [edge containment](public-access.md#activate); withdrawing DNS alone leaves direct-IP access possible. Preserve private recovery access and controller ownership.
 
+## Events missing from the map
+
+Compare the same filters in Events and Map, then inspect `latitude`/`longitude` in the
+`GET /v1/catalog/events` response. Loaded events with null coordinates are a location-data gap;
+a missing base map points to tile delivery or browser rendering instead.
+
+SF Tech Week 2026 publishes area names rather than venue coordinates. The frontend groups
+reviewed SF areas into outlined count markers labeled **approximate**; click one to browse
+its events. Provider coordinates take precedence. Virtual events, `Other`, unrecognized areas
+and sources without a reviewed area mapping stay in the unlocated list. These display centers
+never change stored coordinates, distance filters or directions. Verify desktop/mobile selection
+and pagination before release; no database backfill or fresh crawl is needed for this fallback.
+
 ## Sign-in and operator access
 
 | Failure | Diagnose | Recovery and verification |

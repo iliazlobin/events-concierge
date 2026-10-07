@@ -3316,6 +3316,24 @@ textarea:focus-visible {
   z-index: 3;
 }
 
+.map-marker--area {
+  height: 36px;
+  width: 36px;
+}
+
+.map-marker--area .map-marker__dot {
+  background: rgba(5, 5, 5, 0.88);
+  border: 2px dashed var(--dot-fill);
+  color: var(--dot-fill);
+  display: grid;
+  font-family: var(--mono);
+  font-size: 11px;
+  font-weight: 700;
+  height: 30px;
+  place-items: center;
+  width: 30px;
+}
+
 /* De-emphasis is scale plus fill alpha, never element opacity: fading the element
    would fade the dark punch-out ring with it, and in a dense blob it is that ring
    that keeps overlapping dots countable. */
@@ -3765,6 +3783,16 @@ textarea:focus-visible {
 
 .map-preview__location-note {
   color: var(--quiet);
+}
+
+.map-selection__location-note {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  color: var(--muted);
+  font-size: 12px;
+  margin: 0 0 8px;
+  padding: 10px 14px;
 }
 
 .map-preview {

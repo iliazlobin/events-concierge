@@ -31,7 +31,7 @@ test("the preview rail tracks map bounds and focuses without rebuilding markers"
   assert.match(mapView, /map\.easeTo\(\{ \.\.\.view, duration: 420 \}\)/);
   assert.match(
     mapView,
-    /\}, \[cities, locationScopes, mapReady, mapped, prefersReducedMotion, selectEvent\]\);/,
+    /\}, \[cities, locationScopes, mapReady, mapped, prefersReducedMotion, selectArea, selectEvent\]\);/,
   );
   assert.match(mapView, /marker\.getElement\(\)\.classList\.toggle/);
 });
@@ -92,11 +92,11 @@ test("the multi-day UI stays invisible until it has something to say", () => {
 
 test("day emphasis never rebuilds the markers or refits the camera", () => {
   // Creation-time tier is read from a ref, exactly as the selected id already is,
-  // so the build effect's dependency array (asserted verbatim above) never grows.
+  // so selecting an event, area or day never enters the marker-build dependencies.
   assert.match(mapView, /const emphasis = emphasisDayRef\.current;/);
   assert.match(mapView, /element\.dataset\.day = eventDayKey\(event\) \?\? "";/);
   // Runtime tier rides the existing class-toggle effect instead of a second one.
-  assert.match(mapView, /\}, \[emphasisDay, selectedId\]\);/);
+  assert.match(mapView, /\}, \[emphasisDay, selectedArea, selectedId\]\);/);
   // Promoting a day on select must not add a dependency to selectEvent, whose array
   // feeds the marker-rebuild effect.
   assert.match(

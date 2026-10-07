@@ -1,8 +1,9 @@
-import type { EventItem } from "./types.ts";
 import { locationScope } from "./location-scopes.ts";
+import { eventMapLocation } from "./map-locations.ts";
+import type { MapCoordinate, MappableEvent } from "./map-locations.ts";
 import type { LocationScope } from "./types.ts";
 
-export type MapCoordinate = [longitude: number, latitude: number];
+export type { MapCoordinate } from "./map-locations.ts";
 
 export interface CenterViewport {
   kind: "center";
@@ -80,27 +81,13 @@ function cityKey(value: string): string {
 }
 
 export function eventMapCoordinate(
-  event: Pick<EventItem, "latitude" | "longitude">,
+  event: MappableEvent,
 ): MapCoordinate | null {
-  const latitude = event.latitude;
-  const longitude = event.longitude;
-  if (
-    typeof latitude !== "number"
-    || typeof longitude !== "number"
-    || !Number.isFinite(latitude)
-    || !Number.isFinite(longitude)
-    || latitude < -90
-    || latitude > 90
-    || longitude < -180
-    || longitude > 180
-  ) {
-    return null;
-  }
-  return [longitude, latitude];
+  return eventMapLocation(event)?.coordinate ?? null;
 }
 
 export function eventsInMapBounds<
-  Event extends Pick<EventItem, "latitude" | "longitude">,
+  Event extends MappableEvent,
 >(
   events: Event[],
   bounds: MapBoundsLike,
@@ -111,7 +98,7 @@ export function eventsInMapBounds<
   });
 }
 
-export function partitionMapEvents<Event extends Pick<EventItem, "latitude" | "longitude">>(
+export function partitionMapEvents<Event extends MappableEvent>(
   events: Event[],
 ): { mapped: Event[]; unmapped: Event[] } {
   const mapped: Event[] = [];
@@ -130,7 +117,7 @@ export function cityMapViewport(city: string): CenterViewport {
 }
 
 export function mapViewportFor(
-  events: Array<Pick<EventItem, "latitude" | "longitude">>,
+  events: MappableEvent[],
   city: string | string[],
   scopes: LocationScope[] = [],
 ): MapViewport {
