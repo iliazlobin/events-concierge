@@ -124,6 +124,15 @@ kubectl get nodes
 - CI stops at this handoff; Workload Identity Federation (WIF) publication and private rollout automation remain pending. An archive is neither backup nor deployment.
 - `APP_IMAGE` / `WEB_IMAGE`: `repository@sha256:...`; `BACKEND_REVISION`: full source commit.
 
+**Frontend-only repair**
+
+- Use a reviewed `main` image package with passing CI and applicable deployment checks. Publish its tested Next.js digest without rebuilding.
+- Retain the deployed chart, backend digest/revision and complete values; change only `global.frontendImage.digest`.
+- Independently compare renders: only the frontend container image may change. Preserve configuration, credentials, schema, routing, workers and cadence.
+- Record chart, backend and frontend revisions separately, with old/new digests and the CI receipt. Keep existing acceptance receipts unchanged.
+- Before applying, verify the recorded Helm revision, Deployment identity and old image; reject concurrent changes or a pending release.
+- Verify HTTPS, anonymous search, sign-in and protected endpoints after rollout. Restore only the old frontend digest if needed; never roll back the database for this repair.
+
 **Verify and publish the tested package — after publication authorization**
 
 Set `CI_RUN` and `BACKEND_REVISION` to the successful CI run and its full `main` commit. Download into a new directory:
