@@ -1150,11 +1150,13 @@ def test_graph_event_details_match_map_without_prefetch(release_page, tmp_path, 
     assert page.evaluate("document.documentElement.scrollWidth <= window.innerWidth")
     action = card.get_by_role("link", name="Friday Night Jazz", exact=True)
     action.scroll_into_view_if_needed()
-    assert action.evaluate("""link => {
+    # Detail navigation waits for the double-click window; await actual link reachability,
+    # including fixed navigation that scroll_into_view_if_needed does not account for.
+    page.wait_for_function("""link => {
         const bounds = link.getBoundingClientRect();
         return document.elementFromPoint(bounds.x + bounds.width / 2,
             bounds.y + bounds.height / 2)?.closest('a') === link;
-    }""")
+    }""", arg=action.element_handle(), timeout=5000)
     page.screenshot(path=str(tmp_path / f"graph-event-card-{scope}-{width}.png"), full_page=True)
     inspector.screenshot(path=str(tmp_path / f"graph-event-detail-{scope}-{width}.png"))
 
