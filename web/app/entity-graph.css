@@ -529,16 +529,28 @@
 }
 
 .entity-graph-inspector__close {
+  align-items: center;
   background: transparent;
   border-radius: 999px;
   color: var(--muted);
   cursor: pointer;
   height: 32px;
+  justify-content: center;
   width: 32px;
 }
 
 .entity-graph-inspector__close:hover {
   color: var(--accent);
+}
+
+.entity-graph-inspector__close--focus {
+  display: none;
+}
+
+.entity-graph-inspector__close:focus-visible,
+.entity-graph-zoom button:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
 }
 
 .entity-graph-inspector__refocus {
@@ -910,28 +922,46 @@
     grid-template-columns: minmax(0, 1fr);
   }
 
-  /* Below this width the inspector stops being a column and becomes a bottom sheet. */
+  /* Keep the entire canvas visible; details use the page scroll below it. */
   .entity-graph-inspector {
-    border-radius: 20px 20px 0 0;
-    bottom: 0;
-    left: 0;
-    max-height: 62vh;
-    position: sticky;
-    z-index: 4;
+    max-height: none;
+    overflow-y: visible;
   }
 
   .entity-graph-frame {
     height: clamp(420px, calc(100dvh - var(--header-height) - 300px), 700px);
   }
+
+  .entity-graph-frame,
+  .entity-graph-inspector,
+  .graph-workspace-heading {
+    scroll-margin-top: calc(var(--header-height) + 12px);
+  }
+
+  .entity-graph-inspector__close--focus {
+    display: inline-flex;
+  }
+
+  .entity-graph-zoom button,
+  .entity-graph-inspector__close,
+  .entity-graph-tabs button {
+    min-height: 44px;
+    min-width: 44px;
+  }
+}
+
+@media (max-width: 760px) {
+  .entity-graph-frame {
+    height: clamp(240px, calc(100dvh - var(--header-height) - 240px), 560px);
+  }
+
+  .workspace.entities-view,
+  .entity-graph-shell {
+    padding-bottom: calc(88px + env(safe-area-inset-bottom, 0px));
+  }
 }
 
 @media (max-width: 700px) {
-  .entity-graph-inspector--event {
-    bottom: calc(80px + env(safe-area-inset-bottom, 0px));
-    max-height: min(62dvh, calc(100dvh - var(--header-height) - 100px));
-  }
-
-
   .entity-hub-row {
     grid-template-columns: 26px minmax(0, 1fr);
   }

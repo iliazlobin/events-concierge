@@ -27,6 +27,7 @@ Published people, organizations, event mentions and stored public profile facts.
 - `GET /v1/catalog/entity-resolution`: exact event, role and displayed name.
 - `POST /v1/catalog/entities/{entity_id}/refresh`: full profile only, with the existing auth/CSRF contract; absent from discovery. Manual refresh is unleased and must not be autoscaled.
 - Browsing reads PostgreSQL; it never refreshes providers. [Release allowlist](../src/events_concierge/api/release_profile.py).
+- At widths up to 1100px, graph details follow the canvas in the page scroll. Selecting a node brings its details into view; the return control brings the canvas back. Larger screens show details beside the graph. Fit leaves space for zoom controls.
 
 ## Window and insights
 

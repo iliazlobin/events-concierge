@@ -34,6 +34,8 @@ import { NODE_MAX_RADIUS } from "@/lib/entity-graph-layout";
 const MIN_ZOOM = 0.5;
 const MAX_ZOOM = 2.5;
 const FIT_PADDING = NODE_MAX_RADIUS + 26;
+// Leave room for the zoom rail, including its larger touch targets and bottom margin.
+const FIT_CONTROL_CLEARANCE = 80;
 const REFOCUS_DURATION_MS = 320;
 /**
  * The zoom a re-centre pulls up to, when the reader is further out than this.
@@ -187,10 +189,11 @@ function fitCamera(
 ): Camera {
   const spanX = Math.max(bounds.maxX - bounds.minX, 1) + FIT_PADDING * 2;
   const spanY = Math.max(bounds.maxY - bounds.minY, 1) + FIT_PADDING * 2;
-  const k = Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, Math.min(width / spanX, height / spanY)));
+  const availableHeight = Math.max(1, height - FIT_CONTROL_CLEARANCE);
+  const k = Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, Math.min(width / spanX, availableHeight / spanY)));
   const centreX = (bounds.minX + bounds.maxX) / 2;
   const centreY = (bounds.minY + bounds.maxY) / 2;
-  return { k, tx: width / 2 - centreX * k, ty: height / 2 - centreY * k };
+  return { k, tx: width / 2 - centreX * k, ty: availableHeight / 2 - centreY * k };
 }
 
 function EntityGraphCanvasImpl({
@@ -855,7 +858,7 @@ function EntityGraphCanvasImpl({
           );
         })}
       </div>
-      <div className="entity-graph-zoom" aria-hidden="true">
+      <div className="entity-graph-zoom" role="group" aria-label="Graph zoom">
         <button type="button" onClick={() => zoomBy(1 / 1.2)} aria-label="Zoom out">−</button>
         <span>{zoomLabel}%</span>
         <button type="button" onClick={() => zoomBy(1.2)} aria-label="Zoom in">+</button>
