@@ -22,10 +22,10 @@ Next.js `3000` accepts only Pod-local proxy traffic. `/administrator` is not an 
 | Owner | Resources |
 | --- | --- |
 | Shared platform | Private GKE/VPC, standard Gateway controller and HTTP load-balancing dependency. |
-| [Public-access Terraform](../../infra/terraform/environments/public-access) | `ec-public-ip`, one DNS authorization, managed certificate/map entry, TLS policy and empty `ec-admin-iap` secret container. |
+| [Public-access Terraform](../../infra/terraform/environments/public-access) | `ec-public-ip`, one DNS authorization, managed certificate/map entry, TLS policy and empty `ec-admin-iap` secret container; optional `ec-events-public` child DNS zone with the same A/CNAME. |
 | Application Helm | Gateway, exact-host HTTPRoutes, backend/health policies, shared web Deployment and separate API processes. |
 | [Consumer identity](consumer-identity.md) | Identity Platform, restricted browser key and backend-scoped IAP grant and private RBAC configuration. |
-| DNS authority | Certificate-validation CNAME and one A record; no tunnel or HTTP proxy. |
+| Parent DNS authority | Existing apex, mail and unrelated records; app A/CNAME by default, or only the app's NS delegation after the optional child-zone cutover. No tunnel or HTTP proxy. |
 
 - Gateway class: `gke-l7-global-external-managed`. No proxy-only subnet, public node or public Kubernetes endpoint.
 - Certificate Manager uses `ec-public-cert-map`; do not combine its annotation with Gateway TLS Secret references. [Certificate configuration](https://docs.cloud.google.com/kubernetes-engine/docs/how-to/secure-gateway).
@@ -44,7 +44,7 @@ Next.js `3000` accepts only Pod-local proxy traffic. `/administrator` is not an 
 1. Verify CLI account/project, approved commits, immutable images and current state. Target `iz27-platform-dev`; preserve existing data, Symphony OAuth configuration and unrelated DNS.
 2. Review the platform plan: only enable HTTP load balancing and `CHANNEL_STANDARD` on the existing private cluster. Apply under explicit cloud authorization, then verify the GatewayClass/controller.
 3. Configure the [public-access backend](../../infra/terraform/environments/public-access/backend.tf.example) in the existing protected application bucket. Review the saved plan before applying. This root must not adopt cluster/network/IAP API state, OAuth payloads or a controller-managed load balancer.
-4. Add only the output certificate-validation CNAME at the current authoritative DNS provider, DNS-only. Wait for authorization and the managed certificate to become active. This record does not route application traffic.
+4. Add only the output certificate-validation CNAME at the current authoritative DNS provider, DNS-only. For optional GCP DNS ownership, follow [child-zone delegation](#cloud-dns-delegation). Wait for authorization and the managed certificate to become active. Keep the CNAME for renewal; it does not route application traffic.
 5. Prepare the separate admin OAuth client below. Provision only its versioned namespace Secret through the approved secret channel; no secret value in Helm/Terraform, logs or command arguments.
 6. Complete [private authenticated rollout](transport.md#authenticated-discovery-and-encrypted-dependencies): recovery-key custody, held current backup, coordinated store TLS/Temporal mTLS, migrations through `0208`, consumer identity and private readiness. Preserve rollback and capacity limits.
 
@@ -55,6 +55,43 @@ terraform -chdir=infra/terraform/environments/public-access init -backend=false 
 terraform -chdir=infra/terraform/environments/public-access validate
 terraform -chdir=infra/terraform/environments/public-access test -no-color
 ```
+
+## Cloud DNS delegation
+
+`enable_cloud_dns=false` preserves existing DNS ownership. Enabling it adds only the public
+`ec-events-public` zone (`events.iliazlobin.com.`), its A record from `ec-public-ip` and the existing
+generated `PER_PROJECT_RECORD` validation CNAME. The certificate, map, Gateway and load balancer
+stay unchanged. Public Cloud DNS zones do not need to match the cluster region; the existing
+global certificate/map matches the global Gateway class. [Gateway certificate scope](https://docs.cloud.google.com/kubernetes-engine/docs/how-to/secure-gateway).
+
+1. Verify the Cloud DNS API prerequisite (`dns.googleapis.com`), CLI identity/project and the
+   existing `public-access` GCS state. API ownership stays outside this root. Read the parent
+   zone's app records, NS/DS/CAA and any existing
+   Cloud DNS child zone. If the child zone or records already exist, verify ownership and review
+   their import; do not create a competing zone or adopt another root's resources.
+2. Review a saved plan with `enable_cloud_dns=true`: exactly three additions, all eight existing
+   resources unchanged. Keep the flag enabled after adoption; protected DNS resources cannot be
+   removed by switching it off. Do not change the backend, apex zone, registrar name servers,
+   certificate authorization, IAM, Helm or retained application state.
+3. Apply only after the app A-record [publication gates](#activate) pass. Before delegation, query
+   every server from `cloud_dns_delegation.parent_ns_record.data` directly: child SOA/NS, existing
+   A address and exact validation CNAME must resolve. Cloud DNS supplies the zone's NS/SOA.
+4. At the existing parent DNS provider, publish only the output NS RRset for
+   `events.iliazlobin.com.`; use the assigned servers exactly, without HTTP proxying. Retain the
+   previous app A/CNAME values for rollback and preserve apex NS, mail and unrelated records.
+   Handle any conflicting parent app records in the same reviewed cutover. A parent DS record
+   requires a verified matching child DNSSEC setup; this optional zone does not enable DNSSEC.
+   [Cloudflare outgoing delegation](https://developers.cloudflare.com/dns/manage-dns-records/how-to/subdomains-outside-cloudflare/)
+   and [DNSSEC delegation](https://docs.cloud.google.com/dns/docs/dnssec-advanced).
+5. Verify authoritative and recursive NS/A/CNAME responses, trusted HTTPS, HTTP redirect and
+   unchanged consumer/admin routing. Check certificate authorization remains valid and any
+   inherited CAA allows Google Trust Services (`pki.goog`). Keep the generated CNAME as its only
+   record at that name for certificate renewal. [DNS authorization requirements](https://docs.cloud.google.com/certificate-manager/docs/dns-authorizations).
+
+Delegation rollback: restore the captured parent app A/CNAME records and remove only the new
+child NS RRset, accounting for cached TTLs. Keep the child zone, certificate and evidence for
+recovery; do not destroy them during a DNS rollback. This restores DNS authority, not access
+containment: withdrawing DNS alone does not block the public load balancer.
 
 ## Admin
 
