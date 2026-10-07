@@ -24,13 +24,9 @@ export function useGraphDetailNavigation(
     stageRef.current?.parentElement?.querySelector(selector)?.scrollIntoView({ block: "start", behavior: "instant" });
   }, []);
 
-  useEffect(() => {
-    const previous = previousSelection.current;
-    previousSelection.current = selectedNodeId;
-    if (!selectedNodeId) {
-      if (previous) scrollTo(".graph-workspace-heading");
-      return;
-    }
+  const scheduleScroll = useCallback(() => {
+    cancelScroll();
+    if (!window.matchMedia("(max-width: 1100px)").matches) return;
     // Keep the canvas in place while a second tap can focus an entity or recenter a node.
     scrollTimer.current = window.setTimeout(() => {
       scrollTimer.current = null;
@@ -47,15 +43,26 @@ export function useGraphDetailNavigation(
       scrollObserver.current = observer;
       observer.observe(inspector, { attributes: true, attributeFilter: ["aria-busy"] });
     }, 500);
+  }, [scrollTo, cancelScroll]);
+
+  useEffect(() => {
+    const previous = previousSelection.current;
+    previousSelection.current = selectedNodeId;
+    if (!selectedNodeId) {
+      if (previous) scrollTo(".graph-workspace-heading");
+      return;
+    }
+    scheduleScroll();
     return cancelScroll;
-  }, [selectedNodeId, scrollTo, cancelScroll]);
+  }, [selectedNodeId, scrollTo, scheduleScroll, cancelScroll]);
 
   const selectNode = useCallback((nodeId: string | null) => {
     if (!nodeId) cancelScroll();
+    else if (nodeId === selectedNodeId) scheduleScroll();
     onSelectNode(nodeId);
     // The focused entity already has no explicit selection, so its return button must also work.
     if (!nodeId) scrollTo(".graph-workspace-heading");
-  }, [onSelectNode, scrollTo, cancelScroll]);
+  }, [selectedNodeId, onSelectNode, scrollTo, scheduleScroll, cancelScroll]);
 
   return { stageRef, selectNode, cancelScroll };
 }

@@ -28,7 +28,7 @@ export function TopicGraphView({topic,events,hasMore,loading,error,onOverview,on
       onDoubleClickCapture={cancelScroll}
       onKeyDownCapture={(event) => { if (event.key === "Enter" && event.shiftKey) cancelScroll(); }}>
       <div className="entity-graph-column">
-        <EntityGraphCanvas scene={scene} selectedNodeId={selected} hoveredNodeId={null} onSelect={setSelected} onFocus={setSelected}/>
+        <EntityGraphCanvas scene={scene} selectedNodeId={selected} hoveredNodeId={null} onSelect={selectNode} onFocus={setSelected}/>
       </div>
       {event ? <GraphEventCard event={event} onClose={()=>selectNode(null)}
         onEntitySelect={onEntitySelect} onTopicSelect={onTopicSelect}/> : null}

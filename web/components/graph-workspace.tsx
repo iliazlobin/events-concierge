@@ -52,7 +52,7 @@ export function GraphWorkspace({
       onKeyDownCapture={(event) => { if (event.key === "Enter" && event.shiftKey) cancelScroll(); }}>
       <div className="entity-graph-column" ref={measureColumn}>
         <EntityGraphCanvas scene={scene} selectedNodeId={canvasSelectedNodeId}
-          hoveredNodeId={canvasHoveredNodeId} onSelect={onSelectNode} onFocus={onFocusNode} />
+          hoveredNodeId={canvasHoveredNodeId} onSelect={selectNode} onFocus={onFocusNode} />
       </div>
       {inspectedNode ? <EntityInspector scope={scope} tenantId={tenantId} canRefresh={canRefresh}
         model={model} detailModel={detailModel} eventSessions={eventSessions}
