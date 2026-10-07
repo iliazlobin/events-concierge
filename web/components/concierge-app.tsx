@@ -239,6 +239,7 @@ export function ConciergeApp() {
   const [config, setConfig] = useState<UiConfig | null>(null);
   const profile = releaseProfile(config);
   const fullRelease = profile === "full";
+  const museEnabled = config?.muse_enabled === true;
   const navItems = NAV_ITEMS.filter(item => releaseViewAllowed(item.value, profile));
   const [tenantId, setTenantId] = useState<string | null>(null);
   const [me, setMe] = useState<Me | null>(null);
@@ -278,6 +279,7 @@ export function ConciergeApp() {
   const [museOpen, setMuseOpen] = useState(false);
   const [museError, setMuseError] = useState<string | null>(null);
   function toggleMuse(event: EventItem) {
+    if (!museEnabled) return;
     setMuseError(null);
     if (!museEvents.has(event.canonical_event_id) && (museEvents.size >= MAX_MUSE_EVENTS || museEligibility(event))) {
       setMuseError("Select up to five upcoming free Luma or Meetup events.");
@@ -291,6 +293,7 @@ export function ConciergeApp() {
     });
   }
   function openMuse(event: EventItem) {
+    if (!museEnabled) return;
     if (!museEvents.has(event.canonical_event_id)) {
       if (museEvents.size >= MAX_MUSE_EVENTS || museEligibility(event)) {
         setMuseError("Select up to five upcoming free Luma or Meetup events.");
@@ -302,7 +305,7 @@ export function ConciergeApp() {
     setMuseOpen(true);
   }
   useEffect(() => {
-    if (sessionState !== "ready" || !me) return;
+    if (!museEnabled || sessionState !== "ready" || !me) return;
     let ids: string[] = [];
     try { ids = takeMuseSelection(window.sessionStorage); } catch { return; }
     if (!ids.length) return;
@@ -316,7 +319,7 @@ export function ConciergeApp() {
       if (restored.length !== ids.length) setMuseError("Some selected events are no longer eligible for Muse.");
     });
     return () => { active = false; };
-  }, [sessionState, me, tenantId]);
+  }, [museEnabled, sessionState, me, tenantId]);
   const [selectedEntityId, setSelectedEntityId] = useState<string | null>(null);
   const [turns, setTurns] = useState<ChatTurn[]>([]);
   // One id per browser session keeps the server-side transcript and refs together.
@@ -1398,8 +1401,8 @@ export function ConciergeApp() {
         {view === "events" ? (
           <EventsView
             museSelectedIds={new Set(museEvents.keys())}
-            onMuseToggle={toggleMuse}
-            onMuseSignup={openMuse}
+            onMuseToggle={museEnabled ? toggleMuse : undefined}
+            onMuseSignup={museEnabled ? openMuse : undefined}
             broadDiscovery={!filters.query.trim() && !filters.topics.length && !filters.sourceKeys.length}
             events={events}
             sort={filters.sort}
@@ -1496,15 +1499,15 @@ export function ConciergeApp() {
         ) : null}
       </main>
 
-      {museError ? <p role="alert" className="workspace-error">{museError}</p> : null}
-      {museEvents.size ? <aside className={museStyles.tray} aria-label="Selected Muse events">
+      {museEnabled && museError ? <p role="alert" className="workspace-error">{museError}</p> : null}
+      {museEnabled && museEvents.size ? <aside className={museStyles.tray} aria-label="Selected Muse events">
         <strong>{museEvents.size} selected</strong>
         <div className={museStyles.actions}>
           <button type="button" className="button" onClick={() => setMuseEvents(new Map())}>Clear selection</button>
           <button type="button" className="button button-primary" onClick={() => setMuseOpen(true)}>Sign up with Muse</button>
         </div>
       </aside> : null}
-      {museOpen ? <MuseSignup events={[...museEvents.values()]} tenantId={tenantId}
+      {museEnabled && museOpen ? <MuseSignup events={[...museEvents.values()]} tenantId={tenantId}
         signedIn={Boolean(me)} signInUrl={signInFailurePath(401, typeof window === "undefined" ? "/" : window.location.pathname + window.location.search)}
         onSignIn={() => { try { saveMuseSelection(window.sessionStorage, [...museEvents.keys()]); } catch { setMuseError("This browser could not preserve your selection. Select the events again after signing in."); } }}
         onClose={() => setMuseOpen(false)} onRemove={id => setMuseEvents(current => {

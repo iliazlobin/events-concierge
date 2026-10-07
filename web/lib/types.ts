@@ -68,6 +68,8 @@ export interface SignupLegalPolicy {
 
 export interface UiConfig {
   release_profile?: "full" | "discovery";
+  /** Muse remains unavailable unless the deployment explicitly enables it. */
+  muse_enabled?: boolean;
   product_name: string;
   local_demo: boolean;
   auth_mode: "local_demo" | "deployment_session";

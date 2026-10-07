@@ -571,7 +571,7 @@ def build_container(
         ),
         tenant_roles=tenant_roles or PostgresTenantRoleRepository(),
         api_keys=api_keys or PostgresApiKeyRepository(),
-        muse=MuseSignupService(PostgresMuseRepository(), catalog),
+        muse=(MuseSignupService(PostgresMuseRepository(), catalog) if settings.muse_enabled else None),
         saved_catalog_filters=(saved_catalog_filters or PostgresSavedCatalogFilterRepository()),
         ranking_feedback_repo=configured_ranking_feedback_repo,
         ranking_feedback=ranking_feedback,

@@ -45,7 +45,8 @@ export function SettingsShell({ children }: { children: React.ReactNode }) {
 
       <div className="settings-grid">
         <nav className="settings-nav" aria-label="Settings sections">
-          {TABS.filter(tab => releaseSettingsAllowed(tab.href, releaseProfile(config))).map((tab) => {
+          {TABS.filter(tab => releaseSettingsAllowed(tab.href, releaseProfile(config))
+            && (tab.href !== "/settings/muse" || config?.muse_enabled === true)).map((tab) => {
             const active = pathname === tab.href;
             return (
               <Link

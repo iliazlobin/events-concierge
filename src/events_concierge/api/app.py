@@ -759,6 +759,7 @@ class CatalogEntityDirectoryOut(BaseModel):
 class UiConfigOut(BaseModel):
     product_name: str = "Events Concierge"
     release_profile: Literal["full", "discovery"] = "full"
+    muse_enabled: bool = False
     local_demo: bool
     auth_mode: Literal["local_demo", "deployment_session"]
     auth_provider: Literal["custom_claim", "google", "identity_platform"] | None = None
@@ -2604,6 +2605,7 @@ def create_app() -> FastAPI:
         browser_session = getattr(getattr(app.state, "container", None), "browser_session", None)
         return UiConfigOut(
             release_profile=settings.release_profile,
+            muse_enabled=settings.muse_enabled,
             local_demo=settings.mock_cloud,
             auth_mode="local_demo" if settings.mock_cloud else "deployment_session",
             auth_provider=(
@@ -4119,7 +4121,8 @@ def create_app() -> FastAPI:
         response_model=HandoffCompletionAccepted,
     )(_mark_handoff_done)
 
-    app.include_router(muse_router(_authenticated_tenant, _csrf_protected_tenant))
+    if settings.muse_enabled:
+        app.include_router(muse_router(_authenticated_tenant, _csrf_protected_tenant))
     install_ingestion_admin_routes(app)
     install_command_investigation_routes(app)
     install_operator_operations_routes(app)

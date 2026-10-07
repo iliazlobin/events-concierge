@@ -16,10 +16,44 @@ from events_concierge.ports.auth import AuthenticationFailedError, CsrfVerificat
 ORIGIN = "https://events.example.test"
 
 
+@pytest.mark.parametrize("profile", ["full", "discovery"])
+@pytest.mark.parametrize("explicitly_disabled", [False, True])
+async def test_disabled_muse_omits_routes_before_authentication_or_io(
+    monkeypatch, profile, explicitly_disabled,
+):
+    monkeypatch.delenv("EC_MUSE_ENABLED", raising=False)
+    settings = Settings(
+        _env_file=None, release_profile=profile,
+        **({"muse_enabled": False} if explicitly_disabled else {}),
+    )
+    monkeypatch.setattr(app_module, "get_settings", lambda: settings)
+    app = app_module.create_app()
+    # A disabled release must not need a container, authentication or Muse tables.
+    batch_id, event_id = uuid4(), uuid4()
+    async with AsyncClient(transport=ASGITransport(app=app), base_url=ORIGIN) as client:
+        for method, path in [
+            ("GET", "/v1/me/muse/connection"),
+            ("POST", "/v1/me/muse/connection"),
+            ("DELETE", "/v1/me/muse/connection"),
+            ("GET", "/v1/me/muse/batches"),
+            ("POST", "/v1/me/muse/batches"),
+            ("GET", "/v1/muse/openapi.json"),
+            ("GET", "/v1/muse/connector/batches"),
+            ("GET", f"/v1/muse/connector/batches/{batch_id}"),
+            ("POST", f"/v1/muse/connector/batches/{batch_id}/items/{event_id}/claim"),
+            ("PUT", f"/v1/muse/connector/batches/{batch_id}/items/{event_id}/outcome"),
+        ]:
+            response = await client.request(method, path)
+            assert response.status_code == 404, (method, path, response.text)
+        assert (await client.get("/v1/ui-config")).json()["muse_enabled"] is False
+    assert not any("/muse/" in path for path in app.openapi()["paths"])
+
+
 def muse_app(monkeypatch):
     tenant = uuid4()
     settings = Settings(
-        _env_file=None, mock_cloud=True, release_profile="discovery", public_base_url=ORIGIN
+        _env_file=None, mock_cloud=True, release_profile="discovery", public_base_url=ORIGIN,
+        muse_enabled=True,
     )
     monkeypatch.setattr(app_module, "get_settings", lambda: settings)
     app = app_module.create_app()
@@ -65,6 +99,7 @@ def muse_app(monkeypatch):
 async def test_owner_key_creation_requires_browser_identity_and_csrf(monkeypatch):
     app, repository, tenant = muse_app(monkeypatch)
     async with AsyncClient(transport=ASGITransport(app=app), base_url=ORIGIN) as client:
+        assert (await client.get("/v1/ui-config")).json()["muse_enabled"] is True
         assert (await client.post("/v1/me/muse/connection")).status_code == 401
         assert (
             await client.post("/v1/me/muse/connection", headers={"Cookie": "fixture-session=owner"})
@@ -183,6 +218,7 @@ async def test_connector_obeys_current_legal_acceptance(monkeypatch, accepted, e
         _env_file=None,
         mock_cloud=False,
         release_profile="discovery",
+        muse_enabled=True,
         public_base_url=ORIGIN,
         identity_platform_enabled=True,
         identity_platform_project_id="events-fixture",

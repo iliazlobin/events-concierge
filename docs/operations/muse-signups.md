@@ -28,6 +28,11 @@ An uncertain submission needs a provider status check using the same attempt. Co
 
 ## API and operation
 
+Muse is disabled by default. Set `EC_MUSE_ENABLED=true` only after the Muse schema migration and
+connector release are approved and verified. When disabled, the API omits Muse routes and service
+composition, and `/v1/ui-config` hides selection, signup, restoration and settings entry points.
+Direct settings navigation shows an unavailable state without accessing Muse data.
+
 The [connector schema](../../src/events_concierge/api/muse.py) includes only four Bearer-authenticated operations:
 
 | Method | Path below `/v1/muse/connector` |
