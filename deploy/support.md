@@ -11,7 +11,7 @@ Common incidents on shared GKE. Use the deployed profile and [release record](ht
 | Failed rollout or interrupted backup | [Release and recovery](#release-and-recovery) |
 | Certificate warning or transport failure | [Certificates](#certificates) |
 | Account deletion remains pending | [Account erasure](#account-erasure) |
-| Pending/OOM Pods, growing disks, unexpected spend | [Platform support](https://github.com/iliazlobin/gcp-foundation#support-and-diagnosis) |
+| Pending/OOM Pods, growing disks, unexpected spend | [Platform support](https://github.com/iliazlobin/gcp-foundation/blob/981fa95d33257876b4fd33d3ebea124bfba0ed2d/README.md#support-and-diagnosis) |
 
 ## Start here
 
@@ -92,7 +92,7 @@ kubectl --context="$EC_CONTEXT" -n "$EC_NAMESPACE" --request-timeout=20s \
 
 ## Stores and background workers
 
-- Inspect scoped Pod/PVC state, restarts and resource pressure. Route node, scheduling, disk and egress failures to [platform support](https://github.com/iliazlobin/gcp-foundation#support-and-diagnosis); the application owns its stores and data.
+- Inspect scoped Pod/PVC state, restarts and resource pressure. Route node, scheduling, disk and egress failures to [platform support](https://github.com/iliazlobin/gcp-foundation/blob/981fa95d33257876b4fd33d3ebea124bfba0ed2d/README.md#support-and-diagnosis); the application owns its stores and data.
 - Read the private API readiness components. Database or configured identity unavailability returns `503`. Temporal can be `degraded` with HTTP `200`; inspect engine and catalog workers separately. Redis failure can block identity readiness and collection pacing.
 - Match required processes to the installed [process inventory](../docs/production-operations.md#required-process-inventory). Do not start deferred transactional workers to repair discovery.
 - Recover through [coordinated maintenance](development.md#authenticated-discovery-and-encrypted-dependencies) or [manual recovery](development.md#manual-recovery). Preserve PVCs, credentials, fenced commands and Temporal history; do not initialize restored databases or reset queues.
