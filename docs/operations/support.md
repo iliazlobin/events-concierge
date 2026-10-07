@@ -64,6 +64,12 @@ curl --silent --show-error --max-time 10 --write-out '\nHTTP %{http_code}\n' \
 
 ## Events missing from the map
 
+Map markers and day counts describe the loaded pages. Compare the loaded count with the
+full matching count, then choose **Load remaining events**; each action reads at most 40
+pages of 100 events and retains successful pages if a later request fails. Large catalogs
+keep a continuation. Events without a reviewed map location remain in the separate list.
+Compare provider IDs across every catalog page before diagnosing an ingestion gap.
+
 Compare the same filters in Events and Map, then inspect `latitude`/`longitude` in the
 `GET /v1/catalog/events` response. Loaded events with null coordinates are a location-data gap;
 a missing base map points to tile delivery or browser rendering instead.

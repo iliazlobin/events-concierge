@@ -1291,10 +1291,11 @@ def test_catalog_count_distinguishes_loaded_pages_from_calendar_range(release_pa
     nav = page.locator(".site-nav" if width > 700 else ".mobile-nav")
     nav.get_by_role("button", name="Map", exact=True).click()
     expect(count).to_have_text("72 loaded · more available")
-    assert not summary_queries, "Paged views must not add a range-count request"
-    page.get_by_role("button", name="Load more", exact=True).click()
+    expect(page.locator(".map-heading")).to_contain_text("72 of 1,588 loaded")
+    assert summary_queries, "The map must reveal how much of the matching catalog is loaded"
+    page.get_by_role("button", name="Load remaining events", exact=True).click()
     expect(count).to_have_text("73 loaded")
-    expect(page.get_by_role("button", name="Load more", exact=True)).to_have_count(0)
+    expect(page.get_by_role("button", name="Load remaining events", exact=True)).to_have_count(0)
 
     nav.get_by_role("button", name="Calendar", exact=True).click()
     expect(count).to_have_text("1,588 events in range")
@@ -1380,8 +1381,8 @@ def test_map_retains_unlocated_events_filters_details_and_pagination(release_pag
     expect(selection).to_contain_text(first["description"])
     expect(selection.locator('a[href="https://events.example.test/friday-jazz"]')).to_be_visible()
 
-    page.get_by_role("button", name="Load more", exact=True).click()
-    expect(page.get_by_role("button", name="Load more", exact=True)).to_have_count(0)
+    page.get_by_role("button", name="Load remaining events", exact=True).click()
+    expect(page.get_by_role("button", name="Load remaining events", exact=True)).to_have_count(0)
     expect(rail.get_by_role("button", name=f"Show details for {first['title']}", exact=True)).to_be_visible()
     expect(missing_list).to_have_attribute("aria-pressed", "true")
     expect(selection).to_contain_text(first["description"])
@@ -1393,7 +1394,11 @@ def test_map_retains_unlocated_events_filters_details_and_pagination(release_pag
     else:
         expect(rail.get_by_role("button", name=f"Show details for {second['title']}", exact=True)).to_be_visible()
     paged_query = next(query for query in queries if query.get("cursor") == ["fixture-page-1"])
-    assert {key: value for key, value in paged_query.items() if key != "cursor"} == queries[0]
+    assert paged_query["limit"] == ["100"]
+    assert paged_query["include_facets"] == ["false"]
+    assert {key: value for key, value in paged_query.items() if key not in {"cursor", "limit", "include_facets"}} == {
+        key: value for key, value in queries[0].items() if key != "limit"
+    }
     assert paged_query["source_key"] == ["fixture-techweek"]
     assert paged_query["city"] == ["sanfrancisco"]
     assert {"starts_after", "starts_before"}.issubset(paged_query)

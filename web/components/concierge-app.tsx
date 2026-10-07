@@ -50,6 +50,7 @@ import {
 } from "@/lib/catalog-cache";
 import { clearEntityGraphCache } from "@/lib/entity-graph-cache";
 import { clipCalendarSummary } from "@/lib/calendar";
+import { loadCatalogRemainder } from "@/lib/catalog-pagination";
 import { streamChatTurn } from "@/lib/agent-stream";
 import type { SelectionEntry } from "@/lib/agent-stream";
 import { MuseSignup } from "@/components/muse-signup";
@@ -72,6 +73,7 @@ import type {
   CalendarMode,
   CatalogDaySummary,
   CatalogFilters,
+  CatalogPage,
   CatalogProvider,
   CatalogTopic,
   ChatTurn,
@@ -258,6 +260,8 @@ export function ConciergeApp() {
   const [catalogLoading, setCatalogLoading] = useState(false);
   const [loadingMore, setLoadingMore] = useState(false);
   const [catalogError, setCatalogError] = useState<string | null>(null);
+  const [mapTotalCount, setMapTotalCount] = useState<number | null>(null);
+  const [mapTotalUnavailable, setMapTotalUnavailable] = useState(false);
   const [summary, setSummary] = useState<CatalogDaySummary | null>(null);
   const [summaryLoading, setSummaryLoading] = useState(false);
   /**
@@ -350,6 +354,8 @@ export function ConciergeApp() {
   const [onboardingError, setOnboardingError] = useState<string | null>(null);
   const [historyReady, setHistoryReady] = useState(false);
   const catalogGeneration = useRef(0);
+  const catalogReadContext = useRef({ filters, view, tenantId });
+  catalogReadContext.current = { filters, view, tenantId };
   const summaryGeneration = useRef(0);
   /** The filter the rail's inventory was last read for, so it is read once per filter. */
   const facetsSignature = useRef<string | null>(null);
@@ -487,10 +493,18 @@ export function ConciergeApp() {
   const loadCatalog = useCallback(async (nextFilters: CatalogFilters) => {
     if (sessionState !== "ready") return;
     const generation = ++catalogGeneration.current;
+    const isCurrent = () => (
+      generation === catalogGeneration.current
+      && catalogReadContext.current.filters === nextFilters
+      && catalogReadContext.current.view === view
+      && catalogReadContext.current.tenantId === tenantId
+    );
     loadingCursor.current = null;
     setCatalogLoading(true);
     setLoadingMore(false);
     setCatalogError(null);
+    setMapTotalCount(null);
+    setMapTotalUnavailable(false);
     setEvents([]);
     setNextCursor(null);
     setTopicFacets([]);
@@ -501,7 +515,7 @@ export function ConciergeApp() {
     }
     try {
       const page = await getCatalogPage(tenantId, nextFilters);
-      if (generation !== catalogGeneration.current) return;
+      if (!isCurrent()) return;
       setEvents(dedupeEvents(page.items));
       setNextCursor(page.next_cursor);
       setTopicFacets(page.topic_facets ?? []);
@@ -521,15 +535,25 @@ export function ConciergeApp() {
       setKnownCities((current) => (
         [...new Set([...current, ...facetCities, ...cities])].sort()
       ));
+      if (view === "map" && page.next_cursor) {
+        // Count after the first page so two catalog-wide reads do not delay its display.
+        void getCatalogSummary(tenantId, nextFilters, calendarTimeZone()).then((total) => {
+          if (!isCurrent()) return;
+          setMapTotalCount(total.total_event_count);
+        }).catch(() => {
+          if (!isCurrent()) return;
+          setMapTotalUnavailable(true);
+        });
+      }
     } catch (error) {
-      if (generation !== catalogGeneration.current) return;
+      if (!isCurrent()) return;
       setCatalogError(readableError(error));
       setEvents([]);
       setNextCursor(null);
     } finally {
       if (generation === catalogGeneration.current) setCatalogLoading(false);
     }
-  }, [sessionState, tenantId]);
+  }, [sessionState, tenantId, view]);
 
   useEffect(() => {
     if (sessionState !== "ready" || !historyReady) return;
@@ -847,43 +871,66 @@ export function ConciergeApp() {
     }
   };
 
-  const handleLoadMore = useCallback(async () => {
+  const loadMoreCatalog = useCallback(async (remaining: boolean) => {
     if (!nextCursor || loadingMore || loadingCursor.current === nextCursor) return;
     const generation = catalogGeneration.current;
     const cursor = nextCursor;
     const requestFilters = filters;
+    const requestView = view;
+    const isCurrent = () => (
+      generation === catalogGeneration.current
+      && catalogReadContext.current.filters === requestFilters
+      && catalogReadContext.current.view === requestView
+      && catalogReadContext.current.tenantId === tenantId
+    );
     loadingCursor.current = cursor;
     setLoadingMore(true);
+    setCatalogError(null);
     try {
-      const page = await getCatalogPage(tenantId, requestFilters, cursor);
-      if (generation !== catalogGeneration.current) return;
-      setEvents((current) => dedupeEvents([...current, ...page.items]));
-      setNextCursor(page.next_cursor);
-      if (page.topic_facets?.length) setTopicFacets(page.topic_facets);
-      setProviders((current) => (
-        requestFilters.sourceKeys.length
-          ? mergeProviders(current, page.providers)
-          : [...page.providers].sort((left, right) => (
-              left.display_name.localeCompare(right.display_name)
-            ))
-      ));
-      const cities = page.items
-        .map((item) => item.city?.trim())
-        .filter((value): value is string => Boolean(value));
-      const facetCities = (page.city_facets ?? [])
-        .map((facet) => facet.city.trim())
-        .filter(Boolean);
-      setKnownCities((current) => (
-        [...new Set([...current, ...facetCities, ...cities])].sort()
-      ));
+      const appendPage = (page: CatalogPage) => {
+        setEvents((current) => dedupeEvents([...current, ...page.items]));
+        setNextCursor(page.next_cursor);
+        if (page.topic_facets?.length) setTopicFacets(page.topic_facets);
+        if (page.providers.length) {
+          setProviders((current) => (
+            requestFilters.sourceKeys.length
+              ? mergeProviders(current, page.providers)
+              : [...page.providers].sort((left, right) => (
+                  left.display_name.localeCompare(right.display_name)
+                ))
+          ));
+        }
+        const cities = page.items
+          .map((item) => item.city?.trim())
+          .filter((value): value is string => Boolean(value));
+        const facetCities = (page.city_facets ?? []).map((facet) => facet.city.trim()).filter(Boolean);
+        setKnownCities((current) => (
+          [...new Set([...current, ...facetCities, ...cities])].sort()
+        ));
+      };
+      if (remaining) {
+        await loadCatalogRemainder(
+          cursor,
+          (next) => getCatalogPage(tenantId, requestFilters, next, { limit: 100, includeFacets: false }),
+          appendPage,
+          isCurrent,
+        );
+      } else {
+        const page = await getCatalogPage(tenantId, requestFilters, cursor);
+        if (isCurrent()) appendPage(page);
+      }
     } catch (error) {
-      if (generation !== catalogGeneration.current) return;
+      if (!isCurrent()) return;
       setCatalogError(readableError(error));
     } finally {
-      if (loadingCursor.current === cursor) loadingCursor.current = null;
-      if (generation === catalogGeneration.current) setLoadingMore(false);
+      if (generation === catalogGeneration.current) {
+        if (loadingCursor.current === cursor) loadingCursor.current = null;
+        setLoadingMore(false);
+      }
     }
-  }, [filters, loadingMore, nextCursor, tenantId]);
+  }, [filters, loadingMore, nextCursor, tenantId, view]);
+  const handleLoadMore = useCallback(() => { void loadMoreCatalog(false); }, [loadMoreCatalog]);
+  const handleMapLoadRemaining = useCallback(() => { void loadMoreCatalog(true); }, [loadMoreCatalog]);
 
   const pushConsumerSnapshot = useCallback((requestedSnapshot: ConsumerHistorySnapshot) => {
     const nextSnapshot = releaseHistorySnapshot(requestedSnapshot, profile);
@@ -1441,8 +1488,10 @@ export function ConciergeApp() {
             loading={catalogLoading}
             error={catalogError}
             hasMore={Boolean(nextCursor)}
+            totalCount={mapTotalCount}
+            totalUnavailable={mapTotalUnavailable}
             loadingMore={loadingMore}
-            onLoadMore={handleLoadMore}
+            onLoadMore={handleMapLoadRemaining}
             onSourceSelect={handleSourceSelect}
             onFacetSelect={handleFacetSelect}
             onEntitySelect={handleEntitySelect}
