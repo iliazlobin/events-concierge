@@ -383,6 +383,9 @@ export function FilterBar({
   const latestFilters = useRef(filters);
 
   useEffect(() => {
+    // URL navigation and saved selections restore committed text. A parent echo of
+    // the text currently being typed is different: it may still be a filter expression.
+    if (filters.query !== query) literalQuery.current = filters.query || null;
     latestFilters.current = filters;
     setQuery(filters.query);
   }, [filters]);

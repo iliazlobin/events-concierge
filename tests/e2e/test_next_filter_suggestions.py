@@ -69,24 +69,40 @@ def discovery_filters_page(page_factory, request):
                                 "preference_revision": 1, "local_demo": False, "is_admin": False,
                                 "relay_inbox": None})
 
-        def saved_filters(route: Route):
-            api.calls.append((route.request.method, "/v1/me/saved-filters"))
-            api.respond(route, [{
+        entries = [{
                 "saved_filter_id": f"92000000-0000-4000-8000-{index:012d}",
                 "name": f"My saved selection {index}",
-                "filters": {"query": "", "sort": "soonest", "datePreset": "all",
-                            "customStart": "", "customEnd": "", "dateRanges": [],
-                            "sourceKeys": [], "city": "", "cities": [], "locationScopes": [],
+                "filters": {"query": "Mira AI in San Francisco this week" if index == 2 else "",
+                            "sort": "soonest", "datePreset": "custom" if index == 2 else "all",
+                            "customStart": "2030-10-01" if index == 2 else "",
+                            "customEnd": "2030-10-31" if index == 2 else "", "dateRanges": [],
+                            "sourceKeys": ["tech-week-sf-2026"] if index == 2 else [],
+                            "city": "", "cities": [], "locationScopes": [],
                             "topics": [], "price": "any", "priceComparison": "any",
                             "priceMinDollars": "", "priceMaxDollars": "", "availability": "any"},
                 "created_at": None, "updated_at": None, "last_used_at": None,
-            } for index in range(3)])
+            } for index in range(3)]
+
+        def saved_filters(route: Route):
+            api.calls.append((route.request.method, "/v1/me/saved-filters"))
+            api.respond(route, entries)
+
+        def applied(route: Route):
+            path = urlsplit(route.request.url).path
+            assert route.request.method == "POST"
+            assert path == f"/v1/me/saved-filters/{entries[2]['saved_filter_id']}/applied"
+            api.calls.append(("POST", path))
+            api.respond(route, entries[2])
 
         harness.page.route("**/v1/me", account)
         harness.page.route("**/v1/me/saved-filters", saved_filters)
+        harness.page.route("**/v1/me/saved-filters/*/applied", applied)
     yield harness, api, queries
     assert not api.unexpected
-    assert all(method == "GET" for method, _ in api.calls)
+    assert all(method == "GET" or (
+        signed_in and method == "POST"
+        and path == "/v1/me/saved-filters/92000000-0000-4000-8000-000000000002/applied"
+    ) for method, path in api.calls)
     assert not any(path.startswith(("/auth/", "/v1/preferences")) for _, path in api.calls)
     if not signed_in:
         assert not any(path.startswith("/v1/me/") for _, path in api.calls)
@@ -140,7 +156,6 @@ def test_catalog_names_autocomplete_select_and_reload_preserve_filters(discovery
     assert page.evaluate("document.documentElement.scrollWidth <= innerWidth")
 
     # An event name can contain filter words. Selecting/reloading it must keep the literal name.
-    search = page.get_by_role("combobox", name=SEARCH_NAME)
     search.fill("mira")
     option = page.get_by_role("option").filter(has_text="Mira AI in San Francisco this week")
     expect(option).to_be_visible()
@@ -148,9 +163,35 @@ def test_catalog_names_autocomplete_select_and_reload_preserve_filters(discovery
     expect(search).to_have_value("Mira AI in San Francisco this week")
     page.reload()
     expect(page.get_by_role("combobox", name=SEARCH_NAME)).to_have_value("Mira AI in San Francisco this week")
+    page.get_by_role("combobox", name=SEARCH_NAME).press("Enter")
     query = parse_qs(urlsplit(page.url).query)
     assert query["when"] == ["custom"] and query["start"] == ["2030-10-01"]
+    assert query["q"] == ["Mira AI in San Francisco this week"]
     assert "topic" not in query
+
+
+@pytest.mark.parametrize("discovery_filters_page", [True], indirect=True)
+def test_restored_saved_name_stays_literal_after_history_and_enter(discovery_filters_page):
+    harness, _, _ = discovery_filters_page
+    page = harness.page
+    page.goto(f"{BASE}/?view=events")
+    expect(page.get_by_role("button", name="Saved · 3", exact=True)).to_be_visible()
+    search = page.get_by_role("combobox", name=SEARCH_NAME)
+    search.fill("My saved selection 2")
+    page.get_by_role("option").filter(has_text="My saved selection 2").click()
+    expect(search).to_have_value("Mira AI in San Francisco this week")
+    search.press("Enter")
+    query = parse_qs(urlsplit(page.url).query)
+    assert query["q"] == ["Mira AI in San Francisco this week"]
+    assert query["source"] == ["tech-week-sf-2026"] and query["when"] == ["custom"]
+    assert query["start"] == ["2030-10-01"] and "topic" not in query
+    page.go_back()
+    page.go_forward()
+    expect(page.get_by_role("combobox", name=SEARCH_NAME)).to_have_value("Mira AI in San Francisco this week")
+    page.get_by_role("combobox", name=SEARCH_NAME).press("Enter")
+    query = parse_qs(urlsplit(page.url).query)
+    assert query["q"] == ["Mira AI in San Francisco this week"]
+    assert query["start"] == ["2030-10-01"] and "topic" not in query
 
 
 def test_catalog_name_failure_and_old_response_do_not_replace_current_suggestions(discovery_filters_page):

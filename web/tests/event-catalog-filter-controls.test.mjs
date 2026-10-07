@@ -199,7 +199,7 @@ test("category-first typing opens a scoped composer without becoming event searc
   assert.match(filterBar, /searchInputRef\.current\?\.focus\(\)/);
   assert.match(filterBar, /setSuggestionsSuppressed\(true\)/);
   assert.match(filterBar, /searchFocused && !suggestionsSuppressed/);
-  assert.match(filterBar, /type place, topic, source, date, price, or registration/);
+  assert.match(filterBar, /Search events, people, businesses, venues, or add a filter/);
   assert.doesNotMatch(
     readFileSync(new URL("../components/concierge-app.tsx", import.meta.url), "utf8"),
     /next\.sourceKey && next\.sourceKey !== filters\.sourceKey/,

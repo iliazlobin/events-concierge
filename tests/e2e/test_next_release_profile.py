@@ -193,9 +193,7 @@ class ReleaseApi:
                 "preference_revision": 1, "local_demo": True, "is_admin": False,
                 "relay_inbox": "fixture@relay.example.test",
             })
-        elif path in {"/v1/me/saved-filters", "/v1/me/api-keys"}:
-            self.respond(route, [])
-        elif path == "/v1/catalog/name-suggestions":
+        elif path in {"/v1/me/saved-filters", "/v1/me/api-keys"} or path == "/v1/catalog/name-suggestions":
             self.respond(route, [])
         elif path == "/v1/catalog/events":
             event = self.with_event_url(catalog_event())
