@@ -2,6 +2,7 @@
 
 import {
   Bookmark,
+  CheckCircle2,
   CalendarDays,
   DollarSign,
   MapPin,
@@ -46,6 +47,8 @@ import {
   getSmartFilterSuggestions,
   getStarterFilterSuggestions,
   parseSmartFilterComposerQuery,
+  REGISTRATION_FILTER_OPTIONS,
+  TECH_WEEK_FILTERS,
   type AtomicSmartFilterSuggestion,
   type SmartFilterContext,
   type SmartFilterSuggestion,
@@ -97,10 +100,9 @@ const MAX_CITY_FILTERS = 20;
 const MAX_SOURCE_FILTERS = 40;
 const MAX_TOPIC_FILTERS = 12;
 
-const AVAILABILITY_OPTIONS: FilterChipEditorOption[] = [
-  { id: "available", label: "Available", detail: "Registration is open" },
-  { id: "sold_out", label: "Sold out", detail: "No registration spots remain" },
-];
+const AVAILABILITY_OPTIONS: FilterChipEditorOption[] = REGISTRATION_FILTER_OPTIONS.map(
+  ({ value, label }) => ({ id: value, label }),
+);
 
 type DatePickerTarget = "legacy" | "new" | string;
 
@@ -112,6 +114,7 @@ function suggestionKindLabel(suggestion: SmartFilterSuggestion): string {
   if (suggestion.kind === "provider") return "Source";
   if (suggestion.kind === "topic") return "Topic";
   if (suggestion.kind === "date") return "Date";
+  if (suggestion.kind === "availability") return "Registration";
   return "Price";
 }
 
@@ -130,6 +133,7 @@ function suggestionKindIcon(suggestion: SmartFilterSuggestion) {
   if (suggestion.kind === "provider") return <Rss aria-hidden="true" />;
   if (suggestion.kind === "topic") return <Tag aria-hidden="true" />;
   if (suggestion.kind === "date") return <CalendarDays aria-hidden="true" />;
+  if (suggestion.kind === "availability") return <CheckCircle2 aria-hidden="true" />;
   return <DollarSign aria-hidden="true" />;
 }
 
@@ -226,7 +230,7 @@ function priceIsActive(filters: CatalogFilters): boolean {
 }
 
 function availabilityLabel(filters: CatalogFilters): string {
-  return filters.availability === "sold_out" ? "Sold out" : "Available";
+  return filters.availability === "sold_out" ? "Sold out" : "Open";
 }
 
 function applyAtomicSuggestion(
@@ -281,6 +285,7 @@ function applyAtomicSuggestion(
       next.priceMaxDollars = "";
     }
   }
+  if (suggestion.kind === "availability") next.availability = suggestion.value;
   if (suggestion.kind === "date") {
     // A named window keeps its name. Resolving "this week" to the dates it means today and
     // pinning those was what made a starting point, a typed phrase, and a kept selection all
@@ -412,7 +417,7 @@ export function FilterBar({
     const savedMatches = effectiveComposerContext
       ? []
       : getSavedFilterSuggestions(composerTerm, savedFilters);
-    return [...savedMatches, ...scoped].slice(0, 6);
+    return [...savedMatches, ...scoped].slice(0, !effectiveComposerContext && !composerTerm.trim() ? 8 : 6);
   }, [
     availableCities,
     composerTerm,
@@ -481,6 +486,7 @@ export function FilterBar({
 
   const sourceLabel = (sourceKey: string): string => (
     providers.find((provider) => provider.source_key === sourceKey)?.display_name
+    ?? TECH_WEEK_FILTERS.find((source) => source.value === sourceKey)?.label
     ?? sourceKey
   );
 
@@ -501,19 +507,25 @@ export function FilterBar({
       }))
       .sort((left, right) => left.label.localeCompare(right.label)),
   ], [availableCities]);
-  const sourceOptions = useMemo<FilterChipEditorOption[]>(
-    () => [...providers]
-      .sort((left, right) => (
-        right.event_count - left.event_count
-        || left.display_name.localeCompare(right.display_name)
-      ))
-      .map((provider) => ({
-        id: provider.source_key,
-        label: provider.display_name,
-        detail: `${provider.event_count} ${rangeDetailSuffix}`,
+  const sourceOptions = useMemo<FilterChipEditorOption[]>(() => {
+    const known = new Set(providers.map((provider) => provider.source_key));
+    return [
+      ...[...providers]
+        .sort((left, right) => (
+          right.event_count - left.event_count
+          || left.display_name.localeCompare(right.display_name)
+        ))
+        .map((provider) => ({
+          id: provider.source_key,
+          label: provider.display_name,
+          detail: `${provider.event_count} ${rangeDetailSuffix}`,
+        })),
+      ...filters.sourceKeys.filter((key) => !known.has(key)).map((key) => ({
+        id: key,
+        label: sourceLabel(key),
       })),
-    [providers, rangeDetailSuffix],
-  );
+    ];
+  }, [filters.sourceKeys, providers, rangeDetailSuffix]);
   const topicOptions = useMemo<FilterChipEditorOption[]>(() => {
     const known = new Set(topics.map((topic) => topic.topic));
     return [
@@ -670,6 +682,7 @@ export function FilterBar({
     if (suggestion.kind === "scope") return filters.locationScopes.includes(suggestion.value);
     if (suggestion.kind === "provider") return filters.sourceKeys.includes(suggestion.value);
     if (suggestion.kind === "topic") return filters.topics.includes(suggestion.value);
+    if (suggestion.kind === "availability") return filters.availability === suggestion.value;
     if (suggestion.kind === "price") {
       return suggestion.value === filters.price
         && (
@@ -1012,7 +1025,7 @@ export function FilterBar({
                   }
                 }
               }}
-              placeholder="Search events, or type place, topic, source, date, or price…"
+              placeholder="Search events, or type place, topic, source, date, price, or registration…"
               maxLength={160}
               role="combobox"
               aria-autocomplete="list"
@@ -1051,7 +1064,7 @@ export function FilterBar({
             >
               <span className="filter-suggestions__heading">
                 {effectiveComposerContext
-                  ? `Suggested ${effectiveComposerContext === "source" ? "sources" : `${effectiveComposerContext}s`}`
+                  ? `Suggested ${effectiveComposerContext === "source" ? "sources" : effectiveComposerContext === "availability" ? "registration statuses" : `${effectiveComposerContext}s`}`
                   : startersLayout ? "Useful starting points" : "Suggested filters"}
               </span>
               {suggestions.map((suggestion, index) => {
@@ -1210,15 +1223,15 @@ export function FilterBar({
         ) : null}
         {(filters.availability ?? "any") !== "any" ? (
           <FilterChipEditor
-            chipLabel="Availability"
+            chipLabel="Registration"
             summary={availabilityLabel(filters)}
-            title="Edit availability"
+            title="Edit registration"
             hint="Registration status"
             options={AVAILABILITY_OPTIONS}
             selectedIds={[filters.availability]}
-            searchLabel="Find an availability"
-            clearActionLabel="Remove availability"
-            removeLabel="Remove availability filter"
+            searchLabel="Find a registration status"
+            clearActionLabel="Remove registration"
+            removeLabel="Remove registration filter"
             onApply={([next]) => applyAvailability(next as CatalogFilters["availability"])}
             onRemove={clearAvailability}
           />
@@ -1302,11 +1315,11 @@ export function FilterBar({
         {(filters.availability ?? "any") === "any" ? (
           <FilterChipEditor
             variant="add"
-            summary="Add availability"
-            title="Add availability"
+            summary="Add registration"
+            title="Add registration"
             hint="Choose registration status"
             options={AVAILABILITY_OPTIONS}
-            searchLabel="Find an availability"
+            searchLabel="Find a registration status"
             onApply={([next]) => applyAvailability(next as CatalogFilters["availability"])}
           />
         ) : null}

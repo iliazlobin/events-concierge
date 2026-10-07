@@ -8,6 +8,7 @@ import {
   getSmartFilterSuggestions,
   getStarterFilterSuggestions,
   parseSmartFilterComposerQuery,
+  REGISTRATION_FILTER_OPTIONS,
 } from "../lib/filter-suggestions.ts";
 
 const CITIES = [
@@ -121,15 +122,23 @@ test("bare categories expose popular values before a term is typed", () => {
   assert.equal(dates[0]?.value, "today");
 });
 
-test("empty search offers six compact starting points with useful combinations", () => {
+test("empty search puts both Tech Week calendars first without losing existing starting points", () => {
   const suggestions = getStarterFilterSuggestions("oakland");
 
-  assert.equal(suggestions.length, 6);
+  assert.equal(suggestions.length, 8);
   assert.ok(
     suggestions.filter((suggestion) => suggestion.kind === "combination").length >= 3,
   );
 
-  const freeThisWeek = suggestions[0];
+  assert.deepEqual(suggestions.slice(0, 2).map(({ label, filters }) => ({
+    label,
+    filters: filters.map(({ kind, value }) => ({ kind, value })),
+  })), [
+    { label: "SF Tech Week 2026", filters: [{ kind: "provider", value: "tech-week-sf-2026" }] },
+    { label: "LA Tech Week 2026", filters: [{ kind: "provider", value: "tech-week-la-2026" }] },
+  ]);
+
+  const freeThisWeek = suggestions[2];
   assert.equal(freeThisWeek?.kind, "combination");
   assert.equal(freeThisWeek?.label, "Free in Oakland this week");
   assert.deepEqual(
@@ -143,7 +152,7 @@ test("empty search offers six compact starting points with useful combinations",
     ],
   );
 
-  const regionalWeekend = suggestions[1];
+  const regionalWeekend = suggestions[3];
   assert.deepEqual(
     regionalWeekend?.kind === "combination"
       ? regionalWeekend.filters.map(({ kind, value }) => ({ kind, value }))
@@ -153,6 +162,37 @@ test("empty search offers six compact starting points with useful combinations",
       { kind: "date", value: "weekend" },
     ],
   );
+});
+
+test("registration-open phrases select the existing confirmed-open API value", () => {
+  for (const query of ["registration open", "registration still open", "still open", "open for registration", "available"]) {
+    const suggestion = getSmartFilterSuggestions(query, CITIES, PROVIDERS)[0];
+    assert.equal(suggestion?.kind, "availability", query);
+    assert.equal(suggestion?.value, "available", query);
+    assert.equal(suggestion?.label, "Registration open", query);
+  }
+  assert.deepEqual(REGISTRATION_FILTER_OPTIONS, [
+    { value: "available", label: "Registration open" },
+    { value: "sold_out", label: "Sold out" },
+  ]);
+  assert.equal(getSmartFilterSuggestions("waitlist", CITIES, PROVIDERS).some(
+    (suggestion) => suggestion.kind === "availability" && suggestion.value === "available",
+  ), false);
+});
+
+test("the registration composer exposes and scopes registration statuses", () => {
+  assert.deepEqual(parseSmartFilterComposerQuery("registration"), { context: "availability", term: "" });
+  assert.deepEqual(parseSmartFilterComposerQuery("registration still open"), { context: "availability", term: "still open" });
+  assert.deepEqual(parseSmartFilterComposerQuery("registration status: sold out"), { context: "availability", term: "sold out" });
+  const popular = getPopularSmartFilterSuggestions("availability", CITIES, PROVIDERS, TOPICS);
+  assert.deepEqual(popular.map(({ kind, value }) => ({ kind, value })), [
+    { kind: "availability", value: "available" },
+    { kind: "availability", value: "sold_out" },
+  ]);
+  const suggestions = getSmartFilterSuggestions("open", CITIES, PROVIDERS, [{ topic: "open-source", label: "Open source", event_count: 20 }]);
+  const scoped = filterSmartFilterSuggestionsByContext(suggestions, "availability");
+  assert.equal(scoped.length, 1);
+  assert.equal(scoped[0].value, "available");
 });
 
 test("San Francisco shorthand produces a city filter suggestion", () => {

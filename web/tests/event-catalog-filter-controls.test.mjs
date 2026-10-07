@@ -199,7 +199,7 @@ test("category-first typing opens a scoped composer without becoming event searc
   assert.match(filterBar, /searchInputRef\.current\?\.focus\(\)/);
   assert.match(filterBar, /setSuggestionsSuppressed\(true\)/);
   assert.match(filterBar, /searchFocused && !suggestionsSuppressed/);
-  assert.match(filterBar, /type place, topic, source, date, or price/);
+  assert.match(filterBar, /type place, topic, source, date, price, or registration/);
   assert.doesNotMatch(
     readFileSync(new URL("../components/concierge-app.tsx", import.meta.url), "utf8"),
     /next\.sourceKey && next\.sourceKey !== filters\.sourceKey/,
@@ -368,10 +368,9 @@ test("search composer and active chips are the only persistent filter surface", 
 });
 
 test("registration availability is an editable, removable filter chip", () => {
-  assert.match(filterBar, /summary="Add availability"/);
-  assert.match(filterBar, /chipLabel="Availability"/);
-  assert.match(filterBar, /id: "available", label: "Available"/);
-  assert.match(filterBar, /id: "sold_out", label: "Sold out"/);
+  assert.match(filterBar, /summary="Add registration"/);
+  assert.match(filterBar, /chipLabel="Registration"/);
+  assert.match(filterBar, /REGISTRATION_FILTER_OPTIONS\.map/);
   assert.match(filterBar, /onRemove=\{clearAvailability\}/);
 });
 
@@ -469,7 +468,7 @@ test("every filter kind can be started from the strip, not only dates", () => {
     'summary="Add place"',
     'summary="Add topic"',
     'summary="Add price"',
-    'summary="Add availability"',
+    'summary="Add registration"',
     'summary="Add dates"',
   ]) {
     assert.ok(filterBar.includes(marker), `${marker} should be offered in the strip`);

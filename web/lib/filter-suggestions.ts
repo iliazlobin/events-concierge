@@ -6,6 +6,7 @@ import {
 import { CATALOG_LOCATION_SCOPES } from "./location-scopes.ts";
 import { formatCity } from "./presentation.ts";
 import type {
+  AvailabilityFilter,
   CatalogProvider,
   CatalogTopic,
   DatePreset,
@@ -48,6 +49,12 @@ export type AtomicSmartFilterSuggestion =
     customEnd?: string;
   }
   | {
+    kind: "availability";
+    value: Exclude<AvailabilityFilter, "any">;
+    label: string;
+    score: number;
+  }
+  | {
     kind: "price";
     value: PriceFilter;
     label: string;
@@ -78,7 +85,7 @@ export type SmartFilterSuggestion = AtomicSmartFilterSuggestion | SavedFilterSug
   filters: AtomicSmartFilterSuggestion[];
 };
 
-export type SmartFilterContext = "place" | "source" | "topic" | "date" | "price";
+export type SmartFilterContext = "place" | "source" | "topic" | "date" | "price" | "availability";
 
 export interface SmartFilterComposerQuery {
   context: SmartFilterContext;
@@ -114,6 +121,10 @@ const FILTER_CONTEXT_ALIASES: Array<{
   {
     context: "price",
     aliases: ["price", "prices", "cost", "costs", "budget"],
+  },
+  {
+    context: "availability",
+    aliases: ["registration status", "registration", "availability"],
   },
 ];
 
@@ -226,6 +237,13 @@ export function getPopularSmartFilterSuggestions(
         customStart: date.customStart,
         customEnd: date.customEnd,
       }));
+  }
+  if (context === "availability") {
+    return REGISTRATION_FILTER_OPTIONS.slice(0, limit).map((option, index) => ({
+      kind: "availability",
+      ...option,
+      score: 200 - index,
+    }));
   }
   // Opening the price composer has to show that a number is an option at all.
   // Listing only Free/Paid/Any/Unlisted made the ceiling invisible: a reader had
@@ -366,6 +384,33 @@ export const PRICE_FILTER_OPTIONS: ReadonlyArray<{
   PRICE_SUGGESTIONS.map(({ value, label }) => Object.freeze({ value, label })),
 );
 
+const REGISTRATION_SUGGESTIONS: Array<{
+  value: Exclude<AvailabilityFilter, "any">;
+  label: string;
+  aliases: string[];
+}> = [
+  {
+    value: "available",
+    label: "Registration open",
+    aliases: ["open", "available", "still open", "registration still open", "open for registration", "spots available"],
+  },
+  {
+    value: "sold_out",
+    label: "Sold out",
+    aliases: ["sold out", "soldout", "no spots remaining"],
+  },
+];
+
+export const REGISTRATION_FILTER_OPTIONS = REGISTRATION_SUGGESTIONS.map(
+  ({ value, label }) => ({ value, label }),
+);
+
+/** Known edition sources also remain selectable when another city's facets omit them. */
+export const TECH_WEEK_FILTERS = [
+  { value: "tech-week-sf-2026", label: "SF Tech Week 2026" },
+  { value: "tech-week-la-2026", label: "LA Tech Week 2026" },
+] as const;
+
 const FILTER_QUERY_FILLERS = new Set([
   "event",
   "events",
@@ -396,6 +441,14 @@ export function getStarterFilterSuggestions(
   const city = activeCity || "sanfrancisco";
   const cityLabel = formatCity(city);
   return [
+    ...TECH_WEEK_FILTERS.map((source, index) => ({
+      kind: "combination" as const,
+      value: source.value,
+      label: source.label,
+      description: "Upcoming events from the official Tech Week calendar",
+      score: 120 - index,
+      filters: [{ kind: "provider" as const, ...source, score: 100 }],
+    })),
     {
       kind: "combination",
       value: "free-this-week",
@@ -833,6 +886,16 @@ export function getSmartFilterSuggestions(
       kind: "price",
       value: price.value,
       label: price.label,
+      score,
+    });
+  }
+
+  for (const registration of REGISTRATION_SUGGESTIONS) {
+    const score = bestScore(query, [registration.label, ...registration.aliases]);
+    if (score) suggestions.push({
+      kind: "availability",
+      value: registration.value,
+      label: registration.label,
       score,
     });
   }

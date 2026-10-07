@@ -605,7 +605,6 @@ export function MapView({
           unmappedEvents={unmapped}
           mappedCount={mapped.length}
           showUnmapped={showUnmapped}
-          approximateCount={approximateCount}
           areaLabel={selectedArea?.label}
           onAreaClear={() => setSelectedArea(null)}
           onListChange={(showUnmappedList) => {

@@ -53,7 +53,7 @@ function priceLabel(filters: CatalogFilters): string | null {
 }
 
 function availabilityLabel(filters: CatalogFilters): string | null {
-  if (filters.availability === "available") return "available";
+  if (filters.availability === "available") return "registration open";
   if (filters.availability === "sold_out") return "sold out";
   return null;
 }

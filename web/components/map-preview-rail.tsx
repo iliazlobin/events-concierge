@@ -17,7 +17,6 @@ interface MapPreviewRailProps {
   unmappedEvents: EventItem[];
   mappedCount: number;
   showUnmapped: boolean;
-  approximateCount: number;
   areaLabel?: string;
   onAreaClear: () => void;
   onListChange: (unmapped: boolean) => void;
@@ -129,7 +128,6 @@ export function MapPreviewRail({
   unmappedEvents,
   mappedCount,
   showUnmapped,
-  approximateCount,
   areaLabel,
   onAreaClear,
   onListChange,
@@ -191,8 +189,6 @@ export function MapPreviewRail({
 
       {showUnmapped ? <p className="map-preview-rail__notice">
         These events have no map coordinates. Open an event for its location details.
-      </p> : approximateCount ? <p className="map-preview-rail__notice">
-        Outlined markers show approximate areas, not venues. Check the event page for the address.
       </p> : null}
 
       {areaLabel && !showUnmapped ? (
