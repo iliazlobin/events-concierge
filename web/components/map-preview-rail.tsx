@@ -9,6 +9,7 @@ import { eventLocationLabel, eventPageUrl } from "@/lib/event-links";
 import { dayCompactLabel, dayTrackLabel } from "@/lib/map-days";
 import type { MapDayGroup, MapDayModel } from "@/lib/map-days";
 import { eventMapCoordinate } from "@/lib/map-viewport";
+import { eventMapLocation } from "@/lib/map-locations";
 import type { EventEntityReference, EventItem } from "@/lib/types";
 
 interface MapPreviewRailProps {
@@ -16,6 +17,9 @@ interface MapPreviewRailProps {
   unmappedEvents: EventItem[];
   mappedCount: number;
   showUnmapped: boolean;
+  approximateCount: number;
+  areaLabel?: string;
+  onAreaClear: () => void;
   onListChange: (unmapped: boolean) => void;
   selectedId: string | null;
   onSelect: (event: EventItem) => void;
@@ -48,6 +52,7 @@ function MapPreviewCard({ event, selected, muted, onSelect, onEntitySelect }: Ma
   const imageUrl = eventImageUrl(event);
   const pageUrl = eventPageUrl(event);
   const hasMapLocation = eventMapCoordinate(event) !== null;
+  const mapLocation = eventMapLocation(event);
   const sourceLabel = event.calendar_labels?.find((value) => value.trim())
     ?? event.sources.find((source) => source.label?.trim())?.label
     ?? event.providers?.find((value) => value.trim());
@@ -102,6 +107,9 @@ function MapPreviewCard({ event, selected, muted, onSelect, onEntitySelect }: Ma
             {eventLocationLabel(event)}
           </span>
           {!hasMapLocation ? <small className="map-preview__location-note">Not plotted on map</small> : null}
+          {mapLocation?.precision === "area" ? (
+            <small className="map-preview__location-note">Approximate area · {mapLocation.label}</small>
+          ) : null}
         </span>
       </div>
 
@@ -121,6 +129,9 @@ export function MapPreviewRail({
   unmappedEvents,
   mappedCount,
   showUnmapped,
+  approximateCount,
+  areaLabel,
+  onAreaClear,
   onListChange,
   selectedId,
   onSelect,
@@ -180,7 +191,18 @@ export function MapPreviewRail({
 
       {showUnmapped ? <p className="map-preview-rail__notice">
         These events have no map coordinates. Open an event for its location details.
+      </p> : approximateCount ? <p className="map-preview-rail__notice">
+        Outlined markers show approximate areas, not venues. Check the event page for the address.
       </p> : null}
+
+      {areaLabel && !showUnmapped ? (
+        <div className="map-preview-rail__filter">
+          <span>Approximate area · {areaLabel}</span>
+          <button type="button" onClick={onAreaClear} aria-label="Show all areas">
+            <X aria-hidden="true" /> All areas
+          </button>
+        </div>
+      ) : null}
 
       {grouped && activeDay ? (
         <div className="map-preview-rail__filter">

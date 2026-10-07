@@ -7,6 +7,7 @@ Common incidents on shared GKE. Use the deployed profile and [release record](ht
 | Page unavailable, loopback connection refused, public gateway error | [Access and routing](#access-and-routing) |
 | Google sign-in fails or admin access is denied | [Sign-in and operator access](#sign-in-and-operator-access) |
 | Missing events, stale sources or stuck refresh | [Collection](#collection) |
+| Events load but have no map markers | [Map locations](#events-missing-from-the-map) |
 | API not ready, database/Redis/Temporal failure | [Stores and background workers](#stores-and-background-workers) |
 | Failed rollout or interrupted backup | [Release and recovery](#release-and-recovery) |
 | Certificate warning or transport failure | [Certificates](#certificates) |
@@ -60,6 +61,19 @@ curl --silent --show-error --max-time 10 --write-out '\nHTTP %{http_code}\n' \
 **Public access, if activated:** inspect Gateway/HTTPRoute conditions, backend health and certificate state through [public-edge operations](public-access.md#operate). Verify DNS and the exact HTTPS hostname; separate an edge failure from a private API failure. Private health/version/metrics endpoints intentionally have no public route; their public `404` is expected.
 
 **Verify:** the selected page loads, the private API reports the expected revision, and required dependencies are ready. `/healthz` alone proves only that the process responds. If exposure is unsafe, follow [edge containment](public-access.md#activate); withdrawing DNS alone leaves direct-IP access possible. Preserve private recovery access and controller ownership.
+
+## Events missing from the map
+
+Compare the same filters in Events and Map, then inspect `latitude`/`longitude` in the
+`GET /v1/catalog/events` response. Loaded events with null coordinates are a location-data gap;
+a missing base map points to tile delivery or browser rendering instead.
+
+SF Tech Week 2026 publishes area names rather than venue coordinates. The frontend groups
+reviewed SF areas into outlined count markers labeled **approximate**; click one to browse
+its events. Provider coordinates take precedence. Virtual events, `Other`, unrecognized areas
+and sources without a reviewed area mapping stay in the unlocated list. These display centers
+never change stored coordinates, distance filters or directions. Verify desktop/mobile selection
+and pagination before release; no database backfill or fresh crawl is needed for this fallback.
 
 ## Sign-in and operator access
 

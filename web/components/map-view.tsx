@@ -7,6 +7,8 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { EventList } from "@/components/event-list";
 import { MapDayTrack } from "@/components/map-day-track";
 import { MapPreviewRail } from "@/components/map-preview-rail";
+import { eventMapLocation, mapMarkerGroups } from "@/lib/map-locations";
+import type { MapLocation } from "@/lib/map-locations";
 import {
   dayFullLabel,
   eventDayKey,
@@ -56,7 +58,8 @@ const MAP_STYLE = {
 const PEEK_MARKER_LIMIT = 800;
 
 interface EventMarker {
-  eventId: string;
+  events: EventItem[];
+  location: MapLocation;
   marker: Marker;
 }
 
@@ -84,11 +87,16 @@ export function MapView({
     [events],
   );
   const [unmappedList, setUnmappedList] = useState(false);
+  const [selectedArea, setSelectedArea] = useState<MapLocation | null>(null);
+  const selectedAreaRef = useRef(selectedArea);
+  selectedAreaRef.current = selectedArea;
+  const approximateCount = mapped.filter((event) => eventMapLocation(event)?.precision === "area").length;
   const showUnmapped = unmapped.length > 0 && (unmappedList || !mapped.length);
   useEffect(() => {
     // A new search resets the list; pagination uses loadingMore instead.
     if (loading) {
       setUnmappedList(false);
+      setSelectedArea(null);
       return;
     }
     // Keep the fallback list selected when a later page introduces map locations.
@@ -134,11 +142,12 @@ export function MapView({
   );
   const visibleEvents = useMemo(() => {
     const visible = new Set(visibleIds);
-    return mapped.filter((event) => visible.has(event.canonical_event_id));
-  }, [mapped, visibleIds]);
+    return mapped.filter((event) => visible.has(event.canonical_event_id)
+      && (!selectedArea || eventMapLocation(event)?.areaKey === selectedArea.areaKey));
+  }, [mapped, selectedArea, visibleIds]);
   const dayModel = useMemo(
-    () => mapDayModel(mapped, visibleIds, activeDay),
-    [activeDay, mapped, visibleIds],
+    () => mapDayModel(mapped, visibleEvents.map((event) => event.canonical_event_id), activeDay),
+    [activeDay, mapped, visibleEvents],
   );
   const dayGroups = useMemo(
     () => groupVisibleEventsByDay(visibleEvents),
@@ -150,6 +159,9 @@ export function MapView({
 
   const selectEvent = useCallback((event: EventItem) => {
     setSelectedId(event.canonical_event_id);
+    setSelectedArea((current) => (
+      current?.areaKey === eventMapLocation(event)?.areaKey ? current : null
+    ));
     // Deliberately clicking a dimmed pin promotes its day — the fastest hop there is.
     // Browsing all days is a mode, so a click never creates an emphasis that was not
     // already there. The functional form keeps this out of the dependency array.
@@ -168,8 +180,20 @@ export function MapView({
     }
   }, [prefersReducedMotion]);
 
+  const selectArea = useCallback((location: MapLocation) => {
+    setSelectedArea(location);
+    setSelectedId(null);
+    setUnmappedList(false);
+    const map = mapRef.current;
+    if (!map) return;
+    const view = { center: location.coordinate, zoom: Math.max(map.getZoom(), 12) };
+    if (prefersReducedMotion) map.jumpTo(view);
+    else map.easeTo({ ...view, duration: 420 });
+  }, [prefersReducedMotion]);
+
   /** The only thing in this feature that moves the camera, and only when asked. */
   const fitToDay = useCallback((dayKey: string | null) => {
+    setSelectedArea(null);
     const map = mapRef.current;
     if (!map) return;
     const coordinates = mapped
@@ -268,47 +292,60 @@ export function MapView({
       markersRef.current.forEach(({ marker }) => marker.remove());
       markersRef.current = [];
       const emphasis = emphasisDayRef.current;
-      for (const event of mapped) {
-        const coordinates = eventMapCoordinate(event);
-        if (!coordinates) continue;
+      for (const group of mapMarkerGroups(mapped)) {
+        const { location, events: groupEvents } = group;
+        const event = groupEvents[0];
         const element = document.createElement("button");
-        element.className = "map-marker";
+        element.className = `map-marker${location.precision === "area" ? " map-marker--area" : ""}`;
         element.type = "button";
         element.dataset.day = eventDayKey(event) ?? "";
         // maplibre writes inline transform and opacity onto this element on every
         // render, so every visual lives on the inner dot instead.
         const dot = document.createElement("span");
         dot.className = "map-marker__dot";
+        if (location.precision === "area") dot.textContent = String(groupEvents.length);
         element.append(dot);
         element.setAttribute(
           "aria-label",
-          `Show ${event.title}, ${dayFullLabel(element.dataset.day)}`,
+          location.precision === "area"
+            ? `Show ${groupEvents.length} events near ${location.label} (approximate area)`
+            : `Show ${event.title}, ${dayFullLabel(element.dataset.day)}`,
         );
+        element.title = location.precision === "area"
+          ? `${location.label} · Approximate area, not the venue · ${groupEvents.length} events`
+          : event.title;
+        const isSelected = groupEvents.some((item) => item.canonical_event_id === selectedIdRef.current)
+          || (location.areaKey !== undefined && location.areaKey === selectedAreaRef.current?.areaKey);
         element.setAttribute(
           "aria-pressed",
-          String(selectedIdRef.current === event.canonical_event_id),
+          String(isSelected),
         );
         element.classList.toggle(
           "is-selected",
-          selectedIdRef.current === event.canonical_event_id,
+          isSelected,
         );
         element.classList.toggle(
           "is-day-active",
-          emphasis !== null && emphasis === element.dataset.day,
+          emphasis !== null && groupEvents.some((item) => eventDayKey(item) === emphasis),
         );
         element.classList.toggle(
           "is-muted",
-          emphasis !== null && emphasis !== element.dataset.day,
+          emphasis !== null && !groupEvents.some((item) => eventDayKey(item) === emphasis),
         );
         element.addEventListener("click", (clickEvent) => {
           clickEvent.stopPropagation();
-          selectEvent(event);
+          if (location.precision === "area") selectArea(location);
+          else selectEvent(event);
         });
-        const marker = new maplibre.Marker({ element, anchor: "center" })
-          .setLngLat(coordinates)
+        // A count label sits beside its area center, keeping nearby venue dots clickable.
+        const marker = new maplibre.Marker({
+          element, anchor: location.precision === "area" ? "left" : "center",
+        })
+          .setLngLat(location.coordinate)
           .addTo(map);
         markersRef.current.push({
-          eventId: event.canonical_event_id,
+          events: groupEvents,
+          location,
           marker,
         });
       }
@@ -353,7 +390,7 @@ export function MapView({
     return () => {
       cancelled = true;
     };
-  }, [cities, locationScopes, mapReady, mapped, prefersReducedMotion, selectEvent]);
+  }, [cities, locationScopes, mapReady, mapped, prefersReducedMotion, selectArea, selectEvent]);
 
   useEffect(() => {
     const map = mapRef.current;
@@ -376,6 +413,7 @@ export function MapView({
 
   useEffect(() => {
     setSelectedId(null);
+    setSelectedArea(null);
     setActiveDay(null);
     setPeekDay(null);
   }, [cities, locationScopes]);
@@ -397,22 +435,23 @@ export function MapView({
   }, [dayModel.keys]);
 
   useEffect(() => {
-    markersRef.current.forEach(({ eventId, marker }) => {
+    markersRef.current.forEach(({ events: groupEvents, location, marker }) => {
       const element = marker.getElement();
-      const isSelected = selectedId === eventId;
-      const day = element.dataset.day;
+      const isSelected = groupEvents.some((event) => event.canonical_event_id === selectedId)
+        || (location.areaKey !== undefined && location.areaKey === selectedArea?.areaKey);
+      const matchesDay = groupEvents.some((event) => eventDayKey(event) === emphasisDay);
       marker.getElement().classList.toggle("is-selected", isSelected);
       element.classList.toggle(
         "is-day-active",
-        emphasisDay !== null && day === emphasisDay,
+        emphasisDay !== null && matchesDay,
       );
       element.classList.toggle(
         "is-muted",
-        emphasisDay !== null && day !== emphasisDay,
+        emphasisDay !== null && !matchesDay,
       );
       element.setAttribute("aria-pressed", String(isSelected));
     });
-  }, [emphasisDay, selectedId]);
+  }, [emphasisDay, selectedArea, selectedId]);
 
   useEffect(() => {
     const stage = stageRef.current;
@@ -493,7 +532,7 @@ export function MapView({
           <p>
             {loading && !events.length
               ? "Loading locations…"
-              : `${mapped.length} mapped · ${unmapped.length} without map locations${hasMore ? " · more available" : ""}`}
+              : `${mapped.length} mapped${approximateCount ? ` (${approximateCount} approximate)` : ""} · ${unmapped.length} without map locations${hasMore ? " · more available" : ""}`}
           </p>
           {hasMore ? (
             <button type="button" disabled={loadingMore} onClick={onLoadMore}>
@@ -541,6 +580,7 @@ export function MapView({
                 return;
               }
               setSelectedId(null);
+              setSelectedArea(null);
             }}
           />
           {multiDay ? null : (
@@ -565,8 +605,12 @@ export function MapView({
           unmappedEvents={unmapped}
           mappedCount={mapped.length}
           showUnmapped={showUnmapped}
+          approximateCount={approximateCount}
+          areaLabel={selectedArea?.label}
+          onAreaClear={() => setSelectedArea(null)}
           onListChange={(showUnmappedList) => {
             setUnmappedList(showUnmappedList);
+            setSelectedArea(null);
             setSelectedId(null);
             setActiveDay(null);
             setPeekDay(null);
@@ -585,6 +629,9 @@ export function MapView({
 
         {selected.length ? (
           <aside className="map-selection">
+            {eventMapLocation(selected[0])?.precision === "area" ? (
+              <p className="map-selection__location-note">Approximate area only. Check the event page for the venue.</p>
+            ) : null}
             <EventList
               events={selected}
               compact
