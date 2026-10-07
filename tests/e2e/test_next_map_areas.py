@@ -73,7 +73,7 @@ def test_guest_map_groups_areas_retains_exact_and_unlocated_results_and_paginate
     expect(page.locator(".map-heading")).to_contain_text("4 mapped (3 approximate) · 2 without map locations")
     expect(page.locator(".map-marker--area")).to_have_count(2)
     expect(page.locator(".map-marker:not(.map-marker--area)")).to_have_count(1)
-    expect(rail).to_contain_text("Outlined markers show approximate areas, not venues")
+    expect(rail.locator(".map-preview-rail__notice")).to_have_count(0)
     expect(rail.locator(".map-preview")).to_have_count(4)
     soma = page.get_by_role("button", name="Show 2 events near South of Market (approximate area)", exact=True)
     expect(soma).to_be_visible()

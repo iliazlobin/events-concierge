@@ -49,6 +49,10 @@ test("a new session starts somewhere real and Reset still clears everything", ()
 test("the offered name describes the selection rather than numbering it", () => {
   const base = initialCatalogFilters();
   assert.equal(suggestSavedFilterName(base, [], [], NOW), "San Francisco · this week");
+  assert.equal(
+    suggestSavedFilterName({ ...base, availability: "available" }, [], [], NOW),
+    "San Francisco · registration open · this week",
+  );
 
   const rich = {
     ...base,
