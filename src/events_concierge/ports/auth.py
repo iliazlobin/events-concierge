@@ -9,12 +9,42 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from dataclasses import dataclass
+from enum import StrEnum
 from typing import Protocol
 from uuid import UUID
 
 
 class AuthenticationFailedError(PermissionError):
     """The request did not establish one valid authenticated tenant (FR-1.1)."""
+
+
+class ConsumerSignInFailureReason(StrEnum):
+    """Fixed, non-sensitive categories for private sign-in rejection counters."""
+
+    ORIGIN = "origin"
+    LOGIN_COOKIE = "login_cookie"
+    CHALLENGE = "challenge"
+    TOKEN_VERIFICATION = "token_verification"
+    CLAIM_AUTHORITY = "claim_authority"
+    CLAIM_PROVIDER = "claim_provider"
+    CLAIM_UID = "claim_uid"
+    CLAIM_EMAIL = "claim_email"
+    CLAIM_FRESHNESS = "claim_freshness"
+    REAUTHENTICATION = "reauthentication"
+    ACCOUNT_UNAVAILABLE = "account_unavailable"
+    ACCOUNT_FENCED = "account_fenced"
+    EXISTING_SESSION_COOKIE = "existing_session_cookie"
+    UNKNOWN = "unknown"
+
+
+class ConsumerSignInRejectedError(AuthenticationFailedError):
+    """Retain a bounded private category while keeping the public response generic."""
+
+    def __init__(self, reason: ConsumerSignInFailureReason) -> None:
+        if not isinstance(reason, ConsumerSignInFailureReason):
+            raise ValueError("unknown consumer sign-in rejection reason")
+        super().__init__("sign-in could not be verified")
+        self.reason = reason
 
 
 class CsrfVerificationFailedError(PermissionError):
