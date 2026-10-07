@@ -63,6 +63,14 @@ def test_filter_migration_is_independent_reversible_and_merges_at_head() -> None
                 ).scalar_one()
                 is None
             )
+            assert (
+                connection.execute(
+                    text(
+                        "SELECT EXISTS (SELECT 1 FROM pg_proc WHERE proname = 'fn_suggest_catalog_names_v1')"
+                    )
+                ).scalar_one()
+                is False
+            )
             for signature in (
                 "public.fn_list_retained_catalog_browse_observations_v1(text,timestamptz,timestamptz)",
                 "public.fn_list_retained_catalog_browse_observations_v2(text[],timestamptz,timestamptz)",
@@ -89,6 +97,22 @@ def test_filter_migration_is_independent_reversible_and_merges_at_head() -> None
                 text("SELECT has_function_privilege('public', :signature, 'EXECUTE')"),
                 {"signature": recommendation},
             ).scalar_one()
+        # A later authorized upgrade from the repair-only branch must provision the other
+        # branch normally, with no duplicated functions or substituted schema stamps.
+        _migrate(child, "upgrade", "head")
+        with engine.connect() as connection:
+            assert (
+                connection.execute(text("SELECT version_num FROM alembic_version")).scalar_one()
+                == "0212"
+            )
+            assert (
+                connection.execute(
+                    text(
+                        "SELECT EXISTS (SELECT 1 FROM pg_proc WHERE proname = 'fn_suggest_catalog_names_v1')"
+                    )
+                ).scalar_one()
+                is True
+            )
         _migrate(child, "downgrade", "0208")
         with engine.connect() as connection:
             assert (
