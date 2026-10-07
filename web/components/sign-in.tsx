@@ -61,8 +61,10 @@ export function SignIn({ reason, returnTo = "/", reauthenticationState }: {
     if (!identity || !challenge || !config || (legalRequired && !config.legal_policy) || busy) return;
     setBusy(true);
     setError(null);
+    let stage: "provider" | "session" = "provider";
     try {
       const token = await identity.signIn(provider);
+      stage = "session";
       const result = await api<{ return_to: string }>("/auth/identity/session", {
         method: "POST", bodyJson: {
           id_token: token, state: challenge,
@@ -76,13 +78,18 @@ export function SignIn({ reason, returnTo = "/", reauthenticationState }: {
       window.location.replace(result.return_to);
     } catch (failure) {
       const sdk = await import("@/lib/consumer-identity");
+      console.warn("Consumer sign-in failed", sdk.identityFailureDiagnostic(failure, stage));
       setError(sdk.identityErrorMessage(failure));
       // Sign-in challenges are one-shot. A normal retry obtains a fresh cookie and state.
       if (!reauthenticationState) setAttempt(value => value + 1);
       else setChallenge(null);
     } finally {
       try { await identity.clear(); }
-      catch { setError("Sign-in could not be cleared. Reload this page before trying again."); }
+      catch (failure) {
+        const sdk = await import("@/lib/consumer-identity");
+        console.warn("Consumer sign-in cleanup failed", sdk.identityFailureDiagnostic(failure, "clear"));
+        setError("Sign-in could not be cleared. Reload this page before trying again.");
+      }
       finally { setBusy(false); }
     }
   };
