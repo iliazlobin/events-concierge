@@ -17,6 +17,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from ...domain import dedup
 from ...domain.catalog_browse import (
+    MAX_CATALOG_NAME_SUGGESTIONS,
+    MIN_CATALOG_NAME_QUERY_LENGTH,
     CatalogBrowseCity,
     CatalogBrowseCursor,
     CatalogBrowseDay,
@@ -26,6 +28,8 @@ from ...domain.catalog_browse import (
     CatalogBrowseSort,
     CatalogBrowseSource,
     CatalogBrowseTopic,
+    CatalogNameKind,
+    CatalogNameSuggestion,
 )
 from ...domain.enums import PriceStatus, Source
 from ...domain.event_semantics import (
@@ -1062,6 +1066,64 @@ class PostgresCatalogRepository:
                 for row in rows
             ),
         )
+
+    async def suggest_names(
+        self,
+        *,
+        query: str,
+        source_keys: tuple[str, ...] = (),
+        date_ranges: tuple[tuple[datetime, datetime], ...] = (),
+        cities: tuple[str, ...] = (),
+        location_scopes: tuple[str, ...] = (),
+        price: str | None = None,
+        price_max_cents: int | None = None,
+        price_min_cents: int | None = None,
+        topics: tuple[str, ...] = (),
+        availability: str | None = None,
+        limit: int = 8,
+    ) -> list[CatalogNameSuggestion]:
+        if (
+            not MIN_CATALOG_NAME_QUERY_LENGTH <= len(query.strip()) <= _MAX_CATALOG_FILTER_LENGTH
+            or not 1 <= limit <= MAX_CATALOG_NAME_SUGGESTIONS
+        ):
+            raise ValueError("catalog name suggestion query is invalid")
+        normalized_topics = _validated_catalog_filter_inputs(
+            query=query, source_keys=source_keys, city_filters=cities,
+            location_scopes=location_scopes, price=price, price_max_cents=price_max_cents,
+            price_min_cents=price_min_cents, topics=topics, availability=availability,
+        )
+        windows = _catalog_browse_ranges(
+            starts_after=None, starts_before=None, date_ranges=date_ranges,
+            max_window=(
+                _MAX_SOURCE_CATALOG_ARCHIVE_WINDOW if source_keys else _MAX_CATALOG_BROWSE_WINDOW
+            ),
+        )
+        async with self._session_scope() as session:
+            rows = (await session.execute(
+                text("""
+                    SELECT * FROM public.fn_suggest_catalog_names_v1(
+                        :query, CAST(:source_keys AS text[]),
+                        CAST(:window_starts AS timestamptz[]), CAST(:window_ends AS timestamptz[]),
+                        CAST(:cities AS text[]), CAST(:location_scopes AS text[]),
+                        :price, :price_max_cents, :price_min_cents, CAST(:topics AS text[]),
+                        :availability, :limit
+                    )
+                """),
+                {
+                    "query": query.strip(), "source_keys": list(dict.fromkeys(source_keys)),
+                    "window_starts": [start for start, _ in windows] if windows else [None],
+                    "window_ends": [end for _, end in windows] if windows else [None],
+                    "cities": list(dict.fromkeys(cities)),
+                    "location_scopes": list(dict.fromkeys(location_scopes)),
+                    "price": price, "price_max_cents": price_max_cents,
+                    "price_min_cents": price_min_cents, "topics": list(normalized_topics),
+                    "availability": availability, "limit": limit,
+                },
+            )).all()
+        return [CatalogNameSuggestion(
+            name=row.name, kinds=tuple(cast(list[CatalogNameKind], row.kinds)),
+            event_count=int(row.event_count),
+        ) for row in rows]
 
     async def browse_current(
         self,

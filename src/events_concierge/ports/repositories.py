@@ -18,6 +18,7 @@ from ..domain.catalog_browse import (
     CatalogBrowseProvider,
     CatalogBrowseSort,
     CatalogBrowseTopic,
+    CatalogNameSuggestion,
 )
 from ..domain.credentials import Tenant
 from ..domain.enums import HandoffReminderKind, LifecycleState, Source
@@ -175,6 +176,24 @@ class CatalogRepository(Protocol):
 
     async def list_city_facets(self) -> list[CatalogBrowseCity]:
         """List normalized cities from the admitted upcoming catalog projection."""
+        ...
+
+    async def suggest_names(
+        self,
+        *,
+        query: str,
+        source_keys: tuple[str, ...] = (),
+        date_ranges: tuple[tuple[datetime, datetime], ...] = (),
+        cities: tuple[str, ...] = (),
+        location_scopes: tuple[str, ...] = (),
+        price: str | None = None,
+        price_max_cents: int | None = None,
+        price_min_cents: int | None = None,
+        topics: tuple[str, ...] = (),
+        availability: str | None = None,
+        limit: int = 8,
+    ) -> list[CatalogNameSuggestion]:
+        """Match names across all eligible events before ranking and limiting suggestions."""
         ...
 
 

@@ -195,6 +195,8 @@ class ReleaseApi:
             })
         elif path in {"/v1/me/saved-filters", "/v1/me/api-keys"}:
             self.respond(route, [])
+        elif path == "/v1/catalog/name-suggestions":
+            self.respond(route, [])
         elif path == "/v1/catalog/events":
             event = self.with_event_url(catalog_event())
             self.respond(route, {

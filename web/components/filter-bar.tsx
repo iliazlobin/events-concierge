@@ -22,6 +22,7 @@ import {
 } from "@/components/filter-chip-editor";
 import { SavedFilterPicker } from "@/components/saved-filter-picker";
 import { signInFailurePath } from "@/lib/sign-in";
+import { getCatalogNameSuggestions } from "@/lib/api";
 import { suggestSavedFilterName, uniqueSavedFilterName } from "@/lib/catalog-filter-name";
 import {
   PriceFilterEditor,
@@ -43,6 +44,7 @@ import {
 import {
   filterSmartFilterSuggestionsByContext,
   getPopularSmartFilterSuggestions,
+  getCatalogNameFilterSuggestions,
   getSavedFilterSuggestions,
   getSmartFilterSuggestions,
   getStarterFilterSuggestions,
@@ -61,6 +63,7 @@ import {
 } from "@/lib/presentation";
 import type {
   CatalogFilters,
+  CatalogNameSuggestion,
   CatalogProvider,
   CatalogTopic,
   DateRangeFilter,
@@ -107,6 +110,7 @@ const AVAILABILITY_OPTIONS: FilterChipEditorOption[] = REGISTRATION_FILTER_OPTIO
 type DatePickerTarget = "legacy" | "new" | string;
 
 function suggestionKindLabel(suggestion: SmartFilterSuggestion): string {
+  if (suggestion.kind === "name") return suggestion.nameKind;
   if (suggestion.kind === "combination") return "Starting point";
   if (suggestion.kind === "saved") return "Saved";
   if (suggestion.kind === "city") return "City";
@@ -126,6 +130,7 @@ function suggestionKindLabel(suggestion: SmartFilterSuggestion): string {
  * still what a screen reader hears -- the tile keeps it beside the glyph, visually hidden.
  */
 function suggestionKindIcon(suggestion: SmartFilterSuggestion) {
+  if (suggestion.kind === "name") return <Search aria-hidden="true" />;
   if (suggestion.kind === "saved") return <Bookmark aria-hidden="true" />;
   if (suggestion.kind === "city" || suggestion.kind === "scope") {
     return <MapPin aria-hidden="true" />;
@@ -353,6 +358,10 @@ export function FilterBar({
   const [searchFocused, setSearchFocused] = useState(false);
   const [suggestionsSuppressed, setSuggestionsSuppressed] = useState(false);
   const [activeSuggestion, setActiveSuggestion] = useState(-1);
+  const literalQuery = useRef<string | null>(filters.query || null);
+  const [catalogNames, setCatalogNames] = useState<{
+    key: string; items: CatalogNameSuggestion[];
+  } | null>(null);
   const suggestionListRef = useRef<HTMLDivElement>(null);
   /**
    * Follow the arrow keys down the list.
@@ -387,11 +396,36 @@ export function FilterBar({
     ...cities,
   ].filter(Boolean))], [cities, filters.cities, filters.city]);
   const typedComposer = useMemo(
-    () => composerContext ? null : parseSmartFilterComposerQuery(query),
+    () => composerContext || literalQuery.current === query
+      ? null : parseSmartFilterComposerQuery(query),
     [composerContext, query],
   );
   const effectiveComposerContext = composerContext ?? typedComposer?.context ?? null;
   const composerTerm = composerContext ? query : typedComposer?.term ?? query;
+  const nameSearchKey = catalogFilterKey({ ...filters, query: composerTerm.trim(), sort: "soonest" });
+  const searchNames = searchFocused && !suggestionsSuppressed
+    && !effectiveComposerContext && composerTerm.trim().length >= 2;
+  useEffect(() => {
+    if (!searchNames) return;
+    const controller = new AbortController();
+    let cancelled = false;
+    const timer = window.setTimeout(() => {
+      void getCatalogNameSuggestions(latestFilters.current, composerTerm, controller.signal)
+        .then((items) => {
+          if (cancelled) return;
+          setCatalogNames({ key: nameSearchKey, items });
+          setActiveSuggestion(-1);
+        })
+        .catch(() => {
+          if (!cancelled) setCatalogNames({ key: nameSearchKey, items: [] });
+        });
+    }, 220);
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timer);
+      controller.abort();
+    };
+  }, [composerTerm, nameSearchKey, searchNames]);
   const suggestions = useMemo(() => {
     const candidates = effectiveComposerContext && !composerTerm.trim()
       ? getPopularSmartFilterSuggestions(
@@ -424,7 +458,10 @@ export function FilterBar({
         ...scoped.slice(TECH_WEEK_FILTERS.length),
       ].slice(0, 8);
     }
-    return [...savedMatches, ...scoped].slice(0, 6);
+    const names = !effectiveComposerContext && searchNames && catalogNames?.key === nameSearchKey
+      ? getCatalogNameFilterSuggestions(composerTerm, catalogNames.items) : [];
+    return [...savedMatches, ...[...scoped, ...names].sort((a, b) => b.score - a.score)]
+      .slice(0, 8);
   }, [
     availableCities,
     composerTerm,
@@ -433,12 +470,20 @@ export function FilterBar({
     providers,
     savedFilters,
     topics,
+    catalogNames,
+    nameSearchKey,
+    searchNames,
   ]);
 
   useEffect(() => {
     if (composerOnly || typedComposer) return undefined;
     const timer = window.setTimeout(() => {
       const current = latestFilters.current;
+      if (query === current.query) return;
+      if (query === literalQuery.current) {
+        onChange({ ...current, query });
+        return;
+      }
       const expression = interpretCatalogFilterExpression(
         query,
         availableCities,
@@ -675,6 +720,7 @@ export function FilterBar({
   const clearAvailability = () => applyAvailability("any");
 
   const suggestionIsActive = (suggestion: SmartFilterSuggestion): boolean => {
+    if (suggestion.kind === "name") return suggestion.value === filters.query;
     if (suggestion.kind === "combination") {
       return suggestion.filters.every((item) => suggestionIsActive(item));
     }
@@ -720,6 +766,7 @@ export function FilterBar({
   };
 
   const suggestionDetail = (suggestion: SmartFilterSuggestion): string => {
+    if (suggestion.kind === "name") return suggestion.description;
     if (suggestion.kind === "saved") {
       return suggestionIsActive(suggestion) ? "Applied" : suggestion.description;
     }
@@ -741,6 +788,16 @@ export function FilterBar({
   }, [query]);
 
   const applySuggestion = (suggestion: SmartFilterSuggestion) => {
+    if (suggestion.kind === "name") {
+      literalQuery.current = suggestion.value;
+      setQuery(suggestion.value);
+      setComposerOnly(false);
+      setComposerContext(null);
+      setSuggestionsSuppressed(true);
+      setActiveSuggestion(-1);
+      onChange({ ...filters, query: suggestion.value }, "push");
+      return;
+    }
     // A saved selection replaces the whole strip, so it never composes with what is active.
     if (suggestion.kind === "saved") {
       const entry = savedFilters.find((item) => item.saved_filter_id === suggestion.value);
@@ -796,6 +853,12 @@ export function FilterBar({
   };
 
   const commitFilterExpression = () => {
+    if (query === literalQuery.current) {
+      setSearchFocused(false);
+      setSuggestionsSuppressed(true);
+      onChange({ ...filters, query }, "push");
+      return;
+    }
     const expression = interpretCatalogFilterExpression(
       query,
       availableCities,
@@ -833,6 +896,7 @@ export function FilterBar({
   });
 
   const openFilterComposer = (seed = "", context: SmartFilterContext | null = null) => {
+    literalQuery.current = null;
     setComposerOnly(true);
     setComposerContext(context);
     setQuery(seed);
@@ -964,6 +1028,7 @@ export function FilterBar({
               ref={searchInputRef}
               value={query}
               onChange={(event) => {
+                literalQuery.current = null;
                 setQuery(event.target.value);
                 setSuggestionsSuppressed(false);
               }}
@@ -1032,7 +1097,7 @@ export function FilterBar({
                   }
                 }
               }}
-              placeholder="Search events, or type place, topic, source, date, price, or registration…"
+              placeholder="Search events, people, businesses, venues, or add a filter…"
               maxLength={160}
               role="combobox"
               aria-autocomplete="list"

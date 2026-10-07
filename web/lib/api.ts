@@ -1,5 +1,6 @@
 import type {
   CatalogFilters,
+  CatalogNameSuggestion,
   CatalogEntity,
   CatalogEntityDetail,
   CatalogDaySummary,
@@ -191,6 +192,17 @@ function catalogFilterQuery(filters: CatalogFilters, dayKey?: string): URLSearch
     query.set("availability", filters.availability);
   }
   return query;
+}
+
+export function getCatalogNameSuggestions(
+  filters: CatalogFilters,
+  term: string,
+  signal?: AbortSignal,
+): Promise<CatalogNameSuggestion[]> {
+  if (term.trim().length < 2) return Promise.resolve([]);
+  const query = catalogFilterQuery({ ...filters, query: term });
+  query.set("limit", "8");
+  return api<CatalogNameSuggestion[]>(`/v1/catalog/name-suggestions?${query}`, { signal });
 }
 
 export function getCatalogPage(
