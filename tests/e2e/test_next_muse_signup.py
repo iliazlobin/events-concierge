@@ -238,6 +238,7 @@ def test_guest_selection_survives_explicit_sign_in_without_anonymous_writes(page
 @pytest.mark.parametrize("width", [1440, 320])
 def test_settings_secret_is_one_time_and_results_are_not_promoted(page_factory, width, tmp_path):
     harness, api = install(page_factory, width)
+    api.events[1]["title"] = api.events[0]["title"]
     api.batches = [
         {
             "batch_id": BATCH_ID,
@@ -261,7 +262,15 @@ def test_settings_secret_is_one_time_and_results_are_not_promoted(page_factory, 
     expect(page.get_by_role("status")).to_contain_text("secure credential setup")
     expect(page.get_by_text("Waitlisted", exact=True)).to_be_visible()
     expect(page.get_by_text("Needs verification", exact=True)).to_be_visible()
+    results = page.locator("article li")
+    expect(results.nth(0)).to_contain_text("Jun 14, 2030")
+    expect(results.nth(0)).to_contain_text("PDT")
+    expect(results.nth(0)).to_contain_text("Waitlisted")
+    expect(results.nth(1)).to_contain_text("Jun 15, 2030")
+    expect(results.nth(1)).to_contain_text("PDT")
+    expect(results.nth(1)).to_contain_text("Needs verification")
     expect(page.get_by_text("Registered · reported by Muse", exact=True)).not_to_be_visible()
+    page.locator("article").screenshot(path=str(tmp_path / f"muse-results-{width}.png"))
     page.screenshot(path=str(tmp_path / f"muse-settings-{width}.png"))
     page.get_by_role("button", name="Hide key", exact=True).click()
     expect(secret).not_to_be_visible()

@@ -4,7 +4,7 @@ import { useEffect, useId, useRef, useState } from "react";
 import Link from "next/link";
 import { readableError } from "@/lib/api";
 import {
-  MUSE_URL, getMuseConnection, museInstruction, museStatusLabel, prepareMuseBatch,
+  MUSE_URL, getMuseConnection, museEventDate, museInstruction, museStatusLabel, prepareMuseBatch,
   type MuseBatch, type MuseConnection,
 } from "@/lib/muse";
 import type { EventItem } from "@/lib/types";
@@ -67,7 +67,7 @@ export function MuseSignup({ events, tenantId, signedIn, signInUrl, onSignIn, on
         date: item.event.start_at, status: museStatusLabel[item.status] }))
         : events.map(event => ({ id: event.canonical_event_id, title: event.title, date: event.start_at, status: null })))
         .map(item => <li key={item.id}><div><strong>{item.title}</strong>
-          <p>{new Date(item.date).toLocaleString(undefined, { month: "short", day: "numeric", year: "numeric", hour: "numeric", minute: "2-digit", timeZoneName: "short" })}</p>
+          <p>{museEventDate(item.date)}</p>
           {item.status ? <p>{item.status}</p> : null}</div>
           {!batch ? <button type="button" className="button" disabled={busy} onClick={() => onRemove(item.id)}
             aria-label={`Remove ${item.title}`}>Remove</button> : null}

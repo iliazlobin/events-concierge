@@ -4,7 +4,7 @@ import { useCallback, useEffect, useState } from "react";
 import { useSession } from "@/components/session-provider";
 import { readableError } from "@/lib/api";
 import {
-  MUSE_URL, createMuseConnection, getMuseBatches, getMuseConnection, museInstruction,
+  MUSE_URL, createMuseConnection, getMuseBatches, getMuseConnection, museEventDate, museInstruction,
   museProviderUrl, museStatusLabel, revokeMuseConnection, type MuseBatch, type MuseConnection,
 } from "@/lib/muse";
 import styles from "@/components/muse.module.css";
@@ -80,6 +80,7 @@ export function MusePanel() {
         <h3>{new Date(batch.created_at).toLocaleString()}</h3>
         <ul className={styles.items}>{batch.items.map(item => <li key={item.event.canonical_event_id}><div>
           <a href={item.event.registration_url} target="_blank" rel="noopener noreferrer">{item.event.title}</a>
+          <p>{museEventDate(item.event.start_at)}</p>
           <p>{museStatusLabel[item.status]}</p>
           {item.outcome?.note ? <p>{item.outcome.note}</p> : null}
           {item.outcome?.confirmation_reference ? <p>Confirmation: {item.outcome.confirmation_reference}</p> : null}

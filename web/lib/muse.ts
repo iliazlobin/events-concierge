@@ -64,7 +64,13 @@ export function getMuseCatalogEvent(id: string, tenantId: string | null) {
 }
 
 export function museInstruction(batchId: string): string {
-  return `Use my Events Concierge connector to read signup batch ${batchId}. Sign me up for the selected free events using your browser. Claim each event before acting, check for an existing RSVP, and verify date, price and availability. Preserve your approval checks. Ask me for login or unanswered form questions; do not invent answers, pay or substitute events. Report each outcome with provider confirmation evidence. If a submission is uncertain, check its status before retrying.`;
+  return `Use my Events Concierge connector to read signup batch ${batchId}. Sign me up for the selected free events using your browser. Claim each event before acting, check for an existing RSVP, and verify title, date, price and availability. Preserve your approval checks. Ask me for login or unanswered form questions; do not invent answers, pay or substitute events. Report each outcome with provider confirmation evidence. If a submission is uncertain, check its status before retrying.`;
+}
+
+export function museEventDate(value: string): string {
+  return new Date(value).toLocaleString(undefined, {
+    month: "short", day: "numeric", year: "numeric", hour: "numeric", minute: "2-digit", timeZoneName: "short",
+  });
 }
 
 export const museStatusLabel: Record<MuseStatus, string> = {

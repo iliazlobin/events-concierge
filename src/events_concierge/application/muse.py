@@ -129,6 +129,7 @@ class MuseSignupService:
             event.price_status is not PriceStatus.FREE
             or event.event_status is not EventStatus.SCHEDULED
             or event.registration_status is RegistrationStatus.SOLD_OUT
+            or event.title != item.event.title
             or event.start_at != item.event.start_at
             or event.end_at != item.event.end_at
             or event.venue_name != item.event.venue_name

@@ -18,7 +18,7 @@ A supported Muse task-creation API/deeplink has not been verified. The button op
 | --- | --- |
 | Account | Google/Apple app session creates selections and keys; owner writes require CSRF. Muse cannot edit the account or choose events. |
 | Connection | One 30-day key per account, shown once; PostgreSQL stores its hash. Replace revokes the old key; disconnect revokes access. |
-| Selection | Published, scheduled, future, free event dates; admitted Luma/Meetup observation within 48 hours. A claim rechecks date, location, availability and freshness. |
+| Selection | Published, scheduled, future, free event dates; admitted Luma/Meetup observation within 48 hours. A claim rechecks title, date, location, availability and freshness. |
 | Attempt | Claim with a stable UUID before browser action. The account/event pair has one durable attempt; another batch or attempt conflicts. Replays return progress, never authorize another submission. |
 | Result | Needs input, organizer approval, waitlist, registered, failed and uncertain remain distinct. Registered requires a provider reference or evidence URL and is labeled **reported by Muse**. |
 

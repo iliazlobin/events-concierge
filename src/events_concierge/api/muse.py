@@ -186,7 +186,7 @@ def muse_router(
         tenant_id: ConnectorTenant,
     ) -> SignupItem:
         """Write. Save/reuse the attempt UUID. Claim before opening forms; check an existing RSVP
-        before submitting. Recheck date, price and availability in the provider browser. Never
+        before submitting. Recheck title, date, price and availability in the provider browser. Never
         purchase, substitute events or invent form answers. Preserve Muse's approval checks.
         A repeated claim returns existing progress and does not authorize another submission.
         """

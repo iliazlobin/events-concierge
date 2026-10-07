@@ -193,7 +193,7 @@ async def test_selection_is_bounded_and_idempotent_even_if_catalog_later_changes
 
 
 @pytest.mark.parametrize(
-    "change", ["price", "start", "end", "venue", "city", "stale", "unpublished"]
+    "change", ["price", "title", "start", "end", "venue", "city", "stale", "unpublished"]
 )
 async def test_claim_rechecks_facts_before_a_browser_attempt(change):
     browse = published_event()
@@ -204,6 +204,7 @@ async def test_claim_rechecks_facts_before_a_browser_attempt(change):
     repository.batch.return_value = batch
     updates = {
         "price": {"price_status": PriceStatus.PAID},
+        "title": {"title": "Political Fundraiser"},
         "start": {"start_at": browse.canonical_event.start_at + timedelta(days=1)},
         "end": {"end_at": None},
         "venue": {"venue_name": "Changed"},
