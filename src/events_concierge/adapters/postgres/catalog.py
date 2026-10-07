@@ -182,20 +182,28 @@ def _catalog_browse_ranges(
     )
     if len(requested) > _MAX_CATALOG_DATE_RANGES:
         raise ValueError("catalog browse has too many date ranges")
-    if (
-        any(
-            start.tzinfo is None
-            or start.utcoffset() is None
-            or end.tzinfo is None
-            or end.utcoffset() is None
-            or end <= start
-            or end - start > max_window
-            for start, end in requested
-        )
-        or sum((end - start for start, end in requested), timedelta()) > max_window
+    if any(
+        start.tzinfo is None
+        or start.utcoffset() is None
+        or end.tzinfo is None
+        or end.utcoffset() is None
+        for start, end in requested
     ):
         raise ValueError("catalog browse window is invalid")
-    return requested
+    absolute_ranges = tuple(
+        (start.astimezone(UTC), end.astimezone(UTC)) for start, end in requested
+    )
+    if any(end <= start or end - start > max_window for start, end in absolute_ranges):
+        raise ValueError("catalog browse window is invalid")
+    merged: list[tuple[datetime, datetime]] = []
+    for start, end in sorted(absolute_ranges):
+        if merged and start <= merged[-1][1]:
+            merged[-1] = (merged[-1][0], max(merged[-1][1], end))
+        else:
+            merged.append((start, end))
+    if sum((end - start for start, end in merged), timedelta()) > max_window:
+        raise ValueError("catalog browse window is invalid")
+    return tuple(merged)
 
 
 def _semantic_projection(candidate: CandidateEvent) -> EventSemanticProjection:
@@ -970,7 +978,7 @@ class PostgresCatalogRepository:
                             WHERE observation.canonical_event_id = canonical_events.canonical_event_id)
                 OR canonical_event_id IN (
                     SELECT admitted.canonical_event_id
-                    FROM public.fn_list_retained_catalog_browse_observations_v2(
+                    FROM public.fn_list_retained_catalog_recommendation_observations_v1(
                         NULL, :admission_start, :admission_end
                     ) admitted
                 )
@@ -1232,36 +1240,36 @@ class PostgresCatalogRepository:
                 # than paying for a result it discards.
                 if not include_providers:
                     continue
-                # The rollup takes one source, and it is pinned only for the single-source
-                # archive view. Any wider selection reads the whole admitted catalog, which is
-                # what a facet list should offer anyway.
-                provider_source_key = (
-                    source_keys[0]
-                    if len(source_keys) == 1
+                # Wide archives must remain source-scoped: the provider capability refuses an
+                # all-source window over 370 days, even when the page selected several sources.
+                provider_source_keys: tuple[str | None, ...] = (
+                    tuple(dict.fromkeys(source_keys))
+                    if source_keys
                     and window_start is not None
                     and window_end is not None
                     and window_end - window_start > _MAX_CATALOG_BROWSE_WINDOW
-                    else None
+                    else (None,)
                 )
-                provider_rows.extend(
-                    (
-                        await session.execute(
-                            text(
-                                """
+                for provider_source_key in provider_source_keys:
+                    provider_rows.extend(
+                        (
+                            await session.execute(
+                                text(
+                                    """
                                 SELECT *
                                 FROM public.fn_list_current_catalog_providers_v3(
                                     :source_key, :window_start, :window_end
                                 )
                                 """
-                            ),
-                            {
-                                "source_key": provider_source_key,
-                                "window_start": window_start,
-                                "window_end": window_end,
-                            },
-                        )
-                    ).all()
-                )
+                                ),
+                                {
+                                    "source_key": provider_source_key,
+                                    "window_start": window_start,
+                                    "window_end": window_end,
+                                },
+                            )
+                        ).all()
+                    )
 
         grouped: dict[UUID, tuple[CanonicalEvent, list[CatalogBrowseSource]]] = {}
         for row in rows:
@@ -1345,12 +1353,27 @@ class PostgresCatalogRepository:
         returns one row per topic.  Summing here still combines the rows from multiple date
         ranges into one compact product facet per topic.
         """
-        if date_ranges and starts_after is not None:
-            raise ValueError("catalog browse window must use one date encoding")
+        requested_ranges = _catalog_browse_ranges(
+            starts_after=starts_after,
+            starts_before=starts_before,
+            date_ranges=date_ranges,
+            max_window=(
+                _MAX_SOURCE_CATALOG_ARCHIVE_WINDOW if source_keys else _MAX_CATALOG_BROWSE_WINDOW
+            ),
+        )
+        _validated_catalog_filter_inputs(
+            query=query,
+            source_keys=source_keys,
+            city_filters=cities,
+            location_scopes=location_scopes,
+            price=price,
+            price_max_cents=price_max_cents,
+            price_min_cents=price_min_cents,
+            topics=(),
+            availability=availability,
+        )
         windows: tuple[tuple[datetime | None, datetime | None], ...] = (
-            date_ranges
-            if date_ranges
-            else (((starts_after, starts_before),) if starts_after is not None else ((None, None),))
+            requested_ranges if requested_ranges else ((None, None),)
         )
         params = {
             "source_keys": list(dict.fromkeys(source_keys)),
@@ -1420,11 +1443,17 @@ class PostgresCatalogRepository:
         groups by ``start_at AT TIME ZONE time_zone``, because a calendar day is a local
         wall-clock concept.  Unlike the topic facet this applies the topic selection, so the grid
         agrees with the agenda the same filters produce.  Counts from multiple requested windows
-        are summed exactly as the topic facet sums them; the API merges overlapping and adjacent
-        windows before calling, so day buckets do not overlap in practice.
+        are summed exactly as the topic facet sums them. Merged disjoint windows cannot select
+        one event twice, but may select different events starting on the same local day.
         """
-        if date_ranges and starts_after is not None:
-            raise ValueError("catalog browse window must use one date encoding")
+        requested_ranges = _catalog_browse_ranges(
+            starts_after=starts_after,
+            starts_before=starts_before,
+            date_ranges=date_ranges,
+            max_window=(
+                _MAX_SOURCE_CATALOG_ARCHIVE_WINDOW if source_keys else _MAX_CATALOG_BROWSE_WINDOW
+            ),
+        )
         _validated_catalog_time_zone(time_zone)
         city_filters = tuple(dict.fromkeys(cities))
         normalized_topics = _validated_catalog_filter_inputs(
@@ -1439,9 +1468,7 @@ class PostgresCatalogRepository:
             availability=availability,
         )
         windows: tuple[tuple[datetime | None, datetime | None], ...] = (
-            date_ranges
-            if date_ranges
-            else (((starts_after, starts_before),) if starts_after is not None else ((None, None),))
+            requested_ranges if requested_ranges else ((None, None),)
         )
         params = {
             "source_keys": list(dict.fromkeys(source_keys)),
@@ -1455,14 +1482,14 @@ class PostgresCatalogRepository:
             "availability": availability,
             "time_zone": time_zone,
         }
-        rows: list[Any] = []
+        day_totals: dict[date, int] = {}
+        topic_counts: dict[date, dict[str, int]] = {}
         async with self._session_scope() as session:
             for window_start, window_end in windows:
-                rows.extend(
-                    (
-                        await session.execute(
-                            text(
-                                """
+                rows = (
+                    await session.execute(
+                        text(
+                            """
                                 SELECT *
                                 FROM public.fn_list_catalog_day_facets_v3(
                                     CAST(:source_keys AS text[]), :window_start, :window_end,
@@ -1472,30 +1499,27 @@ class PostgresCatalogRepository:
                                     :availability, :time_zone
                                 )
                                 """
-                            ),
-                            {
-                                **params,
-                                "window_start": window_start,
-                                "window_end": window_end,
-                            },
-                        )
-                    ).all()
-                )
-        day_totals: dict[date, int] = {}
-        topic_counts: dict[date, dict[str, int]] = {}
-        for row in rows:
-            start_day = cast(date, row.start_day)
-            if start_day not in day_totals:
-                day_totals[start_day] = 0
-                topic_counts[start_day] = {}
-            day_totals[start_day] = max(day_totals[start_day], int(row.day_event_count))
-            topic = str(row.topic)
-            counts = topic_counts[start_day]
-            counts[topic] = counts.get(topic, 0) + int(row.topic_event_count)
+                        ),
+                        {
+                            **params,
+                            "window_start": window_start,
+                            "window_end": window_end,
+                        },
+                    )
+                ).all()
+                window_totals: dict[date, int] = {}
+                for row in rows:
+                    start_day = cast(date, row.start_day)
+                    window_totals[start_day] = int(row.day_event_count)
+                    counts = topic_counts.setdefault(start_day, {})
+                    topic = str(row.topic)
+                    counts[topic] = counts.get(topic, 0) + int(row.topic_event_count)
+                for start_day, count in window_totals.items():
+                    day_totals[start_day] = day_totals.get(start_day, 0) + count
         days: list[CatalogBrowseDay] = []
         for start_day in sorted(day_totals):
             counts = topic_counts[start_day]
-            event_count = max(day_totals[start_day], *counts.values()) if counts else 0
+            event_count = day_totals[start_day]
             if event_count < 1:
                 continue
             days.append(

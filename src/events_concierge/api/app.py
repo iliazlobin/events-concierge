@@ -142,6 +142,7 @@ _MAX_CATALOG_TIME_ZONE_LENGTH = 64
 _MAX_CATALOG_DATE_RANGES = 8
 _MAX_CATALOG_DATE_RANGE_LENGTH = 96
 _MIN_PRINTABLE_CODEPOINT = 0x20
+_DELETE_CODEPOINT = 0x7F
 _FEED_CURSOR_PATTERN = rf"^(?:0|[1-9][0-9]{{0,{len(str(_MAX_FEED_CURSOR)) - 1}}})$"
 _CATALOG_SOURCE_KEY_PATTERN = r"^[a-z0-9][a-z0-9-]{1,79}$"
 _CATALOG_CURSOR_PATTERN = r"^[A-Za-z0-9_-]+$"
@@ -1487,7 +1488,7 @@ def _normalized_catalog_filters(
             detail="minimum price cannot exceed the maximum price",
         )
     if any(
-        ord(character) < _MIN_PRINTABLE_CODEPOINT
+        ord(character) < _MIN_PRINTABLE_CODEPOINT or ord(character) == _DELETE_CODEPOINT
         for value in (query, *cities)
         if value is not None
         for character in value

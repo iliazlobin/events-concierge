@@ -1,8 +1,8 @@
 """Chronological, source-grounded catalog browse value objects.
 
-This read model is intentionally separate from the personalized feed.  Requested windows use
-half-open event-interval overlap, so an event remains live until its recorded end.  Ongoing and
-future items are attached only to a reviewed source's latest successful refresh.  Explicit past
+This read model is intentionally separate from the personalized feed. Explicit windows select
+event starts in a half-open interval. Without a window, events remain live until their recorded end.
+Ongoing and future items are attached only to a reviewed source's latest successful refresh. Explicit past
 windows may also use a retained last-known observation after a fully ended identity rolls off that
 projection.  The canonical record remains latest known state; this model is not version history.
 """
