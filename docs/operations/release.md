@@ -52,6 +52,14 @@ make staging-canary BASE_URL="$BASE_URL" \
 
 **Migration constraints**
 
+- `0210` repairs explicit catalog date eligibility independently of `0209` Muse storage. For a
+  deployment that has not enabled Muse, use `alembic upgrade 0210`, retain
+  `EC_MUSE_ENABLED=false`, and verify `alembic_version = 0210` with Muse tables absent.
+  `0211` merges these branches for full-chain installations; `upgrade head` also applies `0209`.
+  Rehearse the selected path before deployment. The repair replaces observation functions and
+  adds a recommendation capability without changing retained event data or function signatures.
+  Preserve the prior definitions, owners and grants for recovery. Compatible older images can
+  remain on `0210`; do not downgrade while the candidate API uses the new recommendation function.
 - `0202` joins the retained operator branch (`0198`) and published application branch (`0201`). Upgrade normally from either head; preserve applied IDs and rehearse on a restore. Never substitute a schema stamp for the missing branch.
 - [Migration sources](../../migrations/versions/) own version-specific reconciliation. Drain cadence/source/command workers before legacy `0128`–`0130` lease changes; reconciliation is irreversible.
 - Rebuild `0152` indexes if older writers ran during migration. `0181`/`0182` require distinct operator/executor roles and matching images; no consumer-admin rollback.

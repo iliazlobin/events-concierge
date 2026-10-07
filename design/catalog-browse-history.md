@@ -8,9 +8,10 @@
 
 `GET /v1/catalog/events` has two date modes:
 
-1. With neither `starts_after` nor `starts_before`, it is a live-catalog browse. PostgreSQL uses the
-   current statement time as the inclusive lower bound, so elapsed events are excluded.
-2. With both timezone-aware bounds, the supplied end-exclusive interval is authoritative. It may be
+1. With neither `starts_after` nor `starts_before`, it is a live-catalog browse. Events with a known
+   end remain eligible while ongoing; ended events and elapsed events without an end are excluded.
+2. With both timezone-aware bounds, an event must **start** in the supplied `[start, end)` range.
+   An earlier start is excluded even when the event continues into the range. It may be
    future, mixed, or wholly past and participates in the cursor's filter identity. Unscoped ranges
    are limited to 370 days; a selected source may request up to 7,305 days for its archive view.
 
@@ -51,8 +52,8 @@ distinct API contract. Do not describe this retained projection as event version
 Provider facets normally return every currently admitted non-fixture source, including a zero
 count, for the same date interval. The repository asks for the global facet list even when event
 rows are source-filtered so clients can replace rather than merge source options. The one bounded
-exception is a selected-source range over 370 days: that archive's provider query remains
-source-scoped to preserve the all-source range limit.
+exception is a selected-source range over 370 days: those archives' provider queries remain
+scoped to the selected sources to preserve the all-source range limit.
 
 ## API contract
 
@@ -60,7 +61,11 @@ source-scoped to preserve the all-source range limit.
 - Bounds must include timezones and `starts_before > starts_after`.
 - All-source ranges span at most 370 days; selected-source archive ranges span at most 7,305 days.
 - `starts_before` is exclusive.
-- Omitting both bounds means future-only, not “all time.”
+- Omitting both bounds means upcoming or ongoing, not “all time.”
+- Relative presets such as This week start at the current moment and end at the next local period
+  boundary. Custom ranges include the selected calendar days, ending at the following local midnight.
+- A paginated client freezes the relative window when it loads the first page and reuses those exact
+  bounds for continuations. A new filter scope or refresh starts a new window and clears the cursor.
 - The cursor is valid only for the exact source, date, query, place, and price filter scope that
   created it.
 - An explicit previous month may legitimately be empty because the identity was never retained, is
@@ -78,7 +83,8 @@ facets, keyset behavior, fixture exclusion, least-privilege grants, and additive
 
 Personalized retrieval now uses event-interval overlap: an omitted window excludes ended and
 cancelled events while allowing ongoing events with a known end. An explicit window admits
-retained history. Registry-owned records use the same admitted observation function as browse;
+retained history. Registry-owned records use the recommendation observation capability, retaining
+interval overlap independently of browse's explicit start-time filters;
 request-discovered records without registry observations still use the canonical retrieval path.
 Rolloff removes current recommendation eligibility, not the canonical record or its status.
 Historical and ongoing feed items carry no registration lane; cancellation records remain retained.

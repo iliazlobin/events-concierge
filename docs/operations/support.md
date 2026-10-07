@@ -7,6 +7,7 @@ Common incidents on shared GKE. Use the deployed profile and [release record](ht
 | Page unavailable, loopback connection refused, public gateway error | [Access and routing](#access-and-routing) |
 | Google sign-in fails or admin access is denied | [Sign-in and operator access](#sign-in-and-operator-access) |
 | Missing events, stale sources or stuck refresh | [Collection](#collection) |
+| Events fall outside selected dates, counts differ or More events fails | [Catalog filters](#catalog-filters) |
 | Events load but have no map markers | [Map locations](#events-missing-from-the-map) |
 | API not ready, database/Redis/Temporal failure | [Stores and background workers](#stores-and-background-workers) |
 | Failed rollout or interrupted backup | [Release and recovery](#release-and-recovery) |
@@ -74,6 +75,24 @@ its events. Provider coordinates take precedence. Virtual events, `Other`, unrec
 and sources without a reviewed area mapping stay in the unlocated list. These display centers
 never change stored coordinates, distance filters or directions. Verify desktop/mobile selection
 and pagination before release; no database backfill or fresh crawl is needed for this fallback.
+
+## Catalog filters
+
+Inspect the browser's `GET /v1/catalog/events` bounds and selected filter parameters. Explicit
+dates select event **starts** in `[starts_after, starts_before)` or the union of repeated
+`date_range` intervals; an earlier multi-day start is excluded. With no dates, ongoing events
+remain eligible until their known end. Compare rows, source date counts, topic facets and
+calendar day counts using the same frozen window.
+
+- Relative presets begin at the first request's current moment. Continuation pages must reuse
+  those exact bounds; a different window invalidates the cursor. Filter changes clear the cursor.
+- Sources and places each form unions; topics are all required. Query, place, price and
+  registration constraints intersect before pagination. Source/place option inventories have
+  their documented broader scope and are not a count of the currently narrowed result list.
+- A maximum price admits free events and known USD prices within the bound. Unknown/non-USD
+  prices and unknown/waitlist registration do not imply a confirmed match.
+- Check the serving API revision and schema against [release](release.md#rollback-and-migration-safety).
+  Browsing and diagnosis do not require a new provider crawl or retained-data cleanup.
 
 ## Sign-in and operator access
 
