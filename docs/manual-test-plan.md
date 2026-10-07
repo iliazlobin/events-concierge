@@ -72,7 +72,7 @@ Mark checks requiring unavailable catalog data **NOT EXERCISED**.
 - [ ] A maximum allows free or known USD prices within the bound; adding Paid excludes free events.
   Free/Price unlisted clears amount bounds; unknown or non-USD prices do not satisfy USD comparisons.
 - [ ] A zero-dollar maximum selects free events. Values above the supported $1,000,000 ceiling
-  produce a validation error without silently removing the price constraint.
+  do not commit or silently remove the previously selected price constraint.
 - [ ] Past-range rows and source counts use the same interval. Retained past observations may survive crawl rolloff; future entries require the current projection.
 - [ ] Empty history means no eligible retained events, not proof the provider had none. Latest-known event state is not an as-of archive.
 

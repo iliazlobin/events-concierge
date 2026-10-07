@@ -642,10 +642,8 @@ export function ConciergeApp() {
     try {
       const fetched = await getCatalogSummary(tenantId, nextFilters, timeZone);
       if (generation !== summaryGeneration.current) return;
-      // A range read also returns days before it, for events that began earlier
-      // and run into it. Those counts describe only the overlap, so the calendar
-      // drops them rather than showing a wrong total for a day it did not ask
-      // about — and the cache never stores one to repeat later.
+      // Keep the cache bounded to the requested calendar days, even if a future
+      // response includes additional day keys.
       const nextSummary = start && end ? clipCalendarSummary(fetched, start, end) : fetched;
       setSummary(nextSummary);
       setSummaryCovered(true);
@@ -702,10 +700,9 @@ export function ConciergeApp() {
     setDayLoading(true);
     void (async () => {
       try {
-        // A day window also matches events that began earlier and are still
-        // running. Those sort first and belong to their own start day, so keep
-        // reading until this day's own events appear rather than showing an
-        // empty agenda beside a cell that counts hundreds.
+        // Read starts within the selected local day. Keep the day-key guard
+        // while collecting pages so an unexpected response cannot leak rows
+        // from a different day into the agenda.
         let cursor: string | null = null;
         const collected: EventItem[] = [];
         for (let page = 0; page < MAX_CALENDAR_DAY_SKIP_PAGES; page += 1) {
@@ -772,10 +769,7 @@ export function ConciergeApp() {
   // Week columns preview a few events each; month and six-month cells show only
   // counts, so they need no event read at all.
   //
-  // Each column reads a whole page rather than just the handful it shows: a day
-  // window also matches events that began earlier and are still running, and
-  // those sort first, so a small page can be entirely leftovers and leave a busy
-  // column looking empty.
+  // Each column caches a whole page so opening its day can reuse the same rows.
   useEffect(() => {
     if (sessionState !== "ready" || view !== "calendar" || calendarMode !== "week") {
       setDayPreviews(new Map());
