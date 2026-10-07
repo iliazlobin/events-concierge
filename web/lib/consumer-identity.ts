@@ -1,12 +1,21 @@
 import { getApp, initializeApp } from "firebase/app";
 import {
-  getAuth, GoogleAuthProvider, inMemoryPersistence, OAuthProvider,
+  AuthErrorCodes, getAuth, GoogleAuthProvider, inMemoryPersistence, OAuthProvider,
   setPersistence, signInWithPopup, signOut,
 } from "firebase/auth";
 
 import type { ConsumerIdentityConfig } from "./types.ts";
 
 export type ConsumerProvider = "google.com" | "apple.com";
+
+export function consumerOAuthProvider(provider: ConsumerProvider) {
+  const oauth = provider === "google.com" ? new GoogleAuthProvider() : new OAuthProvider("apple.com");
+  // The API requires a verified email for account creation and reauthentication.
+  oauth.addScope("email");
+  if (provider === "google.com") oauth.setCustomParameters({ prompt: "select_account" });
+  else oauth.addScope("name");
+  return oauth;
+}
 
 /** The SDK exists only on the sign-in page. Refresh/identity tokens never enter browser storage. */
 export async function prepareConsumerIdentity(config: ConsumerIdentityConfig) {
@@ -28,13 +37,26 @@ export async function prepareConsumerIdentity(config: ConsumerIdentityConfig) {
   return {
     async signIn(provider: ConsumerProvider): Promise<string> {
       if (!config.providers.includes(provider)) throw new Error("This sign-in option is unavailable.");
-      const oauth = provider === "google.com" ? new GoogleAuthProvider() : new OAuthProvider("apple.com");
-      if (provider === "google.com") oauth.setCustomParameters({ prompt: "select_account" });
-      else { oauth.addScope("email"); oauth.addScope("name"); }
+      const oauth = consumerOAuthProvider(provider);
       const result = await signInWithPopup(auth, oauth);
       return result.user.getIdToken();
     },
     clear() { return signOut(auth); },
+  };
+}
+
+/** Only SDK-defined codes and HTTP status; never log a thrown object or its message. */
+export function identityFailureDiagnostic(
+  error: unknown, stage: "provider" | "session" | "clear",
+) {
+  const code = typeof error === "object" && error !== null && "code" in error ? error.code : null;
+  const status = typeof error === "object" && error !== null && "status" in error ? error.status : null;
+  return {
+    stage,
+    code: typeof code === "string" && Object.values(AuthErrorCodes).some(value => value === code)
+      ? code : "unknown",
+    status: typeof status === "number" && Number.isInteger(status) && status >= 400 && status <= 599
+      ? status : null,
   };
 }
 
