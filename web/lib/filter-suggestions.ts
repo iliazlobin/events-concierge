@@ -445,7 +445,7 @@ export function getStarterFilterSuggestions(
       kind: "combination" as const,
       value: source.value,
       label: source.label,
-      description: "Upcoming events from the official Tech Week calendar",
+      description: "Events from the official Tech Week calendar",
       score: 120 - index,
       filters: [{ kind: "provider" as const, ...source, score: 100 }],
     })),

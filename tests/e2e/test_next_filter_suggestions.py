@@ -20,7 +20,8 @@ SEARCH_NAME = "Search events, organizers, hosts, speakers, partners, or add a fi
 
 
 @pytest.fixture
-def discovery_filters_page(page_factory):
+def discovery_filters_page(page_factory, request):
+    signed_in = getattr(request, "param", False)
     harness = page_factory(authenticated=False)
     api = ConsumerIdentityApi(harness)
     api.install(harness.page)
@@ -61,10 +62,34 @@ def discovery_filters_page(page_factory):
         })
 
     harness.page.route(re.compile(r"/v1/catalog/events(?:\?.*)?$"), catalog)
+    if signed_in:
+        def account(route: Route):
+            api.calls.append((route.request.method, "/v1/me"))
+            api.respond(route, {"notify_email": "browser@example.test", "interests": [],
+                                "preference_revision": 1, "local_demo": False, "is_admin": False,
+                                "relay_inbox": None})
+
+        def saved_filters(route: Route):
+            api.calls.append((route.request.method, "/v1/me/saved-filters"))
+            api.respond(route, [{
+                "saved_filter_id": f"92000000-0000-4000-8000-{index:012d}",
+                "name": f"My saved selection {index}",
+                "filters": {"query": "", "sort": "soonest", "datePreset": "all",
+                            "customStart": "", "customEnd": "", "dateRanges": [],
+                            "sourceKeys": [], "city": "", "cities": [], "locationScopes": [],
+                            "topics": [], "price": "any", "priceComparison": "any",
+                            "priceMinDollars": "", "priceMaxDollars": "", "availability": "any"},
+                "created_at": None, "updated_at": None, "last_used_at": None,
+            } for index in range(3)])
+
+        harness.page.route("**/v1/me", account)
+        harness.page.route("**/v1/me/saved-filters", saved_filters)
     yield harness, api, queries
     assert not api.unexpected
     assert all(method == "GET" for method, _ in api.calls)
-    assert not any(path.startswith(("/auth/", "/v1/me/", "/v1/preferences")) for _, path in api.calls)
+    assert not any(path.startswith(("/auth/", "/v1/preferences")) for _, path in api.calls)
+    if not signed_in:
+        assert not any(path.startswith("/v1/me/") for _, path in api.calls)
 
 
 @pytest.mark.parametrize("width", [1440, 390])
@@ -100,6 +125,26 @@ def test_tech_week_starters_lead_and_replace_inherited_filters(discovery_filters
     page.reload()
     expect(page.locator(".active-filter-chip").filter(has_text="LA Tech Week 2026")).to_be_visible()
     expect(page.locator(".event-card")).to_have_count(1)
+
+
+@pytest.mark.parametrize("discovery_filters_page", [True], indirect=True)
+@pytest.mark.parametrize("width", [1440, 390])
+def test_tech_week_leads_saved_selections_without_hiding_typed_matches(discovery_filters_page, tmp_path, width):
+    harness, _, _ = discovery_filters_page
+    page = harness.page
+    page.set_viewport_size({"width": width, "height": 900})
+    page.goto(f"{BASE}/?view=events")
+    expect(page.get_by_role("button", name="Saved · 3", exact=True)).to_be_visible()
+    search = page.get_by_role("combobox", name=SEARCH_NAME)
+    search.click()
+    options = page.get_by_role("listbox", name="Useful starting points").get_by_role("option")
+    expect(options.nth(2)).to_contain_text("My saved selection 0")
+    expect(options.nth(0)).to_contain_text("SF Tech Week 2026")
+    expect(options.nth(1)).to_contain_text("LA Tech Week 2026")
+    page.screenshot(path=str(tmp_path / f"tech-week-with-saved-{width}.png"), animations="disabled")
+    search.fill("My saved selection 1")
+    expect(page.get_by_role("listbox", name="Suggested filters").get_by_role("option").first).to_contain_text("My saved selection 1")
+    assert page.evaluate("document.documentElement.scrollWidth <= innerWidth")
 
 
 @pytest.mark.parametrize("width", [1440, 390])

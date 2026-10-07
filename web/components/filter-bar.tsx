@@ -417,7 +417,14 @@ export function FilterBar({
     const savedMatches = effectiveComposerContext
       ? []
       : getSavedFilterSuggestions(composerTerm, savedFilters);
-    return [...savedMatches, ...scoped].slice(0, !effectiveComposerContext && !composerTerm.trim() ? 8 : 6);
+    if (!effectiveComposerContext && !composerTerm.trim()) {
+      return [
+        ...scoped.slice(0, TECH_WEEK_FILTERS.length),
+        ...savedMatches,
+        ...scoped.slice(TECH_WEEK_FILTERS.length),
+      ].slice(0, 8);
+    }
+    return [...savedMatches, ...scoped].slice(0, 6);
   }, [
     availableCities,
     composerTerm,
