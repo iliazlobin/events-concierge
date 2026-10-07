@@ -12,7 +12,7 @@ Approved product scope. Symphony owns task stages and acceptance; GitHub owns is
 
 | Status | Scope |
 | --- | --- |
-| Included | Search, shared filters, Events/Map/Calendar, read-only entity graphs, event details, provider registration links, profiles and saved filters. |
+| Included | Search, shared filters, Events/Map/Calendar, read-only entity graphs, event details, provider registration links, profiles, saved filters and selected free-event handoffs to Muse. |
 | Deferred | Chat, automated RSVP, managed handoffs, notifications, Calendar synchronization, purchases and programmatic API keys. |
 | Implemented | Guest catalog access, Google accounts and optional Apple support, configured legal acceptance, datastore TLS and Temporal mTLS; GCP Gateway HTTPS and configured IAP admin. |
 | Deployment | The [release record](docs/operations/README.md#release-record) owns the serving profile, revisions and acceptance evidence. |
@@ -22,6 +22,7 @@ Approved product scope. Symphony owns task stages and acceptance; GitHub owns is
 - `EC_MOCK_CLOUD` controls integration behavior independently of product scope.
 - Public access exposes the consumer/admin frontends; APIs, stores, GKE nodes and control plane remain private. [Routing and ownership](docs/operations/public-access.md#route-and-ownership).
 - [Consumer accounts](docs/operations/consumer-identity.md): managed signup, reauthentication/erasure and admin access controlled by [configured RBAC](docs/operations/operator-access.md). The legacy Google-only pilot retains its deletion limitation.
+- [Muse signups](docs/operations/muse-signups.md): five free Luma/Meetup dates per batch, a scoped connection key and Muse-reported outcomes; connection/provider acceptance remain release checks.
 - [Release acceptance](docs/operations/release.md#first-release-acceptance) owns launch gates. Development acceptance does not establish production acceptance.
 
 ## Boundaries

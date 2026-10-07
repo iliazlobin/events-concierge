@@ -21,6 +21,7 @@ Application Terraform must not adopt platform state or cluster/network resources
 | Install/restore stores, back up or recover an interrupted backup | [Recovery](recovery.md) |
 | Convert transport or rotate private certificates | [Private transport](transport.md) |
 | Configure consumer signup and erasure | [Consumer identity](consumer-identity.md) |
+| Connect Muse and hand off free-event signups | [Muse signups](muse-signups.md) |
 | Configure operator roles and policy versions | [Operator access](operator-access.md) |
 | Prepare, activate or contain public HTTPS/IAP | [Public access](public-access.md) |
 | Contain provider effects or rotate credentials | [Maintenance](maintenance.md) |

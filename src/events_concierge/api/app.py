@@ -42,6 +42,7 @@ from starlette.types import ASGIApp, Message, Receive, Scope, Send
 from ..adapters.identity_platform import IdentityPlatformBrowserSessionAdapter
 from ..adapters.oidc.session import _safe_return_path
 from ..api.firebase_auth_helper import install_firebase_auth_helper
+from ..api.muse import is_muse_path, muse_router
 from ..api.release_profile import apply_release_profile
 from ..application.discovery_results import lifecycle
 from ..application.feed import MAX_FEED_OFFSET
@@ -2451,9 +2452,14 @@ def create_app() -> FastAPI:
 
     @app.exception_handler(RequestValidationError)
     async def redact_auth_validation(request: Request, error: RequestValidationError) -> Response:
-        if request.url.path.startswith("/auth/"):
+        if request.url.path.startswith("/auth/") or is_muse_path(request.url.path):
             # FastAPI's default validation payload includes input values, including ID tokens.
-            response = JSONResponse({"detail": "invalid sign-in request"}, status_code=422)
+            detail = (
+                "invalid Muse request"
+                if is_muse_path(request.url.path)
+                else "invalid sign-in request"
+            )
+            response = JSONResponse({"detail": detail}, status_code=422)
             _secure_auth_response(response)
             return response
         return await request_validation_exception_handler(request, error)
@@ -2461,7 +2467,7 @@ def create_app() -> FastAPI:
     @app.exception_handler(HTTPException)
     async def secure_auth_error(request: Request, error: HTTPException) -> Response:
         response = await http_exception_handler(request, error)
-        if request.url.path.startswith("/auth/"):
+        if request.url.path.startswith("/auth/") or is_muse_path(request.url.path):
             _secure_auth_response(response)
         return response
 
@@ -4023,6 +4029,7 @@ def create_app() -> FastAPI:
         response_model=HandoffCompletionAccepted,
     )(_mark_handoff_done)
 
+    app.include_router(muse_router(_authenticated_tenant, _csrf_protected_tenant))
     install_ingestion_admin_routes(app)
     install_command_investigation_routes(app)
     install_operator_operations_routes(app)

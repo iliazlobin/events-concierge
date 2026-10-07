@@ -38,6 +38,7 @@ const LINKS: MenuLink[] = [
   { href: "/settings", label: "Profile", hint: "Name, photo, time zone", icon: Settings2 },
   { href: "/settings/taste", label: "Interests", hint: "Topics you enjoy", icon: Sparkles },
   { href: "/settings/saved-filters", label: "Saved filters", hint: "Your saved searches", icon: Bookmark },
+  { href: "/settings/muse", label: "Muse signups", hint: "Connection and signup results", icon: Sparkles },
   { href: "/settings/activity", label: "Activity", hint: "Asks, registrations", icon: SlidersHorizontal },
   { href: "/settings/api-keys", label: "API keys", hint: "Development key records", icon: KeyRound },
   { href: "/settings/security", label: "Security", hint: "Password, two-factor", icon: ShieldCheck },

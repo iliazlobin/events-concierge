@@ -6,6 +6,13 @@ from fastapi.routing import APIRoute
 # An allowlist makes new consumer endpoints opt in to the first release. Account
 # ownership, saved filters and erasure retain their existing auth/CSRF boundaries.
 _DISCOVERY_ROUTES = {
+    "/v1/me/muse/connection",
+    "/v1/me/muse/batches",
+    "/v1/muse/openapi.json",
+    "/v1/muse/connector/batches",
+    "/v1/muse/connector/batches/{batch_id}",
+    "/v1/muse/connector/batches/{batch_id}/items/{event_id}/claim",
+    "/v1/muse/connector/batches/{batch_id}/items/{event_id}/outcome",
     "/v1/ui-config",
     "/v1/onboard",
     "/v1/me",

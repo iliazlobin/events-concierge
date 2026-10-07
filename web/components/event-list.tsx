@@ -7,6 +7,9 @@ import { EventCard } from "@/components/event-card";
 import type { EventEntityReference, EventItem } from "@/lib/types";
 
 interface EventListProps {
+  museSelectedIds?: ReadonlySet<string>;
+  onMuseToggle?: (event: EventItem) => void;
+  onMuseSignup?: (event: EventItem) => void;
   events: EventItem[];
   groupSessions?: boolean;
   expandedId: string | null;
@@ -25,6 +28,9 @@ interface EventListProps {
 }
 
 export function EventList({
+  museSelectedIds,
+  onMuseToggle,
+  onMuseSignup,
   events,
   groupSessions = false,
   expandedId,
@@ -57,6 +63,9 @@ export function EventList({
         {(groupSessions ? groupEventSessions(events) : events.map((event) => [event])).map((group) => {
           const renderEvent = (event: EventItem) => (
           <EventCard
+            museSelected={museSelectedIds?.has(event.canonical_event_id)}
+            onMuseToggle={onMuseToggle}
+            onMuseSignup={onMuseSignup}
             key={event.canonical_event_id}
             event={event}
             compact={compact}

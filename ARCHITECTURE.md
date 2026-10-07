@@ -1,6 +1,6 @@
 # Architecture
 
-- **Product:** event discovery and provider registration links.
+- **Product:** event discovery, provider registration links and explicit free-event handoffs to Muse.
 - **Current surface:** search, filters, profiles, Events/Map/Calendar and read-only entity graphs.
 - **Deferred lifecycle:** registration, notifications and calendar synchronization remain gated.
 - [Current milestone](PROJECT.md#current-milestone-discovery) and [release acceptance](docs/operations/release.md#first-release-acceptance) define scope.
@@ -27,6 +27,7 @@ Ports and adapters: domain logic has no external I/O; application services use t
 - **Source change:** registered adapter → guarded catalog refresh.
 - **Runtime change:** `composition.py` or `catalog_runtime.py`; provider selection stays outside domain code.
 - **Consumer identity:** `web/lib/consumer-identity.ts` → `api/app.py` → `adapters/identity_platform.py`; `adapters/postgres/consumer_accounts.py` and migration `0207` bind accounts/legal receipts; `0208` adds account creation without consent when legal acceptance is deferred. Redis stores sessions. The selected operator edge uses Google IAP; the API independently verifies its signed assertion and configured owner role. [Release contract](docs/operations/consumer-identity.md).
+- **Muse handoff:** `web/components/muse-signup.tsx` → `api/muse.py` → `application/muse.py` → `adapters/postgres/muse.py`. Migration `0209` stores tenant-owned batches, attempt claims and hashed connection keys. Muse calls the narrow connector with a Bearer token and owns external browser execution. [Setup and limits](docs/operations/muse-signups.md).
 
 ## Runtime flows
 
@@ -68,6 +69,7 @@ discovery reads persisted facts without contacting social providers.
 
 - **Tenant isolation:** explicit tenant/system scopes in `infra/db.py`; PostgreSQL RLS and distinct operator/executor roles.
 - **Guest/account boundary:** catalog reads are public; profiles, preferences and saved filters require a verified account and legal acceptance when configured as required. Consumer identity never grants production admin access.
+- **Muse authority:** the owner chooses published free Luma/Meetup dates; the connector can only read that account's batches and claim/report their attempts. Keys expire and can be revoked. App state cannot guarantee exactly-once browser submission or cancellation of a running Muse task.
 - **Provider access:** reviewed, enabled sources; policy admission, shared pacing and bounded calls before egress.
 - **Publication:** lease-fenced normalization/publication; failed runs preserve the last successful projection.
 - **Durable effects:** persisted pending work, idempotency and ownership. Retries do not guarantee exactly-once remote mutations.

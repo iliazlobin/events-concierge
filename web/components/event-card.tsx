@@ -26,6 +26,7 @@ import {
   googleMapsUrl,
 } from "@/lib/event-links";
 import { formatEventPrice } from "@/lib/event-price";
+import { museEligibility } from "@/lib/muse";
 import { eventTopicLabel, eventTopicTone } from "@/lib/event-topics";
 import type {
   EventEntityKind,
@@ -36,6 +37,9 @@ import type {
 } from "@/lib/types";
 
 interface EventCardProps {
+  museSelected?: boolean;
+  onMuseToggle?: (event: EventItem) => void;
+  onMuseSignup?: (event: EventItem) => void;
   event: EventItem;
   expanded: boolean;
   onToggle?: () => void;
@@ -162,6 +166,9 @@ function EntityLinks({
 }
 
 export function EventCard({
+  museSelected = false,
+  onMuseToggle,
+  onMuseSignup,
   event,
   expanded,
   onToggle,
@@ -352,6 +359,16 @@ export function EventCard({
         </div>
 
       </div>
+
+      {onMuseSignup ? <div className="event-card__muse">
+        <label><input type="checkbox" checked={museSelected}
+          disabled={Boolean(museEligibility(event))}
+          onChange={() => onMuseToggle?.(event)}
+          aria-label={`Select ${event.title} for Muse`} /> Select for Muse</label>
+        <button type="button" className="button" disabled={Boolean(museEligibility(event))}
+          title={museEligibility(event) ?? "Review this event before sending to Muse"}
+          onClick={() => onMuseSignup(event)}>Sign up with Muse</button>
+      </div> : null}
 
       <div
         className="event-card__expansion"
