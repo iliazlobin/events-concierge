@@ -2,7 +2,7 @@
 
 `/admin` uses Google IAP for entry and application RBAC for permitted actions.
 Consumer sign-in never grants an operator role. [Public routing](public-access.md#admin)
-and [consumer accounts](../deployment/consumer-identity.md) configure those separate paths.
+and [consumer accounts](consumer-identity.md) configure those separate paths.
 
 ## Roles
 
@@ -12,7 +12,7 @@ and [consumer accounts](../deployment/consumer-identity.md) configure those sepa
 | Operator | Viewer access, refresh commands and source enable/disable. |
 | Reviewer | Operator access, source configuration and model budgets. |
 
-The [API capability map](../src/events_concierge/api/operator_auth.py) defines roles.
+The [API capability map](../../src/events_concierge/api/operator_auth.py) defines roles.
 Unlisted operations are denied. GCP IAM controls cloud resources; Kubernetes RBAC controls
 cluster operations; PostgreSQL roles restrict each process's database access.
 
@@ -20,7 +20,7 @@ cluster operations; PostgreSQL roles restrict each process's database access.
 
 [Google Cloud Parameter Manager](https://docs.cloud.google.com/secret-manager/parameter-manager/docs/overview)
 stores the private role assignments. Secret Manager continues to hold credentials.
-The [consumer-identity Terraform root](../infra/terraform/environments/consumer-identity)
+The [consumer-identity Terraform root](../../infra/terraform/environments/consumer-identity)
 creates an empty JSON parameter and a GET-only runtime role, restricted by an IAM condition
 to that parameter's versions. Only the operator API's Workload Identity receives it.
 IAM bindings are project-level; the condition narrows their resource scope.
@@ -39,7 +39,7 @@ deny everyone. Keep identity values in the private payload, outside Git, Helm an
 state; Terraform must not manage version payloads. Explicit local fixtures may use static
 assignments, but deployed operator profiles require Parameter Manager.
 
-The [policy reader](../src/events_concierge/adapters/operator_policy.py) uses ADC and a
+The [policy reader](../../src/events_concierge/adapters/operator_policy.py) uses ADC and a
 fixed Google API endpoint. It validates the version and payload after authenticating
 each request's signed assertion. When its cache expires, an unavailable, disabled or
 invalid version blocks access; stale grants are never reused. The API reports a generic
@@ -47,7 +47,7 @@ authorization-unavailable error and fails readiness without logging identities o
 
 ## Publish and activate
 
-1. Review and authorize the saved Terraform plan in the [identity setup](../deployment/consumer-identity.md#gcp-setup).
+1. Review and authorize the saved Terraform plan in the [identity setup](consumer-identity.md#gcp-setup).
    Keep the existing backend IAP member and restricted workload identities explicit.
 2. Prepare a private, permission-restricted policy file. Verify subjects against signed
    assertions through the approved operator channel; never trust an unsigned identity header.
@@ -62,7 +62,7 @@ gcloud parametermanager parameters versions create "$POLICY_VERSION" \
 
 4. Pin the returned version using the numeric project number in private release values;
    leave `operator.subjectRoles` empty. Review and roll out the configuration through the
-   [private release procedure](development.md#shared-release-and-access). No image rebuild
+   [private release procedure](release.md#gke-release). No image rebuild
    is needed for subsequent grant changes; changing the version pin requires a rollout.
 5. Verify API readiness, permitted reads/writes by role, unassigned/incorrect identities,
    forged assertions and policy-outage denial. IAP membership and application RBAC must

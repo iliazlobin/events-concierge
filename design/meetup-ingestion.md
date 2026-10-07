@@ -1,6 +1,6 @@
 # Meetup collection contract
 
-Anonymous public collection and tenant OAuth are separate trust domains. [Operations](../docs/meetup-ingestion-runbook.md) covers city refreshes; [group-calendar operations](../deploy/development.md#public-collection) covers official exports.
+Anonymous public collection and tenant OAuth are separate trust domains. [Operations](../docs/meetup-ingestion-runbook.md) covers city refreshes; [group-calendar operations](../docs/ingestion-admin.md#public-source-coverage) covers official exports.
 
 | Surface | Input / budget | Authority |
 | --- | --- | --- |
@@ -45,4 +45,4 @@ Migration `0199` defines `meetup_group_ics`. [Adapter](../src/events_concierge/a
 
 The existing GraphQL adapter reads membership/RSVP state before `createEventRsvp`, omits `member_id`, refuses browser RSVP and routes ambiguous/ineligible cases to handoff. Default discovery keeps it disabled.
 
-Live schema, authorization, quota scope, autonomous join behavior and retry semantics require the G2 field gate with approved Meetup Pro access. Fixture discovery is not a public catalog source. [Deferred launch gates](../docs/production-operations.md#external-launch-gates).
+Live schema, authorization, quota scope, autonomous join behavior and retry semantics require the G2 field gate with approved Meetup Pro access. Fixture discovery is not a public catalog source. [Deferred launch gates](../docs/operations/release.md#external-launch-gates).

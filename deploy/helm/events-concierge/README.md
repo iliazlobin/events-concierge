@@ -12,7 +12,7 @@ values schema. Secret Manager values are mounted read-only with the GKE Secret M
 For the private shared development landing, layer `values-shared-development.yaml` after
 `values-development.yaml`, then apply the target-checked release identity/image values. The data
 chart's matching overlay consumes the platform-owned `shared-retain` class without creating it.
-The [deployment runbook](../../development.md) owns readiness, state migration, recovery, and
+The [deployment runbook](../../../docs/operations/README.md) owns readiness, state migration, recovery, and
 cutover steps; the overlay alone does not establish production readiness.
 
 For authenticated discovery on those in-cluster stores, use
@@ -23,7 +23,7 @@ database DSN and CA. Frontend, catalog and controller processes receive no Googl
 The file does not activate the public edge or IAP admin. Follow the runbook's coordinated TLS
 cutover, provider/legal setup and deployed login/logout checks before enabling signup or cadence.
 
-[Public access](../../public-access.md) uses an opt-in GCP Gateway and Certificate Manager
+[Public access](../../../docs/operations/public-access.md) uses an opt-in GCP Gateway and Certificate Manager
 for the consumer site and configured IAP admin. Both use the same reserved global IP.
 The selected `publicEdge` serves both from `events.iliazlobin.com` through one Next.js
 Deployment. Separate backend Services target Caddy consumer `8080` and protected admin
@@ -148,7 +148,7 @@ these prerequisites or authorize a migration/deployment.
 The [authenticated private values](values-private-authenticated.example.yaml) support a separate
 operator app against the retained PostgreSQL service. Enable `operator.enabled` and both operator
 workloads only with a complete reviewed identity configuration. The API verifies the signed
-Google IAP assertion, backend audience and private [RBAC policy](../../operator-access.md).
+Google IAP assertion, backend audience and private [RBAC policy](../../../docs/operations/operator-access.md).
 Consumer signup grants no admin role.
 
 - Supply an isolated operator API GCP identity authorized for the numbered
@@ -176,4 +176,4 @@ Consumer signup grants no admin role.
 - PublicEdge readiness/backup use `--operator --shared-frontend --profile private`.
   Legacy separate frontend installations use `--operator` alone. Recovery uses the recorded
   inventory. Verify assigned login, unassigned/forged-assertion denial, CSRF and recovery through
-  [edge acceptance](../../public-access.md) before declaring the endpoint usable.
+  [edge acceptance](../../../docs/operations/public-access.md) before declaring the endpoint usable.

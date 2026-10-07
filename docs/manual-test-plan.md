@@ -6,11 +6,11 @@ Attach sanitized acceptance evidence to the release PR. Source tests and mock ru
 ## Prepare
 
 - Use an approved target and disposable account in a private browser window.
-- Follow [local setup](../README.md), [private operations access](../deploy/development.md#shared-release-and-access) or the approved [public consumer/admin edge](../deploy/public-access.md).
+- Follow [local setup](development.md), [private operations access](operations/access.md#connect) or the approved [public consumer/admin edge](operations/public-access.md).
 - Record API revision, frontend digest, release/auth profiles, mock/live adapters, browser and viewport.
 - Check `/versionz`, `/healthz` and `/readyz` through private access; the public consumer edge rejects probes. Check `/v1/ui-config` on the served consumer origin.
-  [Readiness meanings](production-operations.md#health-readiness-and-engine-degradation) distinguish liveness, dependency health and identity readiness.
-- Verify required processes through the [process inventory](production-operations.md#required-process-inventory).
+  [Readiness meanings](runtime.md#health-readiness-and-engine-degradation) distinguish liveness, dependency health and identity readiness.
+- Verify required processes through the [process inventory](runtime.md#required-process-inventory).
   Discovery does not require deferred request/notification workers.
 - Do not start, rebuild, stop or reset services as preflight. Never delete volumes or trigger provider refreshes for a UI check.
 - Keep DevTools Network open. Record failing requests, correlation IDs and screenshots; exclude cookies, CSRF values, credentials and capability URLs.
@@ -98,8 +98,8 @@ Mark checks requiring unavailable catalog data **NOT EXERCISED**.
 - [ ] Expired deployment sessions lead to sign-in without an automatic OAuth loop.
 - [ ] Successful logout clears the browser session reference. Failed server logout remains visible and does not claim revocation.
   Local-demo sign-out removes browser access only; it does not erase server data.
-- [ ] Google deletion remains disabled with its stated reauthentication limitation; signing in again does not enable it.
-  Google configuration and deployed identity acceptance remain [release gates](production-operations.md#first-release-acceptance).
+- [ ] Legacy OIDC Google-pilot deletion remains disabled with its stated reauthentication limitation; signing in again does not enable it.
+  Google configuration and deployed identity acceptance remain [release gates](operations/release.md#first-release-acceptance).
 
 **Profile and saved filters** — [profile tests](../web/tests/account-profile-form.test.mjs), [saved-filter UI tests](../web/tests/event-saved-filters.test.mjs), [tenant isolation tests](../tests/integration/test_saved_catalog_filters.py).
 
@@ -118,8 +118,9 @@ Mark checks requiring unavailable catalog data **NOT EXERCISED**.
 ## Account erasure — destructive, last
 
 Use only an explicitly approved disposable account. Verify its exact tenant and contact identity before submission.
-The account-erasure worker and relevant cleanup adapters must be available. For deployment sessions, follow the
-[identity and recent-auth contract](production-operations.md#built-in-oidc-bff-activation); Google destructive reauthentication is unsupported.
+The account-erasure worker and relevant cleanup adapters must be available. Select the deployed
+[consumer identity contract](operations/consumer-identity.md#access). Managed accounts require fresh, same-account login.
+Legacy Google OIDC pilots cannot run destructive reauthentication; mark erasure unexercised under their explicit exception.
 
 1. Save representative profile/saved-filter data. Open Settings → Account → Erase this account.
 2. Check lowercase and trailing-space variants: neither enables erasure. Cancel; account remains usable.
@@ -145,7 +146,7 @@ backup expiry, retention policy or production deadlines.
 
 - Record **PASS**, **FAIL** or **PARTIAL** against the exact running candidate; list failed, skipped and unexercised checks.
 - Include sanitized evidence and the first reproducible failure. Keep implementation, CI, local acceptance and deployed acceptance separate.
-- Preserve the retained-data defect above until resolved; apply all [release gates](production-operations.md#first-release-acceptance).
+- Preserve the retained-data defect above until resolved; apply all [release gates](operations/release.md#first-release-acceptance).
 - Full-profile request/lifecycle behavior remains deferred. Its contracts live in [request-start](../tests/integration/test_request_start.py)
   and [workflow tests](../tests/integration/test_workflow.py): durable acceptance, duplicate rejection, recovery and verified outcomes.
   Do not enable provider writes or simulate outages as part of discovery acceptance.

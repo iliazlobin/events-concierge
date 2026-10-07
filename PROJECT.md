@@ -3,8 +3,8 @@
 Approved product scope. Symphony owns task stages and acceptance; GitHub owns issue content, code and review evidence.
 
 - [Architecture](ARCHITECTURE.md): components, code map and invariants.
-- [README](README.md): development commands and workflow.
-- [Deployment and recovery](deploy/development.md): serving revisions, configuration, access and recovery evidence.
+- [Development](docs/development.md): local commands and contribution workflow.
+- [Deployment and recovery](docs/operations/README.md): serving revisions, configuration, access and recovery evidence.
 
 <a id="current-milestone-private-discovery-candidate"></a>
 
@@ -15,14 +15,14 @@ Approved product scope. Symphony owns task stages and acceptance; GitHub owns is
 | Included | Search, shared filters, Events/Map/Calendar, read-only entity graphs, event details, provider registration links, profiles and saved filters. |
 | Deferred | Chat, automated RSVP, managed handoffs, notifications, Calendar synchronization, purchases and programmatic API keys. |
 | Implemented | Guest catalog access, Google accounts and optional Apple support, configured legal acceptance, datastore TLS and Temporal mTLS; GCP Gateway HTTPS and configured IAP admin. |
-| Recorded deployment | Private discovery with mock product adapters; the [dated runtime record](deploy/development.md#current-deployment) distinguishes serving configuration from prepared source. |
-| Release acceptance | Provider/legal-mode configuration, transport/recovery checks and real consumer/admin browser acceptance; [release preparation](https://github.com/iliazlobin/events-concierge/issues/24). |
+| Deployment | The [release record](docs/operations/README.md#release-record) owns the serving profile, revisions and acceptance evidence. |
+| Release acceptance | Provider/legal-mode configuration, transport/recovery checks and real consumer/admin browser acceptance; [release gates](docs/operations/release.md#first-release-acceptance). |
 
 - `EC_RELEASE_PROFILE=discovery` selects product scope; retained full-profile code does not expand it.
 - `EC_MOCK_CLOUD` controls integration behavior independently of product scope.
-- Public access exposes the consumer/admin frontends; APIs, stores, GKE nodes and control plane remain private. [Routing and ownership](deploy/public-access.md#route-and-ownership).
-- [Consumer accounts](deployment/consumer-identity.md): managed signup, reauthentication/erasure and admin access controlled by [configured RBAC](deploy/operator-access.md). The legacy Google-only pilot retains its deletion limitation.
-- [Release acceptance](docs/production-operations.md#first-release-acceptance) owns launch gates. Development acceptance does not establish production acceptance.
+- Public access exposes the consumer/admin frontends; APIs, stores, GKE nodes and control plane remain private. [Routing and ownership](docs/operations/public-access.md#route-and-ownership).
+- [Consumer accounts](docs/operations/consumer-identity.md): managed signup, reauthentication/erasure and admin access controlled by [configured RBAC](docs/operations/operator-access.md). The legacy Google-only pilot retains its deletion limitation.
+- [Release acceptance](docs/operations/release.md#first-release-acceptance) owns launch gates. Development acceptance does not establish production acceptance.
 
 ## Boundaries
 
@@ -33,12 +33,12 @@ Approved product scope. Symphony owns task stages and acceptance; GitHub owns is
 - Consumer, operator and executor authority stay separate. Tenant data remains authorized and RLS-scoped.
 - Registration happens on the provider website. Gmail access remains forbidden. [ADR-011](decisions/adr-011-relay-inbox-no-gmail.md).
 - Full-product requirements and historical decisions remain in [requirements](design/requirements.md) and [ADRs](decisions/README.md); they do not expand discovery scope.
-- [Production operations](docs/production-operations.md#first-release-acceptance) defines acceptance; [release prerequisites](deploy/development.md#remaining-release-work) link tracked work. CI, task acceptance and deployment are separate facts.
+- [Release](docs/operations/release.md) defines acceptance; the [release record](https://github.com/iliazlobin/events-concierge/issues/26) retains evidence and unresolved work. CI, task acceptance and deployment are separate facts.
 
 ## Conventions
 
 - Approved source: [iliazlobin/events-concierge](https://github.com/iliazlobin/events-concierge). Permanent integration branch: `main`.
-- Use isolated task worktrees; preserve unrelated local changes. Follow the [development workflow](README.md#development-workflow).
+- Use isolated task worktrees; preserve unrelated local changes. Follow the [development workflow](docs/development.md#development-workflow).
 - The `legacy-prototype` remote is reference material, not the release repository.
 - Use job names: request-start worker, notification worker, change-delivery worker, watch-projection worker and ingestion-command worker.
 - Use **background workers** for the group. Preserve proper provider names such as RelayInbox.
