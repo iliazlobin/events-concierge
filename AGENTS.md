@@ -15,6 +15,7 @@ API keys are deferred unless the assigned task explicitly changes their scope.
 - [Development workflow](README.md#development-workflow): `main`, task branches, PRs and release authority.
 - [Release acceptance](docs/production-operations.md#first-release-acceptance): release gates.
 - [GKE release and recovery](deploy/development.md): application operations.
+- [Application support](deploy/support.md): common incidents, safe diagnosis and recovery boundaries.
 - [Consumer accounts](deployment/consumer-identity.md): signup and legal acceptance.
 - [Operator access](deploy/operator-access.md): RBAC configuration and separate IAP access.
 - [Public consumer access](deploy/public-access.md): GCP routing, TLS and admin release gates.

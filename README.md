@@ -160,3 +160,4 @@ make catalog-refresh SOURCE_KEY=luma-sf
 - A working provider factory or healthy endpoint does not prove release acceptance.
 - [Production operations](docs/production-operations.md): release gates, process limits, secret rotation and incidents.
 - [GKE release and recovery](deploy/development.md): application release, access, backup and restore.
+- [Application support](deploy/support.md): access, sign-in, collection, stores, certificates and recovery incidents.
