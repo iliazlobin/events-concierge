@@ -197,11 +197,13 @@ export function getCatalogPage(
   tenantId: string | null,
   filters: CatalogFilters,
   cursor: string | null = null,
+  options: { limit?: number; includeFacets?: boolean } = {},
 ): Promise<CatalogPage> {
   const query = catalogFilterQuery(filters);
-  query.set("limit", "72");
+  query.set("limit", String(options.limit ?? 72));
   query.set("sort", filters.sort ?? "soonest");
   if (cursor) query.set("cursor", cursor);
+  if (options.includeFacets === false) query.set("include_facets", "false");
   return api<CatalogPage>(`/v1/catalog/events?${query}`, { tenantId });
 }
 

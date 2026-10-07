@@ -33,6 +33,8 @@ interface MapViewProps {
   loading: boolean;
   error: string | null;
   hasMore: boolean;
+  totalCount: number | null;
+  totalUnavailable: boolean;
   loadingMore: boolean;
   onLoadMore: () => void;
   onSourceSelect: (sourceKey: string) => void;
@@ -70,6 +72,8 @@ export function MapView({
   loading,
   error,
   hasMore,
+  totalCount,
+  totalUnavailable,
   loadingMore,
   onLoadMore,
   onSourceSelect,
@@ -130,7 +134,7 @@ export function MapView({
   const trackInsetRef = useRef(0);
   /**
    * The mapped ids the last automatic fit answered for. Appending a page is not a new
-   * spatial question, so `Load more` must not yank the camera back to whole-result
+   * spatial question, so loading remaining events must not reset the camera to the whole-result
    * bounds from wherever the reader had panned. Every other change still refits.
    */
   const fittedIdsRef = useRef<string[]>([]);
@@ -532,12 +536,13 @@ export function MapView({
           <p>
             {loading && !events.length
               ? "Loading locations…"
-              : `${mapped.length} mapped${approximateCount ? ` (${approximateCount} approximate)` : ""} · ${unmapped.length} without map locations${hasMore ? " · more available" : ""}`}
+              : `${events.length}${hasMore && totalCount !== null && totalCount >= events.length ? ` of ${totalCount.toLocaleString()}` : ""} loaded · ${mapped.length} mapped${approximateCount ? ` (${approximateCount} approximate)` : ""} · ${unmapped.length} without map locations${hasMore ? " · more available" : ""}`}
+            {totalUnavailable && hasMore ? " · full count unavailable" : null}
           </p>
           {hasMore ? (
             <button type="button" disabled={loadingMore} onClick={onLoadMore}>
               {loadingMore ? <LoaderCircle className="spin" aria-hidden="true" /> : null}
-              {loadingMore ? "Loading" : "Load more"}
+              {loadingMore ? "Loading remaining events" : "Load remaining events"}
             </button>
           ) : null}
         </div>

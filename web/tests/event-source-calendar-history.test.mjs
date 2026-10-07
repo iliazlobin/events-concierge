@@ -65,7 +65,8 @@ test("historical and source windows are not presented as future-only results", (
 
 test("the paged map view discloses and continues an incomplete result set", () => {
   assert.match(conciergeApp, /const generation = catalogGeneration\.current/);
-  assert.match(conciergeApp, /if \(generation !== catalogGeneration\.current\) return/);
+  assert.match(conciergeApp, /generation === catalogGeneration\.current/);
+  assert.match(conciergeApp, /if \(!isCurrent\(\)\) return/);
   assert.match(conciergeApp, /<MapView[\s\S]*?hasMore=\{Boolean\(nextCursor\)\}/);
   assert.match(mapView, /more available/);
   assert.match(mapView, /onClick=\{onLoadMore\}/);
