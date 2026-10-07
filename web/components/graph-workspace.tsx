@@ -35,7 +35,7 @@ export function GraphWorkspace({
 }) {
   const detailModel = useMemo(() => deriveEntityGraphDetails(model), [model]);
   const inspectedNode = selectedNodeId ? model.byId.get(selectedNodeId) : scope === "entity" ? model.ego : null;
-  const { stageRef, selectNode } = useGraphDetailNavigation(selectedNodeId, onSelectNode);
+  const { stageRef, selectNode, cancelScroll } = useGraphDetailNavigation(selectedNodeId, onSelectNode);
   useEffect(() => {
     if (scope !== "catalog") return;
     const close = (event: KeyboardEvent) => {
@@ -47,7 +47,9 @@ export function GraphWorkspace({
     return () => window.removeEventListener("keydown", close);
   }, [scope, onSelectNode]);
   return (
-    <div className="entity-graph-stage" ref={stageRef} data-selection={inspectedNode?.node_kind ?? "none"}>
+    <div className="entity-graph-stage" ref={stageRef} data-selection={inspectedNode?.node_kind ?? "none"}
+      onDoubleClickCapture={cancelScroll}
+      onKeyDownCapture={(event) => { if (event.key === "Enter" && event.shiftKey) cancelScroll(); }}>
       <div className="entity-graph-column" ref={measureColumn}>
         <EntityGraphCanvas scene={scene} selectedNodeId={canvasSelectedNodeId}
           hoveredNodeId={canvasHoveredNodeId} onSelect={onSelectNode} onFocus={onFocusNode} />

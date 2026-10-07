@@ -17,14 +17,16 @@ export function TopicGraphView({topic,events,hasMore,loading,error,onOverview,on
   onOverview:()=>void;onLoadMore:()=>void;onEntitySelect:(reference:EventEntityReference)=>void;onTopicSelect:(topic:string)=>void;
 }) {
   const [selected,setSelected]=useState<string|null>(null);
-  const { stageRef, selectNode } = useGraphDetailNavigation(selected, setSelected);
+  const { stageRef, selectNode, cancelScroll } = useGraphDetailNavigation(selected, setSelected);
   const scene=useMemo(()=>layoutEgoRings(deriveEntityGraphScene(topicEventGraph(topic,events,hasMore)),{width:960,height:640}),[topic,events,hasMore]);
   const event=events.find(e=>`event:${e.canonical_event_id}`===selected);
   return <section className="workspace entities-view">
     <GraphWorkspaceHeading current={eventTopicLabel(topic)} onRoot={onOverview}
       summary={`${events.length} loaded events matching your filters${hasMore ? " · more available" : ""}`}/>
     {error ? <p role="alert">{error}</p> : null}
-    <div className="entity-graph-stage" ref={stageRef} data-selection={event ? "event" : "none"}>
+    <div className="entity-graph-stage" ref={stageRef} data-selection={event ? "event" : "none"}
+      onDoubleClickCapture={cancelScroll}
+      onKeyDownCapture={(event) => { if (event.key === "Enter" && event.shiftKey) cancelScroll(); }}>
       <div className="entity-graph-column">
         <EntityGraphCanvas scene={scene} selectedNodeId={selected} hoveredNodeId={null} onSelect={setSelected} onFocus={setSelected}/>
       </div>
