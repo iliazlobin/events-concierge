@@ -9,7 +9,6 @@ from __future__ import annotations
 
 import copy
 import importlib.util
-import json
 import os
 import subprocess
 from pathlib import Path
@@ -50,7 +49,7 @@ def operator_values() -> dict[str, Any]:
         "iapAudience": "/projects/123456789/global/backendServices/987654321",
         "iapClientId": "validation.apps.googleusercontent.com",
         "iapClientSecretName": "validation-iap-oauth",
-        "subjectRoles": {OPERATOR_SUBJECT: "reviewer"},
+        "policyVersion": "projects/123456789/locations/global/parameters/ec-operator-rbac/versions/release-1",
         "operatorSecrets": [
             {
                 "fileName": "EC_OPERATOR_DATABASE_URL",
@@ -101,6 +100,7 @@ def test_private_operator_remains_off_without_an_explicit_complete_overlay(helm,
     for field in ("hostname", "tlsSecretName", "iapAudience", "iapClientId", "iapClientSecretName"):
         assert not private.get("operator", {}).get(field, defaults["operator"][field])
     assert not private.get("operator", {}).get("subjectRoles", defaults["operator"]["subjectRoles"])
+    assert not private.get("operator", {}).get("policyVersion", defaults["operator"]["policyVersion"])
     for name in ("operator-frontend", "operator-api"):
         assert private["workloads"][name]["enabled"] is False
     rendered = documents(render(helm, tmp_path, private))
@@ -122,7 +122,9 @@ def test_private_operator_configures_iap_without_provisioning_an_edge(resources)
     assert config["EC_OPERATOR_API_ENABLED"] == "true"
     assert config["EC_OPERATOR_IAP_AUDIENCE"] == configured["iapAudience"]
     assert config["EC_OPERATOR_PUBLIC_ORIGIN"] == frontend["EC_OPERATOR_PUBLIC_ORIGIN"]
-    assert json.loads(config["EC_OPERATOR_SUBJECT_ROLES"]) == {OPERATOR_SUBJECT: "reviewer"}
+    assert config["EC_OPERATOR_POLICY_VERSION"] == configured["policyVersion"]
+    assert config["EC_OPERATOR_POLICY_CACHE_SECONDS"] == "30"
+    assert "EC_OPERATOR_SUBJECT_ROLES" not in config
     assert all(
         item["spec"].get("type", "ClusterIP") == "ClusterIP"
         for (kind, _), item in resources.items()
@@ -265,7 +267,8 @@ def test_rendered_operator_passes_real_startup_without_consumer_or_worker_creden
     with patch.dict(os.environ, config, clear=True):
         settings = Settings(_env_file=None)
     assert settings.operator_api_enabled and not settings.identity_platform_enabled
-    assert settings.operator_subject_roles == {OPERATOR_SUBJECT: "reviewer"}
+    assert settings.operator_subject_roles == {}
+    assert settings.operator_policy_version == operator_values()["operator"]["policyVersion"]
     preflight_operator_runtime(settings)
 
 
@@ -315,12 +318,12 @@ def test_operator_has_no_application_or_iap_route_during_migration(helm, tmp_pat
         "iapAudience",
         "iapClientId",
         "iapClientSecretName",
-        "subjectRoles",
+        "policyVersion",
     ],
 )
 def test_incomplete_private_iap_configuration_fails_closed(helm, tmp_path, field):
     config = operator_values()
-    config["operator"][field] = {} if field == "subjectRoles" else ""
+    config["operator"][field] = ""
     result = render(helm, tmp_path, config)
     assert result.returncode != 0, f"missing operator.{field} rendered"
     assert "operator" in result.stderr
@@ -371,8 +374,11 @@ def test_incomplete_private_iap_configuration_fails_closed(helm, tmp_path, field
         ),
         (("serviceAccounts", "operator-api", "name"), NAME + "-api"),
         (("serviceAccounts", "operator-api", "name"), ""),
-        (("operator", "subjectRoles"), {"iliazlobin91@gmail.com": "reviewer"}),
+        (("operator", "subjectRoles"), {"unassigned@example.test": "reviewer"}),
         (("operator", "subjectRoles"), {OPERATOR_SUBJECT: "admin"}),
+        (("operator", "subjectRoles"), {OPERATOR_SUBJECT: "reviewer"}),
+        (("operator", "policyVersion"), "projects/123456789/locations/global/parameters/ec-operator-rbac/versions/latest"),
+        (("operator", "policyCacheSeconds"), 61),
         (
             ("operator", "subjectRoles"),
             {OPERATOR_SUBJECT: "reviewer", "accounts.google.com:second-owner": "viewer"},

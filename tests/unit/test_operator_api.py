@@ -47,6 +47,7 @@ def _token(**overrides: object) -> str:
         "iss": IAP_ISSUER,
         "aud": _AUDIENCE,
         "sub": _SUBJECT,
+        "email": "operator@example.test",
         "iat": now,
         "exp": now + 600,
     }
@@ -57,12 +58,13 @@ def _token(**overrides: object) -> str:
 def _settings(**overrides: object) -> Settings:
     values: dict[str, object] = {
         "_env_file": None,
-        "env": "staging",
+        "env": "test",
         "mock_cloud": False,
         "operator_api_enabled": True,
         "operator_iap_audience": _AUDIENCE,
         "operator_public_origin": _ORIGIN,
         "operator_subject_roles": {_SUBJECT: "reviewer"},
+        "operator_allowed_email": "operator@example.test",
         "operator_database_url": "postgresql+psycopg://operator_login:secret@db.example.test/ec?sslmode=verify-full",
     }
     values.update(overrides)
@@ -132,30 +134,30 @@ async def test_unsigned_headers_and_consumer_bearer_never_grant_operator_authori
     assert response.status_code == 401
 
 
-@pytest.mark.parametrize("email", [None, "other@example.test", "iliazlobin27@gmail.com"])
+@pytest.mark.parametrize("email", [None, "other@example.test", "another@example.test"])
 async def test_owner_only_operator_rejects_every_other_verified_email(email: str | None) -> None:
     app, _ = _app()
     app.state.operator_identity_verifier = IapOperatorIdentityVerifier(
         audience=_AUDIENCE,
         subject_roles={_SUBJECT: "reviewer"},
-        allowed_email="iliazlobin91@gmail.com",
+        allowed_email="operator@example.test",
         key_resolver=_key,
     )
     async with AsyncClient(transport=ASGITransport(app=app), base_url=_ORIGIN) as client:
         headers = _headers(_token(email=email)) | {
-            "x-goog-authenticated-user-email": "accounts.google.com:iliazlobin91@gmail.com",
+            "x-goog-authenticated-user-email": "accounts.google.com:operator@example.test",
         }
         assert (await client.get("/admin/v1/operator/session", headers=headers)).status_code == 403
         assert (
             await client.get(
                 "/admin/v1/operator/session",
-                headers=_headers(_token(email="iliazlobin91@gmail.com")),
+                headers=_headers(_token(email="operator@example.test")),
             )
         ).status_code == 200
         assert (
             await client.get(
                 "/admin/v1/operator/session",
-                headers=_headers(_token(email="iliazlobin91@gmail.com", sub="unassigned-subject")),
+                headers=_headers(_token(email="operator@example.test", sub="unassigned-subject")),
             )
         ).status_code == 403
 
@@ -381,12 +383,13 @@ def test_file_resolved_operator_settings_are_not_resolved_twice(
     monkeypatch.setenv("EC_OPERATOR_DATABASE_URL_FILE", str(secret_path))
     settings = Settings(
         _env_file=None,
-        env="staging",
+        env="test",
         mock_cloud=False,
         operator_api_enabled=True,
         operator_iap_audience=_AUDIENCE,
         operator_public_origin=_ORIGIN,
         operator_subject_roles={_SUBJECT: "reviewer"},
+        operator_allowed_email="operator@example.test",
     )
     app = create_operator_app(settings)
     assert app.state.settings.operator_database_url == settings.operator_database_url

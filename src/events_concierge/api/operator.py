@@ -17,6 +17,11 @@ from starlette.responses import JSONResponse
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
 from ..adapters.agent_runtime.openrouter.key_usage import OpenRouterKeyUsage
+from ..adapters.operator_policy import (
+    OperatorPolicySource,
+    ParameterManagerOperatorPolicy,
+    StaticOperatorPolicy,
+)
 from ..adapters.postgres.catalog import PostgresCatalogRepository
 from ..adapters.postgres.command_investigation import CommandInvestigationStore
 from ..adapters.postgres.ingestion_admin import PostgresIngestionAdminRepository
@@ -165,6 +170,13 @@ def create_operator_app(settings: Settings | None = None) -> FastAPI:
     )
     if not settings.operator_api_enabled or settings.mock_cloud or settings.admin_ingestion_enabled:
         raise ValueError("standalone operator API requires the explicit non-mock operator profile")
+    policy: OperatorPolicySource = (
+        ParameterManagerOperatorPolicy(
+            settings.operator_policy_version, settings.operator_policy_cache_seconds
+        )
+        if settings.operator_policy_version is not None
+        else StaticOperatorPolicy(settings.operator_subject_roles, settings.operator_allowed_email)
+    )
     verifier: IapOperatorIdentityVerifier | CloudflareAccessOperatorIdentityVerifier
     if settings.operator_auth_provider == "cloudflare_access":
         assert settings.operator_cloudflare_team_domain is not None
@@ -172,19 +184,20 @@ def create_operator_app(settings: Settings | None = None) -> FastAPI:
         verifier = CloudflareAccessOperatorIdentityVerifier(
             team_domain=settings.operator_cloudflare_team_domain,
             audience=settings.operator_cloudflare_audience,
-            subject_roles=settings.operator_subject_roles,
+            policy=policy,
         )
     else:
         assert settings.operator_iap_audience is not None
         verifier = IapOperatorIdentityVerifier(
             audience=settings.operator_iap_audience,
-            subject_roles=settings.operator_subject_roles,
-            allowed_email="iliazlobin91@gmail.com",
+            policy=policy,
         )
 
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         preflight_operator_runtime(settings)
+        if not await policy.ready():
+            raise RuntimeError("operator authorization policy unavailable")
         database = build_operator_services(app, settings)
         try:
             yield
@@ -217,6 +230,8 @@ def create_operator_app(settings: Settings | None = None) -> FastAPI:
 
     @app.get("/readyz")
     async def ready() -> dict[str, str]:
+        if not await policy.ready():
+            raise HTTPException(503, "operator authorization unavailable")
         database = getattr(app.state, "operator_database", None)
         if database is None or not await database.ready():
             raise HTTPException(503, "operator database unavailable")

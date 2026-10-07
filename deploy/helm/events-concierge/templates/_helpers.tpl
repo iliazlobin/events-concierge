@@ -37,7 +37,8 @@ app.kubernetes.io/component: {{ .component }}
 EC_OPERATOR_AUTH_PROVIDER: {{ .Values.operator.authProvider | quote }}
 EC_OPERATOR_IAP_AUDIENCE: {{ .Values.operator.iapAudience | quote }}
 EC_OPERATOR_PUBLIC_ORIGIN: {{ printf "https://%s" .Values.operator.hostname | quote }}
-EC_OPERATOR_SUBJECT_ROLES: {{ .Values.operator.subjectRoles | toJson | quote }}
+EC_OPERATOR_POLICY_VERSION: {{ .Values.operator.policyVersion | quote }}
+EC_OPERATOR_POLICY_CACHE_SECONDS: {{ .Values.operator.policyCacheSeconds | quote }}
 {{- end -}}
 
 {{- define "events-concierge.migrationSecretProviderClass" -}}
@@ -81,7 +82,9 @@ seccompProfile:
 {{- range $key := $identityKeys -}}
 {{- if not (index $.Values.operator $key) -}}{{- fail (printf "operator.%s is required" $key) -}}{{- end -}}
 {{- end -}}
-{{- if not .Values.operator.subjectRoles -}}{{- fail "operator.subjectRoles must explicitly assign verified subjects" -}}{{- end -}}
+{{- if or (not (regexMatch "^projects/[1-9][0-9]{0,19}/locations/global/parameters/[A-Za-z0-9_][A-Za-z0-9_-]{0,62}/versions/[A-Za-z0-9_][A-Za-z0-9_-]{0,62}$" .Values.operator.policyVersion)) (hasSuffix "/versions/latest" (lower .Values.operator.policyVersion)) -}}{{- fail "operator.policyVersion must pin an explicit global Parameter Manager version" -}}{{- end -}}
+{{- if .Values.operator.subjectRoles -}}{{- fail "operator.subjectRoles cannot be combined with hosted Parameter Manager policy" -}}{{- end -}}
+{{- if or (lt (int .Values.operator.policyCacheSeconds) 1) (gt (int .Values.operator.policyCacheSeconds) 60) -}}{{- fail "operator.policyCacheSeconds must be between 1 and 60" -}}{{- end -}}
 {{- if not .Values.networkPolicy.enabled -}}{{- fail "operator requires networkPolicy.enabled" -}}{{- end -}}
 {{- $catalogPrefix := printf "%s/" (trimSuffix "/" .Values.operator.executorClaimCheckPrefix) -}}
 {{- $consumerPrefix := printf "%s/" (trimSuffix "/" .Values.applicationConfig.EC_GCS_CLAIM_CHECK_PREFIX) -}}
@@ -312,11 +315,7 @@ seccompProfile:
 {{- define "events-concierge.validatePrivateOperator" -}}
 {{- $operator := .Values.operator -}}
 {{- if or (and (not .Values.publicEdge.enabled) (eq $operator.hostname .Values.publicEdge.hostname)) (not (regexMatch "^[a-z0-9]([a-z0-9.-]*[a-z0-9])?$" $operator.hostname)) -}}{{- fail "private operator requires a distinct HTTPS hostname unless publicEdge shares its frontend" -}}{{- end -}}
-{{- if ne (len $operator.subjectRoles) 1 -}}{{- fail "private operator assigns exactly one stable owner subject" -}}{{- end -}}
 {{- if not (regexMatch "^/projects/[0-9]+/global/backendServices/[0-9]+$" $operator.iapAudience) -}}{{- fail "private operator requires the exact signed IAP backend audience" -}}{{- end -}}
-{{- range $subject, $role := $operator.subjectRoles -}}
-{{- if or (not (regexMatch "^accounts\\.google\\.com:[A-Za-z0-9_-]+$" $subject)) (not (has $role (list "viewer" "operator" "reviewer"))) -}}{{- fail "private operator requires a stable Google IAP subject and explicit role" -}}{{- end -}}
-{{- end -}}
 {{- if ne (toJson $operator.frontendIngressCidrs) (toJson (list "130.211.0.0/22" "35.191.0.0/16")) -}}{{- fail "private operator ingress is restricted to Google Front End ranges" -}}{{- end -}}
 {{- if ne (len $operator.operatorSecrets) 1 -}}{{- fail "private operator requires only its controller database DSN" -}}{{- end -}}
 {{- $secret := first $operator.operatorSecrets -}}
@@ -356,8 +355,8 @@ seccompProfile:
 {{- if or (ne $edge.proxyImage.repository "caddy") (ne $edge.proxyImage.digest "sha256:d44355d3c2149dc580ce2cac735955d1c08d3d00882c30489c241aa51a5c10d9") -}}{{- fail "publicEdge must retain the reviewed immutable Caddy image" -}}{{- end -}}
 {{- if or (ne $operator.authProvider "iap") $operator.tlsSecretName (not $operator.iapClientId) (not $operator.iapClientSecretName) (eq $operator.iapClientSecretName "ec-consumer-google") -}}{{- fail "publicEdge requires a separate admin IAP OAuth client and Secret, with certificate-map TLS" -}}{{- end -}}
 {{- if $edge.bootstrap -}}
-{{- if or $operator.enabled (index .Values.workloads "operator-api").enabled $operator.iapAudience $operator.subjectRoles $edge.operatorAccessVerified -}}{{- fail "publicEdge bootstrap requires no operator endpoints, audience, subjects or access attestation" -}}{{- end -}}
+{{- if or $operator.enabled (index .Values.workloads "operator-api").enabled $operator.iapAudience $operator.subjectRoles $operator.policyVersion $edge.operatorAccessVerified -}}{{- fail "publicEdge bootstrap requires no operator endpoints, audience, policy or access attestation" -}}{{- end -}}
 {{- else -}}
-{{- if or (not $operator.enabled) (not $edge.operatorAccessVerified) -}}{{- fail "publicEdge runtime requires verified IAP policy, real audience and sole-owner access; use bootstrap first" -}}{{- end -}}
+{{- if or (not $operator.enabled) (not $edge.operatorAccessVerified) -}}{{- fail "publicEdge runtime requires verified IAP policy, real audience and configured operator access; use bootstrap first" -}}{{- end -}}
 {{- end -}}
 {{- end -}}

@@ -16,7 +16,9 @@ operator:
   iapClientId: ""
   iapClientSecretName: ec-admin-iap
   iapAudience: "" # Actual /projects/PROJECT_NUMBER/global/backendServices/ADMIN_BACKEND_ID.
-  subjectRoles: {} # Actual signed Google IAP sub -> reviewer, only the owner's account.
+  subjectRoles: {} # Hosted identities stay in Parameter Manager, never inline.
+  policyVersion: "" # Actual projects/PROJECT_NUMBER/locations/global/parameters/ec-operator-rbac/versions/VERSION.
+  policyCacheSeconds: 30
 workloads:
   operator-frontend: {enabled: false}
   operator-api: {enabled: false}

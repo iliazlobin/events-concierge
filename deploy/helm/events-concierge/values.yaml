@@ -118,7 +118,7 @@ secretManager:
       version: "1"
 
 operator:
-  # One independently verified operator identity; consumer login never grants this role.
+  # Explicit operator policy; consumer login never grants an operator role.
   enabled: false
   authProvider: iap
   hostname: ""
@@ -127,6 +127,9 @@ operator:
   iapClientId: ""
   iapClientSecretName: ""
   subjectRoles: {}
+  # Hosted RBAC is fetched through Workload Identity; only its exact version is deployed.
+  policyVersion: ""
+  policyCacheSeconds: 30
   # HTTP IAP edge data-plane and health-check ranges, independent of the consumer edge.
   frontendIngressCidrs: [130.211.0.0/22, 35.191.0.0/16]
   executorClaimCheckPrefix: events-concierge/catalog/claim-check/v1

@@ -26,6 +26,7 @@ resource "google_project_service" "identity" {
     "securetoken.googleapis.com",
     "secretmanager.googleapis.com",
     "iam.googleapis.com",
+    "parametermanager.googleapis.com",
   ]), var.foundation_owned_services)
   project            = var.project_id
   service            = each.value
@@ -113,5 +114,5 @@ resource "google_iap_web_backend_service_iam_member" "owner" {
   project             = var.project_id
   web_backend_service = var.operator_backend_service
   role                = "roles/iap.httpsResourceAccessor"
-  member              = "user:iliazlobin91@gmail.com"
+  member              = var.operator_iap_member
 }

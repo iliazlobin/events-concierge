@@ -55,6 +55,8 @@ operator:
   iapClientId: ""
   iapClientSecretName: ""
   subjectRoles: {}
+  policyVersion: ""
+  policyCacheSeconds: 30
   operatorSecrets:
     - {fileName: EC_OPERATOR_DATABASE_URL, secretName: ec-dev-operator-database-url, version: "2"}
 secretManager:
@@ -90,7 +92,7 @@ privateRuntime:
     - {fileName: EC_OPERATOR_DATABASE_URL, secretName: ec-dev-operator-database-url, version: "2"}
 serviceAccounts:
   operator-api:
-    gcpServiceAccount: "" # Dedicated identity with access only to the operator database secret.
+    gcpServiceAccount: "" # Dedicated identity: operator database secret and scoped Parameter Manager GET.
   development-admin:
     gcpServiceAccount: ec-dev-development-admin@iz27-platform-dev.iam.gserviceaccount.com
   api:

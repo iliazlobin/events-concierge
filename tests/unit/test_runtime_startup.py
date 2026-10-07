@@ -227,7 +227,7 @@ async def test_operator_api_preserves_and_rejects_migration_file_before_readines
         oidc_bff_enabled=False,
         operator_api_enabled=True,
         operator_iap_audience="/projects/123/global/backendServices/456",
-        operator_subject_roles={"accounts.google.com:123": "reviewer"},
+        operator_policy_version="projects/123/locations/global/parameters/ec-operator-rbac/versions/release-1",
         operator_public_origin="https://ops.example.test",
         operator_database_url=_CONTROLLER_URL,
         migration_url_file="/not-mounted/never-open-this",
