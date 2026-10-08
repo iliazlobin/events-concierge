@@ -17,6 +17,7 @@ from tests.support.integration_database import (
 from tests.support.run_isolated_integration import _create_database, _drop_database
 
 pytestmark = pytest.mark.integration
+_MIGRATION_HEAD = ScriptDirectory.from_config(Config("alembic.ini")).get_current_head()
 
 
 def _migrate(environ: dict[str, str], direction: str, revision: str) -> None:
@@ -35,7 +36,6 @@ def test_filter_migration_is_independent_reversible_and_merges_at_head() -> None
     app_url = os.environ.get("EC_DATABASE_URL")
     if owner_url is None or app_url is None:
         pytest.skip("isolated PostgreSQL integration runner required")
-    head_revision = ScriptDirectory.from_config(Config("alembic.ini")).get_current_head()
     run_id = uuid4().hex
     database = isolated_database_name(run_id)
     child = {
@@ -106,7 +106,7 @@ def test_filter_migration_is_independent_reversible_and_merges_at_head() -> None
         with engine.connect() as connection:
             assert (
                 connection.execute(text("SELECT version_num FROM alembic_version")).scalar_one()
-                == head_revision
+                == _MIGRATION_HEAD
             )
             assert (
                 connection.execute(
@@ -143,7 +143,7 @@ def test_filter_migration_is_independent_reversible_and_merges_at_head() -> None
         with engine.connect() as connection:
             assert (
                 connection.execute(text("SELECT version_num FROM alembic_version")).scalar_one()
-                == head_revision
+                == _MIGRATION_HEAD
             )
             assert (
                 connection.execute(
