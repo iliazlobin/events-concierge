@@ -6,6 +6,8 @@ import sys
 from uuid import uuid4
 
 import pytest
+from alembic.config import Config
+from alembic.script import ScriptDirectory
 from sqlalchemy import create_engine, text
 from tests.support.integration_database import (
     isolated_database_name,
@@ -33,6 +35,7 @@ def test_filter_migration_is_independent_reversible_and_merges_at_head() -> None
     app_url = os.environ.get("EC_DATABASE_URL")
     if owner_url is None or app_url is None:
         pytest.skip("isolated PostgreSQL integration runner required")
+    head_revision = ScriptDirectory.from_config(Config("alembic.ini")).get_current_head()
     run_id = uuid4().hex
     database = isolated_database_name(run_id)
     child = {
@@ -103,7 +106,7 @@ def test_filter_migration_is_independent_reversible_and_merges_at_head() -> None
         with engine.connect() as connection:
             assert (
                 connection.execute(text("SELECT version_num FROM alembic_version")).scalar_one()
-                == "0212"
+                == head_revision
             )
             assert (
                 connection.execute(
@@ -140,7 +143,7 @@ def test_filter_migration_is_independent_reversible_and_merges_at_head() -> None
         with engine.connect() as connection:
             assert (
                 connection.execute(text("SELECT version_num FROM alembic_version")).scalar_one()
-                == "0212"
+                == head_revision
             )
             assert (
                 connection.execute(
