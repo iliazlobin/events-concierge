@@ -54,7 +54,13 @@ speakers and partners across every admitted event matching the active filters. I
 same source, place, date, topic, price and registration filters as event browsing, a literal
 2–160-character `q`, and a limit of 1–20 (default 8). Matching names are grouped and ranked
 before limiting; chronological event pagination does not restrict autocomplete. Profile evidence
-adds Person or Organization labels when known. Grouping equal names does not merge identities.
+adds Person or Organization labels when known. With migration `0213`, suggestions also search
+every organization in the existing entity index that has a matching public event observation.
+This includes its current display name when a source records another name for the same direct
+profile. Selecting that name matches the recorded events in Events, Map, Calendar and facets.
+The index follows source publication; no separate company-refresh job or external lookup runs.
+Names found only in unstructured prose remain literal event-search matches. Grouping equal names
+does not merge identities.
 
 The search box combines these names with existing filter and saved-selection suggestions.
 Selecting a name sets the text query and preserves active filters; URL navigation and saved
