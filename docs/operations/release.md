@@ -63,6 +63,12 @@ make staging-canary BASE_URL="$BASE_URL" \
   Preserve the prior definitions, owners and grants for recovery. Compatible older images can
   remain on `0211`; do not downgrade while the candidate API uses the new recommendation function.
 - Catalog-wide name autocomplete defaults to disabled. Enable `EC_CATALOG_NAME_SUGGESTIONS_ENABLED=true` only after applying authorized migration `0210` and its `0209` dependency; keep it disabled when that schema branch is held. Verify `/v1/ui-config` and the names endpoint together after enablement.
+- `0213` extends enabled autocomplete to the existing organization index, including recorded
+  name variants. It adds a partial trigram index and replaces only the names function and private
+  shared browse predicate, preserving signatures, owners, grants and source admission. Rehearse
+  on a restore of `0212`; verify company selection and Events/Calendar/facet counts together.
+  Compatible older API/frontend images can retain the expanded schema for rollback. No provider
+  refresh, entity rebuild, credential change or feature activation is part of this migration.
 - `0202` joins the retained operator branch (`0198`) and published application branch (`0201`). Upgrade normally from either head; preserve applied IDs and rehearse on a restore. Never substitute a schema stamp for the missing branch.
 - [Migration sources](../../migrations/versions/) own version-specific reconciliation. Drain cadence/source/command workers before legacy `0128`–`0130` lease changes; reconciliation is irreversible.
 - Rebuild `0152` indexes if older writers ran during migration. `0181`/`0182` require distinct operator/executor roles and matching images; no consumer-admin rollback.

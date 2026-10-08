@@ -6,6 +6,8 @@ import sys
 from uuid import uuid4
 
 import pytest
+from alembic.config import Config
+from alembic.script import ScriptDirectory
 from sqlalchemy import create_engine, text
 from tests.support.integration_database import (
     isolated_database_name,
@@ -15,6 +17,7 @@ from tests.support.integration_database import (
 from tests.support.run_isolated_integration import _create_database, _drop_database
 
 pytestmark = pytest.mark.integration
+_MIGRATION_HEAD = ScriptDirectory.from_config(Config("alembic.ini")).get_current_head()
 
 
 def _migrate(environ: dict[str, str], direction: str, revision: str) -> None:
@@ -103,7 +106,7 @@ def test_filter_migration_is_independent_reversible_and_merges_at_head() -> None
         with engine.connect() as connection:
             assert (
                 connection.execute(text("SELECT version_num FROM alembic_version")).scalar_one()
-                == "0212"
+                == _MIGRATION_HEAD
             )
             assert (
                 connection.execute(
@@ -140,7 +143,7 @@ def test_filter_migration_is_independent_reversible_and_merges_at_head() -> None
         with engine.connect() as connection:
             assert (
                 connection.execute(text("SELECT version_num FROM alembic_version")).scalar_one()
-                == "0212"
+                == _MIGRATION_HEAD
             )
             assert (
                 connection.execute(
