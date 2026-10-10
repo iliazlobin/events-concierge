@@ -7857,5 +7857,16 @@ textarea:focus-visible {
   }
 }
 
-.event-card__muse { display: flex; gap: 16px; align-items: center; justify-content: flex-end; padding: 12px 24px; border-top: 1px solid var(--border, #30332a); flex-wrap: wrap; }
-.event-card__muse label { display: flex; gap: 8px; align-items: center; font-size: .875rem; }
+/* Muse shares the existing time/location action row; it adds no card section. */
+.event-card__muse-action { align-items: center; display: inline-flex; position: relative; z-index: 2; background: transparent; color: var(--muted); padding: 3px; border-radius: 5px; }
+.event-card__muse-action svg { width: 17px; height: 17px; color: inherit; }
+.event-card__muse-action:hover:not(:disabled), .event-card__muse-action.is-queued { color: var(--accent); }
+.event-card__muse-action:disabled { opacity: .4; cursor: not-allowed; }
+.event-card__muse-action:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+.event-card__muse-dot { width: 4px; height: 4px; background: var(--accent); border-radius: 50%; position: absolute; top: 0; right: 0; }
+@media (max-width: 760px) {
+  .event-card__meta:has(.event-card__muse-action) { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; column-gap: 10px; }
+  .event-card__meta:has(.event-card__muse-action) > :first-child { grid-column: 1 / -1; }
+  .event-card__meta:has(.event-card__muse-action) > :nth-child(2) { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .event-card__muse-action { grid-column: 2; grid-row: 2; }
+}

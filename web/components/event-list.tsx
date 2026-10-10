@@ -4,11 +4,12 @@ import { LoaderCircle } from "lucide-react";
 
 import { groupEventSessions } from "@/lib/event-discovery";
 import { EventCard } from "@/components/event-card";
+import type { MuseStatus } from "@/lib/muse";
 import type { EventEntityReference, EventItem } from "@/lib/types";
 
 interface EventListProps {
-  museSelectedIds?: ReadonlySet<string>;
-  onMuseToggle?: (event: EventItem) => void;
+  museStatuses?: ReadonlyMap<string, MuseStatus>;
+  musePendingIds?: ReadonlySet<string>;
   onMuseSignup?: (event: EventItem) => void;
   events: EventItem[];
   groupSessions?: boolean;
@@ -28,8 +29,8 @@ interface EventListProps {
 }
 
 export function EventList({
-  museSelectedIds,
-  onMuseToggle,
+  museStatuses,
+  musePendingIds,
   onMuseSignup,
   events,
   groupSessions = false,
@@ -63,8 +64,8 @@ export function EventList({
         {(groupSessions ? groupEventSessions(events) : events.map((event) => [event])).map((group) => {
           const renderEvent = (event: EventItem) => (
           <EventCard
-            museSelected={museSelectedIds?.has(event.canonical_event_id)}
-            onMuseToggle={onMuseToggle}
+            museStatus={museStatuses?.get(event.canonical_event_id)}
+            musePending={musePendingIds?.has(event.canonical_event_id)}
             onMuseSignup={onMuseSignup}
             key={event.canonical_event_id}
             event={event}
