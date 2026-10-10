@@ -4,6 +4,10 @@
 .actions { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 12px; }
 .actions svg { width: 15px; height: 15px; }
 .instruction { width: 100%; min-height: 180px; background: var(--black, #080908); color: inherit; padding: 12px; border: 1px solid var(--line); border-radius: 8px; resize: vertical; font-size: 12px; }
+.instructions { border: 1px solid var(--line); border-radius: 8px; padding: 12px; }
+.instructions summary { cursor: pointer; font-weight: 600; }
+.instructions summary:focus-visible { outline: 2px solid var(--accent); outline-offset: 4px; }
+.instructions p { margin: 12px 0; }
 .panel { display: grid; gap: 16px; }
 .panel input { width: 100%; background: #080908; color: inherit; border: 1px solid #34372e; padding: 12px; }
 .panel a { text-decoration: underline; overflow-wrap: anywhere; }
@@ -17,9 +21,6 @@
 .iconButton:disabled { opacity: .5; }
 .handoff { margin: 20px 0; padding-bottom: 20px; border-bottom: 1px solid var(--line); color: var(--muted); }
 .handoff > p { margin: 0; }
-.connection { display: flex; gap: 14px; flex-wrap: wrap; margin-top: 12px !important; font-size: 11px !important; }
-.connection a, .connection button { color: var(--muted); text-decoration: underline; text-underline-offset: 3px; }
-.connection button { background: transparent; padding: 0; font-size: inherit; }
 .listHeading { display: flex; justify-content: space-between; align-items: center; color: var(--muted); font-size: 11px; }
 .tasks { list-style: none; padding: 0; margin: 4px 0 20px; }
 .tasks > li { padding: 18px 0; border-bottom: 1px solid var(--line); overflow-wrap: anywhere; }

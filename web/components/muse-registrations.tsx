@@ -1,9 +1,9 @@
 "use client";
 
-import { useEffect, useId, useRef, useState } from "react";
+import { useEffect, useId, useRef } from "react";
 import Link from "next/link";
-import { Check, Clipboard, ExternalLink, RefreshCw, X } from "lucide-react";
-import { MUSE_URL, museEventDate, museInstruction, museProviderUrl, museStatusLabel, type MuseRegistration } from "@/lib/muse";
+import { ExternalLink, RefreshCw, X } from "lucide-react";
+import { MUSE_URL, museEventDate, museProviderUrl, museStatusLabel, type MuseRegistration } from "@/lib/muse";
 import { formatCity } from "@/lib/presentation";
 import { MuseIcon } from "./muse-icon";
 import styles from "./muse.module.css";
@@ -25,9 +25,6 @@ export function MuseRegistrations({ items, total, loading, error, hasMore, selec
   onClose, onRefresh, onLoadMore, onSeen }: Props) {
   const dialog = useRef<HTMLDialogElement>(null);
   const titleId = useId();
-  const [copied, setCopied] = useState(false);
-  const [copyError, setCopyError] = useState<string | null>(null);
-  const [showInstruction, setShowInstruction] = useState(false);
   const didScroll = useRef(false);
   useEffect(() => {
     const element = dialog.current;
@@ -58,11 +55,6 @@ export function MuseRegistrations({ items, total, loading, error, hasMore, selec
     element.querySelectorAll("[data-registration]").forEach(item => observer.observe(item));
     return () => observer.disconnect();
   }, [items, onSeen]);
-  async function copyInstruction() {
-    setCopyError(null);
-    try { await navigator.clipboard.writeText(museInstruction()); setCopied(true); }
-    catch { setShowInstruction(true); setCopyError("Clipboard unavailable. Select and copy the instruction below."); }
-  }
   return <dialog ref={dialog} className={styles.registrations} aria-labelledby={titleId}
     onCancel={event => { event.preventDefault(); onClose(); }}
     onClick={event => { if (event.target === event.currentTarget) {
@@ -74,18 +66,11 @@ export function MuseRegistrations({ items, total, loading, error, hasMore, selec
       <button type="button" className={styles.iconButton} onClick={onClose} aria-label="Close registrations"><X aria-hidden="true" /></button>
     </header>
     <div className={styles.handoff}>
-      <p>Your queued events are saved. Copy the instruction into Muse to start or continue. Muse asks you for logins and missing answers.</p>
+      <p>Follow signup progress and requests for your input.</p>
       <div className={styles.actions}>
-        <button type="button" className="button" onClick={copyInstruction} aria-label="Copy Muse instruction">
-          {copied ? <Check aria-hidden="true" /> : <Clipboard aria-hidden="true" />}{copied ? "Copied" : "Copy instruction"}
-        </button>
         <a className="button button-primary" href={MUSE_URL} target="_blank" rel="noopener noreferrer"><MuseIcon />Open Muse</a>
+        <Link className="button" href="/settings/muse">Muse settings</Link>
       </div>
-      <p className={styles.connection}><Link href="/settings/muse">Muse connection settings</Link>
-        <button type="button" onClick={() => setShowInstruction(current => !current)} aria-expanded={showInstruction}>View instruction</button></p>
-      {showInstruction ? <textarea className={styles.instruction} aria-label="Muse signup instruction" readOnly value={museInstruction()} /> : null}
-      {copied ? <span role="status" className="sr-only">Muse instruction copied.</span> : null}
-      {copyError ? <p role="alert">{copyError}</p> : null}
     </div>
     <div className={styles.listHeading}><span>{total} {total === 1 ? "registration" : "registrations"}</span>
       <button type="button" className={styles.iconButton} onClick={onRefresh} disabled={loading} aria-label="Refresh registrations">

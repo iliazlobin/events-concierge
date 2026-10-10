@@ -5,7 +5,7 @@ import { useCallback, useEffect, useState } from "react";
 import { useSession } from "@/components/session-provider";
 import { readableError } from "@/lib/api";
 import {
-  MUSE_URL, createMuseConnection, getMuseConnection, revokeMuseConnection, type MuseConnection,
+  MUSE_URL, museInstruction, createMuseConnection, getMuseConnection, revokeMuseConnection, type MuseConnection,
 } from "@/lib/muse";
 import styles from "@/components/muse.module.css";
 
@@ -79,8 +79,29 @@ function EnabledMusePanel() {
         </div>
       </div> : null}
     </section>
+    <MuseInstructions />
     <section><h2>Registrations</h2><p>View queued events, registration results and requests for your input.</p>
       <Link className="button" href="/?registrations=1">Registrations</Link>
     </section>
   </section>;
+}
+
+function MuseInstructions() {
+  const [copied, setCopied] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  async function copyInstruction() {
+    setCopied(false); setError(null);
+    try { await navigator.clipboard.writeText(museInstruction()); setCopied(true); }
+    catch { setError("Clipboard unavailable. Select and copy the instruction below."); }
+  }
+  return <details className={styles.instructions}>
+    <summary>Muse instructions</summary>
+    <p>After connecting Muse, copy this instruction into a Muse chat to start your queued signups. Opening Muse alone does not start them.</p>
+    {error ? <p role="alert">{error}</p> : null}
+    <textarea className={styles.instruction} aria-label="Muse signup instruction" readOnly value={museInstruction()} />
+    <div className={styles.actions}>
+      <button type="button" className="button" aria-label="Copy Muse instruction" onClick={copyInstruction}>Copy instruction</button>
+    </div>
+    {copied ? <p role="status">Muse instruction copied.</p> : null}
+  </details>;
 }
