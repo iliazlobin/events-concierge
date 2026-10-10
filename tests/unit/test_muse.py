@@ -18,6 +18,7 @@ from events_concierge.domain.muse import (
     SignupBatch,
     SignupItem,
     SignupOutcome,
+    SignupRegistration,
     provider_url,
 )
 from events_concierge.ports.auth import AuthenticationFailedError
@@ -258,3 +259,43 @@ def test_registration_confirmation_and_waitlist_are_not_interchangeable():
         SignupOutcome(status="registered", confirmation_reference="provider-rsvp-123").status
         == "registered"
     )
+
+
+async def test_queue_replay_returns_saved_registration_without_catalog_revalidation():
+    service, repository, catalog = service_for()
+    batch = await service.prepare(uuid4(), uuid4(), [uuid4()])
+    registration = SignupRegistration(
+        **batch.items[0].model_dump(),
+        batch_id=batch.batch_id,
+        created_at=batch.created_at,
+        version=1,
+        unread=False,
+    )
+    repository.queue_registration.return_value = registration
+    catalog.get_browse_event.reset_mock()
+    tenant, request = uuid4(), uuid4()
+    event_id = registration.event.canonical_event_id
+    assert await service.queue(tenant, request, event_id) == registration
+    repository.queue_registration.assert_awaited_once_with(tenant, request, event_id)
+    catalog.get_browse_event.assert_not_awaited()
+
+
+async def test_queue_validates_new_event_and_saves_only_published_facts():
+    browse = published_event()
+    service, repository, _ = service_for(browse)
+    repository.queue_registration.side_effect = [MuseNotFoundError(), "queued-result"]
+    tenant, request, event_id = uuid4(), uuid4(), browse.canonical_event.canonical_event_id
+    assert await service.queue(tenant, request, event_id) == "queued-result"
+    args = repository.queue_registration.await_args.args
+    assert args[:3] == (tenant, request, event_id)
+    assert args[3].registration_url == browse.sources[0].registration_url
+    assert args[3].title == browse.canonical_event.title
+    assert "description" not in args[3].model_dump()
+
+
+async def test_queue_conflicting_request_is_rejected_without_new_selection():
+    service, repository, catalog = service_for()
+    repository.queue_registration.side_effect = MuseConflictError("different selection")
+    with pytest.raises(MuseConflictError):
+        await service.queue(uuid4(), uuid4(), uuid4())
+    catalog.get_browse_event.assert_not_awaited()

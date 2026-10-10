@@ -1,10 +1,10 @@
-"""Muse selection and credential UI in the production bundle; all writes are fixtures."""
+"""Muse queue, unread progress and credentials in the real bundle; writes are fixtures."""
 
 from __future__ import annotations
 
 import os
 import re
-from urllib.parse import urlsplit
+from urllib.parse import parse_qs, urlsplit
 
 import pytest
 from playwright.sync_api import Route, expect
@@ -29,7 +29,10 @@ class MuseApi(ReleaseApi):
         self.event_detail_calls = []
         self.connected = False
         self.batches = []
-        self.prepared = []
+        self.queued = []
+        self.registrations = []
+        self.acknowledged = []
+        self.queue_error = False
         self.writes = []
         self.events = [
             catalog_event()
@@ -105,28 +108,54 @@ class MuseApi(ReleaseApi):
             )
         elif path == "/v1/me/muse/connection":
             self.connection(route)
+        elif path == "/v1/me/muse/registrations":
+            self.queue(route)
+        elif path == "/v1/me/muse/registrations/seen":
+            self.seen(route)
         elif path == "/v1/me/muse/batches":
-            if method == "POST":
-                body = route.request.post_data_json
-                self.prepared.append(body)
-                batch = {
-                    "batch_id": BATCH_ID,
-                    "request_id": body["request_id"],
-                    "created_at": "2030-06-01T00:00:00Z",
-                    "items": [
-                        self.item(event)
-                        for event in self.events
-                        if event["canonical_event_id"] in body["event_ids"]
-                    ],
-                }
-                self.batches = [batch]
-                self.respond(route, batch, 201)
-            else:
-                self.respond(route, self.batches)
+            self.respond(route, self.batches)
         elif path == "/auth/identity/start":
             self.respond(route, {"state": "s" * 43})
         else:
             super().handle(route)
+
+    def queue(self, route):
+        if route.request.method == "POST":
+            body = route.request.post_data_json
+            self.queued.append(body)
+            if self.queue_error:
+                self.harness.allowed_console_error_fragments.append("503")
+                self.respond(route, {"detail": "Registration queue temporarily unavailable"}, 503)
+                return
+            item = next((task for task in self.registrations
+                         if task["event"]["canonical_event_id"] == body["event_id"]), None)
+            if item is None:
+                event = next(event for event in self.events
+                             if event["canonical_event_id"] == body["event_id"])
+                item = self.registration(event)
+                self.registrations.insert(0, item)
+            self.respond(route, item, 201)
+        else:
+            query = parse_qs(urlsplit(route.request.url).query)
+            cursor = query.get("cursor", [None])[0]
+            start = next((index + 1 for index, item in enumerate(self.registrations)
+                          if item["event"]["canonical_event_id"] == cursor), 0)
+            limit = int(query.get("limit", ["50"])[0])
+            items = self.registrations[start:start + limit]
+            self.respond(route, {"items": items, "total": len(self.registrations),
+                                 "unread_count": sum(item["unread"] for item in self.registrations),
+                                 "next_cursor": items[-1]["event"]["canonical_event_id"]
+                                 if items and start + limit < len(self.registrations) else None})
+
+    def seen(self, route):
+        body = route.request.post_data_json
+        self.acknowledged.extend(body["items"])
+        for observed in body["items"]:
+            for item in self.registrations:
+                if (item["event"]["canonical_event_id"] == observed["event_id"]
+                        and item["version"] <= observed["version"]):
+                    item["unread"] = False
+        route.fulfill(status=204)
 
     def connection(self, route):
         if route.request.method == "POST":
@@ -169,6 +198,13 @@ class MuseApi(ReleaseApi):
             "updated_at": "2030-06-01T00:00:00Z",
         }
 
+    @classmethod
+    def registration(cls, event, status="queued", version=1, unread=False):
+        return cls.item(event, status) | {
+            "batch_id": BATCH_ID, "created_at": "2030-06-01T00:00:00Z",
+            "version": version, "unread": unread,
+        }
+
 
 def install(page_factory, width=1440):
     harness = page_factory(width=width)
@@ -190,25 +226,22 @@ def test_disabled_muse_has_no_controls_restore_or_settings_requests(page_factory
     api.muse_enabled = muse_enabled
     event_id = api.events[0]["canonical_event_id"]
     harness.context.add_init_script(
-        f"sessionStorage.setItem('ec:muse:selection', JSON.stringify({{"
-        f"eventIds: ['{event_id}'], savedAt: Date.now() }}));"
+        f"sessionStorage.setItem('ec:muse:intent', JSON.stringify({{"
+        f"eventId: '{event_id}', savedAt: Date.now() }}));"
     )
     page = harness.page
-    page.goto(BASE + "/?view=events&when=all&city=")
+    page.goto(BASE + "/?view=events&when=all&city=&registrations=1")
     expect(page.get_by_role("heading", name="Friday Night Jazz", exact=True)).to_be_visible()
-    expect(page.get_by_role("button", name="Sign up with Muse", exact=True)).to_have_count(0)
-    expect(page.get_by_role("checkbox", name=re.compile("for Muse$"))).to_have_count(0)
-    expect(page.get_by_role("complementary", name="Selected Muse events")).to_have_count(0)
-    expect(page.get_by_role("dialog", name="Sign up with Muse", exact=True)).to_have_count(0)
+    expect(page.get_by_role("button", name=re.compile("Sign up with Muse for"))).to_have_count(0)
+    expect(page.get_by_role("checkbox", name=re.compile("Muse"))).to_have_count(0)
+    expect(page.get_by_role("button", name=re.compile("^Registrations"))).to_have_count(0)
+    expect(page.get_by_role("dialog", name="Registrations", exact=True)).to_have_count(0)
     page.get_by_role("button", name=re.compile(r"^Account menu")).click()
     expect(page.get_by_role("menuitem", name=re.compile("Muse signups"))).to_have_count(0)
-    assert page.evaluate("sessionStorage.getItem('ec:muse:selection')") is not None
+    assert page.evaluate("sessionStorage.getItem('ec:muse:intent')") is not None
     assert api.event_detail_calls == []
     page.goto(BASE + "/settings/muse")
     expect(page.get_by_text("Muse signups are not enabled for this release.", exact=True)).to_be_visible()
-    expect(page.get_by_role("navigation", name="Settings sections").get_by_role(
-        "link", name="Muse signups", exact=True,
-    )).to_have_count(0)
     expect(page.get_by_role("button", name="Create connection key", exact=True)).to_have_count(0)
     assert api.muse_calls == []
     assert api.writes == []
@@ -216,81 +249,165 @@ def test_disabled_muse_has_no_controls_restore_or_settings_requests(page_factory
 
 
 @pytest.mark.parametrize("width", [1440, 320])
-def test_select_two_events_review_and_prepare_without_automatic_dispatch(
-    page_factory, width, tmp_path
-):
+def test_one_icon_queues_each_event_and_progress_panel_retains_filters(page_factory, width, tmp_path):
     harness, api = install(page_factory, width)
     page = harness.page
     page.goto(BASE + "/?view=events&when=all&city=")
-    page.get_by_role("checkbox", name="Select Friday Night Jazz for Muse").check()
-    page.get_by_role("checkbox", name="Select Saturday Night Jazz for Muse").check()
-    tray = page.get_by_role("complementary", name="Selected Muse events")
-    expect(tray).to_contain_text("2 selected")
-    tray.get_by_role("button", name="Sign up with Muse", exact=True).click()
-    dialog = page.get_by_role("dialog", name="Sign up with Muse", exact=True)
+    expect(page.get_by_role("heading", name="Friday Night Jazz", exact=True)).to_be_visible()
+    expect(page.get_by_role("checkbox", name=re.compile("Muse"))).to_have_count(0)
+    expect(page.locator(".event-card__muse")).to_have_count(0)
+    first = page.get_by_role("button", name="Sign up with Muse for Friday Night Jazz", exact=True)
+    expect(first).to_have_attribute("title", "Sign up with Muse")
+    first.click()
+    expect(page.get_by_role("button", name="View registration for Friday Night Jazz")).to_be_visible()
+    page.get_by_role("button", name="Sign up with Muse for Saturday Night Jazz").click()
+    expect(page.get_by_role("button", name="View registration for Saturday Night Jazz")).to_be_visible()
+    assert [item["event_id"] for item in api.queued] == [event["canonical_event_id"] for event in api.events]
+    assert all(set(item) == {"request_id", "event_id"} for item in api.queued)
+    assert all(write[2]["x-fixture-csrf"] == "bound-fixture" for write in api.writes)
+    page.get_by_role("button", name="View registration for Friday Night Jazz").click()
+    dialog = page.get_by_role("dialog", name="Registrations", exact=True)
     expect(dialog).to_contain_text("Friday Night Jazz")
     expect(dialog).to_contain_text("Saturday Night Jazz")
-    dialog.get_by_role("button", name="Prepare signup batch").click()
-    expect(dialog.get_by_role("textbox", name="Muse signup instruction")).to_contain_text(BATCH_ID)
-    assert api.prepared[0]["event_ids"] == [event["canonical_event_id"] for event in api.events]
-    assert api.writes[0][2]["x-fixture-csrf"] == "bound-fixture"
-    expect(dialog.get_by_role("link", name="Open Muse", exact=True)).to_have_attribute(
-        "href", "https://muse.ai/"
-    )
-    dialog.get_by_role("button", name="Copy instruction").click()
-    expect(dialog.get_by_role("button", name="Instruction copied")).to_be_visible()
-    assert FIXTURE_KEY not in page.evaluate("window.__fixtureCopied")
+    expect(dialog).to_contain_text("Muse")
+    assert "view=events" in page.url and "when=all" in page.url and "registrations=1" in page.url
+    dialog.get_by_role("button", name="Copy Muse instruction").click()
+    dialog.get_by_role("button", name="View instruction").click()
+    expect(dialog.get_by_role("textbox", name="Muse signup instruction")).to_be_visible()
+    instruction = page.evaluate("window.__fixtureCopied")
+    assert "queued" in instruction.lower() and FIXTURE_KEY not in instruction
+    expect(dialog.get_by_role("link", name="Open Muse", exact=True)).to_have_attribute("href", "https://muse.ai/")
     assert page.evaluate("document.documentElement.scrollWidth <= innerWidth")
-    page.screenshot(path=str(tmp_path / f"muse-batch-{width}.png"))
+    page.screenshot(path=str(tmp_path / f"muse-queue-{width}.png"))
     page.keyboard.press("Escape")
     expect(dialog).not_to_be_visible()
-    expect(tray.get_by_role("button", name="Sign up with Muse", exact=True)).to_be_focused()
+    expect(page.get_by_role("button", name="View registration for Friday Night Jazz")).to_be_focused()
+    assert "registrations=1" not in page.url
+    assert len(api.queued) == 2
     assert api.unexpected == []
 
 
-def test_guest_selection_survives_explicit_sign_in_without_anonymous_writes(page_factory):
+def test_unread_badge_and_results_acknowledge_observed_versions_only(page_factory):
+    harness, api = install(page_factory)
+    api.registrations = [api.registration(api.events[0], "needs_input", 2, True),
+                         api.registration(api.events[1], "uncertain", 3, True)]
+    api.registrations[0]["outcome"] = {"status": "needs_input", "note": "Login needed in Muse",
+                                     "confirmation_reference": None, "evidence_url": None}
+    page = harness.page
+    page.goto(BASE + "/?view=events&when=all&city=")
+    button = page.get_by_role("button", name=re.compile("^Registrations"))
+    expect(button).to_contain_text("2")
+    assert api.acknowledged == []
+    button.click()
+    dialog = page.get_by_role("dialog", name="Registrations", exact=True)
+    expect(dialog).to_contain_text("Needs your input")
+    expect(dialog).to_contain_text("Needs verification")
+    expect(dialog).to_contain_text("Login needed in Muse")
+    expect(dialog.locator('[aria-label="Unread update"]')).to_have_count(0)
+    expect(button).not_to_contain_text("2")
+    assert {item["version"] for item in api.acknowledged} == {2, 3}
+    assert not any(item["unread"] for item in api.registrations)
+    # A subsequent connector report is an update, even if a prior version was viewed.
+    api.registrations[0].update(status="registered", version=3, unread=True,
+                                outcome={"status": "registered", "note": "Confirmed by provider",
+                                         "confirmation_reference": "fixture-confirmation",
+                                         "evidence_url": "https://lu.ma/friday-jazz"})
+    dialog.get_by_role("button", name="Refresh registrations").click()
+    expect(dialog).to_contain_text("Registered · reported by Muse")
+    expect(dialog).to_contain_text("fixture-confirmation")
+    expect(dialog.get_by_role("link", name=re.compile("evidence", re.I))).to_have_attribute("href", "https://lu.ma/friday-jazz")
+    expect(dialog.locator('[aria-label="Unread update"]')).to_have_count(0)
+    assert api.acknowledged[-1] == {"event_id": api.events[0]["canonical_event_id"], "version": 3}
+    assert api.unexpected == []
+
+
+def test_queue_failure_is_recoverable_without_duplicate_intent(page_factory):
+    harness, api = install(page_factory)
+    api.queue_error = True
+    page = harness.page
+    page.goto(BASE + "/?view=events&when=all&city=")
+    button = page.get_by_role("button", name="Sign up with Muse for Friday Night Jazz")
+    button.click()
+    expect(page.get_by_role("alert").filter(has_text="Registration queue")).to_contain_text("unavailable")
+    expect(button).to_be_enabled()
+    api.queue_error = False
+    button.click()
+    expect(page.get_by_role("button", name="View registration for Friday Night Jazz")).to_be_visible()
+    assert len(api.queued) == 2 and api.queued[0] == api.queued[1]
+    assert len(api.registrations) == 1
+    assert api.unexpected == []
+
+
+def test_guest_click_resumes_one_event_after_sign_in_without_anonymous_writes(page_factory):
     harness, api = install(page_factory)
     api.signed_in = False
     page = harness.page
     return_path = "/?view=events&when=all&city="
     page.goto(BASE + return_path)
-    page.get_by_role("button", name="Sign up with Muse", exact=True).first.click()
-    dialog = page.get_by_role("dialog", name="Sign up with Muse")
-    expect(dialog.get_by_role("link", name="Sign in to use Muse")).to_be_visible()
-    assert api.writes == []
-    dialog.get_by_role("link", name="Sign in to use Muse").click()
+    page.get_by_role("button", name="Sign up with Muse for Friday Night Jazz").click()
     page.wait_for_url(re.compile(r".*/sign-in\?return_to="))
-    stored = page.evaluate("JSON.parse(sessionStorage.getItem('ec:muse:selection'))")
-    assert stored["eventIds"] == [api.events[0]["canonical_event_id"]]
-    assert "title" not in stored and "token" not in stored
-    # The identity authority is exercised in its own suite; this test resumes the verified return.
+    stored = page.evaluate("JSON.parse(sessionStorage.getItem('ec:muse:intent'))")
+    assert stored["eventId"] == api.events[0]["canonical_event_id"]
+    assert set(stored) == {"eventId", "savedAt"}
+    assert api.queued == [] and not any(path.startswith("/v1/me/muse/") for _, path, _ in api.writes)
+    # Identity provider behavior has its own suite; resume only after a verified session.
     api.signed_in = True
     page.goto(BASE + return_path)
-    dialog = page.get_by_role("dialog", name="Sign up with Muse")
-    expect(dialog).to_contain_text("Friday Night Jazz")
-    expect(dialog.get_by_role("button", name="Prepare signup batch")).to_be_visible()
-    assert page.evaluate("sessionStorage.getItem('ec:muse:selection')") is None
+    expect(page.get_by_role("button", name="View registration for Friday Night Jazz")).to_be_visible()
+    assert len(api.queued) == 1
+    assert page.evaluate("sessionStorage.getItem('ec:muse:intent')") is None
+    page.reload()
+    expect(page.get_by_role("button", name="View registration for Friday Night Jazz")).to_be_visible()
+    assert len(api.queued) == 1
+    assert api.unexpected == []
+
+
+def test_older_registrations_remain_accessible_beyond_first_page(page_factory):
+    harness, api = install(page_factory)
+    api.registrations = [api.registration(api.events[0] | {
+        "canonical_event_id": f"{index:08x}-1111-4111-8111-111111111111", "title": f"Queued event {index}"
+    }) for index in reversed(range(55))]
+    page = harness.page
+    page.goto(BASE + "/?view=events&when=all&city=&registrations=1")
+    dialog = page.get_by_role("dialog", name="Registrations", exact=True)
+    expect(dialog).to_contain_text("Queued event 54")
+    expect(dialog).not_to_contain_text("Queued event 0")
+    dialog.get_by_role("button", name="Load more registrations").click()
+    expect(dialog).to_contain_text("Queued event 0")
+    expect(dialog.get_by_role("button", name="Load more registrations")).to_have_count(0)
+    dialog.locator("li").filter(has=page.get_by_role("link", name="Queued event 54", exact=True)).scroll_into_view_if_needed()
+    older = api.registrations[-1]
+    older.update(status="needs_input", version=2, unread=True,
+                 outcome={"status": "needs_input", "note": "Answer needed for older event",
+                          "confirmation_reference": None, "evidence_url": None})
+    dialog.get_by_role("button", name="Refresh registrations").click()
+    expect(dialog).to_contain_text("Answer needed for older event")
+    assert older["unread"]  # Loading an offscreen result does not mark it as viewed.
+    old_card = dialog.locator("li").filter(has=page.get_by_role("link", name="Queued event 0", exact=True))
+    old_card.scroll_into_view_if_needed()
+    expect(old_card.locator('[aria-label="Unread update"]')).to_have_count(0)
+    expect(page.get_by_role("button", name=re.compile("^Registrations"))).not_to_contain_text("1")
+    assert not older["unread"]
+    older.update(status="registered", version=3, unread=True,
+                 outcome={"status": "registered", "note": "Older event confirmed",
+                          "confirmation_reference": "older-confirmation",
+                          "evidence_url": "https://lu.ma/friday-jazz"})
+    dialog.get_by_role("button", name="Refresh registrations").click()
+    expect(old_card).to_contain_text("older-confirmation")
+    old_card.scroll_into_view_if_needed()
+    expect(old_card.locator('[aria-label="Unread update"]')).to_have_count(0)
+    expect(page.get_by_role("button", name=re.compile("^Registrations"))).not_to_contain_text("1")
+    assert api.acknowledged[-1] == {"event_id": older["event"]["canonical_event_id"], "version": 3}
     assert api.unexpected == []
 
 
 @pytest.mark.parametrize("width", [1440, 320])
-def test_settings_secret_is_one_time_and_results_are_not_promoted(page_factory, width, tmp_path):
+def test_settings_secret_is_one_time_with_progress_in_registrations(page_factory, width):
     harness, api = install(page_factory, width)
-    api.events[1]["title"] = api.events[0]["title"]
-    api.batches = [
-        {
-            "batch_id": BATCH_ID,
-            "request_id": BATCH_ID,
-            "created_at": "2030-06-01T00:00:00Z",
-            "items": [api.item(api.events[0], "waitlisted"), api.item(api.events[1], "uncertain")],
-        }
-    ]
     page = harness.page
     page.goto(BASE + "/settings/muse")
     expect(page.get_by_role("heading", name="Muse signups", exact=True)).to_be_visible()
-    expect(page.get_by_role("textbox", name="Muse API description")).to_have_value(
-        BASE + "/v1/muse/openapi.json"
-    )
+    expect(page.get_by_role("textbox", name="Muse API description")).to_have_value(BASE + "/v1/muse/openapi.json")
     page.get_by_role("button", name="Create connection key").click()
     secret = page.get_by_label("Muse connection key", exact=True)
     expect(secret).to_have_attribute("type", "password")
@@ -298,27 +415,14 @@ def test_settings_secret_is_one_time_and_results_are_not_promoted(page_factory, 
     assert FIXTURE_KEY not in page.evaluate("JSON.stringify([localStorage, sessionStorage])")
     page.get_by_role("button", name="Copy connection key", exact=True).click()
     expect(page.get_by_role("status")).to_contain_text("secure credential setup")
-    expect(page.get_by_text("Waitlisted", exact=True)).to_be_visible()
-    expect(page.get_by_text("Needs verification", exact=True)).to_be_visible()
-    results = page.locator("article li")
-    expect(results.nth(0)).to_contain_text("Jun 14, 2030")
-    expect(results.nth(0)).to_contain_text("PDT")
-    expect(results.nth(0)).to_contain_text("Waitlisted")
-    expect(results.nth(1)).to_contain_text("Jun 15, 2030")
-    expect(results.nth(1)).to_contain_text("PDT")
-    expect(results.nth(1)).to_contain_text("Needs verification")
-    expect(page.get_by_text("Registered · reported by Muse", exact=True)).not_to_be_visible()
-    page.locator("article").screenshot(path=str(tmp_path / f"muse-results-{width}.png"))
-    page.screenshot(path=str(tmp_path / f"muse-settings-{width}.png"))
+    expect(page.get_by_role("link", name="Registrations", exact=True)).to_be_visible()
     page.get_by_role("button", name="Hide key", exact=True).click()
     expect(secret).not_to_be_visible()
     page.get_by_role("button", name="Disconnect Muse").click()
     expect(page.get_by_role("status")).to_contain_text("access revoked")
     page.reload()
     expect(page.get_by_text("No active connection key.", exact=True)).to_be_visible()
-    expect(secret).not_to_be_visible()
-    assert [item[:2] for item in api.writes] == [
-        ("POST", "/v1/me/muse/connection"),
-        ("DELETE", "/v1/me/muse/connection"),
-    ]
+    assert [item[:2] for item in api.writes] == [("POST", "/v1/me/muse/connection"),
+                                                ("DELETE", "/v1/me/muse/connection")]
+    assert page.evaluate("document.documentElement.scrollWidth <= innerWidth")
     assert api.unexpected == []

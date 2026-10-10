@@ -8,6 +8,7 @@ import {
   LoaderCircle,
   Map as MapIcon,
   MessageCircle,
+  X,
 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
@@ -52,9 +53,11 @@ import { clearEntityGraphCache } from "@/lib/entity-graph-cache";
 import { clipCalendarSummary } from "@/lib/calendar";
 import { streamChatTurn } from "@/lib/agent-stream";
 import type { SelectionEntry } from "@/lib/agent-stream";
-import { MuseSignup } from "@/components/muse-signup";
+import { MuseRegistrations } from "@/components/muse-registrations";
+import { MuseIcon } from "@/components/muse-icon";
+import { useMuseRegistrations } from "@/components/use-muse-registrations";
 import museStyles from "@/components/muse.module.css";
-import { MAX_MUSE_EVENTS, getMuseCatalogEvent, museEligibility, saveMuseSelection, takeMuseSelection } from "@/lib/muse";
+import { museEligibility, saveMuseIntent, takeMuseIntent } from "@/lib/muse";
 import { catalogFilterKey, initialCatalogFilters } from "@/lib/catalog-filters";
 import { addDays, localDateKey, normalizeDateRangeFilters, parseLocalDate } from "@/lib/date";
 import {
@@ -275,51 +278,39 @@ export function ConciergeApp() {
   const [dayLoadingMore, setDayLoadingMore] = useState(false);
   const [dayPreviews, setDayPreviews] = useState<Map<string, EventItem[]>>(new Map());
   const [expandedId, setExpandedId] = useState<string | null>(null);
-  const [museEvents, setMuseEvents] = useState<Map<string, EventItem>>(() => new Map());
   const [museOpen, setMuseOpen] = useState(false);
-  const [museError, setMuseError] = useState<string | null>(null);
-  function toggleMuse(event: EventItem) {
+  const [museSelectedId, setMuseSelectedId] = useState<string | null>(null);
+  const [museIntentError, setMuseIntentError] = useState<string | null>(null);
+  const museQueue = useMuseRegistrations(museEnabled,
+    me && !signingOut ? `${tenantId ?? "session"}:${me.notify_email}` : null, tenantId, museOpen);
+  const museStatuses = useMemo(() => new Map(museQueue.items.map(item => [item.event.canonical_event_id, item.status])), [museQueue.items]);
+  const showMuseRegistrations = useCallback((eventId: string | null = null) => {
+    setMuseSelectedId(eventId); setMuseOpen(true);
+    const url = new URL(window.location.href);
+    url.searchParams.set("registrations", "1");
+    window.history.replaceState(window.history.state, "", `${url.pathname}${url.search}${url.hash}`);
+  }, []);
+  const closeMuseRegistrations = useCallback(() => {
+    setMuseOpen(false); setMuseSelectedId(null);
+    const url = new URL(window.location.href);
+    url.searchParams.delete("registrations");
+    window.history.replaceState(window.history.state, "", `${url.pathname}${url.search}${url.hash}`);
+  }, []);
+  function queueMuse(event: EventItem) {
     if (!museEnabled) return;
-    setMuseError(null);
-    if (!museEvents.has(event.canonical_event_id) && (museEvents.size >= MAX_MUSE_EVENTS || museEligibility(event))) {
-      setMuseError("Select up to five upcoming free Luma or Meetup events.");
+    setMuseIntentError(null);
+    if (museStatuses.has(event.canonical_event_id)) {
+      showMuseRegistrations(event.canonical_event_id); return;
+    }
+    if (museEligibility(event)) { setMuseIntentError(museEligibility(event)); return; }
+    if (!me) {
+      try { saveMuseIntent(window.sessionStorage, event.canonical_event_id); }
+      catch { setMuseIntentError("Sign in, then use the Muse icon again. This browser cannot keep your signup request."); return; }
+      window.location.assign(signInFailurePath(401, window.location.pathname + window.location.search));
       return;
     }
-    setMuseEvents(current => {
-      const next = new Map(current);
-      if (next.has(event.canonical_event_id)) next.delete(event.canonical_event_id);
-      else next.set(event.canonical_event_id, event);
-      return next;
-    });
+    void museQueue.queue(event.canonical_event_id);
   }
-  function openMuse(event: EventItem) {
-    if (!museEnabled) return;
-    if (!museEvents.has(event.canonical_event_id)) {
-      if (museEvents.size >= MAX_MUSE_EVENTS || museEligibility(event)) {
-        setMuseError("Select up to five upcoming free Luma or Meetup events.");
-        return;
-      }
-      setMuseEvents(current => new Map(current).set(event.canonical_event_id, event));
-    }
-    setMuseError(null);
-    setMuseOpen(true);
-  }
-  useEffect(() => {
-    if (!museEnabled || sessionState !== "ready" || !me) return;
-    let ids: string[] = [];
-    try { ids = takeMuseSelection(window.sessionStorage); } catch { return; }
-    if (!ids.length) return;
-    let active = true;
-    void Promise.allSettled(ids.map(id => getMuseCatalogEvent(id, tenantId))).then(results => {
-      if (!active) return;
-      const restored = results.flatMap(result => result.status === "fulfilled" && !museEligibility(result.value)
-        ? [result.value] : []);
-      setMuseEvents(new Map(restored.map(event => [event.canonical_event_id, event])));
-      if (restored.length) setMuseOpen(true);
-      if (restored.length !== ids.length) setMuseError("Some selected events are no longer eligible for Muse.");
-    });
-    return () => { active = false; };
-  }, [museEnabled, sessionState, me, tenantId]);
   const [selectedEntityId, setSelectedEntityId] = useState<string | null>(null);
   const [turns, setTurns] = useState<ChatTurn[]>([]);
   // One id per browser session keeps the server-side transcript and refs together.
@@ -352,6 +343,27 @@ export function ConciergeApp() {
   const [onboardingBusy, setOnboardingBusy] = useState(false);
   const [onboardingError, setOnboardingError] = useState<string | null>(null);
   const [historyReady, setHistoryReady] = useState(false);
+  useEffect(() => {
+    if (!museEnabled || sessionState !== "ready" || !historyReady || !me) return;
+    if (new URLSearchParams(window.location.search).get("registrations") === "1") setMuseOpen(true);
+    const timer = window.setTimeout(() => {
+      let id: string | null = null;
+      try { id = takeMuseIntent(window.sessionStorage); } catch { return; }
+      if (id) void museQueue.queue(id);
+    }, 0);
+    return () => window.clearTimeout(timer);
+  }, [historyReady, me, museEnabled, museQueue.queue, sessionState]);
+  useEffect(() => {
+    if (!museEnabled) return;
+    const restore = () => setMuseOpen(Boolean(me) && new URLSearchParams(window.location.search).get("registrations") === "1");
+    window.addEventListener("popstate", restore);
+    return () => window.removeEventListener("popstate", restore);
+  }, [me, museEnabled]);
+  useEffect(() => {
+    if (!museQueue.notice) return;
+    const timer = window.setTimeout(museQueue.clearNotice, 8000);
+    return () => window.clearTimeout(timer);
+  }, [museQueue.notice, museQueue.clearNotice]);
   const catalogGeneration = useRef(0);
   const catalogRequestTime = useRef(new Date());
   const summaryGeneration = useRef(0);
@@ -1340,14 +1352,22 @@ export function ConciergeApp() {
           ))}
         </nav>
 
-        <AccountMenu
-          me={me}
-          config={config}
-          tenantId={tenantId}
-          returnTo={typeof window === "undefined" ? "/" : window.location.pathname + window.location.search}
-          signingOut={signingOut}
-          onSignOut={handleSignOut}
-        />
+        <div className={museStyles.headerActions}>
+          {museEnabled && me ? <button type="button" className={museStyles.trigger}
+            aria-label="Registrations" aria-expanded={museOpen} aria-haspopup="dialog"
+            aria-describedby={museQueue.unread > 0 ? "muse-registration-unread" : undefined}
+            onClick={() => showMuseRegistrations()}><MuseIcon /><span>Registrations</span>
+            {museQueue.unread > 0 ? <span id="muse-registration-unread" className={museStyles.badge} aria-label={`${museQueue.unread} unread registration updates`}>{museQueue.unread}</span> : null}
+          </button> : null}
+          <AccountMenu
+            me={me}
+            config={config}
+            tenantId={tenantId}
+            returnTo={typeof window === "undefined" ? "/" : window.location.pathname + window.location.search}
+            signingOut={signingOut}
+            onSignOut={handleSignOut}
+          />
+        </div>
       </header>
 
       {signOutError ? (
@@ -1398,9 +1418,9 @@ export function ConciergeApp() {
         ) : null}
         {view === "events" ? (
           <EventsView
-            museSelectedIds={new Set(museEvents.keys())}
-            onMuseToggle={museEnabled ? toggleMuse : undefined}
-            onMuseSignup={museEnabled ? openMuse : undefined}
+            museStatuses={museStatuses}
+            musePendingIds={museQueue.pending}
+            onMuseSignup={museEnabled ? queueMuse : undefined}
             broadDiscovery={!filters.query.trim() && !filters.topics.length && !filters.sourceKeys.length}
             events={events}
             sort={filters.sort}
@@ -1497,20 +1517,19 @@ export function ConciergeApp() {
         ) : null}
       </main>
 
-      {museEnabled && museError ? <p role="alert" className="workspace-error">{museError}</p> : null}
-      {museEnabled && museEvents.size ? <aside className={museStyles.tray} aria-label="Selected Muse events">
-        <strong>{museEvents.size} selected</strong>
-        <div className={museStyles.actions}>
-          <button type="button" className="button" onClick={() => setMuseEvents(new Map())}>Clear selection</button>
-          <button type="button" className="button button-primary" onClick={() => setMuseOpen(true)}>Sign up with Muse</button>
-        </div>
-      </aside> : null}
-      {museEnabled && museOpen ? <MuseSignup events={[...museEvents.values()]} tenantId={tenantId}
-        signedIn={Boolean(me)} signInUrl={signInFailurePath(401, typeof window === "undefined" ? "/" : window.location.pathname + window.location.search)}
-        onSignIn={() => { try { saveMuseSelection(window.sessionStorage, [...museEvents.keys()]); } catch { setMuseError("This browser could not preserve your selection. Select the events again after signing in."); } }}
-        onClose={() => setMuseOpen(false)} onRemove={id => setMuseEvents(current => {
-          const next = new Map(current); next.delete(id); return next;
-        })} /> : null}
+      {museEnabled && (museQueue.notice || ((!museOpen) && (museQueue.error || museIntentError))) ?
+        <aside className={museStyles.toast} aria-label="Registration update">
+          <p role={museQueue.error || museIntentError ? "alert" : "status"} aria-live={museQueue.error || museIntentError ? "assertive" : "polite"}>
+            {(!museOpen && (museQueue.error || museIntentError)) || museQueue.notice}
+          </p>
+          {me ? <button type="button" onClick={() => showMuseRegistrations()}>View registrations</button> : null}
+          <button type="button" className={museStyles.iconButton} aria-label="Dismiss registration update"
+            onClick={() => { museQueue.clearNotice(); setMuseIntentError(null); }}><X aria-hidden="true" /></button>
+        </aside> : null}
+      {museEnabled && museOpen && me ? <MuseRegistrations items={museQueue.items} total={museQueue.total}
+        selectedId={museSelectedId} loading={museQueue.loading} error={museQueue.error}
+        hasMore={Boolean(museQueue.cursor)} onClose={closeMuseRegistrations}
+        onRefresh={museQueue.refresh} onLoadMore={museQueue.loadMore} onSeen={museQueue.markSeen} /> : null}
 
       <nav className="mobile-nav" aria-label="Main navigation">
         {navItems.map(({ value, label, icon: Icon }) => (

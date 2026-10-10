@@ -1,6 +1,8 @@
 """Real RLS, credential expiry, attempt races and erasure on a disposable database."""
 
 import asyncio
+import os
+import sys
 from datetime import UTC, datetime, timedelta
 from uuid import uuid4
 
@@ -15,7 +17,13 @@ from events_concierge.adapters.postgres.tenant_repos import PostgresTenantReposi
 from events_concierge.application.muse import MuseSignupService
 from events_concierge.domain.account_erasure import AccountErasureStage
 from events_concierge.domain.credentials import Tenant
-from events_concierge.domain.muse import MuseConflictError, SignupEvent, SignupOutcome
+from events_concierge.domain.muse import (
+    MuseConflictError,
+    MuseNotFoundError,
+    SeenRegistration,
+    SignupEvent,
+    SignupOutcome,
+)
 from events_concierge.infra.db import system_session_scope, tenant_session_scope
 from events_concierge.ports.auth import AuthenticationFailedError
 
@@ -169,7 +177,7 @@ async def test_account_erasure_fences_auth_and_cascades_muse_state(db):
     tenant, survivor = await account(), await account()
     repository, event = PostgresMuseRepository(), selected_event()
     await repository.connect(tenant, "f" * 64, datetime.now(UTC) + timedelta(days=1))
-    await repository.create(tenant, uuid4(), [event])
+    await repository.queue_registration(tenant, uuid4(), event.canonical_event_id, event)
     survivor_batch = await repository.create(survivor, uuid4(), [selected_event()])
     erasure = PostgresAccountErasureRepository()
     request_id = uuid4()
@@ -178,6 +186,10 @@ async def test_account_erasure_fences_auth_and_cascades_muse_state(db):
         await repository.authenticate(tenant, "f" * 64)
     with pytest.raises(AuthenticationFailedError):
         await repository.create(tenant, uuid4(), [selected_event()])
+    with pytest.raises(AuthenticationFailedError):
+        await repository.registrations(tenant)
+    with pytest.raises(AuthenticationFailedError):
+        await repository.queue_registration(tenant, uuid4(), event.canonical_event_id)
     # Raw app-role DML is fenced too, even if a future adapter omits its preflight.
     with pytest.raises(DBAPIError, match="fenced for erasure"):
         async with tenant_session_scope(tenant) as session:
@@ -193,6 +205,200 @@ async def test_account_erasure_fences_auth_and_cascades_muse_state(db):
         await erasure.complete_stage(tenant, request_id, stage, count)
     await erasure.finalize(tenant, request_id)
     async with tenant_session_scope(tenant) as session:
-        for table in ("muse_connections", "muse_signup_batches", "muse_signup_items"):
+        for table in (
+            "muse_connections",
+            "muse_signup_batches",
+            "muse_signup_items",
+            "muse_signup_requests",
+        ):
             assert (await session.execute(text(f"SELECT count(*) FROM {table}"))).scalar_one() == 0
     assert await repository.batch(survivor, survivor_batch.batch_id) == survivor_batch
+
+
+async def test_queue_duplicate_clicks_requests_and_concurrent_accounts_are_idempotent(db):
+    tenant, other = await account(), await account()
+    repository, event = PostgresMuseRepository(), selected_event()
+    request = uuid4()
+    results = await asyncio.gather(
+        *[
+            repository.queue_registration(tenant, candidate, event.canonical_event_id, event)
+            for candidate in (request, request, uuid4(), uuid4())
+        ]
+    )
+    assert all(result == results[0] for result in results)
+    assert results[0].version == 1 and not results[0].unread
+    assert len(await repository.batches(tenant)) == 1
+    assert (await repository.registrations(tenant)).total == 1
+    alias = uuid4()
+    assert (
+        await repository.queue_registration(tenant, alias, event.canonical_event_id) == results[0]
+    )
+    for reused in (request, alias):
+        different = selected_event()
+        with pytest.raises(MuseConflictError, match="different selection"):
+            await repository.queue_registration(
+                tenant, reused, different.canonical_event_id, different
+            )
+        with pytest.raises(MuseConflictError):
+            await repository.create(tenant, reused, [different])
+    other_registration = await repository.queue_registration(
+        other, request, event.canonical_event_id, event
+    )
+    assert other_registration.batch_id != results[0].batch_id
+    async with tenant_session_scope(other) as session:
+        assert (
+            await session.execute(text("SELECT count(*) FROM muse_signup_requests"))
+        ).scalar_one() == 1
+    with pytest.raises(DBAPIError):
+        async with tenant_session_scope(other) as session:
+            await session.execute(
+                text("""
+                INSERT INTO muse_signup_requests (tenant_id, request_id, canonical_event_id)
+                VALUES (:tenant, :request, :event)
+            """),
+                {"tenant": tenant, "request": uuid4(), "event": event.canonical_event_id},
+            )
+
+
+async def test_progress_versions_preserve_new_updates_during_acknowledgement_races(db):
+    tenant = await account()
+    repository, event, attempt = PostgresMuseRepository(), selected_event(), uuid4()
+    queued = await repository.queue_registration(tenant, uuid4(), event.canonical_event_id, event)
+    await repository.claim(tenant, queued.batch_id, event.canonical_event_id, attempt)
+    claimed = (await repository.registrations(tenant)).items[0]
+    assert claimed.version == 2 and claimed.unread
+    await repository.claim(tenant, queued.batch_id, event.canonical_event_id, attempt)
+    assert (await repository.registrations(tenant)).items[0] == claimed
+    outcome = SignupOutcome(status="needs_input", note="Sign in to the provider")
+    await asyncio.gather(
+        repository.report(tenant, queued.batch_id, event.canonical_event_id, attempt, outcome),
+        repository.see_registrations(
+            tenant, [SeenRegistration(event_id=event.canonical_event_id, version=2)]
+        ),
+    )
+    updated = (await repository.registrations(tenant)).items[0]
+    assert updated.status == "needs_input" and updated.version == 3 and updated.unread
+    await repository.report(tenant, queued.batch_id, event.canonical_event_id, attempt, outcome)
+    assert (await repository.registrations(tenant)).items[0] == updated
+    await repository.see_registrations(
+        tenant, [SeenRegistration(event_id=event.canonical_event_id, version=3)]
+    )
+    await repository.see_registrations(
+        tenant, [SeenRegistration(event_id=event.canonical_event_id, version=2)]
+    )
+    seen = await repository.registrations(tenant)
+    assert not seen.items[0].unread and seen.unread_count == 0 and seen.items[0].version == 3
+
+
+async def test_seen_validation_is_atomic_and_never_acknowledges_foreign_or_future_state(db):
+    tenant, other = await account(), await account()
+    repository, first, second = PostgresMuseRepository(), selected_event(), selected_event()
+    queued = await repository.queue_registration(tenant, uuid4(), first.canonical_event_id, first)
+    await repository.claim(tenant, queued.batch_id, first.canonical_event_id, uuid4())
+    await repository.queue_registration(other, uuid4(), second.canonical_event_id, second)
+    valid = SeenRegistration(event_id=first.canonical_event_id, version=2)
+    for invalid, error in (
+        (SeenRegistration(event_id=second.canonical_event_id, version=1), MuseNotFoundError),
+        (SeenRegistration(event_id=first.canonical_event_id, version=3), ValueError),
+    ):
+        with pytest.raises(error):
+            await repository.see_registrations(
+                tenant, [valid, invalid] if error is MuseNotFoundError else [invalid]
+            )
+        assert (await repository.registrations(tenant)).unread_count == 1
+    with pytest.raises(ValueError, match="distinct"):
+        await repository.see_registrations(tenant, [valid, valid])
+    assert (await repository.registrations(other)).unread_count == 0
+
+
+async def test_queue_and_connector_pages_cover_more_than_fifty_tasks_and_reject_foreign_cursors(db):
+    tenant, other = await account(), await account()
+    repository = PostgresMuseRepository()
+    events = [selected_event() for _ in range(55)]
+    for event in events:
+        await repository.queue_registration(tenant, uuid4(), event.canonical_event_id, event)
+    page = await repository.registrations(tenant)
+    assert len(page.items) == 50 and page.total == 55 and page.next_cursor is not None
+    remainder = await repository.registrations(tenant, cursor=page.next_cursor)
+    assert len(remainder.items) == 5 and remainder.total == 55 and remainder.next_cursor is None
+    ids = [item.event.canonical_event_id for item in page.items + remainder.items]
+    assert len(set(ids)) == 55 and set(ids) == {event.canonical_event_id for event in events}
+    batches = await repository.batches(tenant)
+    more_batches = await repository.batches(tenant, cursor=batches[-1].batch_id)
+    assert len(batches) == 50 and len(more_batches) == 5
+    assert len({batch.batch_id for batch in batches + more_batches}) == 55
+    other_event = selected_event()
+    foreign = await repository.queue_registration(
+        other, uuid4(), other_event.canonical_event_id, other_event
+    )
+    with pytest.raises(MuseNotFoundError):
+        await repository.registrations(tenant, cursor=foreign.event.canonical_event_id)
+    with pytest.raises(MuseNotFoundError):
+        await repository.batches(tenant, cursor=foreign.batch_id)
+    with pytest.raises(MuseNotFoundError):
+        await repository.registrations(tenant, cursor=uuid4())
+    assert (await repository.registrations(other)).total == 1
+
+
+async def test_legacy_batches_appear_in_queue_and_keep_connector_attempt_ownership(db):
+    tenant = await account()
+    repository, first, second = PostgresMuseRepository(), selected_event(), selected_event()
+    original_request = uuid4()
+    batch = await repository.create(tenant, original_request, [first, second])
+    page = await repository.registrations(tenant)
+    assert page.total == 2 and all(item.batch_id == batch.batch_id for item in page.items)
+    assert all(item.version == 1 and not item.unread for item in page.items)
+    alias = uuid4()
+    existing = await repository.queue_registration(tenant, alias, first.canonical_event_id)
+    assert existing.batch_id == batch.batch_id
+    assert len(await repository.batches(tenant)) == 1
+    for events in ([first], [first, second], [second]):
+        with pytest.raises(MuseConflictError, match="individual registration"):
+            await repository.create(tenant, alias, events)
+    with pytest.raises(MuseConflictError, match="individual registration"):
+        await repository.by_request(tenant, alias)
+    with pytest.raises(MuseConflictError):
+        await repository.queue_registration(tenant, original_request, first.canonical_event_id)
+    attempt = uuid4()
+    claimed = await repository.claim(tenant, batch.batch_id, first.canonical_event_id, attempt)
+    assert claimed.status == "in_progress"
+    with pytest.raises(MuseConflictError):
+        await repository.claim(tenant, batch.batch_id, first.canonical_event_id, uuid4())
+    assert (await repository.registrations(tenant)).unread_count == 1
+
+
+async def test_queue_migration_preserves_existing_batches_and_starts_notifications_seen(db):
+    tenant = await account()
+    repository, event = PostgresMuseRepository(), selected_event()
+    batch = await repository.create(tenant, uuid4(), [event])
+    attempt = uuid4()
+    await repository.claim(tenant, batch.batch_id, event.canonical_event_id, attempt)
+    await repository.report(
+        tenant,
+        batch.batch_id,
+        event.canonical_event_id,
+        attempt,
+        SignupOutcome(status="needs_input", note="Provider login required"),
+    )
+    existing = await repository.batch(tenant, batch.batch_id)
+    # The integration harness guarantees both URLs name this random, disposable test database.
+    for direction, revision in (("downgrade", "0213"), ("upgrade", "head")):
+        process = await asyncio.create_subprocess_exec(
+            sys.executable,
+            "-m",
+            "alembic",
+            direction,
+            revision,
+            env=os.environ.copy(),
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        stdout, stderr = await process.communicate()
+        assert process.returncode == 0, (stdout.decode(), stderr.decode())
+    assert await repository.batch(tenant, batch.batch_id) == existing
+    upgraded = (await repository.registrations(tenant)).items[0]
+    assert upgraded.status == "needs_input" and upgraded.attempt_id == attempt
+    assert upgraded.version == 1 and not upgraded.unread
+    assert (
+        await repository.queue_registration(tenant, uuid4(), event.canonical_event_id) == upgraded
+    )

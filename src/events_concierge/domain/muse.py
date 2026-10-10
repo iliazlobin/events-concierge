@@ -115,6 +115,25 @@ class SignupBatch(MuseModel):
     items: list[SignupItem]
 
 
+class SignupRegistration(SignupItem):
+    batch_id: UUID
+    created_at: datetime
+    version: int = Field(ge=1)
+    unread: bool
+
+
+class SignupRegistrations(MuseModel):
+    items: list[SignupRegistration]
+    total: int = Field(ge=0)
+    unread_count: int = Field(ge=0)
+    next_cursor: UUID | None = None
+
+
+class SeenRegistration(MuseModel):
+    event_id: UUID
+    version: int = Field(ge=1)
+
+
 class MuseConnection(MuseModel):
     connected: bool
     expires_at: datetime | None = None

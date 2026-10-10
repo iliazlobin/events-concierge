@@ -8,6 +8,7 @@ import {
   MapPin,
   Mic2,
   Tags,
+  LoaderCircle,
   UsersRound,
 } from "lucide-react";
 import { useId, type ReactNode } from "react";
@@ -26,7 +27,8 @@ import {
   googleMapsUrl,
 } from "@/lib/event-links";
 import { formatEventPrice } from "@/lib/event-price";
-import { museEligibility } from "@/lib/muse";
+import { museEligibility, museStatusLabel, type MuseStatus } from "@/lib/muse";
+import { MuseIcon } from "@/components/muse-icon";
 import { eventTopicLabel, eventTopicTone } from "@/lib/event-topics";
 import type {
   EventEntityKind,
@@ -37,8 +39,8 @@ import type {
 } from "@/lib/types";
 
 interface EventCardProps {
-  museSelected?: boolean;
-  onMuseToggle?: (event: EventItem) => void;
+  museStatus?: MuseStatus;
+  musePending?: boolean;
   onMuseSignup?: (event: EventItem) => void;
   event: EventItem;
   expanded: boolean;
@@ -166,8 +168,8 @@ function EntityLinks({
 }
 
 export function EventCard({
-  museSelected = false,
-  onMuseToggle,
+  museStatus,
+  musePending = false,
   onMuseSignup,
   event,
   expanded,
@@ -350,6 +352,16 @@ export function EventCard({
                 {location}
               </span>
             )}
+            {onMuseSignup ? <button
+              type="button"
+              className={`event-card__muse-action${museStatus ? " is-queued" : ""}`}
+              disabled={musePending || (!museStatus && Boolean(museEligibility(event)))}
+              title={museStatus ? `${museStatusLabel[museStatus]} · View registration` : museEligibility(event) ?? "Sign up with Muse"}
+              aria-label={museStatus ? `View registration for ${event.title}` : `Sign up with Muse for ${event.title}`}
+              onClick={interaction => { interaction.stopPropagation(); onMuseSignup(event); }}
+            >{musePending ? <LoaderCircle className="spin" aria-hidden="true" /> : <MuseIcon />}
+              {museStatus ? <span className="event-card__muse-dot" aria-hidden="true" /> : null}
+            </button> : null}
           </div>
           {summaryFacts.length ? (
             <ul className="event-card__summary-facts" aria-label="Event highlights">
@@ -359,16 +371,6 @@ export function EventCard({
         </div>
 
       </div>
-
-      {onMuseSignup ? <div className="event-card__muse">
-        <label><input type="checkbox" checked={museSelected}
-          disabled={Boolean(museEligibility(event))}
-          onChange={() => onMuseToggle?.(event)}
-          aria-label={`Select ${event.title} for Muse`} /> Select for Muse</label>
-        <button type="button" className="button" disabled={Boolean(museEligibility(event))}
-          title={museEligibility(event) ?? "Review this event before sending to Muse"}
-          onClick={() => onMuseSignup(event)}>Sign up with Muse</button>
-      </div> : null}
 
       <div
         className="event-card__expansion"

@@ -14,6 +14,7 @@ from ..domain.muse import (
     SignupBatch,
     SignupEvent,
     SignupItem,
+    SignupRegistration,
     provider_url,
 )
 from ..ports.auth import AuthenticationFailedError
@@ -60,46 +61,53 @@ class MuseSignupService:
             if {i.event.canonical_event_id for i in existing.items} != set(event_ids):
                 raise MuseConflictError("this request already has a different selection")
             return existing
-        now = datetime.now(UTC)
-        events: list[SignupEvent] = []
-        for event_id in event_ids:
-            browse = await self.catalog.get_browse_event(event_id)
-            if browse is None:
-                raise ValueError("an event is no longer available in the published catalog")
-            event = browse.canonical_event
-            if (
-                event.start_at <= now
-                or event.price_status is not PriceStatus.FREE
-                or event.event_status is not EventStatus.SCHEDULED
-                or event.registration_status is RegistrationStatus.SOLD_OUT
-            ):
-                raise ValueError(
-                    "Muse currently supports upcoming free events with available registration"
-                )
-            eligible: list[tuple[str, datetime]] = []
-            for source in browse.sources:
-                try:
-                    url = provider_url(source.registration_url)
-                except ValueError:
-                    continue
-                if now - _MAX_OBSERVATION_AGE <= source.last_seen_at <= now + timedelta(minutes=5):
-                    eligible.append((url, source.last_seen_at))
-            if not eligible:
-                raise ValueError("Muse needs a recently collected Luma or Meetup event")
-            url, observed_at = max(eligible, key=lambda candidate: candidate[1])
-            events.append(
-                SignupEvent(
-                    canonical_event_id=event_id,
-                    title=event.title,
-                    start_at=event.start_at,
-                    end_at=event.end_at,
-                    venue_name=event.venue_name,
-                    city=event.city_norm,
-                    registration_url=url,
-                    observed_at=observed_at,
-                )
-            )
+        events = [await self._selected_event(event_id) for event_id in event_ids]
         return await self.repository.create(tenant_id, request_id, events)
+
+    async def queue(self, tenant_id: UUID, request_id: UUID, event_id: UUID) -> SignupRegistration:
+        try:
+            # Resolve durable requests first: a repeat click never selects or starts again.
+            return await self.repository.queue_registration(tenant_id, request_id, event_id)
+        except MuseNotFoundError:
+            event = await self._selected_event(event_id)
+            return await self.repository.queue_registration(tenant_id, request_id, event_id, event)
+
+    async def _selected_event(self, event_id: UUID) -> SignupEvent:
+        now = datetime.now(UTC)
+        browse = await self.catalog.get_browse_event(event_id)
+        if browse is None:
+            raise ValueError("an event is no longer available in the published catalog")
+        event = browse.canonical_event
+        if (
+            event.start_at <= now
+            or event.price_status is not PriceStatus.FREE
+            or event.event_status is not EventStatus.SCHEDULED
+            or event.registration_status is RegistrationStatus.SOLD_OUT
+        ):
+            raise ValueError(
+                "Muse currently supports upcoming free events with available registration"
+            )
+        eligible: list[tuple[str, datetime]] = []
+        for source in browse.sources:
+            try:
+                url = provider_url(source.registration_url)
+            except ValueError:
+                continue
+            if now - _MAX_OBSERVATION_AGE <= source.last_seen_at <= now + timedelta(minutes=5):
+                eligible.append((url, source.last_seen_at))
+        if not eligible:
+            raise ValueError("Muse needs a recently collected Luma or Meetup event")
+        url, observed_at = max(eligible, key=lambda candidate: candidate[1])
+        return SignupEvent(
+            canonical_event_id=event_id,
+            title=event.title,
+            start_at=event.start_at,
+            end_at=event.end_at,
+            venue_name=event.venue_name,
+            city=event.city_norm,
+            registration_url=url,
+            observed_at=observed_at,
+        )
 
     async def claim(
         self,

@@ -69,6 +69,7 @@ make staging-canary BASE_URL="$BASE_URL" \
   on a restore of `0212`; verify company selection and Events/Calendar/facet counts together.
   Compatible older API/frontend images can retain the expanded schema for rollback. No provider
   refresh, entity rebuild, credential change or feature activation is part of this migration.
+- `0214` adds Muse request aliases and task version/read state without resetting saved attempts. Apply it before deploying a Muse-enabled queue release; keep `EC_MUSE_ENABLED=false` when the migration is held. Existing results start read. Older connector clients retain their batch contract; rehearse upgrade and rollback on an isolated restore.
 - `0202` joins the retained operator branch (`0198`) and published application branch (`0201`). Upgrade normally from either head; preserve applied IDs and rehearse on a restore. Never substitute a schema stamp for the missing branch.
 - [Migration sources](../../migrations/versions/) own version-specific reconciliation. Drain cadence/source/command workers before legacy `0128`–`0130` lease changes; reconciliation is irreversible.
 - Rebuild `0152` indexes if older writers ran during migration. `0181`/`0182` require distinct operator/executor roles and matching images; no consumer-admin rollback.

@@ -5,7 +5,16 @@ from typing import Protocol
 from uuid import UUID
 
 from ..domain.catalog_browse import CatalogBrowseEvent
-from ..domain.muse import MuseConnection, SignupBatch, SignupEvent, SignupItem, SignupOutcome
+from ..domain.muse import (
+    MuseConnection,
+    SeenRegistration,
+    SignupBatch,
+    SignupEvent,
+    SignupItem,
+    SignupOutcome,
+    SignupRegistration,
+    SignupRegistrations,
+)
 
 
 class MuseCatalogPort(Protocol):
@@ -26,8 +35,21 @@ class MuseRepository(Protocol):
         request_id: UUID,
         events: list[SignupEvent],
     ) -> SignupBatch: ...
-    async def batches(self, tenant_id: UUID) -> list[SignupBatch]: ...
+    async def batches(
+        self, tenant_id: UUID, limit: int = 50, cursor: UUID | None = None
+    ) -> list[SignupBatch]: ...
     async def batch(self, tenant_id: UUID, batch_id: UUID) -> SignupBatch | None: ...
+    async def queue_registration(
+        self,
+        tenant_id: UUID,
+        request_id: UUID,
+        event_id: UUID,
+        event: SignupEvent | None = None,
+    ) -> SignupRegistration: ...
+    async def registrations(
+        self, tenant_id: UUID, limit: int = 50, cursor: UUID | None = None
+    ) -> SignupRegistrations: ...
+    async def see_registrations(self, tenant_id: UUID, items: list[SeenRegistration]) -> None: ...
     async def claim(
         self,
         tenant_id: UUID,
