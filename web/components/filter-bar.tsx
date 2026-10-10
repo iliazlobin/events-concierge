@@ -416,6 +416,7 @@ export function FilterBar({
     const controller = new AbortController();
     let cancelled = false;
     setCatalogNames({ key: nameSearchKey, items: [], status: "loading", outsideFilters: false });
+    setActiveSuggestion(-1);
     const timer = window.setTimeout(() => {
       void getCatalogNameMatches(latestFilters.current, composerTerm, controller.signal)
         .then(({ items, outsideFilters }) => {
@@ -518,6 +519,7 @@ export function FilterBar({
     : nameState.outsideFilters ? "No names match these filters. Showing catalog matches." : null;
   const showSuggestions = searchFocused && !suggestionsSuppressed
     && (suggestions.length > 0 || nameSearchMessage !== null);
+  const hasActiveSuggestion = activeSuggestion >= 0 && activeSuggestion < suggestions.length;
   // Nothing typed means nothing to rank against, so the list becomes a grid of tiles rather than
   // rows -- a layout narrow enough that the kind has to be drawn instead of spelled.
   const startersLayout = !query.trim();
@@ -1051,6 +1053,7 @@ export function FilterBar({
               onFocus={() => {
                 setSearchFocused(true);
                 setSuggestionsSuppressed(false);
+                setActiveSuggestion(-1);
               }}
               onBlur={() => {
                 setSearchFocused(false);
@@ -1065,7 +1068,7 @@ export function FilterBar({
                   event.key === "Enter"
                   && effectiveComposerContext
                   && suggestions.length > 0
-                  && activeSuggestion < 0
+                  && !hasActiveSuggestion
                 ) {
                   event.preventDefault();
                   applySuggestion(suggestions[0]);
@@ -1074,7 +1077,7 @@ export function FilterBar({
                 if (
                   event.key === "Enter"
                   && effectiveComposerContext
-                  && activeSuggestion < 0
+                  && !hasActiveSuggestion
                 ) {
                   event.preventDefault();
                   return;
@@ -1082,7 +1085,7 @@ export function FilterBar({
                 if (
                   event.key === "Enter"
                   && query.trim()
-                  && (!showSuggestions || activeSuggestion < 0)
+                  && (!showSuggestions || !hasActiveSuggestion)
                 ) {
                   event.preventDefault();
                   commitFilterExpression();
@@ -1098,9 +1101,9 @@ export function FilterBar({
                 } else if (event.key === "ArrowUp") {
                   event.preventDefault();
                   setActiveSuggestion((current) => (
-                    current <= 0 ? suggestions.length - 1 : current - 1
+                    current <= 0 || current >= suggestions.length ? suggestions.length - 1 : current - 1
                   ));
-                } else if (event.key === "Enter" && activeSuggestion >= 0) {
+                } else if (event.key === "Enter" && hasActiveSuggestion) {
                   event.preventDefault();
                   applySuggestion(suggestions[activeSuggestion]);
                 } else if (event.key === "Escape") {
@@ -1121,7 +1124,7 @@ export function FilterBar({
               aria-expanded={showSuggestions}
               aria-controls="smart-filter-suggestions"
               aria-activedescendant={
-                activeSuggestion >= 0
+                showSuggestions && hasActiveSuggestion
                   ? `smart-filter-suggestion-${activeSuggestion}`
                   : undefined
               }

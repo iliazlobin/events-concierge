@@ -348,6 +348,47 @@ def test_empty_loading_and_failed_name_reads_are_visible(catalog_names_page):
     page.wait_for_function("new URL(location.href).searchParams.get('q') === 'missing-service'")
 
 
+def test_refocus_clears_a_later_name_selection_while_names_reload(catalog_names_page):
+    harness, api, _ = catalog_names_page
+    page = harness.page
+    calls = []
+    held = []
+
+    def names(route: Route):
+        calls.append(route.request.url)
+        api.calls.append((route.request.method, "/v1/catalog/name-suggestions"))
+        if len(calls) > 1:
+            held.append(route)
+        else:
+            api.respond(route, [
+                {"name": f"AI Company {name}", "kinds": ["organization"], "event_count": 1}
+                for name in ("One", "Two", "Three")
+            ])
+
+    page.route("**/v1/catalog/name-suggestions?*", names)
+    page.goto(f"{BASE}/?view=events")
+    search = page.get_by_role("combobox", name=SEARCH_NAME)
+    search.fill("ai")
+    expect(page.get_by_role("option").filter(has_text="AI Company Three")).to_be_visible()
+    options = page.get_by_role("listbox", name="Suggested filters").get_by_role("option")
+    count = options.count()
+    assert count > 1
+    for _ in range(count):
+        search.press("ArrowDown")
+    expect(search).to_have_attribute("aria-activedescendant", f"smart-filter-suggestion-{count - 1}")
+    search.press("Tab")
+    with page.expect_request("**/v1/catalog/name-suggestions?*q=ai*"):
+        search.click()
+    expect(page.get_by_role("status").filter(has_text="Searching names")).to_be_visible()
+    # The local AI suggestion remains, but the selected later name no longer exists.
+    expect(page.get_by_role("option")).not_to_have_count(0)
+    expect(search).not_to_have_attribute("aria-activedescendant", re.compile(".+"))
+    search.press("Enter")
+    page.wait_for_function("new URL(location.href).searchParams.get('topic') === 'ai'")
+    for route in held:
+        api.respond(route, [])
+
+
 @pytest.mark.parametrize("width", [1440, 390])
 def test_tech_week_starters_lead_and_replace_inherited_filters(discovery_filters_page, tmp_path, width):
     harness, _, queries = discovery_filters_page
