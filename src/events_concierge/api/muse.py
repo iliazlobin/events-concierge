@@ -5,7 +5,7 @@ from datetime import datetime
 from typing import Annotated, Any
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, Request, Response, Security
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response, Security
 from fastapi.openapi.utils import get_openapi
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import Field
@@ -17,9 +17,12 @@ from ..domain.muse import (
     MuseConnection,
     MuseModel,
     MuseNotFoundError,
+    SeenRegistration,
     SignupBatch,
     SignupItem,
     SignupOutcome,
+    SignupRegistration,
+    SignupRegistrations,
 )
 from ..ports.auth import AuthenticationFailedError
 
@@ -42,6 +45,15 @@ class BatchBody(MuseModel):
 
 class ClaimBody(MuseModel):
     attempt_id: UUID
+
+
+class RegistrationBody(MuseModel):
+    request_id: UUID
+    event_id: UUID
+
+
+class SeenRegistrationsBody(MuseModel):
+    items: list[SeenRegistration] = Field(max_length=100)
 
 
 class ReportBody(MuseModel):
@@ -149,15 +161,47 @@ def muse_router(
     ) -> list[SignupBatch]:
         return await _run(_service(request).repository.batches(tenant_id))
 
+    @router.post("/v1/me/muse/registrations", response_model=SignupRegistration, status_code=201)
+    async def queue_registration(
+        body: RegistrationBody,
+        request: Request,
+        tenant_id: Annotated[UUID, Depends(owner_write)],
+    ) -> SignupRegistration:
+        return await _run(_service(request).queue(tenant_id, body.request_id, body.event_id))
+
+    @router.get("/v1/me/muse/registrations", response_model=SignupRegistrations)
+    async def registrations(
+        request: Request,
+        tenant_id: Annotated[UUID, Depends(owner_read)],
+        limit: Annotated[int, Query(ge=1, le=100)] = 50,
+        cursor: UUID | None = None,
+    ) -> SignupRegistrations:
+        return await _run(_service(request).repository.registrations(tenant_id, limit, cursor))
+
+    @router.post("/v1/me/muse/registrations/seen", status_code=204)
+    async def see_registrations(
+        body: SeenRegistrationsBody,
+        request: Request,
+        tenant_id: Annotated[UUID, Depends(owner_write)],
+    ) -> None:
+        await _run(_service(request).repository.see_registrations(tenant_id, body.items))
+
     @router.get(
         "/v1/muse/connector/batches",
         response_model=list[SignupBatch],
         operation_id="list_muse_signup_batches",
         summary="Read my selected signup batches",
     )
-    async def batches(request: Request, tenant_id: ConnectorTenant) -> list[SignupBatch]:
-        """Read only. Lists up to 50 batches selected by this account; never select new events."""
-        return await _run(_service(request).repository.batches(tenant_id))
+    async def batches(
+        request: Request,
+        tenant_id: ConnectorTenant,
+        limit: Annotated[int, Query(ge=1, le=100)] = 50,
+        cursor: UUID | None = None,
+    ) -> list[SignupBatch]:
+        """Read only. Lists selected batches newest first, 50 per page (maximum 100).
+        Pass the last batch_id as cursor until a page is shorter than limit. Never select new events.
+        """
+        return await _run(_service(request).repository.batches(tenant_id, limit, cursor))
 
     @router.get(
         "/v1/muse/connector/batches/{batch_id}",
