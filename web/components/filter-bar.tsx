@@ -22,7 +22,7 @@ import {
 } from "@/components/filter-chip-editor";
 import { SavedFilterPicker } from "@/components/saved-filter-picker";
 import { signInFailurePath } from "@/lib/sign-in";
-import { getCatalogNameSuggestions } from "@/lib/api";
+import { getCatalogNameMatches } from "@/lib/api";
 import { suggestSavedFilterName, uniqueSavedFilterName } from "@/lib/catalog-filter-name";
 import {
   PriceFilterEditor,
@@ -363,6 +363,7 @@ export function FilterBar({
   const literalQuery = useRef<string | null>(filters.query || null);
   const [catalogNames, setCatalogNames] = useState<{
     key: string; items: CatalogNameSuggestion[];
+    status: "loading" | "ready" | "error"; outsideFilters: boolean;
   } | null>(null);
   const suggestionListRef = useRef<HTMLDivElement>(null);
   /**
@@ -414,15 +415,19 @@ export function FilterBar({
     if (!searchNames) return;
     const controller = new AbortController();
     let cancelled = false;
+    setCatalogNames({ key: nameSearchKey, items: [], status: "loading", outsideFilters: false });
+    setActiveSuggestion(-1);
     const timer = window.setTimeout(() => {
-      void getCatalogNameSuggestions(latestFilters.current, composerTerm, controller.signal)
-        .then((items) => {
+      void getCatalogNameMatches(latestFilters.current, composerTerm, controller.signal)
+        .then(({ items, outsideFilters }) => {
           if (cancelled) return;
-          setCatalogNames({ key: nameSearchKey, items });
+          setCatalogNames({ key: nameSearchKey, items, status: "ready", outsideFilters });
           setActiveSuggestion(-1);
         })
         .catch(() => {
-          if (!cancelled) setCatalogNames({ key: nameSearchKey, items: [] });
+          if (!cancelled) {
+            setCatalogNames({ key: nameSearchKey, items: [], status: "error", outsideFilters: false });
+          }
         });
     }, 220);
     return () => {
@@ -464,7 +469,7 @@ export function FilterBar({
       ].slice(0, 8);
     }
     const names = !effectiveComposerContext && searchNames && catalogNames?.key === nameSearchKey
-      ? getCatalogNameFilterSuggestions(composerTerm, catalogNames.items) : [];
+      ? getCatalogNameFilterSuggestions(composerTerm, catalogNames.items, catalogNames.outsideFilters) : [];
     return [...savedMatches, ...[...scoped, ...names].sort((a, b) => b.score - a.score)]
       .slice(0, 8);
   }, [
@@ -506,7 +511,15 @@ export function FilterBar({
     }, 220);
     return () => window.clearTimeout(timer);
   }, [availableCities, composerOnly, onChange, providers, query, topics, typedComposer]);
-  const showSuggestions = searchFocused && !suggestionsSuppressed && suggestions.length > 0;
+  const nameState = searchNames && catalogNames?.key === nameSearchKey ? catalogNames : null;
+  const nameSearchMessage = !searchNames ? null
+    : !nameState || nameState.status === "loading" ? "Searching names…"
+    : nameState.status === "error" ? "Name suggestions unavailable. You can still search."
+    : !nameState.items.length ? "No matching names in the catalog."
+    : nameState.outsideFilters ? "No names match these filters. Showing catalog matches." : null;
+  const showSuggestions = searchFocused && !suggestionsSuppressed
+    && (suggestions.length > 0 || nameSearchMessage !== null);
+  const hasActiveSuggestion = activeSuggestion >= 0 && activeSuggestion < suggestions.length;
   // Nothing typed means nothing to rank against, so the list becomes a grid of tiles rather than
   // rows -- a layout narrow enough that the kind has to be drawn instead of spelled.
   const startersLayout = !query.trim();
@@ -1040,6 +1053,7 @@ export function FilterBar({
               onFocus={() => {
                 setSearchFocused(true);
                 setSuggestionsSuppressed(false);
+                setActiveSuggestion(-1);
               }}
               onBlur={() => {
                 setSearchFocused(false);
@@ -1054,7 +1068,7 @@ export function FilterBar({
                   event.key === "Enter"
                   && effectiveComposerContext
                   && suggestions.length > 0
-                  && activeSuggestion < 0
+                  && !hasActiveSuggestion
                 ) {
                   event.preventDefault();
                   applySuggestion(suggestions[0]);
@@ -1063,7 +1077,7 @@ export function FilterBar({
                 if (
                   event.key === "Enter"
                   && effectiveComposerContext
-                  && activeSuggestion < 0
+                  && !hasActiveSuggestion
                 ) {
                   event.preventDefault();
                   return;
@@ -1071,13 +1085,14 @@ export function FilterBar({
                 if (
                   event.key === "Enter"
                   && query.trim()
-                  && (!showSuggestions || activeSuggestion < 0)
+                  && (!showSuggestions || !hasActiveSuggestion)
                 ) {
                   event.preventDefault();
                   commitFilterExpression();
                   return;
                 }
                 if (!showSuggestions) return;
+                if (!suggestions.length && event.key !== "Escape") return;
                 if (event.key === "ArrowDown") {
                   event.preventDefault();
                   setActiveSuggestion((current) => (
@@ -1086,9 +1101,9 @@ export function FilterBar({
                 } else if (event.key === "ArrowUp") {
                   event.preventDefault();
                   setActiveSuggestion((current) => (
-                    current <= 0 ? suggestions.length - 1 : current - 1
+                    current <= 0 || current >= suggestions.length ? suggestions.length - 1 : current - 1
                   ));
-                } else if (event.key === "Enter" && activeSuggestion >= 0) {
+                } else if (event.key === "Enter" && hasActiveSuggestion) {
                   event.preventDefault();
                   applySuggestion(suggestions[activeSuggestion]);
                 } else if (event.key === "Escape") {
@@ -1109,7 +1124,7 @@ export function FilterBar({
               aria-expanded={showSuggestions}
               aria-controls="smart-filter-suggestions"
               aria-activedescendant={
-                activeSuggestion >= 0
+                showSuggestions && hasActiveSuggestion
                   ? `smart-filter-suggestion-${activeSuggestion}`
                   : undefined
               }
@@ -1144,6 +1159,11 @@ export function FilterBar({
                   ? `Suggested ${effectiveComposerContext === "source" ? "sources" : effectiveComposerContext === "availability" ? "registration statuses" : `${effectiveComposerContext}s`}`
                   : startersLayout ? "Useful starting points" : "Suggested filters"}
               </span>
+              {nameSearchMessage ? (
+                <span className="filter-suggestions__status" role="status">
+                  {nameSearchMessage}
+                </span>
+              ) : null}
               {suggestions.map((suggestion, index) => {
                 const detail = suggestion.kind === "combination"
                   ? suggestion.description

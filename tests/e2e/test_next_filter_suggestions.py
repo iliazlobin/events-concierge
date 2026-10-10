@@ -269,6 +269,127 @@ def test_catalog_name_failure_and_old_response_do_not_replace_current_suggestion
 
 
 @pytest.mark.parametrize("width", [1440, 390])
+def test_companies_outside_filters_remain_discoverable_without_changing_event_filters(
+    catalog_names_page, tmp_path, width,
+):
+    harness, api, queries = catalog_names_page
+    page = harness.page
+    page.set_viewport_size({"width": width, "height": 900})
+    name_queries = []
+
+    def names(route: Route):
+        query = parse_qs(urlsplit(route.request.url).query)
+        name_queries.append(query)
+        api.calls.append((route.request.method, "/v1/catalog/name-suggestions"))
+        filtered = "starts_after" in query
+        api.respond(route, [] if filtered else [
+            {"name": "Nebius", "kinds": ["organization"], "event_count": 7},
+        ])
+
+    page.route("**/v1/catalog/name-suggestions?*", names)
+    page.goto(f"{BASE}/?view=events&source=tech-week-sf-2026&city=sanfrancisco&when=custom"
+              "&start=2030-10-09&end=2030-10-11&price=free&topic=ai&availability=available")
+    search = page.get_by_role("combobox", name=SEARCH_NAME)
+    search.fill("nebi")
+    option = page.get_by_role("option").filter(has_text="Nebius")
+    expect(option).to_be_visible()
+    expect(page.get_by_role("status").filter(has_text="Showing catalog matches")).to_be_visible()
+    expect(option).to_contain_text("7 catalog events")
+    assert name_queries[-1] == {"q": ["nebi"], "limit": ["8"]}
+    page.screenshot(path=str(tmp_path / f"company-outside-filters-{width}.png"), animations="disabled")
+    search.press("ArrowDown")
+    search.press("Enter")
+    expect(search).to_have_value("Nebius")
+    page.wait_for_function("new URL(location.href).searchParams.get('q') === 'Nebius'")
+    for query in (name_queries[0], queries[-1]):
+        assert query["source_key"] == ["tech-week-sf-2026"]
+        assert query["city"] == ["sanfrancisco"]
+        assert query["price"] == ["free"]
+        assert query["topic"] == ["ai"]
+        assert query["availability"] == ["available"]
+        assert "starts_after" in query and "starts_before" in query
+    page.reload()
+    expect(page.get_by_role("combobox", name=SEARCH_NAME)).to_have_value("Nebius")
+    assert parse_qs(urlsplit(page.url).query)["start"] == ["2030-10-09"]
+    assert page.evaluate("document.documentElement.scrollWidth <= innerWidth")
+
+
+def test_empty_loading_and_failed_name_reads_are_visible(catalog_names_page):
+    harness, api, _ = catalog_names_page
+    page = harness.page
+    held = []
+
+    def names(route: Route):
+        query = parse_qs(urlsplit(route.request.url).query)
+        api.calls.append((route.request.method, "/v1/catalog/name-suggestions"))
+        if query["q"] == ["nebi"]:
+            held.append(route)
+        elif query["q"] == ["unknown-company"]:
+            api.respond(route, [])
+        else:
+            api.respond(route, {"detail": "unavailable"}, 503)
+
+    page.route("**/v1/catalog/name-suggestions?*", names)
+    page.goto(f"{BASE}/?view=events")
+    search = page.get_by_role("combobox", name=SEARCH_NAME)
+    with page.expect_request("**/v1/catalog/name-suggestions?*q=nebi*"):
+        search.fill("nebi")
+        expect(page.get_by_role("status").filter(has_text="Searching names")).to_be_visible()
+    search.fill("unknown-company")
+    expect(page.get_by_role("status").filter(has_text="No matching names")).to_be_visible()
+    for route in held:
+        api.respond(route, [{"name": "Nebius", "kinds": ["organization"], "event_count": 7}])
+    expect(page.get_by_role("option").filter(has_text="Nebius")).to_have_count(0)
+    harness.allowed_console_error_fragments.append("the server responded with a status of 503")
+    search.fill("missing-service")
+    expect(page.get_by_role("status").filter(has_text="Name suggestions unavailable")).to_be_visible()
+    # Failure is distinct from empty results; normal free-text search still works.
+    search.press("Enter")
+    page.wait_for_function("new URL(location.href).searchParams.get('q') === 'missing-service'")
+
+
+def test_refocus_clears_a_later_name_selection_while_names_reload(catalog_names_page):
+    harness, api, _ = catalog_names_page
+    page = harness.page
+    calls = []
+    held = []
+
+    def names(route: Route):
+        calls.append(route.request.url)
+        api.calls.append((route.request.method, "/v1/catalog/name-suggestions"))
+        if len(calls) > 1:
+            held.append(route)
+        else:
+            api.respond(route, [
+                {"name": f"AI Company {name}", "kinds": ["organization"], "event_count": 1}
+                for name in ("One", "Two", "Three")
+            ])
+
+    page.route("**/v1/catalog/name-suggestions?*", names)
+    page.goto(f"{BASE}/?view=events")
+    search = page.get_by_role("combobox", name=SEARCH_NAME)
+    search.fill("ai")
+    expect(page.get_by_role("option").filter(has_text="AI Company Three")).to_be_visible()
+    options = page.get_by_role("listbox", name="Suggested filters").get_by_role("option")
+    count = options.count()
+    assert count > 1
+    for _ in range(count):
+        search.press("ArrowDown")
+    expect(search).to_have_attribute("aria-activedescendant", f"smart-filter-suggestion-{count - 1}")
+    search.press("Tab")
+    with page.expect_request("**/v1/catalog/name-suggestions?*q=ai*"):
+        search.click()
+    expect(page.get_by_role("status").filter(has_text="Searching names")).to_be_visible()
+    # The local AI suggestion remains, but the selected later name no longer exists.
+    expect(page.get_by_role("option")).not_to_have_count(0)
+    expect(search).not_to_have_attribute("aria-activedescendant", re.compile(".+"))
+    search.press("Enter")
+    page.wait_for_function("new URL(location.href).searchParams.get('topic') === 'ai'")
+    for route in held:
+        api.respond(route, [])
+
+
+@pytest.mark.parametrize("width", [1440, 390])
 def test_tech_week_starters_lead_and_replace_inherited_filters(discovery_filters_page, tmp_path, width):
     harness, _, queries = discovery_filters_page
     page = harness.page
