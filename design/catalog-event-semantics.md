@@ -64,7 +64,12 @@ does not merge identities.
 
 The search box combines these names with existing filter and saved-selection suggestions.
 Selecting a name sets the text query and preserves active filters; URL navigation and saved
-filters retain it. Requests are debounced and cancelled when the query or filters change. Browsing
+filters retain it. When a successful scoped read finds no names, the client makes one additional
+read without event filters. These catalog matches are labeled as outside the active filters;
+their counts are catalog counts, not counts for the current event selection. Choosing one still
+preserves the filters. Loading, empty results and unavailable suggestions remain visible instead
+of silently closing the dropdown; failures do not trigger a broader read.
+Requests are debounced and cancelled when the query or filters change. Browsing
 and autocomplete read published data without starting collection or requiring sign-in.
 
 `GET /v1/catalog/events` accepts repeated `topic` parameters. Multiple topics have AND semantics:

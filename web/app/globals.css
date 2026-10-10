@@ -545,6 +545,13 @@ textarea:focus-visible {
   text-transform: uppercase;
 }
 
+.filter-suggestions__status {
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.5;
+  padding: 6px 9px;
+}
+
 .filter-suggestions button {
   align-items: center;
   background: transparent;
