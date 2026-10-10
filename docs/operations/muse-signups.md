@@ -8,7 +8,7 @@ Queue upcoming **free Luma or Meetup** event dates from the Muse icon on each ev
 2. Ask Muse to create a [custom connector](https://www.meta.com/help/artificial-intelligence/1687253048996149/) from the API description shown in settings: `/v1/muse/openapi.json`.
 3. Create a connection key. Enter it only in Muse's secure credential setup as a Bearer token. Keep Luma/Meetup logins in Muse.
 4. Click an event's **Muse icon** to queue its date. Repeat for other events; there are no checkboxes or selection limit across tasks.
-5. Open **Registrations**, copy the queue instruction, then **Open Muse** and paste it. Muse may ask for provider login, approval or missing form answers.
+5. In **Your account → Muse signups → Muse instructions**, copy the queue instruction. **Open Muse** and paste it. Muse may ask for provider login, approval or missing form answers.
 6. Follow progress in **Registrations**. The header badge counts unread task updates; opening the panel acknowledges the versions displayed. In-app announcements report new progress and results. Refresh is manual or every 15 seconds while the page is visible; returning to the page refreshes it.
 
 A supported Muse task-creation API/deeplink has not been verified. The button opens Muse; it does not automatically dispatch a task. A local preview cannot be reached by Muse's cloud browser.
