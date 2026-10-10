@@ -366,15 +366,16 @@ def test_older_registrations_remain_accessible_beyond_first_page(page_factory):
     harness, api = install(page_factory)
     api.registrations = [api.registration(api.events[0] | {
         "canonical_event_id": f"{index:08x}-1111-4111-8111-111111111111", "title": f"Queued event {index}"
-    }) for index in range(55)]
+    }) for index in reversed(range(55))]
     page = harness.page
     page.goto(BASE + "/?view=events&when=all&city=&registrations=1")
     dialog = page.get_by_role("dialog", name="Registrations", exact=True)
-    expect(dialog).to_contain_text("Queued event 0")
-    expect(dialog).not_to_contain_text("Queued event 54")
-    dialog.get_by_role("button", name="Load more registrations").click()
     expect(dialog).to_contain_text("Queued event 54")
+    expect(dialog).not_to_contain_text("Queued event 0")
+    dialog.get_by_role("button", name="Load more registrations").click()
+    expect(dialog).to_contain_text("Queued event 0")
     expect(dialog.get_by_role("button", name="Load more registrations")).to_have_count(0)
+    dialog.locator("li").filter(has=page.get_by_role("link", name="Queued event 54", exact=True)).scroll_into_view_if_needed()
     older = api.registrations[-1]
     older.update(status="needs_input", version=2, unread=True,
                  outcome={"status": "needs_input", "note": "Answer needed for older event",
@@ -382,7 +383,7 @@ def test_older_registrations_remain_accessible_beyond_first_page(page_factory):
     dialog.get_by_role("button", name="Refresh registrations").click()
     expect(dialog).to_contain_text("Answer needed for older event")
     assert older["unread"]  # Loading an offscreen result does not mark it as viewed.
-    old_card = dialog.locator("li").filter(has_text="Queued event 54")
+    old_card = dialog.locator("li").filter(has=page.get_by_role("link", name="Queued event 0", exact=True))
     old_card.scroll_into_view_if_needed()
     expect(old_card.locator('[aria-label="Unread update"]')).to_have_count(0)
     expect(page.get_by_role("button", name=re.compile("^Registrations"))).not_to_contain_text("1")

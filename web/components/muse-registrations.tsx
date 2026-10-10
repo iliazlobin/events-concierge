@@ -4,6 +4,7 @@ import { useEffect, useId, useRef, useState } from "react";
 import Link from "next/link";
 import { Check, Clipboard, ExternalLink, RefreshCw, X } from "lucide-react";
 import { MUSE_URL, museEventDate, museInstruction, museProviderUrl, museStatusLabel, type MuseRegistration } from "@/lib/muse";
+import { formatCity } from "@/lib/presentation";
 import { MuseIcon } from "./muse-icon";
 import styles from "./muse.module.css";
 
@@ -100,7 +101,7 @@ export function MuseRegistrations({ items, total, loading, error, hasMore, selec
       <div className={styles.taskTitle}><a href={museProviderUrl(item.event.registration_url) ?? undefined} target="_blank" rel="noopener noreferrer">
         {item.event.title}<ExternalLink aria-hidden="true" /></a>
         {item.unread ? <span className={styles.unreadDot} aria-label="Unread update" /> : null}</div>
-      <p className={styles.taskDate}>{museEventDate(item.event.start_at)}{item.event.city ? ` · ${item.event.city}` : ""}</p>
+      <p className={styles.taskDate}>{museEventDate(item.event.start_at)}{item.event.city ? ` · ${formatCity(item.event.city)}` : ""}</p>
       <p className={styles.status} data-status={item.status}><span aria-hidden="true" />{museStatusLabel[item.status]}</p>
       {item.status === "queued" ? <p>Waiting for you to start Muse.</p> : null}
       {item.status === "needs_input" ? <p>Open Muse to provide the requested information.</p> : null}
