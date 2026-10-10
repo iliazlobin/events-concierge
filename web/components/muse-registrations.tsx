@@ -107,7 +107,7 @@ export function MuseRegistrations({ items, total, loading, error, hasMore, selec
       {item.status === "uncertain" ? <p>Muse must check the provider before another submission.</p> : null}
       {item.outcome?.note ? <p>{item.outcome.note}</p> : null}
       {item.outcome?.confirmation_reference ? <p>Confirmation: {item.outcome.confirmation_reference}</p> : null}
-      <div className={styles.taskLinks}><Link href={`/?view=events&when=all&city=&q=${encodeURIComponent(item.event.title)}&event=${encodeURIComponent(item.event.canonical_event_id)}`}>Event details</Link>
+      <div className={styles.taskLinks}><Link href={`/?view=events&when=all&city=&q=${encodeURIComponent(item.event.title)}&event=${encodeURIComponent(item.event.canonical_event_id)}`}>Find in catalog</Link>
         {item.outcome?.evidence_url && museProviderUrl(item.outcome.evidence_url) ? <a href={item.outcome.evidence_url} target="_blank" rel="noopener noreferrer">Provider evidence</a> : null}
       </div>
       <time className={styles.updated} dateTime={item.updated_at}>Updated {museEventDate(item.updated_at)}</time>

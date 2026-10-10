@@ -68,7 +68,7 @@ export function takeMuseIntent(storage: Pick<Storage, "getItem" | "removeItem">,
 }
 
 export function museInstruction(): string {
-  return "Use my Events Concierge connector to read every page of my signup batches (limit 100; cursor is the last batch ID). Register only the free events I queued. Claim each queued event before acting, check for an existing RSVP, and verify title, date, price and availability. Resume an existing attempt without claiming a new attempt; if a submission is uncertain, check its status before retrying. Preserve your approval checks. Ask me for login or unanswered form questions; do not invent answers, pay or substitute events. Report each outcome with provider confirmation evidence.";
+  return "Use my Events Concierge connector to read every page of my signup batches (limit 100; cursor is the last batch ID). Register only the free events I queued. Skip registered and failed tasks. Check waitlisted or awaiting-approval results without submitting again. Claim each queued event before acting, check for an existing RSVP, and verify title, date, price and availability. Resume an existing attempt without claiming a new attempt; if a submission is uncertain, check its status before retrying. Preserve your approval checks. Ask me for login or unanswered form questions; do not invent answers, pay or substitute events. Report each outcome with provider confirmation evidence.";
 }
 
 /** Newer responses cannot roll back a task that a queue or outcome response already advanced. */

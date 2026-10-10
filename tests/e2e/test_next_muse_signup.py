@@ -303,6 +303,7 @@ def test_unread_badge_and_results_acknowledge_observed_versions_only(page_factor
     expect(dialog).to_contain_text("Needs your input")
     expect(dialog).to_contain_text("Needs verification")
     expect(dialog).to_contain_text("Login needed in Muse")
+    expect(dialog.locator('[aria-label="Unread update"]')).to_have_count(0)
     expect(button).not_to_contain_text("2")
     assert {item["version"] for item in api.acknowledged} == {2, 3}
     assert not any(item["unread"] for item in api.registrations)
@@ -315,6 +316,7 @@ def test_unread_badge_and_results_acknowledge_observed_versions_only(page_factor
     expect(dialog).to_contain_text("Registered · reported by Muse")
     expect(dialog).to_contain_text("fixture-confirmation")
     expect(dialog.get_by_role("link", name=re.compile("evidence", re.I))).to_have_attribute("href", "https://lu.ma/friday-jazz")
+    expect(dialog.locator('[aria-label="Unread update"]')).to_have_count(0)
     assert api.acknowledged[-1] == {"event_id": api.events[0]["canonical_event_id"], "version": 3}
     assert api.unexpected == []
 
@@ -326,13 +328,37 @@ def test_queue_failure_is_recoverable_without_duplicate_intent(page_factory):
     page.goto(BASE + "/?view=events&when=all&city=")
     button = page.get_by_role("button", name="Sign up with Muse for Friday Night Jazz")
     button.click()
-    expect(page.get_by_role("alert")).to_contain_text("unavailable")
+    expect(page.get_by_role("alert").filter(has_text="Registration queue")).to_contain_text("unavailable")
     expect(button).to_be_enabled()
     api.queue_error = False
     button.click()
     expect(page.get_by_role("button", name="View registration for Friday Night Jazz")).to_be_visible()
     assert len(api.queued) == 2 and api.queued[0] == api.queued[1]
     assert len(api.registrations) == 1
+    assert api.unexpected == []
+
+
+def test_guest_click_resumes_one_event_after_sign_in_without_anonymous_writes(page_factory):
+    harness, api = install(page_factory)
+    api.signed_in = False
+    page = harness.page
+    return_path = "/?view=events&when=all&city="
+    page.goto(BASE + return_path)
+    page.get_by_role("button", name="Sign up with Muse for Friday Night Jazz").click()
+    page.wait_for_url(re.compile(r".*/sign-in\?return_to="))
+    stored = page.evaluate("JSON.parse(sessionStorage.getItem('ec:muse:intent'))")
+    assert stored["eventId"] == api.events[0]["canonical_event_id"]
+    assert set(stored) == {"eventId", "savedAt"}
+    assert api.queued == [] and not any(path.startswith("/v1/me/muse/") for _, path, _ in api.writes)
+    # Identity provider behavior has its own suite; resume only after a verified session.
+    api.signed_in = True
+    page.goto(BASE + return_path)
+    expect(page.get_by_role("button", name="View registration for Friday Night Jazz")).to_be_visible()
+    assert len(api.queued) == 1
+    assert page.evaluate("sessionStorage.getItem('ec:muse:intent')") is None
+    page.reload()
+    expect(page.get_by_role("button", name="View registration for Friday Night Jazz")).to_be_visible()
+    assert len(api.queued) == 1
     assert api.unexpected == []
 
 
@@ -349,6 +375,28 @@ def test_older_registrations_remain_accessible_beyond_first_page(page_factory):
     dialog.get_by_role("button", name="Load more registrations").click()
     expect(dialog).to_contain_text("Queued event 54")
     expect(dialog.get_by_role("button", name="Load more registrations")).to_have_count(0)
+    older = api.registrations[-1]
+    older.update(status="needs_input", version=2, unread=True,
+                 outcome={"status": "needs_input", "note": "Answer needed for older event",
+                          "confirmation_reference": None, "evidence_url": None})
+    dialog.get_by_role("button", name="Refresh registrations").click()
+    expect(dialog).to_contain_text("Answer needed for older event")
+    assert older["unread"]  # Loading an offscreen result does not mark it as viewed.
+    old_card = dialog.locator("li").filter(has_text="Queued event 54")
+    old_card.scroll_into_view_if_needed()
+    expect(old_card.locator('[aria-label="Unread update"]')).to_have_count(0)
+    expect(page.get_by_role("button", name=re.compile("^Registrations"))).not_to_contain_text("1")
+    assert not older["unread"]
+    older.update(status="registered", version=3, unread=True,
+                 outcome={"status": "registered", "note": "Older event confirmed",
+                          "confirmation_reference": "older-confirmation",
+                          "evidence_url": "https://lu.ma/friday-jazz"})
+    dialog.get_by_role("button", name="Refresh registrations").click()
+    expect(old_card).to_contain_text("older-confirmation")
+    old_card.scroll_into_view_if_needed()
+    expect(old_card.locator('[aria-label="Unread update"]')).to_have_count(0)
+    expect(page.get_by_role("button", name=re.compile("^Registrations"))).not_to_contain_text("1")
+    assert api.acknowledged[-1] == {"event_id": older["event"]["canonical_event_id"], "version": 3}
     assert api.unexpected == []
 
 
