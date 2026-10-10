@@ -27,7 +27,7 @@ Ports and adapters: domain logic has no external I/O; application services use t
 - **Source change:** registered adapter → guarded catalog refresh.
 - **Runtime change:** `composition.py` or `catalog_runtime.py`; provider selection stays outside domain code.
 - **Consumer identity:** `web/lib/consumer-identity.ts` → `api/app.py` → `adapters/identity_platform.py`; `adapters/postgres/consumer_accounts.py` and migration `0207` bind accounts/legal receipts; `0208` adds account creation without consent when legal acceptance is deferred. Redis stores sessions. The selected operator edge uses Google IAP; the API independently verifies its signed assertion and configured owner role. [Release contract](docs/operations/consumer-identity.md).
-- **Muse handoff:** `web/components/muse-signup.tsx` → `api/muse.py` → `application/muse.py` → `adapters/postgres/muse.py`. Migration `0209` stores tenant-owned batches, attempt claims and hashed connection keys. Muse calls the narrow connector with a Bearer token and owns external browser execution. [Setup and limits](docs/operations/muse-signups.md).
+- **Muse queue:** the Web client queues one event date through `api/muse.py` → `application/muse.py` → `adapters/postgres/muse.py`. Migrations `0209`/`0214` store account-owned tasks, request aliases, attempt claims, versioned unread progress and hashed keys. Muse calls the Bearer-authenticated connector and owns external browser execution. [Setup and limits](docs/operations/muse-signups.md).
 
 ## Runtime flows
 

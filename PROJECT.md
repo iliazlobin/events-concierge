@@ -22,7 +22,7 @@ Approved product scope. Symphony owns task stages and acceptance; GitHub owns is
 - `EC_MOCK_CLOUD` controls integration behavior independently of product scope.
 - Public access exposes the consumer/admin frontends; APIs, stores, GKE nodes and control plane remain private. [Routing and ownership](docs/operations/public-access.md#route-and-ownership).
 - [Consumer accounts](docs/operations/consumer-identity.md): managed signup, reauthentication/erasure and admin access controlled by [configured RBAC](docs/operations/operator-access.md). The legacy Google-only pilot retains its deletion limitation.
-- [Muse signups](docs/operations/muse-signups.md): five free Luma/Meetup dates per batch, a scoped connection key and Muse-reported outcomes; connection/provider acceptance remain release checks.
+- [Muse signups](docs/operations/muse-signups.md): one-click queue for free Luma/Meetup dates, a scoped connection key, registration progress and unread updates; connection/provider acceptance remain release checks.
 - [Release acceptance](docs/operations/release.md#first-release-acceptance) owns launch gates. Development acceptance does not establish production acceptance.
 
 ## Boundaries
