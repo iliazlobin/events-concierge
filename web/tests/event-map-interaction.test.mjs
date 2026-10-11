@@ -39,11 +39,11 @@ test("the preview rail tracks map bounds and focuses without rebuilding markers"
 test("preview cards expose selection, optional imagery, and a direct event link", () => {
   assert.match(previewRail, /"Events visible in map"/);
   assert.match(previewRail, /aria-pressed=\{selected\}/);
-  assert.match(previewRail, /imageUrl \? \(/);
+  assert.match(previewRail, /imageUrl \? <img/);
   assert.match(previewRail, /className="map-preview__title-link" href=\{pageUrl\}/);
   assert.match(previewRail, /target="_blank"/);
   assert.match(previewRail, /className="map-preview__source"/);
-  assert.match(previewRail, /event\.calendar_labels\?\.find/);
+  assert.match(previewRail, /eventSourceFilter\(event\)/);
 });
 
 test("the right rail scrolls vertically and moves below the map on narrow screens", () => {

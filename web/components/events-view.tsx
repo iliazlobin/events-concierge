@@ -5,13 +5,9 @@ import { variedEventChoices } from "@/lib/event-discovery";
 import { ArrowDownUp } from "lucide-react";
 
 import { EventList } from "@/components/event-list";
-import type { MuseStatus } from "@/lib/muse";
 import type { CatalogSort, EventEntityReference, EventItem } from "@/lib/types";
 
 interface EventsViewProps {
-  museStatuses?: ReadonlyMap<string, MuseStatus>;
-  musePendingIds?: ReadonlySet<string>;
-  onMuseSignup?: (event: EventItem) => void;
   events: EventItem[];
   broadDiscovery?: boolean;
   sort: CatalogSort;
@@ -32,9 +28,6 @@ interface EventsViewProps {
 }
 
 export function EventsView({
-  museStatuses,
-  musePendingIds,
-  onMuseSignup,
   events,
   broadDiscovery = false,
   sort,
@@ -99,9 +92,6 @@ export function EventsView({
         </div>
       ) : (
         <EventList
-          museStatuses={museStatuses}
-          musePendingIds={musePendingIds}
-          onMuseSignup={onMuseSignup}
           groupSessions
           events={displayedEvents}
           expandedId={expandedId}

@@ -4,6 +4,7 @@ import { ChevronLeft, ChevronRight, LoaderCircle, Search, X } from "lucide-react
 import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 
 import { EventList } from "@/components/event-list";
+import { EventMuseAction } from "@/components/event-muse-action";
 import {
   calendarRangeLabel,
   calendarSummaryByDate,
@@ -406,11 +407,12 @@ function CalendarWeekGrid({
           day: "numeric",
         }).format(date);
         return (
-          <button
-            type="button"
+          <div
             role="gridcell"
+            tabIndex={0}
             key={key}
             className={[
+              "calendar-week-day",
               selected ? "is-selected" : "",
               unknown && counting ? "is-counting" : "",
             ].filter(Boolean).join(" ")}
@@ -418,23 +420,33 @@ function CalendarWeekGrid({
             aria-label={`${dateLabel}: ${unknown
               ? "Counting events"
               : `${dayEventCount} event${dayEventCount === 1 ? "" : "s"}`}`}
-            onClick={() => onSelect(key)}
+            onClick={interaction => {
+              if (interaction.target instanceof Element && !interaction.target.closest("a, button")) onSelect(key);
+            }}
+            onKeyDown={interaction => {
+              if (interaction.target === interaction.currentTarget && (interaction.key === "Enter" || interaction.key === " ")) {
+                interaction.preventDefault(); onSelect(key);
+              }
+            }}
           >
             <span className="calendar-week-day__heading">
               <span>{new Intl.DateTimeFormat(undefined, { weekday: "short" }).format(date)}</span>
               <strong>{date.getDate()}</strong>
               <small>{unknown ? "" : dayEventCount}</small>
             </span>
-            <span className="calendar-week-day__events" aria-hidden="true">
+            <div className="calendar-week-day__events">
               {visibleEvents.map((event) => (
-                <span
+                <div
                   className="calendar-week-event"
                   data-topic-tone={eventTopicTone(event.topics?.[0])}
                   key={event.canonical_event_id}
                 >
-                  <time>{formatWeekEventTime(event.start_at)}</time>
+                  <div className="calendar-week-event__meta">
+                    <time>{formatWeekEventTime(event.start_at)}</time>
+                    <EventMuseAction event={event} />
+                  </div>
                   <span>{event.title}</span>
-                </span>
+                </div>
               ))}
               {unknown
                 ? <span className="calendar-week-counting">{counting ? "Counting…" : "—"}</span>
@@ -442,8 +454,8 @@ function CalendarWeekGrid({
               {hiddenEventCount ? (
                 <span className="calendar-week-more">+{hiddenEventCount} more</span>
               ) : null}
-            </span>
-          </button>
+            </div>
+          </div>
         );
       })}
     </div>

@@ -255,7 +255,7 @@ test("selecting a day marks it with an accent ring, not an inverted light fill",
   assert.doesNotMatch(styles, /\.calendar-grid button\.is-selected \{[^}]*background: var\(--ink\)/);
   assert.doesNotMatch(
     styles,
-    /\.calendar-week-grid > button\.is-selected \{[^}]*background: var\(--ink\)/,
+    /\.calendar-week-grid > \.calendar-week-day\.is-selected \{[^}]*background: var\(--ink\)/,
   );
   assert.match(
     styles,
@@ -263,7 +263,7 @@ test("selecting a day marks it with an accent ring, not an inverted light fill",
   );
   assert.match(
     styles,
-    /\.calendar-week-grid > button\.is-selected \{[^}]*box-shadow: inset 0 0 0 1px var\(--accent\)/,
+    /\.calendar-week-grid > \.calendar-week-day\.is-selected \{[^}]*box-shadow: inset 0 0 0 1px var\(--accent\)/,
   );
   // Nothing inside a selected cell may assume a light background any more.
   assert.doesNotMatch(styles, /is-selected[^{]*\{[^}]*color: rgba\(0, 0, 0/);

@@ -5,7 +5,11 @@ import type { RefObject } from "react";
 
 import { formatEventDate, formatEventTime } from "@/lib/date";
 import { eventImageUrl } from "@/lib/event-image";
-import { eventLocationLabel, eventPageUrl } from "@/lib/event-links";
+import { eventRegistrationLabel } from "@/lib/event-facets";
+import { discoveryLabels } from "@/lib/event-discovery";
+import { eventSourceFilter, useEventActions } from "@/components/event-actions-context";
+import { EventMuseAction } from "@/components/event-muse-action";
+import { eventLocationLabel, eventPageUrl, googleCalendarUrl } from "@/lib/event-links";
 import { dayCompactLabel, dayTrackLabel } from "@/lib/map-days";
 import type { MapDayGroup, MapDayModel } from "@/lib/map-days";
 import { eventMapCoordinate } from "@/lib/map-viewport";
@@ -52,9 +56,12 @@ function MapPreviewCard({ event, selected, muted, onSelect, onEntitySelect }: Ma
   const pageUrl = eventPageUrl(event);
   const hasMapLocation = eventMapCoordinate(event) !== null;
   const mapLocation = eventMapLocation(event);
-  const sourceLabel = event.calendar_labels?.find((value) => value.trim())
-    ?? event.sources.find((source) => source.label?.trim())?.label
-    ?? event.providers?.find((value) => value.trim());
+  const actions = useEventActions();
+  const source = eventSourceFilter(event);
+  const calendarUrl = googleCalendarUrl(event);
+  const time = formatEventTime(event.start_at, event.end_at);
+  const highlights = [...discoveryLabels(event), eventRegistrationLabel(event)]
+    .filter((value): value is string => Boolean(value));
   return (
     <article
       className={`map-preview${selected ? " is-selected" : ""}${muted ? " is-muted" : ""}`}
@@ -63,54 +70,64 @@ function MapPreviewCard({ event, selected, muted, onSelect, onEntitySelect }: Ma
       <div className="map-preview__summary" onClick={(interaction) => {
         if (interaction.target instanceof Element && !interaction.target.closest("a, button")) onSelect(event);
       }}>
-        <button
+        {!imageUrl && calendarUrl ? <a className="map-preview__date-link" href={calendarUrl}
+          target="_blank" rel="noopener noreferrer" title="Add to Google Calendar"
+          aria-label={`Add ${event.title} on ${date.weekday}, ${date.month} ${date.day} to Google Calendar`}
+          onPointerDown={interaction => interaction.stopPropagation()}
+          onClick={interaction => interaction.stopPropagation()}>
+          <time className="map-preview__date" dateTime={event.start_at} aria-hidden="true">
+            <span>{date.month}</span><strong>{date.day}</strong>
+          </time>
+        </a> : <button
           className="map-preview__select"
           type="button"
           aria-label={hasMapLocation ? `Focus ${event.title} on map` : `Show details for ${event.title}`}
           aria-pressed={selected}
           onClick={() => onSelect(event)}
         >
-        {imageUrl ? (
-          <img
-            className="map-preview__image"
-            src={imageUrl}
-            alt=""
-            loading="lazy"
-            referrerPolicy="no-referrer"
-          />
-        ) : (
-          <time
-            className="map-preview__date"
-            dateTime={event.start_at}
-            aria-hidden="true"
-          >
-            <span>{date.month}</span>
-            <strong>{date.day}</strong>
-          </time>
-        )}
-        </button>
+          {imageUrl ? <img className="map-preview__image" src={imageUrl} alt="" loading="lazy" referrerPolicy="no-referrer" />
+            : <time className="map-preview__date" dateTime={event.start_at} aria-hidden="true">
+              <span>{date.month}</span><strong>{date.day}</strong>
+            </time>}
+        </button>}
         <span className="map-preview__copy">
-          {sourceLabel ? (
-            <small className="map-preview__source">{sourceLabel}</small>
-          ) : null}
-          <small>
-            <CalendarDays aria-hidden="true" />
-            {date.weekday} · {formatEventTime(event.start_at, event.end_at)}
+          <small className="map-preview__source">
+            {source.sourceKey && actions?.onSourceSelect ? <button type="button"
+              className="map-preview__source-filter"
+              aria-label={`View source ${source.label}`} title={`View source ${source.label}`}
+              onPointerDown={interaction => interaction.stopPropagation()}
+              onClick={interaction => { interaction.preventDefault(); interaction.stopPropagation(); actions.onSourceSelect?.(source.sourceKey!); }}>
+              {source.label}
+            </button> : source.label}
           </small>
+          <small>{calendarUrl ? <a className="map-preview__calendar-link" href={calendarUrl}
+            target="_blank" rel="noopener noreferrer" title="Add to Google Calendar"
+            aria-label={`Add ${event.title} on ${date.weekday}, ${date.month} ${date.day} at ${time} to Google Calendar`}
+            onPointerDown={interaction => interaction.stopPropagation()}
+            onClick={interaction => interaction.stopPropagation()}>
+            <CalendarDays aria-hidden="true" />{date.weekday} · {time}
+          </a> : <><CalendarDays aria-hidden="true" />{date.weekday} · {time}</>}</small>
           <strong>{pageUrl ? <a className="map-preview__title-link" href={pageUrl}
             target="_blank" rel="noopener noreferrer" title="Open provider event page (opens in new tab)">
             {event.title}
           </a> : event.title}</strong>
-          <span>
-            <MapPin aria-hidden="true" />
-            {eventLocationLabel(event)}
-          </span>
+          {!imageUrl && calendarUrl ? <button className="map-preview__location-focus" type="button"
+            aria-label={hasMapLocation ? `Focus ${event.title} on map` : `Show details for ${event.title}`}
+            aria-pressed={selected}
+            onClick={interaction => { interaction.stopPropagation(); onSelect(event); }}>
+            <MapPin aria-hidden="true" />{eventLocationLabel(event)}
+          </button> : <span><MapPin aria-hidden="true" />{eventLocationLabel(event)}</span>}
           {!hasMapLocation ? <small className="map-preview__location-note">Not plotted on map</small> : null}
           {mapLocation?.precision === "area" ? (
             <small className="map-preview__location-note">Approximate area · {mapLocation.label}</small>
           ) : null}
         </span>
       </div>
+
+      {highlights.length || actions?.muse ? <ul className="map-preview__highlights" aria-label="Event highlights">
+        {highlights.map(label => <li key={label}>{label}</li>)}
+        {actions?.muse ? <li className="event-highlight-action"><EventMuseAction event={event} /></li> : null}
+      </ul> : null}
 
       {graphEntity && onEntitySelect ? <div className="map-preview__actions">
         <button type="button" className="map-preview__link"
