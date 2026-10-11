@@ -231,7 +231,7 @@ export function EntityGraphView({
       ) : null}
 
       {sessions && [...sessions.groups.values()].some((group) => group.length > 1) ? (
-        <p className="entity-graph-inspector__provenance">Matching sessions share a graph node. Select one to browse its dates in the detail panel. Counts refer to individual events in the loaded graph.</p>
+        <p className="entity-graph-inspector__provenance">Recurring sessions are grouped. Counts include individual events in this graph.</p>
       ) : null}
 
       {scene ? (

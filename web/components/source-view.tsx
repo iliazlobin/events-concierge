@@ -48,23 +48,22 @@ export function SourceView({
       </button>
       <header className={styles.header}>
         <div>
-          <p className={styles.eyebrow}>Source</p>
           <h1 className={styles.title}>{title}</h1>
           {showPublisher ? <p className={styles.publisher}>By {publisher}</p> : null}
         </div>
         {website ? <a className={styles.website} href={website} target="_blank" rel="noopener noreferrer">
-          Visit website<ArrowUpRight aria-hidden="true" />
+          Website<ArrowUpRight aria-hidden="true" />
         </a> : null}
       </header>
 
       {!loading && !error ? <div className={styles.overview}>
         <div className={styles.count}>
           <strong>{(count ?? summary.loadedCount).toLocaleString()}</strong>
-          <span>{count === null ? "Events loaded" : "Events in selected dates"}</span>
+          <span>{count === null ? "Loaded events" : "Events in range"}</span>
           {hasMore ? <small>{summary.loadedCount.toLocaleString()} loaded · more available</small> : null}
         </div>
         {summary.dateLabel || summary.cities.length || summary.topics.length ? <div className={styles.facts}>
-          <p className={styles.factLabel}>In the events shown</p>
+          {hasMore || (count !== null && count !== summary.loadedCount) ? <p className={styles.factLabel}>Loaded events</p> : null}
           {summary.dateLabel ? <p><CalendarDays aria-hidden="true" />{summary.dateLabel}</p> : null}
           {summary.cities.length ? <p><MapPin aria-hidden="true" />{summary.cities.slice(0, 4).join(" · ")}
             {summary.cities.length > 4 ? ` · +${summary.cities.length - 4} more places` : ""}</p> : null}
@@ -81,7 +80,7 @@ export function SourceView({
       <div className={styles.listHeading}>
         <h2>Events</h2>
         <div className={styles.views} aria-label="View this source's events">
-          {onViewEvents ? <button type="button" onClick={onViewEvents}>All events</button> : null}
+          {onViewEvents ? <button type="button" onClick={onViewEvents}>List</button> : null}
           {onMap ? <button type="button" onClick={onMap}><MapPin aria-hidden="true" />Map</button> : null}
           {onCalendar ? <button type="button" onClick={onCalendar}><CalendarDays aria-hidden="true" />Calendar</button> : null}
         </div>
@@ -94,8 +93,8 @@ export function SourceView({
           events={events}
           expandedId={expandedId}
           onExpandedChange={onExpandedChange}
-          emptyTitle="No events in these dates"
-          emptyCopy="Change the date filter to see more from this source."
+          emptyTitle="No matching events"
+          emptyCopy=""
           hasMore={hasMore}
           loadingMore={loadingMore}
           onLoadMore={onLoadMore}

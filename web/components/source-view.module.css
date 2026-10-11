@@ -15,7 +15,6 @@
 }
 .back svg, .website svg, .facts svg, .views svg, .loading svg { width: 18px; height: 18px; flex-shrink: 0; }
 .header { display: flex; align-items: center; justify-content: space-between; gap: 24px; margin: 32px 0; }
-.eyebrow { color: var(--accent); text-transform: uppercase; letter-spacing: .18em; font-size: 12px; font-weight: 750; margin: 0 0 12px; }
 .title { font-size: clamp(28px, 4vw, 52px); letter-spacing: -.04em; line-height: 1.12; margin: 0; overflow-wrap: anywhere; }
 .publisher { color: var(--muted); margin: 14px 0 0; }
 .website { display: inline-flex; align-items: center; gap: 8px; white-space: nowrap; color: var(--ink); border: 1px solid var(--line-strong); padding: 12px 16px; border-radius: 999px; text-decoration: none; }

@@ -700,7 +700,6 @@ export function CalendarView({
     <section className="workspace calendar-view">
       <header className="workspace-heading">
         <div>
-          <p>EXPLORE BY DATE</p>
           <h1>Calendar</h1>
         </div>
         <div className="view-result-state">
@@ -713,7 +712,7 @@ export function CalendarView({
             {!counted || !summary
               ? error ? "Count unavailable" : "Counting events…"
               : `${summary.total_event_count.toLocaleString()} events${
-                loading ? " · refreshing…" : " · range complete"
+                loading ? " · refreshing…" : ""
               }`}
           </span>
           {loading ? (
@@ -835,7 +834,6 @@ export function CalendarView({
             >
               <header>
                 <div>
-                  <p>COLOR KEY + FILTER</p>
                   <h3 id="calendar-topic-key-title">Event types</h3>
                 </div>
                 {activeTopics.length ? (
@@ -850,7 +848,7 @@ export function CalendarView({
               </header>
               <div className="calendar-topic-key__options">
                 <p className="calendar-topic-key__hint">
-                  Select a color to filter this calendar. Counts reflect the visible events.
+                  Counts cover visible events.
                 </p>
                 {/*
                   The search is here from the start rather than behind the expand.
@@ -966,14 +964,14 @@ export function CalendarView({
               ? "Select a day"
               : dayLoading
                 ? "Loading the agenda…"
-                : selectedHistorical ? "No retained events" : "A quiet day"}
+                : "No matching events"}
             emptyCopy={!selectedDate
-              ? "Choose any day in the month to inspect its agenda."
+              ? ""
               : dayLoading
-                ? "Reading this day's events."
+                ? ""
               : selectedHistorical
-                ? "No matching event is retained for the selected day. Older listings may have rolled off before archival capture."
-                : "Nothing is scheduled for this day. Pick another day or adjust the active filters."}
+                ? "Older listings may be missing."
+                : ""}
           />
           {dayHasMore ? (
             <button

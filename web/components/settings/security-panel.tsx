@@ -78,7 +78,6 @@ export function SecurityPanel() {
   if (releaseProfile(config) !== "full") {
     return <div className="settings-panel">
       <h1>Account security</h1>
-      <p>View your sign-in details and account controls in Account and data.</p>
       <a href="/settings/account">Account and data</a>
     </div>;
   }
@@ -87,24 +86,20 @@ export function SecurityPanel() {
     <div className="settings-panel">
       <header className="settings-panel__head">
         <h1>Security</h1>
-        <p>How you prove it&rsquo;s you, and how to shut things down if it isn&rsquo;t.</p>
       </header>
 
       <p className="preview-banner" role="note">
         <ShieldCheck aria-hidden="true" />
         <span>
-          <strong>Design preview.</strong> Nothing on this page is connected yet — the controls are
-          inert and no settings will change. It is here to react to, not to use.
+          <strong>Preview only.</strong> Controls are disabled; sample data is shown.
         </span>
       </p>
 
       {delegated ? (
         <section className="settings-card">
-          <h2 className="settings-card__title">Where these live</h2>
+          <h2 className="settings-card__title">Sign-in provider</h2>
           <p>
-            You sign in through your identity provider, so your password, two-factor methods and
-            account recovery are managed there rather than here. The most likely shape for this
-            section is a short summary plus a link into that provider&rsquo;s security settings.
+            Password, two-factor authentication and recovery are managed by your sign-in provider.
           </p>
           <button type="button" className="button button-quiet" disabled>
             Open provider security settings
@@ -135,7 +130,6 @@ export function SecurityPanel() {
       <section className="settings-card">
         <h2 className="settings-card__title">Two-factor authentication</h2>
         <p className="settings-hint">
-          A second factor helps keep a stolen password from becoming a stolen account.
           Manage your sign-in protection with your identity provider.
         </p>
         <div className="security-rows">
@@ -192,10 +186,6 @@ export function SecurityPanel() {
             Sign out everywhere
             <span className="preview-tag">Preview</span>
           </button>
-          <p className="settings-hint">
-            Signing out everywhere should never ask you to prove yourself again first. If someone
-            else is in your account, that prompt is the thing standing between you and stopping them.
-          </p>
         </div>
       </section>
 
@@ -211,7 +201,6 @@ export function SecurityPanel() {
             </li>
           ))}
         </ul>
-        <p className="settings-hint">Sample entries. Not real activity from your account.</p>
       </section>
     </div>
   );

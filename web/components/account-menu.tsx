@@ -30,19 +30,18 @@ interface AccountMenuProps {
 interface MenuLink {
   href: string;
   label: string;
-  hint: string;
   icon: typeof Settings2;
 }
 
 const LINKS: MenuLink[] = [
-  { href: "/settings", label: "Profile", hint: "Name, photo, time zone", icon: Settings2 },
-  { href: "/settings/taste", label: "Interests", hint: "Topics you enjoy", icon: Sparkles },
-  { href: "/settings/saved-filters", label: "Saved filters", hint: "Your saved searches", icon: Bookmark },
-  { href: "/settings/muse", label: "Muse signups", hint: "Connection and signup results", icon: Sparkles },
-  { href: "/settings/activity", label: "Activity", hint: "Asks, registrations", icon: SlidersHorizontal },
-  { href: "/settings/api-keys", label: "API keys", hint: "Development key records", icon: KeyRound },
-  { href: "/settings/security", label: "Security", hint: "Password, two-factor", icon: ShieldCheck },
-  { href: "/settings/account", label: "Account and data", hint: "Sign-in, deletion", icon: ShieldAlert },
+  { href: "/settings", label: "Profile", icon: Settings2 },
+  { href: "/settings/taste", label: "Interests", icon: Sparkles },
+  { href: "/settings/saved-filters", label: "Saved filters", icon: Bookmark },
+  { href: "/settings/muse", label: "Muse signups", icon: Sparkles },
+  { href: "/settings/activity", label: "Activity", icon: SlidersHorizontal },
+  { href: "/settings/api-keys", label: "API keys", icon: KeyRound },
+  { href: "/settings/security", label: "Security", icon: ShieldCheck },
+  { href: "/settings/account", label: "Account and data", icon: ShieldAlert },
 ];
 
 /**
@@ -204,7 +203,6 @@ export function AccountMenu({ me, config, tenantId = null, returnTo = "/", signi
                 >
                   <Icon className="account-menu__icon" aria-hidden="true" />
                   <span className="account-menu__label">{link.label}</span>
-                  <span className="account-menu__hint">{link.hint}</span>
                 </a>
               );
             })}

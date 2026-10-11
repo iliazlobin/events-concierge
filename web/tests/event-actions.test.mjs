@@ -103,7 +103,7 @@ test("pending and existing tasks retain the same action without duplicate signup
     muse: museActions({ statuses: new Map([[event.canonical_event_id, "registered"]]) }),
   });
   assert.match(existing, /aria-label="View registration for Free design evening"/);
-  assert.match(existing, /Registered · reported by Muse/);
+  assert.match(existing, /Registered/);
   assert.doesNotMatch(existing, /disabled/);
   const pending = withActions(createElement(action.EventMuseAction, { event }), {
     muse: museActions({ pendingIds: new Set([event.canonical_event_id]) }),

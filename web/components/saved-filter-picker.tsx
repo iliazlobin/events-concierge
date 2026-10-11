@@ -154,7 +154,6 @@ export function SavedFilterPicker({
         >
           <div className="filter-chip-editor__mode">
             <span>Saved filters</span>
-            <small>Reapply or delete a selection you kept</small>
           </div>
 
           {/* Saving is for a selection that is not kept yet. When the strip already holds one of

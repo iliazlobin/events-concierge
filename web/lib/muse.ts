@@ -84,9 +84,9 @@ export function museEventDate(value: string): string {
 }
 
 export const museStatusLabel: Record<MuseStatus, string> = {
-  queued: "Ready for Muse", in_progress: "In progress", needs_input: "Needs your input",
+  queued: "Queued", in_progress: "In progress", needs_input: "Needs input",
   awaiting_approval: "Awaiting organizer approval", waitlisted: "Waitlisted",
-  registered: "Registered · reported by Muse", failed: "Failed", uncertain: "Needs verification",
+  registered: "Registered", failed: "Failed", uncertain: "Unconfirmed",
 };
 
 export function getMuseConnection(tenantId: string | null) {

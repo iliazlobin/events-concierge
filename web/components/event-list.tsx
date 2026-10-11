@@ -29,8 +29,8 @@ export function EventList({
   groupSessions = false,
   expandedId,
   onExpandedChange,
-  emptyTitle = "Nothing here yet",
-  emptyCopy = "Try a broader date range or clear a filter.",
+  emptyTitle = "No matching events",
+  emptyCopy = "",
   compact = false,
   hasMore = false,
   loadingMore = false,
@@ -46,7 +46,7 @@ export function EventList({
       <div className="empty-state">
         <span aria-hidden="true" />
         <h2>{emptyTitle}</h2>
-        <p>{emptyCopy}</p>
+        {emptyCopy ? <p>{emptyCopy}</p> : null}
       </div>
     );
   }

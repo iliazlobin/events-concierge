@@ -101,7 +101,7 @@ export function ApiKeysPanel() {
   if (!fullRelease) {
     return <div className="settings-panel">
       <h1>Account access</h1>
-      <p>API keys are not available in this release. Manage your sign-in and account controls in Account and data.</p>
+      <p>API keys are unavailable.</p>
       <a href="/settings/account">Account and data</a>
     </div>;
   }
@@ -110,15 +110,14 @@ export function ApiKeysPanel() {
     <div className="settings-panel">
       <header className="settings-panel__head">
         <h1>API keys</h1>
-        <p>Manage development API key records. Authentication with these keys is not available yet.</p>
+        <p>API key authentication is not available yet.</p>
       </header>
 
       {issued ? (
         <section className="settings-card settings-card--reveal">
           <h2 className="settings-card__title">Copy your new key now</h2>
           <p className="settings-hint">
-            This is the only time <strong>{issued.name}</strong> will be shown. We store only a
-            fingerprint, so it cannot be retrieved later.
+            Copy <strong>{issued.name}</strong> now. This key cannot be retrieved later.
           </p>
           <div className="secret-reveal">
             <code>{issued.secret}</code>

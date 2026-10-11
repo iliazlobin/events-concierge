@@ -196,7 +196,6 @@ export function MapPreviewRail({
       ) : null}
       <header className="map-preview-rail__heading">
         <div>
-          <p>{showUnmapped ? "MATCHING YOUR FILTERS" : "IN THIS AREA"}</p>
           <h2>{showUnmapped ? "Events without pins" : "Visible events"}</h2>
         </div>
         <span aria-live="polite">
@@ -205,7 +204,7 @@ export function MapPreviewRail({
       </header>
 
       {showUnmapped ? <p className="map-preview-rail__notice">
-        These events have no map coordinates. Open an event for its location details.
+        Map location unavailable.
       </p> : null}
 
       {areaLabel && !showUnmapped ? (
@@ -233,7 +232,7 @@ export function MapPreviewRail({
 
       {!displayedEvents.length && !sections.length ? (
         <p className="map-preview-rail__empty" role="status">
-          Move or zoom the map to find events in this area.
+          No loaded events in this area.
         </p>
       ) : grouped ? (
         <div className="map-preview-rail__list">

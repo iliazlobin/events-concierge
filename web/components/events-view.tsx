@@ -59,7 +59,6 @@ export function EventsView({
     <section className="workspace events-view">
       <header className="workspace-heading">
         <div>
-          <p>DISCOVER</p>
           <h1>{heading}</h1>
         </div>
         <label className="event-sort-control">
@@ -79,10 +78,10 @@ export function EventsView({
       {broadDiscovery && !historicalWindow && !sourceName ? (
         <label>
           <input type="checkbox" checked={varyChoices} onChange={(e) => setVaryChoices(e.target.checked)} />
-          Vary organizers and activities in loaded results
+          Vary organizers and activities
         </label>
       ) : null}
-      {varied ? <p>Varied choices from {events.length} loaded events. Load more to broaden the selection.</p> : null}
+      {varied ? <p>From {events.length} loaded events</p> : null}
       {error ? <p className="workspace-error" role="alert">{error}</p> : null}
       {loading && !events.length ? (
         <div className="event-skeletons" aria-label="Loading events">
@@ -103,10 +102,10 @@ export function EventsView({
           onFacetSelect={onFacetSelect}
           onEntitySelect={onEntitySelect}
           onTopicSelect={onTopicSelect}
-          emptyTitle={historicalWindow ? "No retained events match" : "No events match"}
+          emptyTitle="No matching events"
           emptyCopy={historicalWindow
-            ? "Try another date or broader filters. Older provider listings may have rolled off before archival capture."
-            : "Try another date, remove a provider, or search more broadly."}
+            ? "Older listings may be missing."
+            : ""}
         />
       )}
     </section>

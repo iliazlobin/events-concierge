@@ -36,16 +36,10 @@ test("every control is inert", () => {
 });
 
 test("the page says plainly that it is not connected", () => {
-  assert.match(SOURCE, /Design preview/);
-  assert.match(SOURCE, /inert|not connected/i);
+  assert.match(SOURCE, /Preview only/);
+  assert.match(SOURCE, /Controls are disabled/i);
 });
 
 test("sample data is labelled as sample data", () => {
-  assert.match(SOURCE, /Not real activity/i);
-});
-
-test("signing out everywhere is never gated behind proving yourself again", () => {
-  // De-escalation must stay reachable: the person who most needs this button may be sharing their
-  // account with an attacker right now.
-  assert.match(SOURCE, /never ask you to prove yourself again/i);
+  assert.match(SOURCE, /sample data is shown/i);
 });

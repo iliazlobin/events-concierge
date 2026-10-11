@@ -25,10 +25,7 @@ export function Onboarding({ busy, error, onSubmit }: OnboardingProps) {
       </div>
       <section>
         <p className="onboarding__kicker">Events Concierge</p>
-        <h1>Find something<br />worth going to.</h1>
-        <p className="onboarding__copy">
-          A quiet, personal view of what is happening around you.
-        </p>
+        <h1>Find events</h1>
         <form onSubmit={submit}>
           <label>
             <span className="sr-only">Email address</span>
@@ -49,7 +46,7 @@ export function Onboarding({ busy, error, onSubmit }: OnboardingProps) {
           </button>
         </form>
         {error ? <p className="form-error" role="alert">{error}</p> : null}
-        <small>Local preview · no real registration is performed by browsing.</small>
+        <small>Local preview. No real registrations.</small>
       </section>
     </main>
   );

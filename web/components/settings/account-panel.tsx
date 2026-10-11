@@ -81,11 +81,11 @@ export function AccountPanel() {
     return (
       <div className="settings-panel">
         <header className="settings-panel__head">
-          <h1>Account erasure is underway</h1>
+          <h1>{receipt.status === "completed" ? "Account deleted" : "Deleting account"}</h1>
           <p>
             {receipt.status === "completed"
-              ? "Everything below has been removed."
-              : "We have accepted the request and started work. It continues without this browser."}
+              ? "Deletion complete."
+              : "Deletion continues if you close this page."}
           </p>
         </header>
         <section className="settings-card">
@@ -127,7 +127,6 @@ export function AccountPanel() {
     <div className="settings-panel">
       <header className="settings-panel__head">
         <h1>Account and data</h1>
-        <p>Where your session stands, and how to end it for good.</p>
       </header>
 
       <section className="settings-card">
@@ -148,47 +147,39 @@ export function AccountPanel() {
         </dl>
         {config?.auth_mode === "deployment_session" ? (
           <p className="settings-hint">
-            Sessions last up to eight hours and do not extend as you use them.
-            {!deletionUnavailable ? " Destructive actions ask you to sign in again first." : null}
+            Sessions last up to eight hours.
+            {!deletionUnavailable ? " Account deletion requires signing in again." : null}
           </p>
         ) : null}
       </section>
 
       {releaseProfile(config) === "full" ? <section className="settings-card">
-        <h2 className="settings-card__title">How far the concierge goes</h2>
+        <h2 className="settings-card__title">Registration</h2>
         <ol className="control-ladder">
           <li>
-            <strong>Show me options.</strong> A read-only preview. It learns from what catches your
-            eye and registers nothing.
+            <strong>Browse.</strong> Shows options without registering.
           </li>
           <li>
-            <strong>Find and handle it.</strong> A durable request. It may act inside allowed
-            free-RSVP lanes and hands off anything else to you.
+            <strong>Requests.</strong> Registers for supported free events; other registrations need your input.
           </li>
           <li>
-            <strong>Your calendar stays true.</strong> Confirmed registrations are reconciled when
-            organizers change plans or you withdraw.
+            <strong>Calendar.</strong> Updates confirmed registrations when event details change or you withdraw.
           </li>
         </ol>
         <p className="settings-hint">
-          Paid registration is refused everywhere today — the concierge has no purchase authority.
+          Paid registration is unavailable.
         </p>
-      </section> : <section className="settings-card">
-        <h2 className="settings-card__title">Event discovery</h2>
-        <p>Browse events, explore the map and calendar, and save your filters. Visit the event provider to register. Google Calendar links let you add an event yourself.</p>
-      </section>}
+      </section> : null}
 
       <section className="settings-card settings-card--danger">
         <h2 className="settings-card__title">Erase this account</h2>
         <p>
-          This permanently fences your account, cancels concierge work, removes concierge-owned
-          calendar entries, revokes sessions and stored credentials, and starts deletion from
-          account-scoped storage. It cannot be undone.
+          Blocks account access and starts data deletion. Cancels requests, removes app-created
+          calendar entries and revokes sessions and saved credentials. This cannot be undone.
         </p>
         {deletionUnavailable ? (
           <p className="settings-hint" id="deletion-unavailable">
-            Account deletion is currently unavailable with Google sign-in. It requires an additional
-            identity check that is not available yet. Signing in again will not enable deletion.
+            Account deletion is unavailable. This Google sign-in setup cannot confirm your identity again.
           </p>
         ) : null}
         {error ? (

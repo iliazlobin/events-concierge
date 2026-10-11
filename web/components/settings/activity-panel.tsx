@@ -97,7 +97,6 @@ export function ActivityPanel() {
   if (!fullRelease) {
     return <div className="settings-panel">
       <h1>Event discovery</h1>
-      <p>Browse events and visit their provider pages for registration.</p>
       <a href="/?view=events">Browse events</a>
     </div>;
   }
@@ -115,7 +114,6 @@ export function ActivityPanel() {
     <div className="settings-panel">
       <header className="settings-panel__head">
         <h1>Activity</h1>
-        <p>What you asked for, what the concierge did, and anything still waiting on you.</p>
       </header>
 
       {error ? (
@@ -130,11 +128,11 @@ export function ActivityPanel() {
       ) : null}
 
       <section className="settings-card">
-        <h2 className="settings-card__title">A step from you</h2>
+        <h2 className="settings-card__title">Needs attention</h2>
         {tasks.length === 0 ? (
           <p className="settings-empty">
             <Inbox aria-hidden="true" />
-            Nothing needs you right now.
+            Nothing needs attention.
           </p>
         ) : (
           <ul className="activity-list">
@@ -161,11 +159,11 @@ export function ActivityPanel() {
       </section>
 
       <section className="settings-card">
-        <h2 className="settings-card__title">Registered for you</h2>
+        <h2 className="settings-card__title">Registrations</h2>
         {registrations.length === 0 ? (
           <p className="settings-empty">
             <CalendarClock aria-hidden="true" />
-            Nothing registered yet.
+            No registrations.
           </p>
         ) : (
           <ul className="activity-list">
@@ -198,11 +196,11 @@ export function ActivityPanel() {
       </section>
 
       <section className="settings-card">
-        <h2 className="settings-card__title">What you asked for</h2>
+        <h2 className="settings-card__title">Requests</h2>
         {requests.length === 0 ? (
           <p className="settings-empty">
             <Inbox aria-hidden="true" />
-            No saved briefs yet.
+            No requests.
           </p>
         ) : (
           <ul className="activity-list">

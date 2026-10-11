@@ -472,9 +472,7 @@ export function EventCard({
               ) : null}
             </dl>
           ) : null}
-          <p className="event-card__description">
-            {description || "The organizer has not added a description yet."}
-          </p>
+          {description ? <p className="event-card__description">{description}</p> : null}
           {entityDetails}
         </div>
       </div>

@@ -12,17 +12,17 @@ export function signInReason(value: unknown): SignInReason {
 export function signInMessage(reason: SignInReason): { title: string; description: string } {
   switch (reason) {
     case "cancelled":
-      return { title: "Sign-in cancelled", description: "You stopped signing in. Continue when you’re ready." };
+      return { title: "Sign-in cancelled", description: "" };
     case "not_authorized":
-      return { title: "This account can’t sign in", description: "Please try signing in again with a verified Google or Apple account." };
+      return { title: "This account can’t sign in", description: "Use a verified Google or Apple account." };
     case "unavailable":
-      return { title: "Sign-in is temporarily unavailable", description: "We couldn’t finish signing you in. Please try again in a moment." };
+      return { title: "Sign-in is temporarily unavailable", description: "" };
     case "signed_out":
-      return { title: "You’re signed out", description: "You can sign in again when you’re ready." };
+      return { title: "You’re signed out", description: "" };
     case "terms_updated":
       return { title: "Review the updated terms", description: "Accept the current Terms of Service and acknowledge the Privacy Policy to use your account." };
     case "unknown":
-      return { title: "Sign-in wasn’t completed", description: "Please try signing in again." };
+      return { title: "Sign-in wasn’t completed", description: "" };
     default:
       return { title: "Sign in", description: "" };
   }

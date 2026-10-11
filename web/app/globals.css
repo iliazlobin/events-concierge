@@ -5260,20 +5260,13 @@ textarea:focus-visible {
   margin: 0;
 }
 
-.onboarding__copy {
-  color: var(--muted);
-  font-size: 15px;
-  line-height: 1.55;
-  margin: 24px 0 32px;
-}
-
 .onboarding form {
   background: var(--panel-raised);
   border: 1px solid var(--line-strong);
   border-radius: 18px;
   display: flex;
   gap: 8px;
-  margin: 0 auto;
+  margin: 28px auto 0;
   max-width: 480px;
   padding: 7px;
 }
@@ -6644,15 +6637,6 @@ textarea:focus-visible {
 }
 
 .account-menu__label {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.account-menu__hint {
-  color: var(--quiet);
-  font-size: 11px;
-  grid-column: 2;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;

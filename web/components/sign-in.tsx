@@ -135,7 +135,7 @@ export function SignIn({ reason, returnTo = "/", reauthenticationState }: {
           ) : (
             <>
               <p className={styles.notice} role="alert">
-                {failed ? "We couldn’t load sign-in options. Please try again." : "Sign-in isn’t available here yet. Please check again later."}
+                {failed ? "Could not load sign-in options." : "Sign-in is unavailable."}
               </p>
               <button className={styles.continue} type="button" onClick={() => setAttempt((value) => value + 1)}>
                 {failed ? "Try again" : "Check again"}

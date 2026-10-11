@@ -49,7 +49,7 @@ test("viewed versions do not revive from a stale response or consume a future up
 
 test("status changes and a new question are announced; old responses stay silent", () => {
   const question = { ...item, status: "needs_input", version: 2, outcome: { note: "Which company?" } };
-  assert.match(museRegistrationUpdates([item], [question])[0], /Needs your input.*Which company/);
+  assert.match(museRegistrationUpdates([item], [question])[0], /Needs input.*Which company/);
   const newQuestion = { ...question, version: 3, outcome: { note: "Which job title?" } };
   assert.match(museRegistrationUpdates([question], [newQuestion])[0], /Which job title/);
   assert.deepEqual(museRegistrationUpdates([newQuestion], [question]), []);
@@ -60,7 +60,7 @@ test("handoff covers every page, protects attempts, and distinguishes reported r
   const instruction = museInstruction();
   assert.ok(instruction.includes("every page") && instruction.includes("cursor") && instruction.includes("Claim each queued event"));
   assert.ok(instruction.includes("approval") && instruction.includes("uncertain") && instruction.includes("without claiming a new attempt"));
-  assert.equal(museStatusLabel.registered, "Registered · reported by Muse");
+  assert.equal(museStatusLabel.registered, "Registered");
   assert.notEqual(museStatusLabel.awaiting_approval, museStatusLabel.registered);
 });
 

@@ -91,7 +91,7 @@ export function RegistrationWorkspace({ providers, selectedId, onClose }: {
       {workspace.error ? <p role="alert" className="workspace-error">{workspace.error}</p> : null}
       {workspace.loading && !items.length ? <p role="status">Loading registrations…</p> : null}
       {!workspace.loading && !visible.length && !workspace.error ? <p className={styles.empty}>
-        {workspace.hasMore && (matchedTotal === null || matchedTotal > 0) ? "Load more to see other matching registrations." : filter === "all" ? "No registrations yet. Queue an event from its highlights." : "No registrations in this status."}
+        {workspace.hasMore && (matchedTotal === null || matchedTotal > 0) ? "More registrations available." : filter === "all" ? "No registrations yet." : "No matching registrations."}
       </p> : null}
       <ol className={styles.tasks}>{visible.map(item => {
         const date = formatEventDate(item.event.start_at);
@@ -107,7 +107,6 @@ export function RegistrationWorkspace({ providers, selectedId, onClose }: {
               <p className={styles.taskDate}>{date.weekday} · {formatEventTime(item.event.start_at, item.event.end_at)}{item.event.city ? ` · ${formatCity(item.event.city)}` : ""}</p></div>
             {item.unread ? <span className={styles.unreadDot} aria-label="Unread update" /> : null}</div>
           <p className={styles.status} data-status={item.status}><span aria-hidden="true" />{provider.statusLabels[item.status]}</p>
-          {item.status === "queued" ? <p className={styles.note}>Waiting for you to start {provider.label}.</p> : null}
           {item.status === "uncertain" ? <p className={styles.note}>Check provider confirmation before retrying.</p> : null}
           {item.outcome?.note ? <p className={styles.note}>{item.outcome.note}</p> : null}
           {item.outcome?.confirmation_reference ? <p className={styles.note}>Confirmation: {item.outcome.confirmation_reference}</p> : null}

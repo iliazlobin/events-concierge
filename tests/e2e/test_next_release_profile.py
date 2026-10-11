@@ -1446,11 +1446,10 @@ def test_discovery_settings_suppress_automated_registration_and_calendar_claims(
     harness, api = release_page
     page = harness.page
     page.goto(f"{BASE}/settings/account")
-    expect(page.get_by_role("heading", name="Event discovery", exact=True)).to_be_visible()
+    expect(page.get_by_role("heading", name="Account and data", exact=True)).to_be_visible()
     expect(page.get_by_role("link", name="Activity", exact=True)).to_have_count(0)
     expect(page.get_by_role("link", name="Security", exact=True)).to_have_count(0)
-    expect(page.get_by_text("Find and handle it.", exact=False)).to_have_count(0)
-    expect(page.get_by_text("Your calendar stays true.", exact=False)).to_have_count(0)
+    expect(page.get_by_role("heading", name="Registration", exact=True)).to_have_count(0)
     page.goto(f"{BASE}/settings/activity")
     expect(page.get_by_role("heading", name="Event discovery", exact=True)).to_be_visible()
     expect(page.get_by_role("button", name="Withdraw", exact=True)).to_have_count(0)
@@ -1460,7 +1459,7 @@ def test_discovery_settings_suppress_automated_registration_and_calendar_claims(
     expect(page.get_by_text("Relay inbox", exact=True)).to_have_count(0)
     expect(page.get_by_text("sends confirmations", exact=False)).to_have_count(0)
     page.goto(f"{BASE}/settings/taste")
-    expect(page.get_by_text("Use topic filters", exact=False)).to_be_visible()
+    expect(page.get_by_text("Saved interests do not filter events.", exact=True)).to_be_visible()
     expect(page.get_by_text("keeps refining the order", exact=False)).to_have_count(0)
     page.goto(f"{BASE}/settings/security")
     expect(page.get_by_role("heading", name="Account security", exact=True)).to_be_visible()
@@ -1474,7 +1473,7 @@ def test_full_profile_retains_explicitly_inert_security_preview(release_page):
     page = harness.page
     page.goto(f"{BASE}/settings/security")
     expect(page.get_by_role("heading", name="Security", exact=True)).to_be_visible()
-    expect(page.get_by_role("note")).to_contain_text("Design preview")
+    expect(page.get_by_role("note")).to_contain_text("Preview only")
     expect(page.get_by_role("link", name="Security", exact=True)).to_be_visible()
     buttons = page.get_by_role("button")
     assert buttons.count() > 0
@@ -1829,7 +1828,7 @@ def test_discovery_defers_api_keys_in_navigation_deep_links_and_history(release_
     expect(page.get_by_role("menuitem", name=re.compile(r"^API keys"))).to_have_count(0)
     page.goto(f"{BASE}/settings/api-keys")
     expect(page.get_by_role("heading", name="Account access", exact=True)).to_be_visible()
-    expect(page.get_by_text("API keys are not available in this release.", exact=False)).to_be_visible()
+    expect(page.get_by_text("API keys are unavailable.", exact=True)).to_be_visible()
     expect(page.get_by_role("navigation").get_by_role("link", name="API keys", exact=True)).to_have_count(0)
     expect(page.get_by_role("textbox", name="Key name", exact=True)).to_have_count(0)
     expect(page.get_by_role("button", name="Create key", exact=True)).to_have_count(0)
@@ -1848,9 +1847,9 @@ def test_full_profile_retains_api_key_records_with_accurate_capability_text(rele
     page = harness.page
     page.goto(f"{BASE}/?view=events")
     page.get_by_role("button", name=re.compile(r"^Account menu")).click()
-    page.get_by_role("menuitem", name="API keys Development key records", exact=True).click()
+    page.get_by_role("menuitem", name="API keys", exact=True).click()
     expect(page.get_by_role("heading", name="API keys", exact=True)).to_be_visible()
-    expect(page.get_by_text("Authentication with these keys is not available yet.", exact=False)).to_be_visible()
+    expect(page.get_by_text("API key authentication is not available yet.", exact=True)).to_be_visible()
     expect(page.get_by_role("textbox", name="Key name", exact=True)).to_be_visible()
     expect(page.get_by_text("No keys yet.", exact=True)).to_be_visible()
     assert ("GET", "/v1/me/api-keys") in api.calls

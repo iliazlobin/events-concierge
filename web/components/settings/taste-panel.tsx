@@ -101,8 +101,8 @@ export function TastePanel() {
       <header className="settings-panel__head">
         <h1>Interests</h1>
         <p>{releaseProfile(config) === "full"
-          ? "A starting signal, not a filter. What you engage with keeps refining the order."
-          : "Your saved interests. Use topic filters to choose which events you see."}</p>
+          ? "Used for recommendations."
+          : "Saved interests do not filter events."}</p>
       </header>
 
       <section className="settings-card">
@@ -126,7 +126,7 @@ export function TastePanel() {
       </section>
 
       <section className="settings-card">
-        <h2 className="settings-card__title">Anything else</h2>
+        <h2 className="settings-card__title">Other interests</h2>
         {custom.length > 0 ? (
           <div className="chip-cloud">
             {custom.map((value) => (
@@ -164,7 +164,7 @@ export function TastePanel() {
           </button>
         </div>
         <p className="settings-hint">
-          {interests.length} of {MAX_INTERESTS} kept.
+          {interests.length}/{MAX_INTERESTS} interests
         </p>
       </section>
 

@@ -157,9 +157,6 @@ export function SavedFiltersPanel() {
     <div className="settings-panel">
       <header className="settings-panel__head">
         <h1>Saved filters</h1>
-        <p>
-          The selections you kept from the events view. Open one, rename it, or delete it for good.
-        </p>
       </header>
 
       {error ? (
@@ -175,7 +172,7 @@ export function SavedFiltersPanel() {
         ) : rows.length === 0 ? (
           <p className="settings-empty">
             <Bookmark aria-hidden="true" />
-            Nothing saved yet. Keep a selection from the filter strip and it appears here.
+            No saved filters.
           </p>
         ) : (
           <ul className="saved-list">
@@ -250,7 +247,7 @@ export function SavedFiltersPanel() {
 
                   {pendingDelete === entry.saved_filter_id ? (
                     <div className="saved-list__confirm">
-                      <p>Delete for good?</p>
+                      <p>Delete this filter?</p>
                       <button
                         type="button"
                         className="button button-quiet"

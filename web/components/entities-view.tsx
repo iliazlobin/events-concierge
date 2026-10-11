@@ -376,21 +376,18 @@ function EntityOverviewGraph({ tenantId, canRefresh, query, kinds, identity,
               {drawn.isolated ? ` · ${count(drawn.isolated)} unconnected` : ""}
             </p>
             <details className="entity-overview-about">
-              <summary>How this is drawn</summary>
+              <summary>About this graph</summary>
               <div>
                 {coverage && coveragePercent ? (
                   <p>
                     {count(coverage.events_with_entities)} of {count(coverage.events_total)}{" "}
                     catalog events ({coveragePercent}%) name an organizer, host, speaker or
-                    partner. This graph is drawn from those events only.
+                    partner.
                   </p>
                 ) : null}
                 <p>
-                  Every line is a recorded mention, never an inferred relationship: two hubs are
-                  joined through an event both are named at. Each connection shows{" "}
-                  <strong>one representative event</strong> — the most recent the pair shares —
-                  standing for every event they share. Hubs sharing no event with another hub are
-                  still ranked here, grouped at the bottom with no line drawn.
+                  Connections come from shared event roles. Each line shows the most recent shared event.
+                  Entities with no shared events have no line.
                 </p>
               </div>
             </details>
@@ -415,7 +412,6 @@ function EntityOverviewGraph({ tenantId, canRefresh, query, kinds, identity,
           <div className="empty-state">
             <span />
             <h2>No entities match</h2>
-            <p>Try a broader name, or clear a filter.</p>
           </div>
         ) : null}
 

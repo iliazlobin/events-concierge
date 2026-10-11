@@ -250,7 +250,7 @@ def test_disabled_muse_has_no_controls_restore_or_settings_requests(page_factory
     assert page.evaluate("sessionStorage.getItem('ec:muse:intent')") is not None
     assert api.event_detail_calls == []
     page.goto(BASE + "/settings/muse")
-    expect(page.get_by_text("Muse signups are not enabled for this release.", exact=True)).to_be_visible()
+    expect(page.get_by_text("Unavailable.", exact=True)).to_be_visible()
     expect(page.get_by_role("button", name="Create connection key", exact=True)).to_have_count(0)
     assert api.muse_calls == []
     assert api.writes == []
@@ -288,7 +288,7 @@ def test_one_icon_queues_each_event_and_progress_panel_retains_filters(page_fact
     expect(dialog.get_by_role("button", name="Copy Muse instruction")).to_have_count(0)
     expect(dialog.get_by_role("textbox", name="Muse signup instruction")).to_have_count(0)
     expect(dialog.get_by_role("link", name="Muse settings", exact=True)).to_have_attribute("href", "/settings/muse")
-    expect(dialog).to_contain_text("Waiting for you to start Muse.")
+    expect(dialog.locator('[data-status="queued"]').first).to_have_text("Queued")
     expect(dialog.get_by_role("link", name="Open Muse", exact=True)).to_have_attribute("href", "https://muse.ai/")
     assert page.evaluate("document.documentElement.scrollWidth <= innerWidth")
     page.screenshot(path=str(tmp_path / f"muse-queue-{width}.png"))
@@ -313,8 +313,8 @@ def test_unread_badge_and_results_acknowledge_observed_versions_only(page_factor
     assert api.acknowledged == []
     button.click()
     dialog = page.get_by_role("dialog", name="Registrations", exact=True)
-    expect(dialog).to_contain_text("Needs your input")
-    expect(dialog).to_contain_text("Needs verification")
+    expect(dialog).to_contain_text("Needs input")
+    expect(dialog).to_contain_text("Unconfirmed")
     expect(dialog).to_contain_text("Login needed in Muse")
     expect(dialog.locator('[aria-label="Unread update"]')).to_have_count(0)
     expect(button.locator('[aria-label$="unread registration updates"]')).to_have_count(0)
@@ -326,7 +326,7 @@ def test_unread_badge_and_results_acknowledge_observed_versions_only(page_factor
                                          "confirmation_reference": "fixture-confirmation",
                                          "evidence_url": "https://lu.ma/friday-jazz"})
     dialog.get_by_role("button", name="Refresh registrations").click()
-    expect(dialog).to_contain_text("Registered · reported by Muse")
+    expect(dialog.locator('[data-status="registered"]')).to_have_text("Registered")
     expect(dialog).to_contain_text("fixture-confirmation")
     expect(dialog.get_by_role("link", name=re.compile("evidence", re.I))).to_have_attribute("href", "https://lu.ma/friday-jazz")
     expect(dialog.locator('[aria-label="Unread update"]')).to_have_count(0)
@@ -429,20 +429,20 @@ def test_settings_secret_is_one_time_with_progress_in_registrations(page_factory
     assert secret.input_value() == FIXTURE_KEY
     assert FIXTURE_KEY not in page.evaluate("JSON.stringify([localStorage, sessionStorage])")
     page.get_by_role("button", name="Copy connection key", exact=True).click()
-    expect(page.get_by_role("status")).to_contain_text("secure credential setup")
+    expect(page.get_by_role("status")).to_contain_text("Key copied.")
     expect(page.get_by_role("link", name="Registrations", exact=True)).to_be_visible()
     page.get_by_role("button", name="Hide key", exact=True).click()
     expect(secret).not_to_be_visible()
     page.get_by_role("button", name="Disconnect Muse").click()
-    expect(page.get_by_role("status")).to_contain_text("access revoked")
+    expect(page.get_by_role("status")).to_contain_text("Access revoked")
     page.reload()
-    expect(page.get_by_text("No active connection key.", exact=True)).to_be_visible()
+    expect(page.get_by_text("No active key.", exact=True)).to_be_visible()
     instructions = page.get_by_role("textbox", name="Muse signup instruction")
     expect(instructions).not_to_be_visible()
     expect(page.get_by_role("button", name="Copy Muse instruction")).not_to_be_visible()
     page.locator("summary").filter(has_text="Muse instructions").click()
     expect(instructions).to_be_visible()
-    expect(page.get_by_text("Opening Muse alone does not start them.", exact=False)).to_be_visible()
+    expect(page.get_by_text("Opening Muse does not start registrations.", exact=False)).to_be_visible()
     page.get_by_role("button", name="Copy Muse instruction").click()
     expect(page.get_by_role("status")).to_contain_text("Muse instruction copied.")
     instruction = page.evaluate("window.__fixtureCopied")
@@ -477,8 +477,8 @@ def test_source_view_and_map_calendar_card_actions_use_shared_controls(page_fact
     first_card.get_by_role("button", name="View source SF Tech Week 2026", exact=True).click()
     expect(page.get_by_role("heading", name="SF Tech Week 2026", exact=True)).to_be_visible()
     assert "view=source" in page.url and "source=" + key in page.url
-    expect(page.get_by_text("Events in selected dates", exact=True)).to_be_visible()
-    expect(page.get_by_role("link", name="Visit website")).to_have_attribute("href", "https://www.tech-week.com/")
+    expect(page.get_by_text("Events in range", exact=True)).to_be_visible()
+    expect(page.get_by_role("link", name="Website")).to_have_attribute("href", "https://www.tech-week.com/")
     expect(page.get_by_role("heading", name="Friday Night Jazz", exact=True)).to_be_visible()
     assert parse_qs(urlsplit(api.catalog_reads[-1]).query)["source_key"] == [key]
     page.get_by_role("button", name="Back", exact=True).click()
@@ -516,7 +516,7 @@ def test_registration_summary_counts_full_queue_and_filter_keeps_unseen_tasks_un
     dialog = page.get_by_role("dialog", name="Registrations", exact=True)
     expect(dialog.get_by_role("navigation", name="Registration providers").get_by_role("button", name="Muse registrations")).to_have_attribute("aria-pressed", "true")
     dialog.get_by_role("button", name=re.compile("^Registered")).click()
-    expect(dialog).to_contain_text("Load more to see other matching registrations.")
+    expect(dialog).to_contain_text("More registrations available.")
     assert all(item["unread"] for item in api.registrations[-5:])
     dialog.get_by_role("button", name="Load more registrations").click()
     expect(dialog).to_contain_text("Queued event 0")

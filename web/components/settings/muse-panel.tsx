@@ -12,7 +12,7 @@ import styles from "@/components/muse.module.css";
 export function MusePanel() {
   const { config } = useSession();
   if (config?.muse_enabled !== true) return <section className={styles.panel}>
-    <header><h1>Muse signups</h1><p>Muse signups are not enabled for this release.</p></header>
+    <header><h1>Muse signups</h1><p>Unavailable.</p></header>
   </section>;
   return <EnabledMusePanel />;
 }
@@ -44,7 +44,7 @@ function EnabledMusePanel() {
     setBusy(true); setError(null);
     try {
       await revokeMuseConnection(tenantId); setToken(null); setConnection({ connected: false, expires_at: null });
-      setMessage("Connector access revoked. Stop any running browser task in Muse separately.");
+      setMessage("Access revoked. Stop running tasks in Muse.");
     } catch (problem) { setError(readableError(problem, "Could not revoke the connection key.")); }
     finally { setBusy(false); }
   }
@@ -54,16 +54,16 @@ function EnabledMusePanel() {
   }
   const schema = `${origin}/v1/muse/openapi.json`;
   return <section className={styles.panel}>
-    <header><h1>Muse signups</h1><p>Queue free events with the Muse icon. Muse completes signups in its browser.</p></header>
+    <header><h1>Muse signups</h1></header>
     {error ? <p role="alert" className="workspace-error">{error}</p> : null}
     {message ? <p role="status">{message}</p> : null}
     <section><h2>Connection</h2>
-      <p>Ask Muse to create a custom connector from this API description. Enter the connection key only in its secure credential setup, using Bearer authentication.</p>
+      <p>Add this URL in Muse’s connector settings with Bearer authentication. Enter the key in credential settings, not chat.</p>
       <label>API description<input aria-label="Muse API description" readOnly value={schema} /></label>
-      <p>This requires the deployed HTTPS address; Muse's cloud browser cannot reach a local preview.</p>
+      <p>Requires a public HTTPS URL. Local previews are unavailable to Muse.</p>
       {connection ? <p>{connection.connected
-        ? `Connection key active until ${new Date(connection.expires_at!).toLocaleDateString()}. This does not verify Muse setup.`
-        : "No active connection key."}</p> : <p role="status">Loading connection…</p>}
+        ? `Key expires ${new Date(connection.expires_at!).toLocaleDateString()}.`
+        : "No active key."}</p> : <p role="status">Loading…</p>}
       <div className={styles.actions}>
         <button type="button" className="button button-primary" disabled={busy || !connection} onClick={createKey}>
           {connection?.connected ? "Replace connection key" : "Create connection key"}</button>
@@ -71,16 +71,16 @@ function EnabledMusePanel() {
         <a className="button" href={MUSE_URL} target="_blank" rel="noopener noreferrer">Open Muse</a>
       </div>
       {token ? <div>
-        <p>This key grants access only to your registration tasks for 30 days. Copy it now; it cannot be recovered. Replacing it revokes the previous key.</p>
+        <p>Access to your registrations for 30 days. Copy now; shown once. Replacing it revokes the old key.</p>
         <input type="password" aria-label="Muse connection key" autoComplete="off" readOnly value={token} />
         <div className={styles.actions}>
-          <button type="button" className="button" onClick={() => copy(token, "Connection key copied. Enter it in Muse's secure credential setup.")}>Copy connection key</button>
+          <button type="button" className="button" onClick={() => copy(token, "Key copied.")}>Copy connection key</button>
           <button type="button" className="button" onClick={() => setToken(null)}>Hide key</button>
         </div>
       </div> : null}
     </section>
     <MuseInstructions />
-    <section><h2>Registrations</h2><p>View queued events, registration results and requests for your input.</p>
+    <section>
       <Link className="button" href="/?registrations=1">Registrations</Link>
     </section>
   </section>;
@@ -96,7 +96,7 @@ function MuseInstructions() {
   }
   return <details className={styles.instructions}>
     <summary>Muse instructions</summary>
-    <p>After connecting Muse, copy this instruction into a Muse chat to start your queued signups. Opening Muse alone does not start them.</p>
+    <p>Paste into Muse to start your queue. Opening Muse does not start registrations.</p>
     {error ? <p role="alert">{error}</p> : null}
     <textarea className={styles.instruction} aria-label="Muse signup instruction" readOnly value={museInstruction()} />
     <div className={styles.actions}>

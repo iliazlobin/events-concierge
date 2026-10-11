@@ -153,7 +153,6 @@ export function ProfilePanel() {
     <form className="settings-panel" onSubmit={handleSubmit}>
       <header className="settings-panel__head">
         <h1>Profile</h1>
-        <p>How the concierge addresses you.</p>
       </header>
 
       <section className="settings-card">
@@ -199,7 +198,7 @@ export function ProfilePanel() {
               </p>
             ) : (
               <p className="settings-hint">
-                PNG, JPEG, or WebP. Cropped to a {256}px square and stripped of camera metadata.
+                PNG, JPEG, or WebP. Square crop; camera metadata removed.
               </p>
             )}
           </div>
@@ -224,7 +223,7 @@ export function ProfilePanel() {
             maxLength={64}
             autoComplete="name"
             value={displayName}
-            placeholder="How should the concierge address you?"
+            placeholder="Your name"
             aria-invalid={nameError ? true : undefined}
             aria-describedby={nameError ? "display-name-error" : "display-name-hint"}
             onChange={(event) => setDisplayName(event.target.value)}
@@ -248,8 +247,8 @@ export function ProfilePanel() {
             <span className="settings-fixed">fixed</span>
           </dd>
           <p className="settings-hint">
-            {fullRelease ? "This is where the concierge sends confirmations and anything that needs you. " : "The email used for this account. "}
-            It is bound to your sign-in identity and cannot be changed here yet.
+            {fullRelease ? "Receives confirmations. " : ""}
+            Linked to your sign-in account; cannot be changed here.
           </p>
         </div>
 
@@ -258,8 +257,7 @@ export function ProfilePanel() {
             <dt>Relay inbox</dt>
             <dd className="settings-mono">{me.relay_inbox}</dd>
             <p className="settings-hint">
-              Where sign-in codes from event sites are received on your behalf. Inbound only — it
-              never sends, and it cannot be changed.
+              Receives event-site sign-in codes. Cannot send mail or be changed.
             </p>
           </div>
         ) : null}
@@ -278,7 +276,7 @@ export function ProfilePanel() {
               </option>
             ))}
           </select>
-          <p className="settings-hint">{fullRelease ? "Used when the concierge reasons about “this evening”." : "Saved with your profile. Event times use this device’s time zone."}</p>
+          <p className="settings-hint">{fullRelease ? "Used for date and time requests." : "Event times use this device’s time zone."}</p>
         </div>
       </section>
 

@@ -1117,7 +1117,7 @@ export function FilterBar({
                   }
                 }
               }}
-              placeholder="Search events, people, businesses, venues, or add a filter…"
+              placeholder="Search events, people, or places…"
               maxLength={160}
               role="combobox"
               aria-autocomplete="list"

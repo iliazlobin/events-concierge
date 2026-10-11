@@ -111,9 +111,7 @@ export function ChatView({
           <span className="chat-hero__orb" aria-hidden="true">
             <Sparkles />
           </span>
-          <p>YOUR WEEK, CURATED</p>
-          <h1>What sounds good?</h1>
-          <span>Ask naturally. We will keep the answer grounded in current events.</span>
+          <h1>Find events</h1>
         </div>
       ) : (
         <div className="chat-thread" role="log" aria-live="off">
@@ -221,8 +219,8 @@ export function ChatView({
                   onFacetSelect={onFacetSelect}
                   onEntitySelect={onEntitySelect}
                   onTopicSelect={onTopicSelect}
-                  emptyTitle="No strong matches"
-                  emptyCopy="Try loosening the date, place, or price in your request."
+                  emptyTitle="No matching events"
+                  emptyCopy=""
                 />
               ) : null}
             </article>

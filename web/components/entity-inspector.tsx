@@ -396,8 +396,7 @@ export function EntityInspector({
           </button>
         </header>
         <p className="entity-empty-copy">
-          Topics come from the catalog&rsquo;s own closed vocabulary, applied to the events drawn in
-          this frame. They are a property of those events, not a claim about what this entity is.
+          Topics describe these events, not the entity.
         </p>
       </aside>
     );
