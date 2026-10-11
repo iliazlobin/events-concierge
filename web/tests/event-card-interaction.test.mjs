@@ -59,7 +59,7 @@ test("event source labels apply the exact provider filter without opening the ca
   assert.match(styles, /\.event-card__source-filter:focus-visible/);
   assert.match(
     app,
-    /const handleSourceSelect = useCallback[\s\S]*createConsumerHistorySnapshot\("events"[\s\S]*sourceKeys: \[sourceKey\],[\s\S]*datePreset: "source",[\s\S]*cities: \[\],[\s\S]*pushConsumerSnapshot/,
+    /const handleSourceSelect = useCallback[\s\S]*createConsumerHistorySnapshot\("source"[\s\S]*sourceKeys: \[sourceKey\],[\s\S]*datePreset: "source",[\s\S]*cities: \[\],[\s\S]*pushConsumerSnapshot/,
   );
 });
 

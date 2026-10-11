@@ -44,7 +44,7 @@ export function SourceView({
   return (
     <section className={styles.view} aria-label={`${title} source`}>
       <button type="button" className={styles.back} onClick={onBack}>
-        <ArrowLeft aria-hidden="true" />Back to events
+        <ArrowLeft aria-hidden="true" />Back
       </button>
       <header className={styles.header}>
         <div>

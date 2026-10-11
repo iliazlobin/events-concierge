@@ -2847,6 +2847,10 @@ textarea:focus-visible {
   display: none;
 }
 
+.event-card.is-compact .event-card__summary-facts:has(.event-muse-action) {
+  display: flex;
+}
+
 .load-more {
   align-items: center;
   background: transparent;

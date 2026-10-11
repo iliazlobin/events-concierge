@@ -1338,7 +1338,9 @@ export function FilterBar({
           const explicitRange = friendlyRange(range.start, range.end);
           // Only the chip standing in for the whole date filter can *read* as a rolling window;
           // an additive range is two fixed dates by construction.
-          const rolling = range.legacy ? rollingWindowLabel(filters.datePreset) : null;
+          const rolling = range.legacy
+            ? filters.datePreset === "source" ? "Source history" : rollingWindowLabel(filters.datePreset)
+            : null;
           // But swapping a pinned range for a rolling one is exactly the move worth offering, so
           // the windows are reachable from a single date chip whether or not it is pinned. With
           // several ranges in play there is no single one to swap: choosing a window would drop

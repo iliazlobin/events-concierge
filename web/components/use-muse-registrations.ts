@@ -1,9 +1,10 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
+import type { RegistrationStatusCounts } from "@/lib/registrations";
 import { readableError } from "@/lib/api";
 import {
-  getMuseRegistrations, markMuseRegistrationsSeen, mergeMuseRegistrations, museRegistrationUpdates,
+  getMuseRegistrations, getMuseRegistrationsForEvents, markMuseRegistrationsSeen, mergeMuseRegistrations, museRegistrationUpdates,
   museStatusLabel, museUnreadCount, queueMuseRegistration, type MuseRegistration,
 } from "@/lib/muse";
 
@@ -12,6 +13,7 @@ interface QueueState {
   items: MuseRegistration[];
   unread: number;
   total: number;
+  counts: RegistrationStatusCounts | null;
   cursor: string | null;
   loading: boolean;
   error: string | null;
@@ -19,7 +21,7 @@ interface QueueState {
   notice: string | null;
 }
 const empty = (account: string | null): QueueState => ({
-  account, items: [], unread: 0, total: 0, cursor: null, loading: false, error: null,
+  account, items: [], unread: 0, total: 0, counts: null, cursor: null, loading: false, error: null,
   pending: new Set(), notice: null,
 });
 
@@ -40,6 +42,8 @@ export function useMuseRegistrations(enabled: boolean, account: string | null, t
   const pending = useRef(new Set<string>());
   const seenVersions = useRef(new Map<string, number>());
   const marking = useRef(new Set<string>());
+  const watchedEvents = useRef(new Map<string, number>());
+  const lookupTimer = useRef<number | null>(null);
 
   const controller = useCallback(() => {
     const request = new AbortController();
@@ -51,6 +55,38 @@ export function useMuseRegistrations(enabled: boolean, account: string | null, t
   const normalize = useCallback((items: MuseRegistration[]) => items.map(item => ({
     ...item, unread: item.unread && (seenVersions.current.get(item.event.canonical_event_id) ?? 0) < item.version,
   })), []);
+
+  const lookupEvents = useCallback(async (ids: string[], request: AbortController) => {
+    const incoming: MuseRegistration[] = [];
+    for (let start = 0; start < ids.length; start += 100) {
+      incoming.push(...await getMuseRegistrationsForEvents(tenantId, ids.slice(start, start + 100), request.signal));
+      if (!isCurrent(request)) return [];
+    }
+    return incoming;
+  }, [isCurrent, tenantId]);
+  const lookupWatched = useCallback(async () => {
+    if (!key || currentAccount.current !== key || !watchedEvents.current.size) return;
+    const request = controller();
+    try {
+      const incoming = await lookupEvents([...watchedEvents.current.keys()], request);
+      if (!isCurrent(request)) return;
+      setState(old => old.account === key ? { ...old, items: mergeMuseRegistrations(old.items, normalize(incoming)) } : old);
+    } catch (problem) {
+      if (isCurrent(request)) setState(old => old.account === key ? { ...old,
+        error: readableError(problem, "Could not check registration progress for these events."),
+      } : old);
+    } finally { requests.current.delete(request); }
+  }, [controller, isCurrent, key, lookupEvents, normalize]);
+  const watchEvent = useCallback((id: string) => {
+    if (!key) return () => {};
+    watchedEvents.current.set(id, (watchedEvents.current.get(id) ?? 0) + 1);
+    if (lookupTimer.current !== null) window.clearTimeout(lookupTimer.current);
+    lookupTimer.current = window.setTimeout(() => { lookupTimer.current = null; void lookupWatched(); }, 40);
+    return () => {
+      const remaining = (watchedEvents.current.get(id) ?? 1) - 1;
+      if (remaining > 0) watchedEvents.current.set(id, remaining); else watchedEvents.current.delete(id);
+    };
+  }, [key, lookupWatched]);
 
   const refresh = useCallback(async function readQueue() {
     if (!key || refreshing.current) return;
@@ -68,6 +104,9 @@ export function useMuseRegistrations(enabled: boolean, account: string | null, t
         page = await getMuseRegistrations(tenantId, page.next_cursor, request.signal);
         incoming = [...incoming, ...page.items];
       }
+      const known = new Set(incoming.map(item => item.event.canonical_event_id));
+      const missing = [...watchedEvents.current.keys()].filter(id => !known.has(id));
+      if (missing.length) incoming = [...incoming, ...await lookupEvents(missing, request)];
       if (!isCurrent(request)) return;
       const updates = initialized.current ? museRegistrationUpdates(stateRef.current.items, incoming) : [];
       initialized.current = true;
@@ -76,7 +115,8 @@ export function useMuseRegistrations(enabled: boolean, account: string | null, t
         items: mergeMuseRegistrations(old.items, normalized),
         unread: startedAt === changes.current ? museUnreadCount(first.unread_count, incoming, seenVersions.current)
           : Math.max(old.unread, normalized.filter(item => item.unread).length),
-        total: startedAt === changes.current ? first.total : old.total, cursor: page.next_cursor, loading: false,
+        total: startedAt === changes.current ? first.total : old.total,
+        counts: startedAt === changes.current ? first.status_counts ?? null : old.counts, cursor: page.next_cursor, loading: false,
         notice: updates.length ? updates.slice(0, 3).join(" ") : old.notice,
       } : old);
     } catch (problem) {
@@ -90,13 +130,15 @@ export function useMuseRegistrations(enabled: boolean, account: string | null, t
         if (startedAt !== changes.current) void readQueue();
       }
     }
-  }, [controller, isCurrent, key, normalize, open, tenantId]);
+  }, [controller, isCurrent, key, lookupEvents, normalize, open, tenantId]);
 
   useEffect(() => {
     setState(empty(key));
     loadedCount.current = 50; initialized.current = false; refreshing.current = false;
     requestIds.current.clear(); pending.current.clear(); seenVersions.current.clear(); marking.current.clear();
     return () => {
+      if (lookupTimer.current !== null) window.clearTimeout(lookupTimer.current);
+      lookupTimer.current = null;
       for (const request of requests.current) request.abort();
       requests.current.clear();
     };
@@ -127,9 +169,7 @@ export function useMuseRegistrations(enabled: boolean, account: string | null, t
       const item = await queueMuseRegistration(tenantId, requestId, eventId, request.signal);
       if (!isCurrent(request)) return null;
       changes.current += 1;
-      const existing = stateRef.current.items.some(old => old.event.canonical_event_id === eventId);
       setState(old => old.account === key ? { ...old, items: mergeMuseRegistrations(old.items, normalize([item])),
-        total: old.total + (existing ? 0 : 1), unread: old.unread + (!existing && item.unread ? 1 : 0),
         notice: `${item.event.title}: ${item.status === "queued" ? "Queued for Muse" : museStatusLabel[item.status]}.`,
       } : old);
       void refresh();
@@ -162,6 +202,7 @@ export function useMuseRegistrations(enabled: boolean, account: string | null, t
       const normalized = normalize(page.items);
       setState(old => old.account === key ? { ...old, items: mergeMuseRegistrations(old.items, normalized),
         total: startedAt === changes.current ? page.total : old.total,
+        counts: startedAt === changes.current ? page.status_counts ?? null : old.counts,
         unread: startedAt === changes.current ? museUnreadCount(page.unread_count, page.items, seenVersions.current)
           : Math.max(old.unread, normalized.filter(item => item.unread).length),
         cursor: page.next_cursor, loading: false,
@@ -211,5 +252,5 @@ export function useMuseRegistrations(enabled: boolean, account: string | null, t
 
   const clearNotice = useCallback(() => setState(old => ({ ...old, notice: null, error: null })), []);
   const current = state.account === key ? state : empty(key);
-  return { ...current, queue, refresh, loadMore, markSeen, clearNotice };
+  return { ...current, queue, refresh, loadMore, markSeen, clearNotice, watchEvent };
 }

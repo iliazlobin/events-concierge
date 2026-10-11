@@ -261,7 +261,7 @@ test("a rolling window is named on the chip, and still says which dates it means
   assert.match(dateRange, /title=\{summaryTitle\}/);
   // Only the chip standing in for the whole date filter can be rolling; an additive range is
   // two fixed dates by construction.
-  assert.match(filterBar, /range\.legacy \? rollingWindowLabel\(filters\.datePreset\) : null/);
+  assert.match(filterBar, /range\.legacy\s*\? filters\.datePreset === "source" \? "Source history" : rollingWindowLabel\(filters\.datePreset\)\s*: null/);
   // Swapping a pinned range for a rolling window is the move worth offering, so the windows
   // are reachable from a single date chip whether or not it is pinned -- and hidden once
   // several ranges are in play, where choosing one would silently drop the others.

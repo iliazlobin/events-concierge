@@ -10,6 +10,7 @@ export interface EventActions {
     statuses: ReadonlyMap<string, MuseStatus>;
     pendingIds: ReadonlySet<string>;
     onSignup: (event: EventItem) => void;
+    watchEvent?: (eventId: string) => () => void;
   };
 }
 

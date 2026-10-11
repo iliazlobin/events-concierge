@@ -1,15 +1,15 @@
 # Muse signups
 
-Queue upcoming **free Luma or Meetup** event dates from the Muse icon on each event card. Events Concierge stores each registration task; Muse completes registration in its own browser.
+Signed-in users queue upcoming **free Luma or Meetup** dates from the Muse icon in event highlights. The action is shared by Events, Map, Calendar, source pages and graph details. Events Concierge stores each registration task; Muse completes registration in its own browser.
 
 ## Connect and use
 
 1. Sign in to the deployed app. Open **Your account → Muse signups** to configure the connection.
 2. Ask Muse to create a [custom connector](https://www.meta.com/help/artificial-intelligence/1687253048996149/) from the API description shown in settings: `/v1/muse/openapi.json`.
 3. Create a connection key. Enter it only in Muse's secure credential setup as a Bearer token. Keep Luma/Meetup logins in Muse.
-4. Click an event's **Muse icon** to queue its date. Repeat for other events; there are no checkboxes or selection limit across tasks.
+4. Click an event's **Muse icon** to queue its date and open Registrations. An existing task opens its progress; unsupported or past dates show the reason they cannot be queued.
 5. In **Your account → Muse signups → Muse instructions**, copy the queue instruction. **Open Muse** and paste it. Muse may ask for provider login, approval or missing form answers.
-6. Follow progress in **Registrations**. The header badge counts unread task updates; opening the panel acknowledges the versions displayed. In-app announcements report new progress and results. Refresh is manual or every 15 seconds while the page is visible; returning to the page refreshes it.
+6. The header widget shows queued, in-progress, registered and needs-attention counts across the full account queue. **Registrations** opens a compact right panel with a vertical provider rail and status filters. Muse is the enabled registration provider—the service handling signup. Provider definitions supply its icon, links and labels; event publishers such as Luma remain separate. The badge counts unread task updates; only visible task versions are acknowledged. In-app announcements report new progress and results. Refresh is manual or every 15 seconds while the page is visible; returning to the page refreshes it.
 
 A supported Muse task-creation API/deeplink has not been verified. The button opens Muse; it does not automatically dispatch a task. A local preview cannot be reached by Muse's cloud browser.
 
@@ -44,7 +44,7 @@ The [connector schema](../../src/events_concierge/api/muse.py) includes only fou
 | POST | `/batches/{batch_id}/items/{event_id}/claim` — `attempt_id` |
 | PUT | `/batches/{batch_id}/items/{event_id}/outcome` — `attempt_id`, `outcome` |
 
-- Owner session endpoints: `POST /v1/me/muse/registrations` queues `{request_id, event_id}`; `GET` returns tasks, total/unread counts and `next_cursor`; `POST /registrations/seen` acknowledges `{items: [{event_id, version}]}`. Pages contain up to 100 tasks. Existing batch endpoints remain compatible with saved handoffs.
+- Owner session endpoints: `POST /v1/me/muse/registrations` queues `{request_id, event_id}`; `GET` returns tasks, total/unread counts and `next_cursor`; `POST /registrations/seen` acknowledges `{items: [{event_id, version}]}`. Pages contain up to 100 tasks. `status_counts` returns all eight status totals independently of the page/cursor; waitlisted and organizer approval do not count as registered. Existing batch endpoints remain compatible with saved handoffs.
 - [Owner API](../../src/events_concierge/api/muse.py), [queue service](../../src/events_concierge/application/muse.py) and [persistence](../../src/events_concierge/adapters/postgres/muse.py) own the contract. Migrations 0209 and 0214 retain existing attempts and add request aliases, versions and read state. Tenant RLS and the account-erasure fence apply to every Muse table.
 - Responses use `no-store`. Never send credentials, cookies, payment details or personal form answers in outcomes; store only a short result and provider reference.
 - Release through the existing [migration and immutable-image procedure](release.md). Source checks do not prove that Muse is connected or that a provider signup succeeded.
