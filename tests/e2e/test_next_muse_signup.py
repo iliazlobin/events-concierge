@@ -526,9 +526,8 @@ def test_registration_summary_counts_full_queue_and_filter_keeps_unseen_tasks_un
 def test_visible_past_event_opens_existing_registration_beyond_first_queue_page(page_factory):
     harness, api = install(page_factory)
     api.events[0]["start_at"] = "2020-06-14T19:30:00-07:00"
-    older = api.registration(api.events[0], "registered", version=3, unread=True)
-    older["outcome"] = {"status": "registered", "note": "Provider confirmed this past registration",
-                        "confirmation_reference": "older-rsvp", "evidence_url": "https://lu.ma/friday-jazz"}
+    older = api.registration(api.events[0], "needs_input", version=3, unread=True)
+    older["outcome"] = {"status": "needs_input", "note": "Provider needs a profile response"}
     api.registrations = [api.registration(api.events[1] | {
         "canonical_event_id": f"{index:08x}-1111-4111-8111-111111111111", "title": f"Recent event {index}"
     }) for index in reversed(range(50))] + [older]
@@ -538,7 +537,22 @@ def test_visible_past_event_opens_existing_registration_beyond_first_queue_page(
     expect(control).to_be_enabled()
     control.click()
     dialog = page.get_by_role("dialog", name="Registrations", exact=True)
-    expect(dialog).to_contain_text("older-rsvp")
+    expect(dialog).to_contain_text("Provider needs a profile response")
     assert any(path == "/v1/me/muse/registrations/by-event" for _, path in api.muse_calls)
     assert api.queued == [] and not any(method == "POST" and path == "/v1/me/muse/registrations" for method, path, _ in api.writes)
+
+    # The panel must refresh this cached task even after its catalog card unmounts.
+    dialog.get_by_role("button", name="Close registrations", exact=True).click()
+    api.events = [api.events[1]]
+    page.get_by_role("button", name="Map", exact=True).click()
+    expect(page.get_by_role("heading", name="Event map", exact=True)).to_be_visible()
+    expect(page.get_by_role("button", name="View registration for Friday Night Jazz", exact=True)).not_to_be_visible()
+    older["version"] = 4
+    older["status"] = "registered"
+    older["outcome"] = {"status": "registered", "note": "Provider confirmed this past registration",
+                        "confirmation_reference": "older-rsvp", "evidence_url": "https://lu.ma/friday-jazz"}
+    older["unread"] = True
+    page.get_by_role("button", name="Registrations", exact=True).click()
+    expect(dialog).to_contain_text("older-rsvp")
+    assert api.queued == []
     assert api.unexpected == []

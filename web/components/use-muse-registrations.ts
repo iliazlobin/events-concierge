@@ -105,7 +105,11 @@ export function useMuseRegistrations(enabled: boolean, account: string | null, t
         incoming = [...incoming, ...page.items];
       }
       const known = new Set(incoming.map(item => item.event.canonical_event_id));
-      const missing = [...watchedEvents.current.keys()].filter(id => !known.has(id));
+      const requestedIds = new Set([
+        ...watchedEvents.current.keys(),
+        ...(open ? stateRef.current.items.map(item => item.event.canonical_event_id) : []),
+      ]);
+      const missing = [...requestedIds].filter(id => !known.has(id));
       if (missing.length) incoming = [...incoming, ...await lookupEvents(missing, request)];
       if (!isCurrent(request)) return;
       const updates = initialized.current ? museRegistrationUpdates(stateRef.current.items, incoming) : [];

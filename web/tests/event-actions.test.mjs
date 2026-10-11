@@ -118,6 +118,7 @@ test("pending and existing tasks retain the same action without duplicate signup
 test("the shared action delegates one account-owned callback and isolates the surrounding card", () => {
   const selected = [];
   const isolated = component("event-muse-action.tsx", { ...actionDependencies,
+    "react": { ...require("react"), useRef: () => ({ current: null }), useEffect: () => {} },
     "@/components/event-actions-context": { useEventActions: () => ({ muse: museActions({ onSignup: value => selected.push(value) }) }) },
   });
   const control = isolated.EventMuseAction({ event });
