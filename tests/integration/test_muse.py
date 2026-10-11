@@ -190,6 +190,8 @@ async def test_account_erasure_fences_auth_and_cascades_muse_state(db):
     with pytest.raises(AuthenticationFailedError):
         await repository.registrations(tenant)
     with pytest.raises(AuthenticationFailedError):
+        await repository.registrations_for_events(tenant, [event.canonical_event_id])
+    with pytest.raises(AuthenticationFailedError):
         await repository.queue_registration(tenant, uuid4(), event.canonical_event_id)
     # Raw app-role DML is fenced too, even if a future adapter omits its preflight.
     with pytest.raises(DBAPIError, match="fenced for erasure"):
@@ -318,17 +320,24 @@ async def test_queue_and_connector_pages_cover_more_than_fifty_tasks_and_reject_
     empty = await repository.registrations(other)
     assert empty.total == 0 and empty.status_counts == SignupStatusCounts()
     events = [selected_event() for _ in range(55)]
+    # Saved history remains readable after the event date has passed.
+    events[0] = events[0].model_copy(
+        update={
+            "start_at": datetime(2020, 1, 1, tzinfo=UTC),
+            "end_at": datetime(2020, 1, 1, 2, tzinfo=UTC),
+        }
+    )
     queued = []
     for event in events:
         queued.append(
             await repository.queue_registration(tenant, uuid4(), event.canonical_event_id, event)
         )
     statuses = [
-        "in_progress",
+        "registered",
         "needs_input",
         "awaiting_approval",
         "waitlisted",
-        "registered",
+        "in_progress",
         "failed",
         "uncertain",
     ]
@@ -358,6 +367,25 @@ async def test_queue_and_connector_pages_cover_more_than_fifty_tasks_and_reject_
     assert len(remainder.items) == 5 and remainder.total == 55 and remainder.next_cursor is None
     assert remainder.status_counts == expected and remainder.unread_count == 7
     assert any(item.status == "registered" for item in remainder.items)
+    older_id = events[0].canonical_event_id
+    visible = await repository.registrations_for_events(tenant, [older_id, uuid4()])
+    assert len(visible) == 1 and visible[0].event.canonical_event_id == older_id
+    assert visible[0].event.start_at < datetime.now(UTC) and visible[0].status == "registered"
+    assert visible[0].unread and visible[0].version == 3
+    assert (await repository.registrations(tenant)).unread_count == page.unread_count
+    assert await repository.registrations_for_events(other, [older_id]) == []
+    for invalid in ([], [older_id, older_id], [uuid4() for _ in range(101)]):
+        with pytest.raises(ValueError, match="distinct"):
+            await repository.registrations_for_events(tenant, invalid)
+    assert (
+        len(
+            await repository.registrations_for_events(
+                tenant,
+                [event.canonical_event_id for event in events] + [uuid4() for _ in range(45)],
+            )
+        )
+        == 55
+    )
     ids = [item.event.canonical_event_id for item in page.items + remainder.items]
     assert len(set(ids)) == 55 and set(ids) == {event.canonical_event_id for event in events}
     batches = await repository.batches(tenant)

@@ -47,9 +47,11 @@ async def test_disabled_muse_omits_routes_before_authentication_or_io(
             ("DELETE", "/v1/me/muse/connection"),
             ("GET", "/v1/me/muse/batches"),
             ("GET", "/v1/me/muse/registrations"),
+            ("GET", "/v1/me/muse/registrations/by-event"),
             ("POST", "/v1/me/muse/registrations/seen"),
             ("POST", "/v1/me/muse/batches"),
             ("GET", "/v1/me/muse/registrations"),
+            ("GET", "/v1/me/muse/registrations/by-event?event_id=" + str(uuid4())),
             ("POST", "/v1/me/muse/registrations"),
             ("POST", "/v1/me/muse/registrations/seen"),
             ("GET", "/v1/muse/openapi.json"),
@@ -143,6 +145,9 @@ async def test_owner_key_creation_requires_browser_identity_and_csrf(monkeypatch
             ("GET", "/v1/me"),
             ("POST", "/v1/me/muse/connection"),
             ("GET", "/v1/me/muse/batches"),
+            ("GET", "/v1/me/muse/registrations"),
+            ("GET", "/v1/me/muse/registrations/by-event?event_id=" + str(uuid4())),
+            ("POST", "/v1/me/muse/registrations/seen"),
         ]:
             assert (
                 await client.request(method, path, headers={"Authorization": "Bearer " + token})
@@ -266,6 +271,66 @@ async def test_registration_api_preserves_account_counts_on_paginated_reads(monk
     assert result.json()["total"] == 55 and result.json()["status_counts"] == counts.model_dump()
     assert result.json()["items"] == [] and result.json()["unread_count"] == 7
     repository.registrations.assert_awaited_once_with(tenant, 5, cursor)
+
+
+async def test_visible_event_registration_lookup_requires_owner_and_returns_saved_status(
+    monkeypatch,
+):
+    app, repository, tenant = muse_app(monkeypatch)
+    event_id = (
+        app.state.container.catalog.get_browse_event.return_value.canonical_event.canonical_event_id
+    )
+    batch = await app.state.container.muse.prepare(tenant, uuid4(), [event_id])
+    registration = SignupRegistration(
+        **batch.items[0].model_dump(),
+        batch_id=batch.batch_id,
+        created_at=batch.created_at,
+        version=1,
+        unread=False,
+    )
+    repository.registrations_for_events.return_value = [registration]
+    other_id = uuid4()
+    query = [("event_id", str(event_id)), ("event_id", str(other_id))]
+    async with AsyncClient(transport=ASGITransport(app=app), base_url=ORIGIN) as client:
+        path = "/v1/me/muse/registrations/by-event"
+        assert (await client.get(path, params=query)).status_code == 401
+        repository.registrations_for_events.assert_not_awaited()
+        result = await client.get(path, params=query, headers={"Cookie": "fixture-session=owner"})
+        assert result.status_code == 200
+        assert result.json() == [registration.model_dump(mode="json")]
+        assert result.headers["cache-control"] == "no-store, max-age=0"
+        repository.registrations_for_events.assert_awaited_once_with(tenant, [event_id, other_id])
+        repository.registrations_for_events.side_effect = AuthenticationFailedError(
+            "erasure detail"
+        )
+        erased = await client.get(path, params=query, headers={"Cookie": "fixture-session=owner"})
+        assert erased.status_code == 401 and "erasure detail" not in erased.text
+
+
+async def test_visible_event_lookup_validates_uuid_bounds_and_duplicate_ids(monkeypatch):
+    app, repository, _ = muse_app(monkeypatch)
+    repository.registrations_for_events.return_value = []
+    owner = {"Cookie": "fixture-session=owner"}
+    async with AsyncClient(transport=ASGITransport(app=app), base_url=ORIGIN) as client:
+        path = "/v1/me/muse/registrations/by-event"
+        for query in (
+            [],
+            [("event_id", "invalid")],
+            [("event_id", str(uuid4())) for _ in range(101)],
+        ):
+            assert (await client.get(path, params=query, headers=owner)).status_code == 422
+        repository.registrations_for_events.assert_not_awaited()
+        ids = [uuid4() for _ in range(100)]
+        result = await client.get(
+            path, params=[("event_id", str(event)) for event in ids], headers=owner
+        )
+        assert result.status_code == 200 and result.json() == []
+        repository.registrations_for_events.assert_awaited_once()
+        repository.registrations_for_events.side_effect = ValueError(
+            "look up one to 100 distinct event dates"
+        )
+        duplicate = [("event_id", str(ids[0])), ("event_id", str(ids[0]))]
+        assert (await client.get(path, params=duplicate, headers=owner)).status_code == 422
 
 
 async def test_queue_response_and_ack_errors_use_the_owner_registration_contract(monkeypatch):

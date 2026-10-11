@@ -455,6 +455,31 @@ class PostgresMuseRepository:
                 next_cursor=items[-1].event.canonical_event_id if len(rows) > limit else None,
             )
 
+    async def registrations_for_events(
+        self, tenant_id: UUID, event_ids: list[UUID]
+    ) -> list[SignupRegistration]:
+        if not 1 <= len(event_ids) <= _MAX_PAGE_SIZE or len(set(event_ids)) != len(event_ids):
+            raise ValueError("look up one to 100 distinct event dates")
+        async with tenant_session_scope(tenant_id) as session:
+            await _account_lock(session, tenant_id)
+            rows = (
+                (
+                    await session.execute(
+                        text(f"""
+                        SELECT {_REGISTRATION_FIELDS} FROM public.muse_signup_items i
+                        JOIN public.muse_signup_batches b USING (tenant_id, batch_id)
+                        WHERE i.tenant_id = :tenant_id AND
+                            i.canonical_event_id = ANY(CAST(:event_ids AS uuid[]))
+                        ORDER BY b.created_at DESC, i.canonical_event_id DESC
+                    """),
+                        {"tenant_id": tenant_id, "event_ids": event_ids},
+                    )
+                )
+                .mappings()
+                .all()
+            )
+            return [SignupRegistration.model_validate(dict(row)) for row in rows]
+
     async def see_registrations(self, tenant_id: UUID, items: list[SeenRegistration]) -> None:
         if len(items) > _MAX_PAGE_SIZE or len({item.event_id for item in items}) != len(items):
             raise ValueError("acknowledge at most 100 distinct registrations")

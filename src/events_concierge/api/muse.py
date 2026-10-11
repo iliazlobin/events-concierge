@@ -186,6 +186,17 @@ def muse_router(
     ) -> None:
         await _run(_service(request).repository.see_registrations(tenant_id, body.items))
 
+    @router.get("/v1/me/muse/registrations/by-event", response_model=list[SignupRegistration])
+    async def registrations_for_events(
+        request: Request,
+        tenant_id: Annotated[UUID, Depends(owner_read)],
+        event_id: Annotated[list[UUID], Query(min_length=1, max_length=100)],
+    ) -> list[SignupRegistration]:
+        """Read saved registrations for up to 100 distinct event dates, including past events."""
+        return await _run(
+            _service(request).repository.registrations_for_events(tenant_id, event_id)
+        )
+
     @router.get(
         "/v1/muse/connector/batches",
         response_model=list[SignupBatch],
