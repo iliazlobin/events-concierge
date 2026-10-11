@@ -16,6 +16,7 @@ from events_concierge.domain.muse import (
     MuseNotFoundError,
     SignupRegistration,
     SignupRegistrations,
+    SignupStatusCounts,
 )
 from events_concierge.ports.auth import AuthenticationFailedError, CsrfVerificationFailedError
 
@@ -218,13 +219,16 @@ async def test_batch_body_cannot_set_tenant_or_provider_url(monkeypatch):
 
 async def test_registration_reads_require_owner_and_validate_paging(monkeypatch):
     app, repository, tenant = muse_app(monkeypatch)
-    repository.registrations.return_value = SignupRegistrations(items=[], total=0, unread_count=0)
+    repository.registrations.return_value = SignupRegistrations(
+        items=[], total=0, unread_count=0, status_counts=SignupStatusCounts()
+    )
     async with AsyncClient(transport=ASGITransport(app=app), base_url=ORIGIN) as client:
         path = "/v1/me/muse/registrations"
         assert (await client.get(path)).status_code == 401
         owner = {"Cookie": "fixture-session=owner"}
         result = await client.get(path, headers=owner)
         assert result.status_code == 200 and result.json()["next_cursor"] is None
+        assert result.json()["status_counts"] == dict.fromkeys(SignupStatusCounts.model_fields, 0)
         assert result.headers["cache-control"] == "no-store, max-age=0"
         repository.registrations.assert_awaited_once_with(tenant, 50, None)
         for query in ("limit=0", "limit=101", "cursor=malformed"):
@@ -235,6 +239,33 @@ async def test_registration_reads_require_owner_and_validate_paging(monkeypatch)
         assert (
             await client.get(path + "?cursor=" + str(uuid4()), headers=owner)
         ).status_code == 404
+
+
+async def test_registration_api_preserves_account_counts_on_paginated_reads(monkeypatch):
+    app, repository, tenant = muse_app(monkeypatch)
+    counts = SignupStatusCounts(
+        queued=48,
+        in_progress=1,
+        needs_input=1,
+        awaiting_approval=1,
+        waitlisted=1,
+        registered=1,
+        failed=1,
+        uncertain=1,
+    )
+    repository.registrations.return_value = SignupRegistrations(
+        items=[], total=55, unread_count=7, status_counts=counts
+    )
+    cursor = uuid4()
+    async with AsyncClient(transport=ASGITransport(app=app), base_url=ORIGIN) as client:
+        result = await client.get(
+            f"/v1/me/muse/registrations?limit=5&cursor={cursor}",
+            headers={"Cookie": "fixture-session=owner"},
+        )
+    assert result.status_code == 200
+    assert result.json()["total"] == 55 and result.json()["status_counts"] == counts.model_dump()
+    assert result.json()["items"] == [] and result.json()["unread_count"] == 7
+    repository.registrations.assert_awaited_once_with(tenant, 5, cursor)
 
 
 async def test_queue_response_and_ack_errors_use_the_owner_registration_contract(monkeypatch):

@@ -23,6 +23,7 @@ from events_concierge.domain.muse import (
     SeenRegistration,
     SignupEvent,
     SignupOutcome,
+    SignupStatusCounts,
 )
 from events_concierge.infra.db import system_session_scope, tenant_session_scope
 from events_concierge.ports.auth import AuthenticationFailedError
@@ -314,13 +315,49 @@ async def test_seen_validation_is_atomic_and_never_acknowledges_foreign_or_futur
 async def test_queue_and_connector_pages_cover_more_than_fifty_tasks_and_reject_foreign_cursors(db):
     tenant, other = await account(), await account()
     repository = PostgresMuseRepository()
+    empty = await repository.registrations(other)
+    assert empty.total == 0 and empty.status_counts == SignupStatusCounts()
     events = [selected_event() for _ in range(55)]
+    queued = []
     for event in events:
-        await repository.queue_registration(tenant, uuid4(), event.canonical_event_id, event)
+        queued.append(
+            await repository.queue_registration(tenant, uuid4(), event.canonical_event_id, event)
+        )
+    statuses = [
+        "in_progress",
+        "needs_input",
+        "awaiting_approval",
+        "waitlisted",
+        "registered",
+        "failed",
+        "uncertain",
+    ]
+    for registration, status in zip(queued, statuses, strict=False):
+        attempt = uuid4()
+        event_id = registration.event.canonical_event_id
+        await repository.claim(tenant, registration.batch_id, event_id, attempt)
+        if status != "in_progress":
+            await repository.report(
+                tenant,
+                registration.batch_id,
+                event_id,
+                attempt,
+                SignupOutcome(
+                    status=status,
+                    confirmation_reference="provider-rsvp-stats"
+                    if status == "registered"
+                    else None,
+                ),
+            )
+    expected = SignupStatusCounts(queued=48, **dict.fromkeys(statuses, 1))
     page = await repository.registrations(tenant)
     assert len(page.items) == 50 and page.total == 55 and page.next_cursor is not None
+    assert page.status_counts == expected and page.unread_count == 7
+    assert not any(item.status == "registered" for item in page.items)
     remainder = await repository.registrations(tenant, cursor=page.next_cursor)
     assert len(remainder.items) == 5 and remainder.total == 55 and remainder.next_cursor is None
+    assert remainder.status_counts == expected and remainder.unread_count == 7
+    assert any(item.status == "registered" for item in remainder.items)
     ids = [item.event.canonical_event_id for item in page.items + remainder.items]
     assert len(set(ids)) == 55 and set(ids) == {event.canonical_event_id for event in events}
     batches = await repository.batches(tenant)
@@ -337,7 +374,8 @@ async def test_queue_and_connector_pages_cover_more_than_fifty_tasks_and_reject_
         await repository.batches(tenant, cursor=foreign.batch_id)
     with pytest.raises(MuseNotFoundError):
         await repository.registrations(tenant, cursor=uuid4())
-    assert (await repository.registrations(other)).total == 1
+    isolated = await repository.registrations(other)
+    assert isolated.total == 1 and isolated.status_counts == SignupStatusCounts(queued=1)
 
 
 async def test_legacy_batches_appear_in_queue_and_keep_connector_attempt_ownership(db):
