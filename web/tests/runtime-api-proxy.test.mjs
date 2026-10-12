@@ -1,9 +1,61 @@
 import assert from "node:assert/strict";
 import { once } from "node:events";
 import http from "node:http";
+import { createRequire } from "node:module";
 import test from "node:test";
 
+import nextConfig from "../next.config.ts";
 import { proxyRuntimeApiRequest } from "../lib/runtime-api-proxy.ts";
+
+const { unstable_getResponseFromNextConfig } = createRequire(import.meta.url)(
+  "next/experimental/testing/server",
+);
+
+test("Muse schema, connector rejection and owner responses retain no-store through Next header routing", async (t) => {
+  const originalFetch = global.fetch;
+  const originalOrigin = process.env.EC_API_ORIGIN;
+  process.env.EC_API_ORIGIN = "http://api.internal:8000";
+  t.after(() => {
+    global.fetch = originalFetch;
+    if (originalOrigin === undefined) delete process.env.EC_API_ORIGIN;
+    else process.env.EC_API_ORIGIN = originalOrigin;
+  });
+
+  for (const [path, status, headers] of [
+    ["/v1/muse/openapi.json", 200, {}],
+    ["/v1/muse/connector/batches?limit=100", 401, { Authorization: "Bearer invalid-fixture" }],
+    ["/v1/me/muse/registrations", 200, { Cookie: "__Host-ec_session=owner-fixture" }],
+  ]) {
+    await t.test(`${path} (${status})`, async () => {
+      global.fetch = async () => new Response(JSON.stringify({ fixture: true }), {
+        status,
+        headers: { "Content-Type": "application/json", "Cache-Control": "no-store, max-age=0" },
+      });
+      const url = `https://events.example${path}`;
+      const proxied = await proxyRuntimeApiRequest(
+        new Request(url, { headers }), "/v1", new URL(url).pathname.slice(4).split("/"),
+      );
+      assert.equal(proxied.status, status);
+      assert.equal(proxied.headers.get("cache-control"), "no-store, max-age=0");
+      await proxied.json();
+      const routed = await unstable_getResponseFromNextConfig({ url, nextConfig });
+      assert.equal(routed.headers.get("cache-control"), "no-store, max-age=0");
+    });
+  }
+});
+
+test("Muse cache overrides preserve catalog revalidation and immutable asset exclusions", async () => {
+  const catalog = await unstable_getResponseFromNextConfig({
+    url: "https://events.example/v1/catalog/events", nextConfig,
+  });
+  assert.equal(catalog.headers.get("cache-control"), "no-cache, must-revalidate");
+  for (const path of ["/_next/static/chunks/fixture.js", "/_next/image?url=fixture"]) {
+    const asset = await unstable_getResponseFromNextConfig({
+      url: `https://events.example${path}`, nextConfig,
+    });
+    assert.equal(asset.headers.get("cache-control"), null);
+  }
+});
 
 test("Firebase helper mode strips credentials, preserves callback bytes and CSP, and bounds output", async (t) => {
   const originalFetch = global.fetch;
