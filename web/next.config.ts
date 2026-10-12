@@ -29,6 +29,19 @@ const nextConfig: NextConfig = {
         ],
       },
       {
+        // Connector and account-owned registration responses must not be stored.
+        source: "/v1/muse/:path*",
+        headers: [
+          { key: "Cache-Control", value: "no-store, max-age=0" },
+        ],
+      },
+      {
+        source: "/v1/me/muse/:path*",
+        headers: [
+          { key: "Cache-Control", value: "no-store, max-age=0" },
+        ],
+      },
+      {
         // Browser-bound sign-in challenges and session responses must never be cached.
         source: "/auth/:path*",
         headers: [
