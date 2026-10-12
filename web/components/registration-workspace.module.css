@@ -12,15 +12,14 @@
 .drawer[open] { display: grid; grid-template-columns: minmax(0, 1fr) 64px; }
 .drawer::backdrop { background: #0008; backdrop-filter: blur(3px); }
 .content { min-height: 0; overflow: auto; padding: 22px; }
-.heading { display: flex; justify-content: space-between; align-items: center; gap: 12px; }
+.heading { display: flex; justify-content: space-between; align-items: center; gap: 12px; margin-bottom: 16px; }
+.heading > div:first-child { min-width: 0; }
+.headingActions { display: flex; align-items: center; gap: 4px; flex: 0 0 auto; }
 .heading h2 { margin: 0; font-size: 23px; }
 .eyebrow { color: var(--muted); font-size: 10px; letter-spacing: .18em; font-weight: 700; margin: 0 0 5px; }
 .iconButton { align-items: center; background: transparent; color: var(--muted); display: inline-flex; justify-content: center; border-radius: 8px; width: 32px; height: 32px; flex: 0 0 auto; }
 .iconButton:hover { color: var(--ink); background: var(--panel-soft); }
 .iconButton svg { width: 16px; height: 16px; }
-.actions { display: flex; gap: 8px; flex-wrap: wrap; margin: 18px 0; }
-.actions a { font-size: 11px; padding: 8px 12px; }
-.actions svg { width: 16px; height: 16px; }
 .filters { display: flex; flex-wrap: wrap; gap: 6px; padding: 12px 0; border-top: 1px solid var(--line); border-bottom: 1px solid var(--line); }
 .filters button { font-size: 10px; padding: 6px 8px; display: flex; gap: 7px; color: var(--muted); background: transparent; border: 1px solid var(--line); border-radius: 99px; }
 .filters button[aria-pressed="true"], .filters button:hover { color: var(--ink); border-color: #657832; background: #1a2110; }
@@ -56,3 +55,4 @@
 .providerNav button[aria-pressed="true"], .providerNav button:hover { border-color: #536a91; background: #14223b; color: var(--ink); }
 .providerNav b { position: absolute; right: 1px; top: -4px; padding: 2px 4px; background: var(--accent); color: #080908; border-radius: 99px; font-size: 9px; }
 @media (max-width: 760px) { .triggerTitle { display: none; } .trigger { padding: 7px 8px; } .triggerStats { gap: 7px; } .drawer { border-radius: 0; } .drawer[open] { grid-template-columns: minmax(0, 1fr) 52px; } .content { padding: 16px 12px; } .providerNav { padding: 14px 2px; } .providerNav button { width: 44px; } }
+@media (max-width: 400px) { .heading { gap: 8px; } .heading h2 { font-size: 20px; } }

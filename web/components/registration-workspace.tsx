@@ -2,7 +2,7 @@
 
 import { useEffect, useId, useRef, useState } from "react";
 import Link from "next/link";
-import { ExternalLink, RefreshCw, X } from "lucide-react";
+import { ExternalLink, RefreshCw, Settings, X } from "lucide-react";
 import { formatEventDate, formatEventTime } from "@/lib/date";
 import { googleCalendarUrl } from "@/lib/event-links";
 import { formatCity } from "@/lib/presentation";
@@ -76,11 +76,13 @@ export function RegistrationWorkspace({ providers, selectedId, onClose }: {
     } }}>
     <div className={styles.content} ref={content}>
       <header className={styles.heading}><div><p className={styles.eyebrow}>{provider.label}</p><h2 id={titleId}>Registrations</h2></div>
-        <button type="button" className={styles.iconButton} onClick={onClose} aria-label="Close registrations"><X aria-hidden="true" /></button></header>
-      <div className={styles.actions}>
-        <a className="button button-primary" href={provider.openUrl} target="_blank" rel="noopener noreferrer"><provider.Icon />Open {provider.label}</a>
-        <Link className="button" href={provider.settingsUrl}>{provider.label} settings</Link>
-      </div>
+        <div className={styles.headingActions}>
+          <a className={styles.iconButton} href={provider.openUrl} target="_blank" rel="noopener noreferrer"
+            aria-label={`Open ${provider.label}`} title={`Open ${provider.label}`}><provider.Icon /></a>
+          <Link className={styles.iconButton} href={provider.settingsUrl}
+            aria-label={`${provider.label} settings`} title={`${provider.label} settings`}><Settings aria-hidden="true" /></Link>
+          <button type="button" className={styles.iconButton} onClick={onClose} aria-label="Close registrations" title="Close registrations"><X aria-hidden="true" /></button>
+        </div></header>
       <div className={styles.filters} aria-label="Registration status filters">{registrationFilters.map(({ key, label }) => <button type="button"
         key={key} aria-pressed={filter === key} onClick={() => setFilter(key)}>
         {label}<span>{workspace.counts ? registrationFilterCount(workspace.counts, key) : "–"}</span>
