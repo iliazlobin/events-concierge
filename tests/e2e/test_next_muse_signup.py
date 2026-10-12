@@ -593,7 +593,7 @@ def test_registration_summary_counts_full_queue_and_filter_keeps_unseen_tasks_un
     expect(widget).to_have_attribute("title", "50 queued, 0 in progress, 5 registered, 0 needs attention")
     widget.click()
     dialog = page.get_by_role("dialog", name="Registrations", exact=True)
-    expect(dialog.get_by_role("navigation", name="Registration providers").get_by_role("button", name="Muse registrations")).to_have_attribute("aria-pressed", "true")
+    expect(dialog.get_by_role("combobox", name="Registration provider", exact=True)).to_have_value("muse")
     dialog.get_by_role("button", name=re.compile("^Registered")).click()
     expect(dialog).to_contain_text("More registrations available.")
     assert all(item["unread"] for item in api.registrations[-5:])

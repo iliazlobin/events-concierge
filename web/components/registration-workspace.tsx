@@ -2,7 +2,7 @@
 
 import { useEffect, useId, useRef, useState } from "react";
 import Link from "next/link";
-import { ExternalLink, RefreshCw, Settings, X } from "lucide-react";
+import { ChevronDown, ExternalLink, RefreshCw, Settings, X } from "lucide-react";
 import { formatEventDate, formatEventTime } from "@/lib/date";
 import { googleCalendarUrl } from "@/lib/event-links";
 import { formatCity } from "@/lib/presentation";
@@ -75,7 +75,23 @@ export function RegistrationWorkspace({ providers, selectedId, onClose }: {
       if (event.clientX < rect.left || event.clientX > rect.right || event.clientY < rect.top || event.clientY > rect.bottom) onClose();
     } }}>
     <div className={styles.content} ref={content}>
-      <header className={styles.heading}><div><p className={styles.eyebrow}>{provider.label}</p><h2 id={titleId}>Registrations</h2></div>
+      <header className={styles.heading}>
+        <h2 id={titleId} className="sr-only">Registrations</h2>
+        <div className={styles.selectors}>
+          <label className={`${styles.dropdown} ${styles.sectionDropdown}`}>
+            <select aria-label="Workspace section" defaultValue="registrations">
+              <option value="registrations">Registrations</option>
+            </select><ChevronDown aria-hidden="true" />
+          </label>
+          <label className={`${styles.dropdown} ${styles.providerDropdown}`}>
+            <select aria-label="Registration provider" value={provider.key}
+              onChange={event => { setProviderKey(event.target.value); setFilter("all"); }}>
+              {providers.map(candidate => <option key={candidate.provider.key} value={candidate.provider.key}>
+                {candidate.provider.label}{candidate.unread > 0 ? ` (${candidate.unread} unread)` : ""}
+              </option>)}
+            </select><ChevronDown aria-hidden="true" />
+          </label>
+        </div>
         <div className={styles.headingActions}>
           <a className={styles.iconButton} href={provider.openUrl} target="_blank" rel="noopener noreferrer"
             aria-label={`Open ${provider.label}`} title={`Open ${provider.label}`}><provider.Icon /></a>
@@ -119,12 +135,5 @@ export function RegistrationWorkspace({ providers, selectedId, onClose }: {
       {workspace.hasMore ? <button type="button" className="button" disabled={workspace.loading} onClick={workspace.onLoadMore}>
         {workspace.loading ? "Loading…" : "Load more registrations"}</button> : null}
     </div>
-    <nav className={styles.providerNav} aria-label="Registration providers">{providers.map(candidate => <button type="button"
-      key={candidate.provider.key} aria-label={`${candidate.provider.label} registrations`} title={candidate.provider.label}
-      aria-pressed={workspace.provider.key === candidate.provider.key}
-      onClick={() => { setProviderKey(candidate.provider.key); setFilter("all"); }}>
-      <candidate.provider.Icon /><span>{candidate.provider.label}</span>
-      {candidate.unread > 0 ? <b>{candidate.unread}</b> : null}
-    </button>)}</nav>
   </dialog>;
 }
