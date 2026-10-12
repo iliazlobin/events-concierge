@@ -4,13 +4,22 @@
 .actions { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 12px; }
 .actions svg { width: 15px; height: 15px; }
 .instruction { width: 100%; min-height: 180px; background: var(--black, #080908); color: inherit; padding: 12px; border: 1px solid var(--line); border-radius: 8px; resize: vertical; font-size: 12px; }
-.instructions { border: 1px solid var(--line); border-radius: 8px; padding: 12px; }
-.instructions summary { cursor: pointer; font-weight: 600; }
-.instructions summary:focus-visible { outline: 2px solid var(--accent); outline-offset: 4px; }
-.instructions p { margin: 12px 0; }
-.panel { display: grid; gap: 16px; }
-.panel input { width: 100%; background: #080908; color: inherit; border: 1px solid #34372e; padding: 12px; }
-.panel a { text-decoration: underline; overflow-wrap: anywhere; }
+.facts dt, .fieldLabel { align-items: center; display: flex; gap: 5px; }
+.facts dd { align-items: center; display: flex; gap: 8px; }
+.textButton { background: transparent; color: var(--accent); font: inherit; padding: 0; }
+.settingsActions { align-items: center; display: flex; flex-wrap: wrap; gap: 8px; }
+.settingsActions :global(.button), .copyField :global(.button) { font-size: 12px; min-height: 36px; padding: 8px 12px; }
+.keyReveal { border-top: 1px solid var(--line); padding-top: 16px; }
+.setup { display: block; font-size: 13px; }
+.setup summary { cursor: pointer; font-weight: 600; }
+.setup summary:focus-visible { outline: 2px solid var(--accent); outline-offset: 4px; }
+.setup[open] > :not(summary) { margin-top: 16px; }
+.setup p { color: var(--muted); font-size: 12px; }
+.copyField { align-items: center; display: flex; gap: 8px; min-width: 0; }
+.copyField input { min-width: 0; }
+.copyField button { flex: 0 0 auto; }
+.registrationLink { align-self: flex-start; color: var(--muted); font-size: 13px; text-decoration: none; }
+.registrationLink:hover { color: var(--ink); }
 .headerActions { display: flex; align-items: center; gap: 12px; justify-self: end; }
 .toast { position: fixed; bottom: 26px; left: 50%; transform: translateX(-50%); z-index: 45; display: flex; align-items: center; gap: 14px; max-width: min(620px, calc(100vw - 32px)); padding: 12px 16px; color: var(--ink); background: #20231a; border: 1px solid var(--line); border-radius: 12px; box-shadow: 0 10px 30px #0005; font-size: 12px; }
 .toast p { margin: 0; overflow-wrap: anywhere; }

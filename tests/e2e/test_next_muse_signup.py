@@ -251,7 +251,7 @@ def test_disabled_muse_has_no_controls_restore_or_settings_requests(page_factory
     assert api.event_detail_calls == []
     page.goto(BASE + "/settings/muse")
     expect(page.get_by_text("Unavailable.", exact=True)).to_be_visible()
-    expect(page.get_by_role("button", name="Create connection key", exact=True)).to_have_count(0)
+    expect(page.get_by_role("button", name="Create key", exact=True)).to_have_count(0)
     assert api.muse_calls == []
     assert api.writes == []
     assert api.unexpected == []
@@ -437,15 +437,41 @@ def test_older_registrations_remain_accessible_beyond_first_page(page_factory):
 
 
 @pytest.mark.parametrize("width", [1440, 320])
+def test_settings_setup_is_optional_and_help_supports_keyboard_and_touch(page_factory, width):
+    harness, api = install(page_factory, width)
+    page = harness.page
+    page.goto(BASE + "/settings/muse")
+    expect(page.get_by_role("heading", name="Muse signups", exact=True)).to_be_visible()
+    connector = page.get_by_role("textbox", name="Connector URL", exact=True)
+    expect(connector).not_to_be_visible()
+    help_button = page.get_by_role("button", name="Hosting help", exact=True)
+    help_button.focus()
+    expect(page.get_by_role("tooltip")).to_contain_text("public HTTPS")
+    help_button.press("Escape")
+    expect(page.get_by_role("tooltip")).to_have_count(0)
+    help_button.click()
+    tooltip = page.get_by_role("tooltip")
+    expect(tooltip).to_be_visible()
+    assert tooltip.evaluate("element => { const box = element.getBoundingClientRect(); return box.left >= 0 && box.right <= innerWidth; }")
+    page.locator("summary").filter(has_text="Connector setup").click()
+    expect(page.get_by_role("tooltip")).to_have_count(0)
+    expect(connector).to_have_value(BASE + "/v1/muse/openapi.json")
+    page.get_by_role("button", name="Copy URL", exact=True).click()
+    expect(page.get_by_role("status")).to_contain_text("URL copied.")
+    assert api.writes == []
+    assert page.evaluate("document.documentElement.scrollWidth <= innerWidth")
+
+
+@pytest.mark.parametrize("width", [1440, 320])
 def test_settings_secret_is_one_time_with_progress_in_registrations(page_factory, width):
     harness, api = install(page_factory, width)
     page = harness.page
     page.goto(BASE + "/settings/muse")
     expect(page.get_by_role("heading", name="Muse signups", exact=True)).to_be_visible()
-    expect(page.get_by_role("textbox", name="Muse API description")).to_have_value(BASE + "/v1/muse/openapi.json")
-    page.get_by_role("button", name="Create connection key").click()
+    page.get_by_role("button", name="Create key", exact=True).click()
     secret = page.get_by_label("Muse connection key", exact=True)
     expect(secret).to_have_attribute("type", "password")
+    expect(page.get_by_text("Shown once", exact=True)).to_be_visible()
     assert secret.input_value() == FIXTURE_KEY
     assert FIXTURE_KEY not in page.evaluate("JSON.stringify([localStorage, sessionStorage])")
     page.get_by_role("button", name="Copy connection key", exact=True).click()
@@ -453,10 +479,10 @@ def test_settings_secret_is_one_time_with_progress_in_registrations(page_factory
     expect(page.get_by_role("link", name="Registrations", exact=True)).to_be_visible()
     page.get_by_role("button", name="Hide key", exact=True).click()
     expect(secret).not_to_be_visible()
-    page.get_by_role("button", name="Disconnect Muse").click()
-    expect(page.get_by_role("status")).to_contain_text("Access revoked")
+    page.get_by_role("button", name="Revoke key").click()
+    expect(page.get_by_role("status")).to_contain_text("Key revoked")
     page.reload()
-    expect(page.get_by_text("No active key.", exact=True)).to_be_visible()
+    expect(page.get_by_text("No active key", exact=True)).to_be_visible()
     instructions = page.get_by_role("textbox", name="Muse signup instruction")
     expect(instructions).not_to_be_visible()
     expect(page.get_by_role("button", name="Copy Muse instruction")).not_to_be_visible()

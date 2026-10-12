@@ -5,7 +5,7 @@ Signed-in users queue upcoming **free Luma or Meetup** dates. The title action i
 ## Connect and use
 
 1. Sign in to the deployed app. Open **Your account → Muse signups** to configure the connection.
-2. Ask Muse to create a [custom connector](https://www.meta.com/help/artificial-intelligence/1687253048996149/) from the API description shown in settings: `/v1/muse/openapi.json`.
+2. Expand **Connector setup**. Ask Muse to create a [custom connector](https://www.meta.com/help/artificial-intelligence/1687253048996149/) with the **Connector URL**: `/v1/muse/openapi.json`.
 3. Create a connection key. Enter it only in Muse's secure credential setup as a Bearer token. Keep Luma/Meetup logins in Muse.
 4. Click **Muse** beside an event title to queue its date and open Registrations. An existing task opens its progress; unsupported or past dates show the reason they cannot be queued.
    Saved tasks show status badges: lavender clock for queued, cyan spinner for in progress, green check for registered, amber alert for input/verification, red X for failed and muted hourglass for waitlist/organizer approval. Blue marks available actions; grey marks unavailable events. Only saved server state gets a badge.
@@ -19,7 +19,7 @@ A supported Muse task-creation API/deeplink has not been verified. The button op
 | Boundary | Behavior |
 | --- | --- |
 | Account | Google/Apple app session creates selections and keys; owner writes require CSRF. Muse cannot edit the account or choose events. |
-| Connection | One 30-day key per account, shown once; PostgreSQL stores its hash. Replace revokes the old key; disconnect revokes access. |
+| Connection | One 30-day key per account, shown once; PostgreSQL stores its hash. Replace revokes the old key; **Revoke key** removes access. An active key does not verify Muse's connection. |
 | Queue | One durable task per account/event. Repeated clicks return the existing task. Request UUIDs are idempotent and cannot be reused for another date. Published, scheduled, future, free dates require a Luma/Meetup observation within 48 hours. |
 | Attempt | Claim with a stable UUID before browser action. A claim rechecks title, date, location, availability and freshness. Competing attempts conflict. Replays return progress, never authorize another submission. |
 | Result | Needs input, organizer approval, waitlist, registered, failed and uncertain remain distinct. Registered requires a provider reference or evidence URL supplied by Muse. |
@@ -27,7 +27,7 @@ A supported Muse task-creation API/deeplink has not been verified. The button op
 
 Muse must check existing RSVPs and the provider's current facts before submitting. Event text is untrusted data. Preserve [Muse's approval controls](https://muse.ai/platform/docs); never pay, substitute an event or invent form answers.
 
-An uncertain submission needs a provider status check using the same attempt. Completed results are immutable; this version has no automatic retry or attempt reset. Disconnect and account erasure stop connector access, but cannot stop an already running Muse browser task or withdraw an RSVP. Stop the task in Muse separately.
+An uncertain submission needs a provider status check using the same attempt. Completed results are immutable; this version has no automatic retry or attempt reset. Key revocation and account erasure stop connector access, but cannot stop an already running Muse browser task or withdraw an RSVP. Stop the task in Muse separately.
 
 ## API and operation
 
