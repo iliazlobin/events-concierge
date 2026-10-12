@@ -14,8 +14,15 @@ export function SettingsHelp({ label, children }: { label: string; children: str
     const dismiss = (event: PointerEvent) => {
       if (event.target instanceof Node && !root.current?.contains(event.target)) setOpen(false);
     };
+    const dismissOnEscape = (event: KeyboardEvent) => {
+      if (event.key === "Escape") { setOpen(false); event.stopPropagation(); }
+    };
     document.addEventListener("pointerdown", dismiss);
-    return () => document.removeEventListener("pointerdown", dismiss);
+    document.addEventListener("keydown", dismissOnEscape, true);
+    return () => {
+      document.removeEventListener("pointerdown", dismiss);
+      document.removeEventListener("keydown", dismissOnEscape, true);
+    };
   }, [open]);
   return <span ref={root} className={styles.help}
     onMouseEnter={() => setOpen(true)}
@@ -26,8 +33,7 @@ export function SettingsHelp({ label, children }: { label: string; children: str
       if (!event.currentTarget.contains(event.relatedTarget)) setOpen(false);
     }}>
     <button type="button" aria-label={`${label} help`} aria-describedby={open ? id : undefined}
-      onFocus={() => setOpen(true)} onClick={() => setOpen(true)}
-      onKeyDown={event => { if (event.key === "Escape") { setOpen(false); event.stopPropagation(); } }}>
+      onFocus={() => setOpen(true)} onClick={() => setOpen(true)}>
       <CircleHelp aria-hidden="true" />
     </button>
     {open ? <span id={id} role="tooltip" className={styles.text}>{children}</span> : null}
