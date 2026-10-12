@@ -278,7 +278,7 @@ def test_one_icon_queues_each_event_and_progress_panel_retains_filters(page_fact
     expect(queued.locator(".event-muse-action__badge")).to_be_visible()
     expect(queued.locator(".sr-only")).to_have_text("Queued")
     queued.hover()
-    assert queued.locator(".event-muse-action__badge").evaluate("element => getComputedStyle(element).color") == "rgb(230, 180, 92)"
+    assert queued.locator(".event-muse-action__badge").evaluate("element => getComputedStyle(element).color") == "rgb(184, 162, 255)"
     page.get_by_role("button", name="Sign up with Muse for Saturday Night Jazz").click()
     expect(dialog).to_contain_text("Saturday Night Jazz")
     dialog.get_by_role("button", name="Close registrations").click()
@@ -318,6 +318,9 @@ def test_unread_badge_and_results_acknowledge_observed_versions_only(page_factor
     page.goto(BASE + "/?view=events&when=all&city=")
     button = page.get_by_role("button", name=re.compile("^Registrations"))
     expect(button.locator('[aria-label="2 unread registration updates"]')).to_be_visible()
+    needs_input = page.get_by_role("button", name="View registration for Friday Night Jazz", exact=True)
+    expect(needs_input).to_have_attribute("data-registration-state", "needs_input")
+    assert needs_input.locator(".event-muse-action__badge").evaluate("element => getComputedStyle(element).color") == "rgb(230, 180, 92)"
     assert api.acknowledged == []
     button.click()
     dialog = page.get_by_role("dialog", name="Registrations", exact=True)
