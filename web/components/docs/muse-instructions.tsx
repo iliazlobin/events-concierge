@@ -18,6 +18,7 @@ export function MuseInstructions() {
     <label htmlFor="muse-signup-instruction">Muse instruction</label>
     <textarea id="muse-signup-instruction" aria-label="Muse signup instruction" readOnly value={museInstruction()} />
     <button type="button" className="button" aria-label="Copy Muse instruction" onClick={copyInstruction}>Copy instruction</button>
+    <noscript><p>Select and copy the instruction above.</p></noscript>
     {copied ? <p role="status">Instruction copied.</p> : null}
   </div>;
 }

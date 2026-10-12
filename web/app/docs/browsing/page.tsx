@@ -1,31 +1,36 @@
 import type { Metadata } from "next";
 import Link from "next/link";
+import { CodeBlock, PageContents, RelatedGuides } from "@/components/docs/docs-kit";
 export const metadata: Metadata = { title: "Find events" };
 
 export default function BrowsingGuide() {
   return <>
     <h1>Find events</h1>
     <p>Browse without signing in. Sign in to save filters or queue registrations.</p>
-    <h2>Search and filters</h2>
+    <PageContents links={[{ href: "#filters", label: "Search and filters" }, { href: "#views", label: "Views and calendar" }, { href: "#sources", label: "Sources and entities" }]} />
+    <h2 id="filters" tabIndex={-1}>Search and filters</h2>
     <ul>
       <li>Search event names, people, organizations and venues. Filter by source, place, topic, dates, price or registration status.</li>
       <li>The initial selection is <strong>San Francisco · This week</strong>. This week includes events that have not started yet.</li>
       <li>If no events match, change the dates or place. <strong>Reset</strong> removes the filters.</li>
-      <li><strong>Save filters</strong> stores the selection in your account.</li>
+      <li><strong>Save filters</strong> stores the selection in your account. Reuse it from <Link href="/settings/saved-filters">Saved filters</Link>.</li>
     </ul>
-    <h2>Events, map and calendar</h2>
+    <CodeBlock label="Example: free San Francisco events">{"/?view=events&when=all&city=sanfrancisco&price=free"}</CodeBlock>
+    <p><Link href="/?view=events&when=all&city=sanfrancisco&price=free">Open this search</Link>. The URL keeps the filters, so you can bookmark or share it.</p>
+    <h2 id="views" tabIndex={-1}>Events, map and calendar</h2>
     <ul>
-      <li>Switch views with the same filters. Expand a card for event details.</li>
+      <li>Use the app’s <strong>Events</strong>, <strong>Map</strong> and <strong>Calendar</strong> tabs to keep your filters. Expand a card for event details.</li>
       <li>Map pins can show an approximate area. Events without coordinates remain available in the event list.</li>
-      <li>Click an event date or time to open a Google Calendar draft. Review and save it there; this does not register you or keep the calendar entry synchronized.</li>
+      <li>Click an event date or time to open a <a href="https://support.google.com/calendar/answer/72143" target="_blank" rel="noopener noreferrer">Google Calendar draft</a>. Review and save it there; this does not register you or keep the calendar entry synchronized.</li>
       <li>Follow the event link to check current availability and register on its provider’s website.</li>
     </ul>
-    <h2>Sources and entities</h2>
+    <p>Try San Francisco across all dates: <Link href="/?view=events&when=all&city=sanfrancisco">Events example</Link> · <Link href="/?view=map&when=all&city=sanfrancisco">Map example</Link> · <Link href="/?view=calendar&calendar=week&when=all&city=sanfrancisco">Calendar example</Link>.</p>
+    <h2 id="sources" tabIndex={-1}>Sources and entities</h2>
     <ul>
       <li>Click a source name to open its catalog details and events. Totals cover the selected date range; place and topic summaries cover loaded events.</li>
-      <li><strong>Entities</strong> connects people and organizations to events through recorded roles. A connection does not prove attendance or a personal relationship.</li>
+      <li><Link href="/?view=entities&when=all&city=">Entities</Link> connects people and organizations to events through <Link href="/docs/how-it-works#roles">recorded roles</Link>. A connection does not prove attendance or a personal relationship.</li>
       <li>A profile link comes from the source. It does not independently verify identity.</li>
     </ul>
-    <p>For assisted registration, see <Link href="/docs/muse">Muse signups</Link>.</p>
+    <RelatedGuides links={[{ href: "/docs/account#saved-filters", label: "Save and reuse filters" }, { href: "/docs/muse#start", label: "Register with Muse" }]} />
   </>;
 }

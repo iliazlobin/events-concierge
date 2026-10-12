@@ -3,38 +3,57 @@
 .header > a { color: var(--muted); font-size: 13px; text-decoration: none; }
 .header > a:hover { color: var(--ink); }
 .header .brand { align-items: center; color: var(--ink); display: flex; font-size: 16px; font-weight: 650; gap: 12px; }
-.grid { display: grid; gap: 48px; grid-template-columns: 180px minmax(0, 760px); padding-top: 36px; }
+.grid { display: grid; gap: 48px; grid-template-columns: 180px minmax(0, 620px); padding-top: 36px; }
 .nav { align-self: start; display: flex; flex-direction: column; gap: 5px; position: sticky; top: 24px; }
 .nav a { border-radius: 8px; color: var(--muted); font-size: 13px; padding: 10px 12px; text-decoration: none; }
 .nav a:hover, .nav a[aria-current="page"] { background: var(--panel); color: var(--ink); }
-.page { color: var(--muted); font-size: 14px; line-height: 1.7; min-width: 0; overflow-wrap: anywhere; }
+.page { color: #bfc1bb; font-size: 16px; line-height: 1.75; min-width: 0; overflow-wrap: anywhere; }
 .page h1 { color: var(--ink); font-size: clamp(26px, 4vw, 34px); letter-spacing: -.03em; line-height: 1.2; margin: 0 0 20px; }
-.page h2 { color: var(--ink); font-size: 19px; line-height: 1.4; margin: 32px 0 12px; scroll-margin-top: 20px; }
+.page h2 { color: var(--ink); font-size: 20px; line-height: 1.4; margin: 36px 0 14px; scroll-margin-top: 24px; }
 .page h3 { color: var(--ink); font-size: 15px; margin: 18px 0 6px; }
 .page p { margin: 0 0 14px; }
 .page ul, .page ol { padding-left: 22px; }
 .page li { margin: 7px 0; }
 .page strong { color: var(--ink); font-weight: 600; }
-.page a { color: var(--ink); text-decoration: underline; text-underline-offset: 3px; }
+.page a { color: #bbd2ff; text-decoration: underline; text-decoration-color: #bbd2ff66; text-underline-offset: 4px; }
+.page a:hover { color: #e0eaff; text-decoration-color: currentColor; }
 .page code { background: var(--panel-raised); border-radius: 4px; color: var(--ink); font-size: .92em; padding: 2px 5px; }
-.page table { border-collapse: collapse; font-size: 13px; width: 100%; }
+.page table { border-collapse: collapse; font-size: 14px; margin: 20px 0; width: 100%; }
 .page th, .page td { border-bottom: 1px solid var(--line); padding: 10px 12px 10px 0; text-align: left; vertical-align: top; }
 .page th { color: var(--ink); font-weight: 600; }
 .cards { display: grid; gap: 14px; grid-template-columns: repeat(2, minmax(0, 1fr)); margin-top: 24px; }
 .page .card { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 20px; text-decoration: none; }
 .card:hover { border-color: var(--muted); }
 .card strong { display: block; margin-bottom: 6px; }
-.card span { color: var(--muted); font-size: 13px; }
+.card span { color: #bfc1bb; font-size: 14px; }
 .instruction { display: flex; flex-direction: column; gap: 12px; }
 .instruction label { color: var(--ink); font-size: 13px; font-weight: 600; }
-.instruction textarea { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; color: var(--muted); font: inherit; font-size: 12px; line-height: 1.7; min-height: 260px; padding: 14px; resize: vertical; width: 100%; }
+.instruction textarea { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; color: #bfc1bb; font-family: ui-monospace, "SF Mono", Menlo, monospace; font-size: 13px; line-height: 1.7; min-height: 300px; padding: 16px; resize: vertical; width: 100%; }
 .instruction button { align-self: flex-start; }
-.flow { border-left: 2px solid var(--line); list-style: none; margin: 22px 0; padding-left: 22px; }
-.flow li { padding: 4px 0 12px; }
-.flow strong { display: block; }
+.contents { border-left: 2px solid var(--line); margin: 24px 0 32px; padding-left: 16px; }
+.contents > span, .related > span { color: var(--muted); display: block; font-size: 12px; font-weight: 600; margin-bottom: 8px; }
+.contents ul { display: flex; flex-wrap: wrap; gap: 6px 20px; list-style: none; margin: 0; padding: 0; }
+.contents li { font-size: 13px; margin: 0; }
+.related { border-top: 1px solid var(--line); display: flex; flex-wrap: wrap; gap: 12px 24px; margin-top: 36px; padding-top: 20px; }
+.related > span { flex-basis: 100%; margin: 0; }
+.codeBlock, .diagram { margin: 22px 0; }
+.codeBlock figcaption, .diagram figcaption { color: var(--ink); font-size: 13px; font-weight: 600; margin-bottom: 10px; }
+.codeBlock pre { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; margin: 0; padding: 16px; white-space: pre-wrap; }
+.codeBlock pre code { background: transparent; border-radius: 0; color: #d2e1ff; font-family: ui-monospace, "SF Mono", Menlo, monospace; font-size: 13px; line-height: 1.7; overflow-wrap: anywhere; padding: 0; }
+.diagram ol { display: flex; gap: 24px; list-style: none; margin: 0; padding: 0; }
+.diagram li { display: flex; flex: 1; margin: 0; min-width: 0; position: relative; }
+.node { border: 1px solid #80867c; border-radius: 10px; color: #243040; padding: 14px 12px; width: 100%; }
+.page .node strong { color: inherit; display: block; font-size: 13px; line-height: 1.5; margin-bottom: 6px; }
+.node > span { display: block; font-size: 12px; line-height: 1.5; }
+.tone0 { background: #e8f0fe; }
+.tone1 { background: #fff4ce; }
+.tone2 { background: #e6f4ea; }
+.tone3 { background: #f3e8fd; }
+.arrow { color: var(--muted); position: absolute; right: -19px; top: calc(50% - 15px); }
 .skip { background: var(--panel-raised); color: var(--ink); left: 16px; padding: 8px 12px; position: absolute; top: -60px; z-index: 50; }
 .skip:focus { top: 12px; }
 .shell a:focus-visible, .instruction button:focus-visible { outline: 2px solid var(--accent); outline-offset: 4px; }
+.page h2:focus-visible { outline: 2px solid var(--accent); outline-offset: 6px; }
 @media (max-width: 760px) {
   .shell { padding: 0 20px 40px; }
   .header { gap: 16px; min-height: 68px; }
@@ -44,5 +63,10 @@
   .nav { flex-direction: row; flex-wrap: wrap; position: static; }
   .nav a { font-size: 12px; padding: 8px 10px; }
   .cards { grid-template-columns: minmax(0, 1fr); }
-  .page th, .page td { font-size: 12px; }
+  .page th, .page td { font-size: 13px; }
+}
+@media (max-width: 600px) {
+  .diagram ol { flex-direction: column; }
+  .diagram li { flex: auto; }
+  .arrow { bottom: -26px; left: calc(50% - 6px); right: auto; top: auto; transform: rotate(90deg); }
 }
