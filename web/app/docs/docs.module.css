@@ -1,0 +1,48 @@
+.shell { margin: 0 auto; max-width: 1180px; padding: 0 28px 64px; }
+.header { align-items: center; border-bottom: 1px solid var(--line); display: flex; gap: 24px; justify-content: space-between; min-height: 76px; }
+.header > a { color: var(--muted); font-size: 13px; text-decoration: none; }
+.header > a:hover { color: var(--ink); }
+.header .brand { align-items: center; color: var(--ink); display: flex; font-size: 16px; font-weight: 650; gap: 12px; }
+.grid { display: grid; gap: 48px; grid-template-columns: 180px minmax(0, 760px); padding-top: 36px; }
+.nav { align-self: start; display: flex; flex-direction: column; gap: 5px; position: sticky; top: 24px; }
+.nav a { border-radius: 8px; color: var(--muted); font-size: 13px; padding: 10px 12px; text-decoration: none; }
+.nav a:hover, .nav a[aria-current="page"] { background: var(--panel); color: var(--ink); }
+.page { color: var(--muted); font-size: 14px; line-height: 1.7; min-width: 0; overflow-wrap: anywhere; }
+.page h1 { color: var(--ink); font-size: clamp(26px, 4vw, 34px); letter-spacing: -.03em; line-height: 1.2; margin: 0 0 20px; }
+.page h2 { color: var(--ink); font-size: 19px; line-height: 1.4; margin: 32px 0 12px; scroll-margin-top: 20px; }
+.page h3 { color: var(--ink); font-size: 15px; margin: 18px 0 6px; }
+.page p { margin: 0 0 14px; }
+.page ul, .page ol { padding-left: 22px; }
+.page li { margin: 7px 0; }
+.page strong { color: var(--ink); font-weight: 600; }
+.page a { color: var(--ink); text-decoration: underline; text-underline-offset: 3px; }
+.page code { background: var(--panel-raised); border-radius: 4px; color: var(--ink); font-size: .92em; padding: 2px 5px; }
+.page table { border-collapse: collapse; font-size: 13px; width: 100%; }
+.page th, .page td { border-bottom: 1px solid var(--line); padding: 10px 12px 10px 0; text-align: left; vertical-align: top; }
+.page th { color: var(--ink); font-weight: 600; }
+.cards { display: grid; gap: 14px; grid-template-columns: repeat(2, minmax(0, 1fr)); margin-top: 24px; }
+.page .card { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 20px; text-decoration: none; }
+.card:hover { border-color: var(--muted); }
+.card strong { display: block; margin-bottom: 6px; }
+.card span { color: var(--muted); font-size: 13px; }
+.instruction { display: flex; flex-direction: column; gap: 12px; }
+.instruction label { color: var(--ink); font-size: 13px; font-weight: 600; }
+.instruction textarea { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; color: var(--muted); font: inherit; font-size: 12px; line-height: 1.7; min-height: 260px; padding: 14px; resize: vertical; width: 100%; }
+.instruction button { align-self: flex-start; }
+.flow { border-left: 2px solid var(--line); list-style: none; margin: 22px 0; padding-left: 22px; }
+.flow li { padding: 4px 0 12px; }
+.flow strong { display: block; }
+.skip { background: var(--panel-raised); color: var(--ink); left: 16px; padding: 8px 12px; position: absolute; top: -60px; z-index: 50; }
+.skip:focus { top: 12px; }
+.shell a:focus-visible, .instruction button:focus-visible { outline: 2px solid var(--accent); outline-offset: 4px; }
+@media (max-width: 760px) {
+  .shell { padding: 0 20px 40px; }
+  .header { gap: 16px; min-height: 68px; }
+  .header .brand { font-size: 13px; gap: 8px; }
+  .header > a { font-size: 12px; }
+  .grid { gap: 26px; grid-template-columns: minmax(0, 1fr); padding-top: 18px; }
+  .nav { flex-direction: row; flex-wrap: wrap; position: static; }
+  .nav a { font-size: 12px; padding: 8px 10px; }
+  .cards { grid-template-columns: minmax(0, 1fr); }
+  .page th, .page td { font-size: 12px; }
+}

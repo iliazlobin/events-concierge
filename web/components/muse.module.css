@@ -3,7 +3,6 @@
 .eyebrow { color: var(--accent); font-size: 10px; letter-spacing: .18em; font-weight: 700; margin-bottom: 5px; }
 .actions { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 12px; }
 .actions svg { width: 15px; height: 15px; }
-.instruction { width: 100%; min-height: 180px; background: var(--black, #080908); color: inherit; padding: 12px; border: 1px solid var(--line); border-radius: 8px; resize: vertical; font-size: 12px; }
 .facts dt, .fieldLabel { align-items: center; display: flex; gap: 5px; }
 .facts dd { align-items: center; display: flex; gap: 8px; }
 .textButton { background: transparent; color: var(--accent); font: inherit; padding: 0; }

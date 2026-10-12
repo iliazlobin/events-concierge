@@ -7850,6 +7850,10 @@ textarea:focus-visible {
 .event-muse-action:focus-visible { outline: 2px solid var(--registration-color); outline-offset: 2px; }
 .event-muse-action[data-registration-state="unavailable"] { color: var(--quiet); cursor: not-allowed; opacity: .45; }
 .event-muse-action[data-registration-state="saving"] { cursor: wait; }
+.site-docs-link { align-items: center; border-radius: 50%; color: var(--muted); display: inline-flex; flex: 0 0 auto; height: 30px; justify-content: center; width: 30px; }
+.site-docs-link svg { height: 17px; width: 17px; }
+.site-docs-link:hover { background: var(--panel-raised); color: var(--ink); }
+.site-docs-link:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
 .event-muse-action__badge { align-items: center; background: var(--panel); border: 1px solid currentColor; border-radius: 50%; bottom: -.1em; color: var(--registration-color); display: flex; height: max(10px, .6em); justify-content: center; position: absolute; right: -.1em; width: max(10px, .6em); }
 .event-title-row .event-muse-action__badge svg { color: inherit; height: 100%; stroke-width: 2.5; width: 100%; }
 .map-preview__source-filter { background: transparent; border-radius: 3px; color: inherit; font: inherit; letter-spacing: inherit; padding: 0; text-align: left; text-transform: inherit; }

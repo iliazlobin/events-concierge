@@ -264,6 +264,7 @@ def test_one_icon_queues_each_event_and_progress_panel_retains_filters(page_fact
     page.goto(BASE + "/?view=events&when=all&city=")
     expect(page.get_by_role("heading", name="Friday Night Jazz", exact=True)).to_be_visible()
     expect(page.get_by_role("checkbox", name=re.compile("Muse"))).to_have_count(0)
+    expect(page.get_by_role("link", name="Documentation", exact=True)).to_be_visible()
     expect(page.locator(".event-card__muse")).to_have_count(0)
     first = page.get_by_role("button", name="Sign up with Muse for Friday Night Jazz", exact=True)
     expect(first).to_have_attribute("title", "Sign up with Muse")
@@ -371,8 +372,9 @@ def test_queue_failure_is_recoverable_without_duplicate_intent(page_factory):
     assert api.unexpected == []
 
 
-def test_guest_has_no_muse_controls_or_automatic_queue_after_sign_in(page_factory):
-    harness, api = install(page_factory)
+@pytest.mark.parametrize("width", [1440, 320])
+def test_guest_has_no_muse_controls_or_automatic_queue_after_sign_in(page_factory, width):
+    harness, api = install(page_factory, width)
     api.signed_in = False
     page = harness.page
     return_path = "/?view=events&when=all&city="
@@ -380,6 +382,8 @@ def test_guest_has_no_muse_controls_or_automatic_queue_after_sign_in(page_factor
     expect(page.get_by_role("heading", name="Friday Night Jazz", exact=True)).to_be_visible()
     expect(page.get_by_role("button", name=re.compile("Muse for"))).to_have_count(0)
     expect(page.get_by_role("button", name="Registrations", exact=True)).to_have_count(0)
+    expect(page.get_by_role("link", name="Documentation", exact=True)).to_be_visible()
+    assert page.evaluate("document.documentElement.scrollWidth <= innerWidth")
     page.get_by_role("button", name="Map", exact=True).click()
     expect(page.get_by_role("heading", name="Event map", exact=True)).to_be_visible()
     expect(page.locator(".event-muse-action")).to_have_count(0)
@@ -468,7 +472,7 @@ def test_settings_setup_is_optional_and_help_supports_keyboard_and_touch(page_fa
 
 
 @pytest.mark.parametrize("width", [1440, 320])
-def test_settings_secret_is_one_time_with_progress_in_registrations(page_factory, width):
+def test_settings_secret_is_one_time_with_instructions_in_docs(page_factory, width):
     harness, api = install(page_factory, width)
     page = harness.page
     page.goto(BASE + "/settings/muse")
@@ -491,20 +495,18 @@ def test_settings_secret_is_one_time_with_progress_in_registrations(page_factory
     instructions = page.get_by_role("textbox", name="Muse signup instruction")
     expect(instructions).not_to_be_visible()
     expect(page.get_by_role("button", name="Copy Muse instruction")).not_to_be_visible()
-    page.locator("summary").filter(has_text="Muse instructions").click()
+    page.get_by_role("link", name="Muse setup and usage guide", exact=True).click()
     expect(instructions).to_be_visible()
     expect(page.get_by_text("Opening Muse does not start registrations.", exact=False)).to_be_visible()
     page.get_by_role("button", name="Copy Muse instruction").click()
-    expect(page.get_by_role("status")).to_contain_text("Muse instruction copied.")
+    expect(page.get_by_role("status")).to_contain_text("Instruction copied.")
     instruction = page.evaluate("window.__fixtureCopied")
     assert instruction == instructions.input_value()
     assert "queued" in instruction.lower() and FIXTURE_KEY not in instruction
     page.evaluate("() => { navigator.clipboard.writeText = async () => { throw new Error('clipboard disabled'); }; }")
     page.get_by_role("button", name="Copy Muse instruction").click()
-    expect(page.locator("details").get_by_role("alert")).to_contain_text("Select and copy the instruction below.")
+    expect(page.get_by_role("main").get_by_role("alert")).to_contain_text("Select and copy the instruction below.")
     expect(instructions).to_be_visible()
-    page.locator("summary").filter(has_text="Muse instructions").click()
-    expect(instructions).not_to_be_visible()
     assert [item[:2] for item in api.writes] == [("POST", "/v1/me/muse/connection"),
                                                 ("DELETE", "/v1/me/muse/connection")]
     assert page.evaluate("document.documentElement.scrollWidth <= innerWidth")

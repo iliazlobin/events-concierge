@@ -6,7 +6,7 @@ import { useSession } from "@/components/session-provider";
 import { readableError } from "@/lib/api";
 import { SettingsHelp } from "@/components/settings/settings-help";
 import {
-  MUSE_URL, museInstruction, createMuseConnection, getMuseConnection, revokeMuseConnection, type MuseConnection,
+  MUSE_URL, createMuseConnection, getMuseConnection, revokeMuseConnection, type MuseConnection,
 } from "@/lib/muse";
 import styles from "@/components/muse.module.css";
 
@@ -96,27 +96,7 @@ function EnabledMusePanel() {
       </div>
       <dl className={`settings-facts ${styles.facts}`}><div><dt>Authentication <SettingsHelp label="Authentication">Paste the connection key into Muse’s Bearer token field.</SettingsHelp></dt><dd>Bearer token</dd></div></dl>
     </details>
-    <MuseInstructions />
+    <Link className={styles.registrationLink} href="/docs/muse">Muse setup and usage guide <span aria-hidden="true">→</span></Link>
     <Link className={styles.registrationLink} href="/?registrations=1">Registrations <span aria-hidden="true">→</span></Link>
   </section>;
-}
-
-function MuseInstructions() {
-  const [copied, setCopied] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  async function copyInstruction() {
-    setCopied(false); setError(null);
-    try { await navigator.clipboard.writeText(museInstruction()); setCopied(true); }
-    catch { setError("Clipboard unavailable. Select and copy the instruction below."); }
-  }
-  return <details className={`settings-card ${styles.setup}`}>
-    <summary>Muse instructions</summary>
-    <p>Paste into Muse to start your queue. Opening Muse does not start registrations.</p>
-    {error ? <p role="alert">{error}</p> : null}
-    <textarea className={styles.instruction} aria-label="Muse signup instruction" readOnly value={museInstruction()} />
-    <div className={styles.actions}>
-      <button type="button" className="button" aria-label="Copy Muse instruction" onClick={copyInstruction}>Copy instruction</button>
-    </div>
-    {copied ? <p role="status">Muse instruction copied.</p> : null}
-  </details>;
 }
