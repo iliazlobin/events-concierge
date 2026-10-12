@@ -104,12 +104,26 @@ test("pending and existing tasks retain the same action without duplicate signup
   });
   assert.match(existing, /aria-label="View registration for Free design evening"/);
   assert.match(existing, /Registered/);
+  assert.match(existing, /data-registration-state="registered"/);
+  assert.match(existing, /event-muse-action__badge/);
   assert.doesNotMatch(existing, /disabled/);
+  for (const status of Object.keys(muse.museStatusLabel)) {
+    const saved = withActions(createElement(action.EventMuseAction, { event: { ...event, start_at: "2020-01-01T00:00:00Z" } }), {
+      muse: museActions({ statuses: new Map([[event.canonical_event_id, status]]) }),
+    });
+    assert.match(saved, new RegExp(`data-registration-state="${status}"`));
+    assert.match(saved, /aria-label="View registration for Free design evening"/);
+    assert.match(saved, /aria-describedby=/);
+    assert.match(saved, /event-muse-action__badge/);
+    assert.doesNotMatch(saved, /disabled/);
+  }
   const pending = withActions(createElement(action.EventMuseAction, { event }), {
     muse: museActions({ pendingIds: new Set([event.canonical_event_id]) }),
   });
   assert.match(pending, /disabled="" aria-busy="true"/);
   assert.match(pending, /Queueing with Muse/);
+  assert.match(pending, /data-registration-state="saving"/);
+  assert.doesNotMatch(pending, /event-muse-action__badge/);
   const paid = withActions(createElement(action.EventMuseAction, { event: { ...event, price_status: "paid" } }), { muse: museActions() });
   assert.match(paid, /disabled/);
   assert.match(paid, /Muse currently supports free events/);
@@ -118,7 +132,7 @@ test("pending and existing tasks retain the same action without duplicate signup
 test("the shared action delegates one account-owned callback and isolates the surrounding card", () => {
   const selected = [];
   const isolated = component("event-muse-action.tsx", { ...actionDependencies,
-    "react": { ...require("react"), useRef: () => ({ current: null }), useEffect: () => {} },
+    "react": { ...require("react"), useRef: () => ({ current: null }), useEffect: () => {}, useId: () => "muse-state" },
     "@/components/event-actions-context": { useEventActions: () => ({ muse: museActions({ onSignup: value => selected.push(value) }) }) },
   });
   const control = isolated.EventMuseAction({ event });

@@ -267,15 +267,23 @@ def test_one_icon_queues_each_event_and_progress_panel_retains_filters(page_fact
     expect(page.locator(".event-card__muse")).to_have_count(0)
     first = page.get_by_role("button", name="Sign up with Muse for Friday Night Jazz", exact=True)
     expect(first).to_have_attribute("title", "Sign up with Muse")
+    expect(first).to_have_attribute("data-registration-state", "available")
+    expect(first.locator(".event-muse-action__badge")).to_have_count(0)
     first.click()
     dialog = page.get_by_role("dialog", name="Registrations", exact=True)
     expect(dialog).to_contain_text("Friday Night Jazz")
     dialog.get_by_role("button", name="Close registrations").click()
-    expect(page.get_by_role("button", name="View registration for Friday Night Jazz")).to_be_visible()
+    queued = page.get_by_role("button", name="View registration for Friday Night Jazz", exact=True)
+    expect(queued).to_have_attribute("data-registration-state", "queued")
+    expect(queued.locator(".event-muse-action__badge")).to_be_visible()
+    expect(queued.locator(".sr-only")).to_have_text("Queued")
+    queued.hover()
+    assert queued.locator(".event-muse-action__badge").evaluate("element => getComputedStyle(element).color") == "rgb(230, 180, 92)"
     page.get_by_role("button", name="Sign up with Muse for Saturday Night Jazz").click()
     expect(dialog).to_contain_text("Saturday Night Jazz")
     dialog.get_by_role("button", name="Close registrations").click()
     expect(page.get_by_role("button", name="View registration for Saturday Night Jazz")).to_be_visible()
+    assert queued.get_attribute("aria-describedby") != page.get_by_role("button", name="View registration for Saturday Night Jazz", exact=True).get_attribute("aria-describedby")
     assert [item["event_id"] for item in api.queued] == [event["canonical_event_id"] for event in api.events]
     assert all(set(item) == {"request_id", "event_id"} for item in api.queued)
     assert all(write[2]["x-fixture-csrf"] == "bound-fixture" for write in api.writes)
@@ -331,6 +339,15 @@ def test_unread_badge_and_results_acknowledge_observed_versions_only(page_factor
     expect(dialog.get_by_role("link", name=re.compile("evidence", re.I))).to_have_attribute("href", "https://lu.ma/friday-jazz")
     expect(dialog.locator('[aria-label="Unread update"]')).to_have_count(0)
     assert api.acknowledged[-1] == {"event_id": api.events[0]["canonical_event_id"], "version": 3}
+    dialog.get_by_role("button", name="Close registrations", exact=True).click()
+    registered = page.get_by_role("button", name="View registration for Friday Night Jazz", exact=True)
+    expect(registered).to_have_attribute("data-registration-state", "registered")
+    expect(registered.locator(".sr-only")).to_have_text("Registered")
+    expect(registered.locator(".event-muse-action__badge")).to_be_visible()
+    assert registered.locator(".event-muse-action__badge").evaluate("element => getComputedStyle(element).color") == "rgb(151, 217, 163)"
+    registered.click()
+    expect(dialog).to_contain_text("fixture-confirmation")
+    assert api.queued == []
     assert api.unexpected == []
 
 

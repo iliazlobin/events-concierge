@@ -7837,12 +7837,19 @@ textarea:focus-visible {
 .event-title-row { align-items: flex-start; display: flex; gap: .3em; min-width: 0; }
 .event-title-text { display: -webkit-box; flex: 0 1 auto; min-width: 0; overflow: hidden; overflow-wrap: anywhere; -webkit-box-orient: vertical; -webkit-line-clamp: 2; }
 .muse-icon { color: #78a7ff; }
-.event-muse-action { align-items: center; background: transparent; border: 1px solid transparent; border-radius: 999px; color: #78a7ff; display: inline-flex; flex: 0 0 auto; font: inherit; height: 1.25em; justify-content: center; margin-top: calc((1lh - max(24px, 1.25em)) / 2); min-height: 24px; min-width: 24px; padding: 0; position: relative; width: 1.25em; z-index: 2; transition: background 180ms ease, border-color 180ms ease, color 180ms ease; }
-.event-title-row .event-muse-action svg { color: inherit; height: 1em; width: 1em; }
-.event-muse-action:hover:not(:disabled), .event-muse-action:focus-visible { background: #78a7ff1f; border-color: #78a7ff55; color: #abcaff; }
-.event-muse-action:focus-visible { outline: 2px solid #78a7ff; outline-offset: 2px; }
-.event-muse-action:disabled { cursor: not-allowed; opacity: .35; }
-.event-muse-action__dot { background: #78a7ff; border-radius: 50%; height: max(2px, .2em); position: absolute; right: .05em; top: .05em; width: max(2px, .2em); }
+.event-muse-action { --registration-color: #78a7ff; align-items: center; background: transparent; border: 1px solid transparent; border-radius: 999px; color: var(--registration-color); display: inline-flex; flex: 0 0 auto; font: inherit; height: 1.25em; justify-content: center; margin-top: calc((1lh - max(24px, 1.25em)) / 2); min-height: 24px; min-width: 24px; padding: 0; position: relative; width: 1.25em; z-index: 2; transition: background 180ms ease, border-color 180ms ease, color 180ms ease; }
+.event-title-row .event-muse-action > svg { color: inherit; height: 1em; width: 1em; }
+.event-muse-action[data-registration-state="queued"], .event-muse-action[data-registration-state="needs_input"], .event-muse-action[data-registration-state="uncertain"] { --registration-color: #e6b45c; }
+.event-muse-action[data-registration-state="registered"] { --registration-color: #97d9a3; }
+.event-muse-action[data-registration-state="failed"] { --registration-color: #f28b82; }
+.event-muse-action[data-registration-state="waitlisted"], .event-muse-action[data-registration-state="awaiting_approval"] { --registration-color: #b1afbf; }
+.event-muse-action:not([data-registration-state="available"]):not([data-registration-state="unavailable"]):not([data-registration-state="saving"]) { background: color-mix(in srgb, var(--registration-color) 12%, transparent); border-color: color-mix(in srgb, var(--registration-color) 35%, transparent); }
+.event-muse-action:hover:not(:disabled), .event-muse-action:focus-visible { background: color-mix(in srgb, var(--registration-color) 22%, transparent); border-color: color-mix(in srgb, var(--registration-color) 55%, transparent); color: color-mix(in srgb, var(--registration-color) 80%, white); }
+.event-muse-action:focus-visible { outline: 2px solid var(--registration-color); outline-offset: 2px; }
+.event-muse-action[data-registration-state="unavailable"] { color: var(--quiet); cursor: not-allowed; opacity: .45; }
+.event-muse-action[data-registration-state="saving"] { cursor: wait; }
+.event-muse-action__badge { align-items: center; background: var(--panel); border: 1px solid currentColor; border-radius: 50%; bottom: -.1em; color: var(--registration-color); display: flex; height: max(10px, .6em); justify-content: center; position: absolute; right: -.1em; width: max(10px, .6em); }
+.event-title-row .event-muse-action__badge svg { color: inherit; height: 100%; stroke-width: 2.5; width: 100%; }
 .map-preview__source-filter { background: transparent; border-radius: 3px; color: inherit; font: inherit; letter-spacing: inherit; padding: 0; text-align: left; text-transform: inherit; }
 .map-preview__source-filter:hover, .map-preview__source-filter:focus-visible { color: var(--accent); }
 .map-preview__source-filter:focus-visible, .map-preview__calendar-link:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
