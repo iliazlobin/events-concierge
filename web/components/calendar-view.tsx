@@ -441,11 +441,11 @@ function CalendarWeekGrid({
                   data-topic-tone={eventTopicTone(event.topics?.[0])}
                   key={event.canonical_event_id}
                 >
-                  <div className="calendar-week-event__meta">
-                    <time>{formatWeekEventTime(event.start_at)}</time>
+                  <time>{formatWeekEventTime(event.start_at)}</time>
+                  <div className="calendar-week-event__title-row event-title-row">
+                    <span className="calendar-week-event__title event-title-text">{event.title}</span>
                     <EventMuseAction event={event} />
                   </div>
-                  <span>{event.title}</span>
                 </div>
               ))}
               {unknown

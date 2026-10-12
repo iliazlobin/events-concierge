@@ -1,13 +1,13 @@
 # Muse signups
 
-Signed-in users queue upcoming **free Luma or Meetup** dates from the Muse icon in event highlights. The action is shared by Events, Map, Calendar, source pages and graph details. Events Concierge stores each registration task; Muse completes registration in its own browser.
+Signed-in users queue upcoming **free Luma or Meetup** dates. The title action is shared by Events, Map, Calendar, source pages and graph details. Events Concierge stores each registration task; Muse completes registration in its own browser.
 
 ## Connect and use
 
 1. Sign in to the deployed app. Open **Your account → Muse signups** to configure the connection.
 2. Ask Muse to create a [custom connector](https://www.meta.com/help/artificial-intelligence/1687253048996149/) from the API description shown in settings: `/v1/muse/openapi.json`.
 3. Create a connection key. Enter it only in Muse's secure credential setup as a Bearer token. Keep Luma/Meetup logins in Muse.
-4. Click an event's **Muse icon** to queue its date and open Registrations. An existing task opens its progress; unsupported or past dates show the reason they cannot be queued.
+4. Click **Muse** beside an event title to queue its date and open Registrations. An existing task opens its progress; unsupported or past dates show the reason they cannot be queued.
 5. In **Your account → Muse signups → Muse instructions**, copy the queue instruction. **Open Muse** and paste it. Muse may ask for provider login, approval or missing form answers.
 6. The header widget shows queued, in-progress, registered and needs-attention counts across the full account queue. **Registrations** opens a compact right panel with a vertical provider rail and status filters. Muse is the enabled registration provider—the service handling signup. Provider definitions supply its icon, links and labels; event publishers such as Luma remain separate. The badge counts unread task updates; only visible task versions are acknowledged. In-app announcements report new progress and results. Refresh is manual or every 15 seconds while the page is visible; returning to the page refreshes it.
 

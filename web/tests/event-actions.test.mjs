@@ -87,12 +87,12 @@ test("shared Muse controls stay absent without enabled account context", () => {
   assert.doesNotMatch(renderToStaticMarkup(previewElement()), /Sign up with Muse/);
 });
 
-test("Muse sits in event highlights across normal and compact cards", () => {
+test("Muse sits beside the event heading across normal and compact cards", () => {
   for (const compact of [false, true]) {
     const html = withActions(createElement(card.EventCard, { event, expanded: false, compact }), { muse: museActions() });
-    const meta = html.slice(html.indexOf('<div class="event-card__meta">'), html.indexOf('<ul class="event-card__summary-facts"'));
-    assert.doesNotMatch(meta, /event-muse-action/);
-    assert.match(html, /<ul class="event-card__summary-facts" aria-label="Event highlights">.*aria-label="Sign up with Muse for Free design evening"/);
+    assert.match(html, /class="event-card__title-row event-title-row"><h2[^>]*>.*Free design evening.*<\/h2><button[^>]*aria-label="Sign up with Muse for Free design evening"/);
+    const facts = html.slice(html.indexOf('<ul class="event-card__summary-facts"'), html.indexOf('</ul>', html.indexOf('<ul class="event-card__summary-facts"')));
+    assert.doesNotMatch(facts, /event-muse-action/);
     assert.match(html, /title="Sign up with Muse"/);
     assert.doesNotMatch(html, /Select for Muse|checkbox/);
   }
@@ -135,7 +135,7 @@ test("map previews expose independent calendar, source, focus, and Muse controls
   assert.match(html, /class="map-preview__source-filter" aria-label="View source Design calendar"/);
   assert.match(html, /class="map-preview__calendar-link" href="https:\/\/calendar.google.com\/calendar\/render\?/);
   assert.match(html, /aria-label="Add Free design evening .* to Google Calendar"/);
-  assert.match(html, /<ul class="map-preview__highlights" aria-label="Event highlights">.*Sign up with Muse/);
+  assert.match(html, /class="map-preview__title-row event-title-row"><strong[^>]*>.*Free design evening.*<\/strong><button[^>]*aria-label="Sign up with Muse/);
   const start = html.indexOf('<button class="map-preview__location-focus"');
   const focusButton = html.slice(start, html.indexOf("</button>", start) + 9);
   assert.doesNotMatch(focusButton, /<a |source-filter|event-muse-action/);
@@ -162,7 +162,7 @@ test("week previews expose Muse without nesting a button in the selectable day",
   };
   const html = withActions(createElement(week.CalendarView, props), { muse: museActions() });
   assert.match(html, /role="gridcell" tabindex="0"/);
-  assert.match(html, /class="calendar-week-event__meta".*Sign up with Muse for Free design evening/);
+  assert.match(html, /class="calendar-week-event__title-row event-title-row"><span[^>]*>Free design evening<\/span><button[^>]*aria-label="Sign up with Muse for Free design evening/);
   assert.doesNotMatch(html, /<button[^>]*role="gridcell"/);
   assert.doesNotMatch(html, /class="calendar-week-day__events" aria-hidden="true"/);
 });

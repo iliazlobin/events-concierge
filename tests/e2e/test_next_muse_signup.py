@@ -460,6 +460,25 @@ def test_settings_secret_is_one_time_with_progress_in_registrations(page_factory
     assert api.unexpected == []
 
 
+def assert_title_action_geometry(row):
+    expect(row.locator(".event-muse-action")).to_be_visible()
+    dimensions = row.evaluate("""row => {
+        const text = row.querySelector('.event-title-text');
+        const button = row.querySelector('.event-muse-action');
+        const icon = button.querySelector('svg');
+        const title = text.getBoundingClientRect(), action = button.getBoundingClientRect();
+        const glyph = icon.getBoundingClientRect(), style = getComputedStyle(text);
+        return { font: parseFloat(style.fontSize), line: parseFloat(style.lineHeight),
+                 titleTop: title.top, titleRight: title.right, actionLeft: action.left,
+                 actionCenter: action.top + action.height / 2, width: action.width,
+                 height: action.height, iconSize: glyph.height };
+    }""")
+    assert abs(dimensions["iconSize"] - dimensions["font"]) < 0.5
+    assert dimensions["width"] >= 24 and dimensions["height"] >= 24
+    assert 0 <= dimensions["actionLeft"] - dimensions["titleRight"] <= dimensions["font"]
+    assert abs(dimensions["actionCenter"] - dimensions["titleTop"] - dimensions["line"] / 2) < 1.5
+
+
 @pytest.mark.parametrize("width", [1440, 320])
 def test_source_view_and_map_calendar_card_actions_use_shared_controls(page_factory, width):
     harness, api = install(page_factory, width)
@@ -473,7 +492,8 @@ def test_source_view_and_map_calendar_card_actions_use_shared_controls(page_fact
     page = harness.page
     page.goto(BASE + "/?view=events&when=all&city=")
     first_card = page.locator("article").filter(has=page.get_by_role("heading", name="Friday Night Jazz", exact=True))
-    expect(first_card.get_by_role("list", name="Event highlights").get_by_role("button", name="Sign up with Muse for Friday Night Jazz")).to_be_visible()
+    expect(first_card.locator(".event-card__title-row").get_by_role("button", name="Sign up with Muse for Friday Night Jazz")).to_be_visible()
+    assert_title_action_geometry(first_card.locator(".event-title-row"))
     first_card.get_by_role("button", name="View source SF Tech Week 2026", exact=True).click()
     expect(page.get_by_role("heading", name="SF Tech Week 2026", exact=True)).to_be_visible()
     assert "view=source" in page.url and "source=" + key in page.url
@@ -493,12 +513,18 @@ def test_source_view_and_map_calendar_card_actions_use_shared_controls(page_fact
     expect(date_link).to_have_attribute("href", re.compile("^https://calendar.google.com/calendar/render"))
     expect(mini.locator(".map-preview__calendar-link")).to_have_attribute("href", date_link.get_attribute("href"))
     expect(mini.get_by_role("button", name="Sign up with Muse for Friday Night Jazz", exact=True)).to_be_visible()
+    assert_title_action_geometry(mini.locator(".event-title-row"))
     expect(mini.get_by_role("button", name="View source SF Tech Week 2026", exact=True)).to_be_visible()
     mini.get_by_role("button", name="View source SF Tech Week 2026", exact=True).click()
     expect(page.get_by_role("heading", name="SF Tech Week 2026", exact=True)).to_be_visible()
     page.get_by_role("button", name="Calendar", exact=True).last.click()
     expect(page.get_by_role("button", name="Sign up with Muse for Friday Night Jazz", exact=True)).to_be_visible()
+    assert_title_action_geometry(page.locator(".event-title-row").filter(has=page.get_by_role("button", name="Sign up with Muse for Friday Night Jazz", exact=True)))
     assert "source=" + key in page.url
+    api.events[0]["title"] = "Friday Night Jazz with a very long title that wraps across several lines on a narrow screen"
+    page.goto(BASE + "/?view=events&when=all&city=")
+    long_card = page.locator("article").filter(has=page.get_by_role("heading", name=api.events[0]["title"], exact=True))
+    assert_title_action_geometry(long_card.locator(".event-title-row"))
     assert page.evaluate("document.documentElement.scrollWidth <= innerWidth")
     assert api.queued == [] and api.unexpected == []
 

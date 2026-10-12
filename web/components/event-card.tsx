@@ -280,12 +280,15 @@ export function EventCard({
               </>
             ) : null}
           </span>
-          <h2 className="event-card__title" id={titleId}>
-            {url ? <a className="event-card__title-link" href={url} target="_blank"
-              rel="noopener noreferrer" title="Open provider event page (opens in new tab)">
-              {event.title}
-            </a> : event.title}
-          </h2>
+          <div className="event-card__title-row event-title-row">
+            <h2 className="event-card__title event-title-text" id={titleId}>
+              {url ? <a className="event-card__title-link" href={url} target="_blank"
+                rel="noopener noreferrer" title="Open provider event page (opens in new tab)">
+                {event.title}
+              </a> : event.title}
+            </h2>
+            <EventMuseAction event={event} />
+          </div>
           <div className="event-card__meta">
             {calendarUrl ? (
               <a
@@ -325,10 +328,9 @@ export function EventCard({
               </span>
             )}
           </div>
-          {summaryFacts.length || actions?.muse ? (
+          {summaryFacts.length ? (
             <ul className="event-card__summary-facts" aria-label="Event highlights">
               {summaryFacts.map((fact) => <li key={fact}>{fact}</li>)}
-              {actions?.muse ? <li className="event-highlight-action"><EventMuseAction event={event} /></li> : null}
             </ul>
           ) : null}
         </div>

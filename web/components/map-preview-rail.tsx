@@ -107,10 +107,13 @@ function MapPreviewCard({ event, selected, muted, onSelect, onEntitySelect }: Ma
             onClick={interaction => interaction.stopPropagation()}>
             <CalendarDays aria-hidden="true" />{date.weekday} · {time}
           </a> : <><CalendarDays aria-hidden="true" />{date.weekday} · {time}</>}</small>
-          <strong>{pageUrl ? <a className="map-preview__title-link" href={pageUrl}
-            target="_blank" rel="noopener noreferrer" title="Open provider event page (opens in new tab)">
-            {event.title}
-          </a> : event.title}</strong>
+          <span className="map-preview__title-row event-title-row">
+            <strong className="event-title-text">{pageUrl ? <a className="map-preview__title-link" href={pageUrl}
+              target="_blank" rel="noopener noreferrer" title="Open provider event page (opens in new tab)">
+              {event.title}
+            </a> : event.title}</strong>
+            <EventMuseAction event={event} />
+          </span>
           {!imageUrl && calendarUrl ? <button className="map-preview__location-focus" type="button"
             aria-label={hasMapLocation ? `Focus ${event.title} on map` : `Show details for ${event.title}`}
             aria-pressed={selected}
@@ -124,9 +127,8 @@ function MapPreviewCard({ event, selected, muted, onSelect, onEntitySelect }: Ma
         </span>
       </div>
 
-      {highlights.length || actions?.muse ? <ul className="map-preview__highlights" aria-label="Event highlights">
+      {highlights.length ? <ul className="map-preview__highlights" aria-label="Event highlights">
         {highlights.map(label => <li key={label}>{label}</li>)}
-        {actions?.muse ? <li className="event-highlight-action"><EventMuseAction event={event} /></li> : null}
       </ul> : null}
 
       {graphEntity && onEntitySelect ? <div className="map-preview__actions">
