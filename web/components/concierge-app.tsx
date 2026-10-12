@@ -1361,9 +1361,9 @@ export function ConciergeApp() {
         </nav>
 
         <div className={museStyles.headerActions}>
-          <a className="site-docs-link" href="/docs" aria-label="Documentation" title="Documentation"><BookOpen aria-hidden="true" /></a>
           {museEnabled && me && !signingOut ? <RegistrationSummary counts={museQueue.counts} unread={museQueue.unread}
             loading={museQueue.loading} open={museOpen} onOpen={() => showMuseRegistrations()} /> : null}
+          <a className="site-docs-link" href="/docs" aria-label="Documentation" title="Documentation"><BookOpen aria-hidden="true" /></a>
           <AccountMenu
             me={me}
             config={config}
