@@ -14,6 +14,7 @@ Discover events, browse Events/Map/Calendar and entity graphs, and open provider
 
 | Purpose | Home |
 | --- | --- |
+| User guides | [Public site documentation](https://events.iliazlobin.com/docs), [page source](web/app/docs/) |
 | Product scope and conventions | [PROJECT.md](PROJECT.md) |
 | Code map, flows and invariants | [ARCHITECTURE.md](ARCHITECTURE.md), [runtime](docs/runtime.md) |
 | Local setup, branches and checks | [Development](docs/development.md) |
