@@ -1,0 +1,60 @@
+<!doctype html>
+<html lang="en">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Muse local mock</title>
+<style>
+  :root { color-scheme: dark; font: 16px/1.6 system-ui; background:#090b08; color:#f2f4ed }
+  body { max-width:900px; margin:auto; padding:32px 20px }
+  a { color:#baf07a } button,select { font:inherit; padding:8px 12px; border:1px solid #47523c; border-radius:8px; background:#171c13; color:inherit }
+  button { cursor:pointer } button:hover { border-color:#ccff62 } button:disabled { opacity:.5; cursor:default }
+  article { border:1px solid #39442e; border-radius:12px; padding:18px; margin:16px 0 }
+  h1,h2,p { margin:0 0 12px } h2 { font-size:18px } .muted { color:#a8b39e }
+  .actions { display:flex; flex-wrap:wrap; gap:10px } pre { overflow:auto; font-size:13px }
+  #error { color:#ffb1a6 } :focus-visible { outline:2px solid #ccff62; outline-offset:3px }
+</style>
+<h1>Muse local mock</h1>
+<p>Synthetic results. No provider contacted.</p>
+<p><a href="PREVIEW_PATH" target="_blank" rel="noopener">Open event preview</a> · <button id="refresh">Refresh</button></p>
+<p id="account" class="muted"></p>
+<p id="error" role="alert"></p>
+<section id="events" aria-label="Queued events"></section>
+<details><summary>Connector calls</summary><pre id="calls"></pre></details>
+<script>
+const nonce = "CONTROL_NONCE";
+const labels = {registered:"Registered",needs_input:"Needs input",uncertain:"Uncertain",failed:"Failed",waitlisted:"Waitlisted",awaiting_approval:"Awaiting approval"};
+async function load() {
+  try {
+    const response = await fetch("/__muse_mock/state");
+    const data = await response.json();
+    if (!response.ok) throw new Error(data.detail || "Mock unavailable");
+    document.querySelector("#account").textContent = data.account;
+    document.querySelector("#calls").textContent = data.calls.map(c=>`${c.method} ${c.path} → ${c.status}`).join("\n");
+    const container = document.querySelector("#events"); container.replaceChildren();
+    if (!data.items.length) { container.textContent = "Queue an event in the preview, then refresh."; }
+    for (const item of data.items) {
+      const card = document.createElement("article"), title = document.createElement("h2"), status = document.createElement("p"), actions = document.createElement("div");
+      title.textContent = item.event.title;
+      status.textContent = `${item.status.replaceAll("_"," ")} · ${item.attempt_id ? "Attempt saved" : "Not started"}`;
+      actions.className = "actions";
+      for (const [action,label] of Object.entries({claim:"Start",...labels})) {
+        const button = document.createElement("button"); button.textContent = label;
+        button.disabled = ["registered","failed"].includes(item.status) || (action==="claim" && item.attempt_id!==null);
+        button.onclick = async()=> {
+          button.disabled = true; document.querySelector("#error").textContent = "";
+          try {
+            const response = await fetch("/__muse_mock/advance", {method:"POST",headers:{"Content-Type":"application/json","X-Mock-Control":nonce},body:JSON.stringify({event_id:item.event.canonical_event_id,action})});
+            if (!response.ok) throw new Error((await response.json()).detail || "Could not update");
+            await load();
+          } catch (error) { document.querySelector("#error").textContent = error.message; button.disabled = false; }
+        };
+        actions.append(button);
+      }
+      card.append(title,status,actions); container.append(card);
+    }
+  } catch (error) { document.querySelector("#error").textContent = error.message; }
+}
+document.querySelector("#refresh").onclick = load;
+load();
+</script>
+</html>

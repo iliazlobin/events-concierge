@@ -50,3 +50,18 @@ The [connector schema](../../src/events_concierge/api/muse.py) includes only fou
 - Responses use `no-store`. Never send credentials, cookies, payment details or personal form answers in outcomes; store only a short result and provider reference.
 - Release through the existing [migration and immutable-image procedure](release.md). Source checks do not prove that Muse is connected or that a provider signup succeeded.
 - Before acceptance, verify the deployed schema, owner CSRF, key replacement/revocation, separate-account isolation, and one explicitly authorized free signup. Confirm both the provider RSVP and the reported result. Real signups require the user's authorization.
+
+## Local mock
+
+Use the existing isolated frontend on `14301` and API on `14302`. The [harness](../../tests/support/muse_mock.py) requires `local_demo` and `muse_enabled`, plus both exact reviewed synthetic queue fixtures: upcoming, scheduled, free Luma/Meetup events observed within 48 hours. Invalid or missing fixtures stop startup; do not bypass checks or reseed the catalog.
+
+```sh
+.venv/bin/python -m tests.support.muse_mock
+```
+
+1. Open `http://127.0.0.1:14303/__muse_mock` and click **Open event preview**. The loopback proxy uses a fresh `example.test` account. Its key stays in the mock process; existing preview accounts and browser storage remain unchanged.
+2. Queue a synthetic event with the normal Muse action. In the controls, click **Refresh**, **Start**, then an outcome. These actions use the real connector claim/outcome endpoints and persist progress.
+3. Check the app's badges, counts and unread updates. Visible pages poll every 15 seconds; **Refresh** reads the latest state immediately.
+4. Stop with `Ctrl+C`. Shutdown attempts to revoke only this run's key; the fresh account and task records remain. Restart for a new account after a completed result.
+
+The mock contacts no event provider. It does not verify Google sign-in, production CSRF, Muse connector import or a real signup.
