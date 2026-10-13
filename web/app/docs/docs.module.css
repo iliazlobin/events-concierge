@@ -85,8 +85,7 @@
   .header > a { font-size: 12px; }
   .header > a:last-child { text-align: right; }
   .grid { gap: 26px; grid-template-columns: minmax(0, 1fr); padding-top: 18px; }
-  .nav { flex-direction: row; flex-wrap: wrap; position: static; }
-  .nav { gap: 3px; }
+  .nav { flex-direction: row; flex-wrap: wrap; gap: 3px; position: static; }
   .nav a { font-size: 12px; min-height: 32px; padding: 7px 10px; }
   .cards { grid-template-columns: minmax(0, 1fr); }
   .page th, .page td { font-size: 13px; }
