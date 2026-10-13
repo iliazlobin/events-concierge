@@ -16,6 +16,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { useAvatarSource } from "@/components/use-avatar-source";
 import { releaseProfile, releaseSettingsAllowed } from "@/lib/release-profile";
 import { signInFailurePath } from "@/lib/sign-in";
+import { availableRegistrationProviders } from "@/lib/registration-providers";
 import type { Me, UiConfig } from "@/lib/types";
 
 interface AccountMenuProps {
@@ -38,11 +39,11 @@ const LINKS: MenuLink[] = [
   { href: "/settings", label: "Profile", hint: "Name, photo, time zone", icon: Settings2 },
   { href: "/settings/taste", label: "Interests", hint: "Topics you enjoy", icon: Sparkles },
   { href: "/settings/saved-filters", label: "Saved filters", hint: "Your saved searches", icon: Bookmark },
-  { href: "/settings/muse", label: "Muse signups", hint: "Connection and signup results", icon: Sparkles },
+  { href: "/settings/registrations", label: "Registrations", hint: "Providers and connections", icon: Sparkles },
   { href: "/settings/activity", label: "Activity", hint: "Asks, registrations", icon: SlidersHorizontal },
   { href: "/settings/api-keys", label: "API keys", hint: "Development key records", icon: KeyRound },
   { href: "/settings/security", label: "Security", hint: "Password, two-factor", icon: ShieldCheck },
-  { href: "/settings/account", label: "Account and data", hint: "Sign-in, deletion", icon: ShieldAlert },
+  { href: "/settings/account", label: "Account", hint: "Sign-in, deletion", icon: ShieldAlert },
 ];
 
 /**
@@ -74,7 +75,7 @@ export function AccountMenu({ me, config, tenantId = null, returnTo = "/", signi
 
   // The rendered order the roving index walks: links, the optional admin hop, then sign out.
   const links = LINKS.filter(link => releaseSettingsAllowed(link.href, releaseProfile(config))
-    && (link.href !== "/settings/muse" || config?.muse_enabled === true));
+    && (link.href !== "/settings/registrations" || availableRegistrationProviders(config).length > 0));
   const itemCount = links.length + (showAdmin ? 1 : 0) + 1;
 
   const close = useCallback((restoreFocus: boolean) => {

@@ -186,19 +186,28 @@ def test_google_deletion_gate_preserves_custom_claim_confirmation(sign_in_page, 
     api.provider = provider
     page = harness.page
     page.goto(f"{BASE}/settings/account")
-    button = page.get_by_role("button", name="Erase my account…", exact=True)
+    button = page.get_by_role("button", name="Delete account…", exact=True)
     if provider == "google":
         expect(button).to_be_disabled()
-        expect(page.locator("#deletion-unavailable")).to_contain_text(
-            "Signing in again will not enable deletion."
-        )
+        expect(page.locator("#deletion-unavailable")).to_have_text("Deletion unavailable.")
+        page.get_by_role("button", name="Account deletion help", exact=True).hover()
+        expect(page.get_by_role("tooltip")).to_contain_text("signing in again will not enable deletion")
         expect(page.get_by_text("Google", exact=True)).to_be_visible()
-        expect(page.get_by_text("Destructive actions ask you to sign in again first.", exact=False)).to_have_count(0)
+        expect(page.get_by_text("Type DELETE MY ACCOUNT to confirm.", exact=False)).to_have_count(0)
     else:
         expect(button).to_be_enabled()
         expect(page.get_by_text("Single sign-on", exact=True)).to_be_visible()
         button.click()
+        expect(page.get_by_text("This cannot be undone.", exact=True)).to_be_visible()
+        expect(page.get_by_text("A limited audit record may remain.", exact=False)).to_be_visible()
+        confirmation = page.locator("#erasure-confirm")
+        confirm_button = page.get_by_role("button", name="Delete account", exact=True)
+        confirmation.fill("delete my account")
+        expect(confirm_button).to_be_disabled()
+        confirmation.fill("DELETE MY ACCOUNT")
+        expect(confirm_button).to_be_enabled()
         page.get_by_role("button", name="Cancel", exact=True).click()
+        expect(confirmation).to_have_count(0)
         expect(button).to_be_visible()
     assert all(method == "GET" for method, _ in api.calls)
 

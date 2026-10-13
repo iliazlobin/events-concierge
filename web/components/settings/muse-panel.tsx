@@ -10,17 +10,7 @@ import {
 } from "@/lib/muse";
 import styles from "./muse-panel.module.css";
 
-export function MusePanel() {
-  const { config } = useSession();
-  if (config?.muse_enabled !== true) return <section className="settings-panel">
-    <header className={`settings-panel__head ${styles.heading}`}><h1>Muse signups</h1>
-      <Link href="/docs/muse" className={styles.link}>Setup guide <span aria-hidden="true">→</span></Link>
-    </header><p className="settings-hint">Not enabled.</p>
-  </section>;
-  return <EnabledMusePanel />;
-}
-
-function EnabledMusePanel() {
+export function MuseConnectionPanel() {
   const { tenantId } = useSession();
   const [connection, setConnection] = useState<MuseConnection | null>(null);
   const [token, setToken] = useState<string | null>(null);
@@ -56,11 +46,7 @@ function EnabledMusePanel() {
     catch { setError("Clipboard unavailable. Copy the field manually."); }
   }
   const schema = origin ? `${origin}/v1/muse/openapi.json` : "";
-  return <section className="settings-panel">
-    <header className={`settings-panel__head ${styles.heading}`}>
-      <h1>Muse signups</h1>
-      <Link href="/docs/muse" className={styles.link}>Setup guide <span aria-hidden="true">→</span></Link>
-    </header>
+  return <div className="settings-panel">
     {error ? <p role="alert" className="settings-error">{error}</p> : null}
     {message ? <p role="status" className="settings-notice">{message}</p> : null}
     <section className="settings-card" aria-labelledby="muse-connection-heading">
@@ -100,5 +86,5 @@ function EnabledMusePanel() {
       <Link className={styles.link} href="/?registrations=1">Registrations <span aria-hidden="true">→</span></Link>
       <a className={styles.link} href={MUSE_URL} target="_blank" rel="noopener noreferrer">Open Muse <span aria-hidden="true">↗</span></a>
     </nav>
-  </section>;
+  </div>;
 }

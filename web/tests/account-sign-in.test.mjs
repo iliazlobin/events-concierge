@@ -59,10 +59,10 @@ test("Google deletion is unavailable without affecting local demo or custom clai
 });
 
 test("personal destinations survive sign-in without open redirects", () => {
-  for (const path of ["/settings", "/settings/account", "/settings/saved-filters", "/settings/taste", "/?view=calendar"]) {
+  for (const path of ["/settings", "/settings/account", "/settings/saved-filters", "/settings/taste", "/settings/registrations", "/settings/muse", "/?view=calendar"]) {
     assert.equal(signInReturnTo(path), path);
   }
-  for (const path of ["https://evil.test", "//evil.test", "/\\evil.test", "/admin", "/auth/login", "/unknown"]) {
+  for (const path of ["https://evil.test", "//evil.test", "/\\evil.test", "/admin", "/auth/login", "/unknown", "/settings/registrations/../admin", "/settings/registrations/%2e%2e/admin"]) {
     assert.equal(signInReturnTo(path), "/");
   }
   assert.equal(signInFailurePath(401, "/settings/saved-filters"), "/sign-in?return_to=%2Fsettings%2Fsaved-filters");

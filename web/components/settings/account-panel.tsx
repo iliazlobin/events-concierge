@@ -1,6 +1,7 @@
 "use client";
 
 import { LoaderCircle } from "lucide-react";
+import Link from "next/link";
 import { useState } from "react";
 
 import { useSession } from "@/components/session-provider";
@@ -13,9 +14,9 @@ import {
 } from "@/lib/api";
 import { clearCatalogCache } from "@/lib/catalog-cache";
 import { clearEntityGraphCache } from "@/lib/entity-graph-cache";
-import { releaseProfile } from "@/lib/release-profile";
 import { accountDeletionUnavailable } from "@/lib/sign-in";
 import type { AccountErasureReceipt } from "@/lib/types";
+import { SettingsHelp } from "./settings-help";
 
 const CONFIRMATION = "DELETE MY ACCOUNT";
 const ERASURE_REQUEST_KEY = "events-concierge.erasure-request.v1";
@@ -81,11 +82,11 @@ export function AccountPanel() {
     return (
       <div className="settings-panel">
         <header className="settings-panel__head">
-          <h1>Account erasure is underway</h1>
-          <p>
+          <h1>{receipt.status === "completed" ? "Account deleted" : "Deleting account"}</h1>
+          <p className="settings-hint">
             {receipt.status === "completed"
-              ? "Everything below has been removed."
-              : "We have accepted the request and started work. It continues without this browser."}
+              ? "Cleanup completed."
+              : "Request accepted. Cleanup continues."}
           </p>
         </header>
         <section className="settings-card">
@@ -126,19 +127,21 @@ export function AccountPanel() {
   return (
     <div className="settings-panel">
       <header className="settings-panel__head">
-        <h1>Account and data</h1>
-        <p>Where your session stands, and how to end it for good.</p>
+        <h1>Account</h1>
+        <Link className="settings-guide-link" href="/docs/account#access">Guide <span aria-hidden="true">→</span></Link>
       </header>
 
       <section className="settings-card">
         <h2 className="settings-card__title">Sign-in</h2>
         <dl className="settings-facts">
           <div>
-            <dt>Email on file</dt>
+            <dt>Email</dt>
             <dd>{me?.notify_email ?? "—"}</dd>
           </div>
           <div>
-            <dt>Sign-in method</dt>
+            <dt className="settings-field-label">Sign-in method
+              {config?.auth_mode === "deployment_session" ? <SettingsHelp label="Session">Sessions last up to eight hours and do not extend as you use them. Account deletion requires a recent identity check when supported.</SettingsHelp> : null}
+            </dt>
             <dd>
               {config?.auth_mode === "deployment_session"
                 ? config.auth_provider === "google" ? "Google" : "Single sign-on"
@@ -146,50 +149,17 @@ export function AccountPanel() {
             </dd>
           </div>
         </dl>
-        {config?.auth_mode === "deployment_session" ? (
-          <p className="settings-hint">
-            Sessions last up to eight hours and do not extend as you use them.
-            {!deletionUnavailable ? " Destructive actions ask you to sign in again first." : null}
-          </p>
-        ) : null}
       </section>
 
-      {releaseProfile(config) === "full" ? <section className="settings-card">
-        <h2 className="settings-card__title">How far the concierge goes</h2>
-        <ol className="control-ladder">
-          <li>
-            <strong>Show me options.</strong> A read-only preview. It learns from what catches your
-            eye and registers nothing.
-          </li>
-          <li>
-            <strong>Find and handle it.</strong> A durable request. It may act inside allowed
-            free-RSVP lanes and hands off anything else to you.
-          </li>
-          <li>
-            <strong>Your calendar stays true.</strong> Confirmed registrations are reconciled when
-            organizers change plans or you withdraw.
-          </li>
-        </ol>
-        <p className="settings-hint">
-          Paid registration is refused everywhere today — the concierge has no purchase authority.
-        </p>
-      </section> : <section className="settings-card">
-        <h2 className="settings-card__title">Event discovery</h2>
-        <p>Browse events, explore the map and calendar, and save your filters. Visit the event provider to register. Google Calendar links let you add an event yourself.</p>
-      </section>}
-
       <section className="settings-card settings-card--danger">
-        <h2 className="settings-card__title">Erase this account</h2>
-        <p>
-          This permanently fences your account, cancels concierge work, removes concierge-owned
-          calendar entries, revokes sessions and stored credentials, and starts deletion from
-          account-scoped storage. It cannot be undone.
-        </p>
+        <div className="settings-title-row"><h2 className="settings-card__title">Delete account</h2>
+          <Link className="settings-guide-link" href="/docs/account#deletion">Details <span aria-hidden="true">→</span></Link>
+        </div>
+        <p className="settings-hint">This cannot be undone.</p>
         {deletionUnavailable ? (
-          <p className="settings-hint" id="deletion-unavailable">
-            Account deletion is currently unavailable with Google sign-in. It requires an additional
-            identity check that is not available yet. Signing in again will not enable deletion.
-          </p>
+          <div className="settings-field-label"><p className="settings-hint" id="deletion-unavailable">Deletion unavailable.</p>
+            <SettingsHelp label="Account deletion">Deletion is unavailable with this Google sign-in configuration. The required identity check is not supported; signing in again will not enable deletion.</SettingsHelp>
+          </div>
         ) : null}
         {error ? (
           <p className="settings-error" role="alert">
@@ -198,6 +168,7 @@ export function AccountPanel() {
         ) : null}
         {dialogOpen ? (
           <div className="danger-confirm">
+            <p className="settings-hint">This ends account access, revokes sessions and connections, cancels pending work and starts deletion of account data. A limited audit record may remain.</p>
             <label htmlFor="erasure-confirm">
               Type <code>{CONFIRMATION}</code> to confirm.
             </label>
@@ -226,7 +197,7 @@ export function AccountPanel() {
                 onClick={erase}
               >
                 {busy ? <LoaderCircle className="spin" aria-hidden="true" /> : null}
-                Erase my account
+                Delete account
               </button>
             </div>
           </div>
@@ -238,7 +209,7 @@ export function AccountPanel() {
             aria-describedby={deletionUnavailable ? "deletion-unavailable" : undefined}
             onClick={() => setDialogOpen(true)}
           >
-            Erase my account…
+            Delete account…
           </button>
         )}
       </section>

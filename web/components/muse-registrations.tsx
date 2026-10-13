@@ -69,7 +69,7 @@ export function MuseRegistrations({ items, total, loading, error, hasMore, selec
       <p>Follow signup progress and requests for your input.</p>
       <div className={styles.actions}>
         <a className="button button-primary" href={MUSE_URL} target="_blank" rel="noopener noreferrer"><MuseIcon />Open Muse</a>
-        <Link className="button" href="/settings/muse">Muse settings</Link>
+        <Link className="button" href="/settings/registrations">Registration settings</Link>
       </div>
     </div>
     <div className={styles.listHeading}><span>{total} {total === 1 ? "registration" : "registrations"}</span>

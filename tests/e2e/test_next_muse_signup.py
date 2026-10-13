@@ -237,7 +237,7 @@ def test_disabled_muse_has_no_controls_restore_or_settings_requests(page_factory
     expect(page.get_by_role("button", name=re.compile("^Registrations"))).to_have_count(0)
     expect(page.get_by_role("dialog", name="Registrations", exact=True)).to_have_count(0)
     page.get_by_role("button", name=re.compile(r"^Account menu")).click()
-    expect(page.get_by_role("menuitem", name=re.compile("Muse signups"))).to_have_count(0)
+    expect(page.get_by_role("menuitem", name=re.compile("Registrations"))).to_have_count(0)
     assert page.evaluate("sessionStorage.getItem('ec:muse:intent')") is not None
     assert api.event_detail_calls == []
     page.goto(BASE + "/settings/muse")
@@ -273,7 +273,7 @@ def test_one_icon_queues_each_event_and_progress_panel_retains_filters(page_fact
     assert "view=events" in page.url and "when=all" in page.url and "registrations=1" in page.url
     expect(dialog.get_by_role("button", name="Copy Muse instruction")).to_have_count(0)
     expect(dialog.get_by_role("textbox", name="Muse signup instruction")).to_have_count(0)
-    expect(dialog.get_by_role("link", name="Muse settings", exact=True)).to_have_attribute("href", "/settings/muse")
+    expect(dialog.get_by_role("link", name="Registration settings", exact=True)).to_have_attribute("href", "/settings/registrations")
     expect(dialog).to_contain_text("Waiting for you to start Muse.")
     expect(dialog.get_by_role("link", name="Open Muse", exact=True)).to_have_attribute("href", "https://muse.ai/")
     assert page.evaluate("document.documentElement.scrollWidth <= innerWidth")
@@ -404,8 +404,11 @@ def test_older_registrations_remain_accessible_beyond_first_page(page_factory):
 def test_settings_secret_is_one_time_with_instructions_in_docs(page_factory, width):
     harness, api = install(page_factory, width)
     page = harness.page
-    page.goto(BASE + "/settings/muse")
-    expect(page.get_by_role("heading", name="Muse signups", exact=True)).to_be_visible()
+    page.goto(BASE + "/settings/registrations")
+    expect(page.get_by_role("heading", name="Registrations", exact=True)).to_be_visible()
+    selector = page.get_by_role("combobox", name="Provider", exact=True)
+    expect(selector).to_have_value("muse")
+    assert selector.locator("option").all_text_contents() == ["Muse"]
     expect(page.get_by_role("textbox", name="Connector URL", exact=True)).to_have_value(BASE + "/v1/muse/openapi.json")
     page.get_by_role("button", name="Create key", exact=True).click()
     secret = page.get_by_label("Muse connection key", exact=True)
@@ -417,7 +420,7 @@ def test_settings_secret_is_one_time_with_instructions_in_docs(page_factory, wid
     expect(page.get_by_role("status")).to_contain_text("Key copied.")
     expect(page.get_by_text("Active", exact=True)).to_be_visible()
     expect(page.get_by_text("Expires", exact=True)).to_be_visible()
-    expect(page.get_by_role("link", name="Registrations", exact=True)).to_be_visible()
+    expect(page.get_by_role("navigation", name="Muse links").get_by_role("link", name="Registrations", exact=True)).to_be_visible()
     page.get_by_role("button", name="Hide key", exact=True).click()
     expect(secret).not_to_be_visible()
     page.get_by_role("button", name="Revoke key", exact=True).click()
@@ -450,8 +453,8 @@ def test_settings_secret_is_one_time_with_instructions_in_docs(page_factory, wid
 def test_settings_help_supports_hover_keyboard_touch_and_copy_without_writes(page_factory, width):
     harness, api = install(page_factory, width)
     page = harness.page
-    page.goto(BASE + "/settings/muse")
-    expect(page.get_by_role("heading", name="Muse signups", exact=True)).to_be_visible()
+    page.goto(BASE + "/settings/registrations")
+    expect(page.get_by_role("heading", name="Registrations", exact=True)).to_be_visible()
     connector = page.get_by_role("textbox", name="Connector URL", exact=True)
     expect(connector).to_have_value(BASE + "/v1/muse/openapi.json")
     expect(page.get_by_role("tooltip")).to_have_count(0)
@@ -476,3 +479,20 @@ def test_settings_help_supports_hover_keyboard_touch_and_copy_without_writes(pag
     assert page.evaluate("window.__fixtureCopied") == connector.input_value()
     assert api.writes == []
     assert page.evaluate("document.documentElement.scrollWidth <= innerWidth")
+
+
+def test_registration_settings_preserve_bookmarks_and_sign_in_destination(page_factory):
+    harness, api = install(page_factory)
+    page = harness.page
+    page.goto(BASE + "/settings/muse")
+    expect(page).to_have_url(BASE + "/settings/registrations")
+    expect(page.get_by_role("heading", name="Registrations", exact=True)).to_be_visible()
+    expect(page.get_by_role("combobox", name="Provider", exact=True)).to_have_value("muse")
+    api.muse_calls.clear()
+    api.signed_in = False
+    page.reload()
+    expect(page).to_have_url(BASE + "/sign-in?return_to=%2Fsettings%2Fregistrations")
+    expect(page.get_by_role("button", name="Continue with Google", exact=True)).to_be_visible()
+    assert api.muse_calls == []
+    assert api.writes == []
+    assert api.unexpected == []

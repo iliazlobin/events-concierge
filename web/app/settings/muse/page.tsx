@@ -1,5 +1,3 @@
-import type { Metadata } from "next";
-import { MusePanel } from "@/components/settings/muse-panel";
+import { redirect } from "next/navigation";
 
-export const metadata: Metadata = { title: "Muse signups" };
-export default function MuseSettingsPage() { return <MusePanel />; }
+export default function MuseSettingsPage() { redirect("/settings/registrations"); }

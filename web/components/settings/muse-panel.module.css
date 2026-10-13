@@ -1,5 +1,7 @@
-.heading { align-items: baseline; display: flex; flex-wrap: wrap; gap: 8px 20px; justify-content: space-between; }
-.heading h1 { margin: 0; }
+.provider { align-items: center; display: flex; gap: 12px; }
+.provider label { color: var(--muted); font-size: 13px; }
+.provider select { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; color: var(--ink); font-size: 13px; min-height: 36px; padding: 7px 28px 7px 10px; }
+.provider select:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
 .facts dt, .fieldLabel { align-items: center; display: flex; gap: 5px; }
 .facts dd { align-items: center; display: flex; gap: 8px; }
 .textButton { background: transparent; color: var(--accent); font: inherit; padding: 0; }

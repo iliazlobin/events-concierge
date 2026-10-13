@@ -6,16 +6,17 @@ import { usePathname } from "next/navigation";
 
 import { releaseProfile, releaseSettingsAllowed } from "@/lib/release-profile";
 import { useSession } from "@/components/session-provider";
+import { availableRegistrationProviders } from "@/lib/registration-providers";
 
 const TABS = [
   { href: "/settings", label: "Profile" },
   { href: "/settings/taste", label: "Interests" },
   { href: "/settings/saved-filters", label: "Saved filters" },
-  { href: "/settings/muse", label: "Muse signups" },
+  { href: "/settings/registrations", label: "Registrations" },
   { href: "/settings/activity", label: "Activity" },
   { href: "/settings/api-keys", label: "API keys" },
   { href: "/settings/security", label: "Security" },
-  { href: "/settings/account", label: "Account and data" },
+  { href: "/settings/account", label: "Account" },
 ];
 
 /**
@@ -46,7 +47,7 @@ export function SettingsShell({ children }: { children: React.ReactNode }) {
       <div className="settings-grid">
         <nav className="settings-nav" aria-label="Settings sections">
           {TABS.filter(tab => releaseSettingsAllowed(tab.href, releaseProfile(config))
-            && (tab.href !== "/settings/muse" || config?.muse_enabled === true)).map((tab) => {
+            && (tab.href !== "/settings/registrations" || availableRegistrationProviders(config).length > 0)).map((tab) => {
             const active = pathname === tab.href;
             return (
               <Link
