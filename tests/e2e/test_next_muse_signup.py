@@ -241,8 +241,8 @@ def test_disabled_muse_has_no_controls_restore_or_settings_requests(page_factory
     assert page.evaluate("sessionStorage.getItem('ec:muse:intent')") is not None
     assert api.event_detail_calls == []
     page.goto(BASE + "/settings/muse")
-    expect(page.get_by_text("Muse signups are not enabled for this release.", exact=True)).to_be_visible()
-    expect(page.get_by_role("button", name="Create connection key", exact=True)).to_have_count(0)
+    expect(page.get_by_text("Not enabled.", exact=True)).to_be_visible()
+    expect(page.get_by_role("button", name="Create key", exact=True)).to_have_count(0)
     assert api.muse_calls == []
     assert api.writes == []
     assert api.unexpected == []
@@ -401,44 +401,78 @@ def test_older_registrations_remain_accessible_beyond_first_page(page_factory):
 
 
 @pytest.mark.parametrize("width", [1440, 320])
-def test_settings_secret_is_one_time_with_progress_in_registrations(page_factory, width):
+def test_settings_secret_is_one_time_with_instructions_in_docs(page_factory, width):
     harness, api = install(page_factory, width)
     page = harness.page
     page.goto(BASE + "/settings/muse")
     expect(page.get_by_role("heading", name="Muse signups", exact=True)).to_be_visible()
-    expect(page.get_by_role("textbox", name="Muse API description")).to_have_value(BASE + "/v1/muse/openapi.json")
-    page.get_by_role("button", name="Create connection key").click()
+    expect(page.get_by_role("textbox", name="Connector URL", exact=True)).to_have_value(BASE + "/v1/muse/openapi.json")
+    page.get_by_role("button", name="Create key", exact=True).click()
     secret = page.get_by_label("Muse connection key", exact=True)
     expect(secret).to_have_attribute("type", "password")
+    expect(page.get_by_text("Shown once", exact=True)).to_be_visible()
     assert secret.input_value() == FIXTURE_KEY
     assert FIXTURE_KEY not in page.evaluate("JSON.stringify([localStorage, sessionStorage])")
     page.get_by_role("button", name="Copy connection key", exact=True).click()
-    expect(page.get_by_role("status")).to_contain_text("secure credential setup")
+    expect(page.get_by_role("status")).to_contain_text("Key copied.")
+    expect(page.get_by_text("Active", exact=True)).to_be_visible()
+    expect(page.get_by_text("Expires", exact=True)).to_be_visible()
     expect(page.get_by_role("link", name="Registrations", exact=True)).to_be_visible()
     page.get_by_role("button", name="Hide key", exact=True).click()
     expect(secret).not_to_be_visible()
-    page.get_by_role("button", name="Disconnect Muse").click()
-    expect(page.get_by_role("status")).to_contain_text("access revoked")
+    page.get_by_role("button", name="Revoke key", exact=True).click()
+    expect(page.get_by_role("status")).to_contain_text("Key revoked.")
     page.reload()
-    expect(page.get_by_text("No active connection key.", exact=True)).to_be_visible()
+    expect(page.get_by_text("No active key", exact=True)).to_be_visible()
     instructions = page.get_by_role("textbox", name="Muse signup instruction")
     expect(instructions).not_to_be_visible()
     expect(page.get_by_role("button", name="Copy Muse instruction")).not_to_be_visible()
-    page.locator("summary").filter(has_text="Muse instructions").click()
+    expect(page.locator("details")).to_have_count(0)
+    page.get_by_role("link", name="Setup guide", exact=True).click()
     expect(instructions).to_be_visible()
-    expect(page.get_by_text("Opening Muse alone does not start them.", exact=False)).to_be_visible()
+    expect(page.get_by_text("Opening Muse does not start registrations.", exact=False)).to_be_visible()
     page.get_by_role("button", name="Copy Muse instruction").click()
-    expect(page.get_by_role("status")).to_contain_text("Muse instruction copied.")
+    expect(page.get_by_role("status")).to_contain_text("Instruction copied.")
     instruction = page.evaluate("window.__fixtureCopied")
     assert instruction == instructions.input_value()
     assert "queued" in instruction.lower() and FIXTURE_KEY not in instruction
     page.evaluate("() => { navigator.clipboard.writeText = async () => { throw new Error('clipboard disabled'); }; }")
     page.get_by_role("button", name="Copy Muse instruction").click()
-    expect(page.locator("details").get_by_role("alert")).to_contain_text("Select and copy the instruction below.")
+    expect(page.get_by_role("main").get_by_role("alert")).to_contain_text("Select and copy the instruction below.")
     expect(instructions).to_be_visible()
-    page.locator("summary").filter(has_text="Muse instructions").click()
-    expect(instructions).not_to_be_visible()
     assert [item[:2] for item in api.writes] == [("POST", "/v1/me/muse/connection"),
                                                 ("DELETE", "/v1/me/muse/connection")]
     assert page.evaluate("document.documentElement.scrollWidth <= innerWidth")
     assert api.unexpected == []
+
+
+@pytest.mark.parametrize("width", [1440, 320])
+def test_settings_help_supports_hover_keyboard_touch_and_copy_without_writes(page_factory, width):
+    harness, api = install(page_factory, width)
+    page = harness.page
+    page.goto(BASE + "/settings/muse")
+    expect(page.get_by_role("heading", name="Muse signups", exact=True)).to_be_visible()
+    connector = page.get_by_role("textbox", name="Connector URL", exact=True)
+    expect(connector).to_have_value(BASE + "/v1/muse/openapi.json")
+    expect(page.get_by_role("tooltip")).to_have_count(0)
+    help_button = page.get_by_role("button", name="Connector URL help", exact=True)
+    help_button.hover()
+    tooltip = page.get_by_role("tooltip")
+    expect(tooltip).to_contain_text("public HTTPS")
+    assert help_button.evaluate("element => element !== document.activeElement")
+    page.keyboard.press("Escape")
+    expect(tooltip).to_have_count(0)
+    help_button.focus()
+    expect(tooltip).to_be_visible()
+    expect(help_button).to_have_attribute("aria-describedby", tooltip.get_attribute("id"))
+    help_button.press("Escape")
+    expect(tooltip).to_have_count(0)
+    help_button.click()
+    expect(tooltip).to_be_visible()
+    assert tooltip.evaluate("element => { const box = element.getBoundingClientRect(); return box.left >= 0 && box.right <= innerWidth; }")
+    page.get_by_role("button", name="Copy URL", exact=True).click()
+    expect(tooltip).to_have_count(0)
+    expect(page.get_by_role("status")).to_contain_text("URL copied.")
+    assert page.evaluate("window.__fixtureCopied") == connector.input_value()
+    assert api.writes == []
+    assert page.evaluate("document.documentElement.scrollWidth <= innerWidth")

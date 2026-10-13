@@ -2,6 +2,7 @@
 
 import { TopicGraphView } from "@/components/topic-graph-view";
 import {
+  BookOpen,
   Building2,
   CalendarDays,
   List,
@@ -1359,6 +1360,9 @@ export function ConciergeApp() {
             onClick={() => showMuseRegistrations()}><MuseIcon /><span>Registrations</span>
             {museQueue.unread > 0 ? <span id="muse-registration-unread" className={museStyles.badge} aria-label={`${museQueue.unread} unread registration updates`}>{museQueue.unread}</span> : null}
           </button> : null}
+          <a href="/docs" className={museStyles.iconButton} aria-label="Documentation" title="Documentation">
+            <BookOpen aria-hidden="true" />
+          </a>
           <AccountMenu
             me={me}
             config={config}

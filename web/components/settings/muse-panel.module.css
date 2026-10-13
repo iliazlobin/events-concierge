@@ -1,0 +1,16 @@
+.heading { align-items: baseline; display: flex; flex-wrap: wrap; gap: 8px 20px; justify-content: space-between; }
+.heading h1 { margin: 0; }
+.facts dt, .fieldLabel { align-items: center; display: flex; gap: 5px; }
+.facts dd { align-items: center; display: flex; gap: 8px; }
+.textButton { background: transparent; color: var(--accent); font: inherit; padding: 0; }
+.actions { align-items: center; display: flex; flex-wrap: wrap; gap: 8px; }
+.actions :global(.button), .copyField :global(.button) { font-size: 12px; min-height: 36px; padding: 8px 12px; }
+.connector { padding-top: 4px; }
+.copyField { align-items: center; display: flex; gap: 8px; min-width: 0; }
+.copyField input { font-size: 12px; min-width: 0; }
+.copyField button { flex: 0 0 auto; }
+.keyReveal { border-top: 1px solid var(--line); padding-top: 16px; }
+.links { display: flex; flex-wrap: wrap; gap: 12px 24px; }
+.link { color: var(--muted); font-size: 13px; text-decoration: none; }
+.link:hover { color: var(--ink); }
+.link:focus-visible { outline: 2px solid var(--accent); outline-offset: 4px; }

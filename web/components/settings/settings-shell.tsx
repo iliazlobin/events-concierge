@@ -59,6 +59,7 @@ export function SettingsShell({ children }: { children: React.ReactNode }) {
               </Link>
             );
           })}
+          <Link href="/docs">Documentation</Link>
         </nav>
 
         <main className="settings-main">

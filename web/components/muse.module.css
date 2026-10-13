@@ -3,14 +3,6 @@
 .eyebrow { color: var(--accent); font-size: 10px; letter-spacing: .18em; font-weight: 700; margin-bottom: 5px; }
 .actions { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 12px; }
 .actions svg { width: 15px; height: 15px; }
-.instruction { width: 100%; min-height: 180px; background: var(--black, #080908); color: inherit; padding: 12px; border: 1px solid var(--line); border-radius: 8px; resize: vertical; font-size: 12px; }
-.instructions { border: 1px solid var(--line); border-radius: 8px; padding: 12px; }
-.instructions summary { cursor: pointer; font-weight: 600; }
-.instructions summary:focus-visible { outline: 2px solid var(--accent); outline-offset: 4px; }
-.instructions p { margin: 12px 0; }
-.panel { display: grid; gap: 16px; }
-.panel input { width: 100%; background: #080908; color: inherit; border: 1px solid #34372e; padding: 12px; }
-.panel a { text-decoration: underline; overflow-wrap: anywhere; }
 .registrations { color: var(--ink); background: #10110e; border: 1px solid var(--line); border-radius: 20px 0 0 20px; width: min(480px, 100vw); height: 100dvh; max-width: 100vw; max-height: 100dvh; margin: 0 0 0 auto; padding: 24px; overflow: auto; box-shadow: -10px 0 70px #0006; }
 .registrations::backdrop { background: #0008; backdrop-filter: blur(3px); }
 .registrations p { line-height: 1.6; font-size: 12px; }

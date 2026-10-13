@@ -1,3 +1,4 @@
+:global(html):has(.shell) { scroll-behavior: auto; }
 .shell { margin: 0 auto; max-width: 1180px; padding: 0 28px 64px; }
 .header { align-items: center; border-bottom: 1px solid var(--line); display: flex; gap: 24px; justify-content: space-between; min-height: 76px; }
 .header > a { color: var(--muted); font-size: 13px; text-decoration: none; }

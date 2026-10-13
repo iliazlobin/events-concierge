@@ -1,0 +1,9 @@
+.help { display: inline-flex; flex: 0 0 auto; position: relative; vertical-align: middle; }
+.help button { align-items: center; background: transparent; border-radius: 50%; color: var(--quiet); display: inline-flex; height: 24px; justify-content: center; padding: 0; width: 24px; }
+.help button:hover, .help button:focus-visible { color: var(--ink); }
+.help button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.help svg { height: 14px; width: 14px; }
+.text { background: var(--panel-raised); border: 1px solid var(--line); border-radius: 8px; box-shadow: 0 8px 24px #0006; color: var(--ink); font-size: 12px; font-weight: 400; left: 0; line-height: 1.5; padding: 10px 12px; position: absolute; text-transform: none; top: 100%; width: 260px; z-index: 20; }
+@media (max-width: 600px) {
+  .text { bottom: 24px; left: 24px; position: fixed; right: 24px; top: auto; width: auto; }
+}
