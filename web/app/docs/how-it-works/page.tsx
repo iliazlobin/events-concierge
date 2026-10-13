@@ -1,13 +1,14 @@
 import type { Metadata } from "next";
 import Link from "next/link";
-import { CodeBlock, FlowDiagram, PageContents, RelatedGuides } from "@/components/docs/docs-kit";
+import { CodeBlock, FlowDiagram, GuidePage, RelatedGuides } from "@/components/docs/docs-kit";
 export const metadata: Metadata = { title: "How it works" };
 
 export default function HowItWorks() {
-  return <>
-    <h1>How it works</h1>
-    <p>Search reads a collected catalog. Registration happens on the event provider’s website.</p>
-    <PageContents links={[{ href: "#discovery", label: "Discovery" }, { href: "#roles", label: "Event roles" }, { href: "#registrations", label: "Registration tasks" }]} />
+  return <GuidePage
+    title="How it works"
+    intro={<p>Search reads a collected catalog. Registration happens on the event provider’s website.</p>}
+    contents={[{ href: "#discovery", label: "Discovery" }, { href: "#roles", label: "Event roles" }, { href: "#registrations", label: "Registration tasks" }]}
+  >
     <h2 id="discovery" tabIndex={-1}>Event discovery</h2>
     <FlowDiagram id="catalog-flow" label="How events reach the app" steps={[
       { title: "Collection workers", detail: "Refresh source listings" },
@@ -30,5 +31,5 @@ export default function HowItWorks() {
     <CodeBlock label="Saved task state — example excerpt">{'{\n  "status": "queued",\n  "version": 1,\n  "unread": false\n}'}</CodeBlock>
     <p>Changes to a task’s status or result advance its version. Unread marks an update you have not viewed. See <Link href="/docs/muse#progress">registration statuses</Link> for the meaning of each outcome.</p>
     <RelatedGuides links={[{ href: "/docs/browsing#views", label: "Explore the event views" }, { href: "/docs/muse#start", label: "Start a registration" }]} />
-  </>;
+  </GuidePage>;
 }

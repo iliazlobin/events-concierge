@@ -1,19 +1,20 @@
 import type { Metadata } from "next";
 import Link from "next/link";
-import { CodeBlock, PageContents, RelatedGuides } from "@/components/docs/docs-kit";
+import { CodeBlock, GuidePage, RelatedGuides } from "@/components/docs/docs-kit";
 export const metadata: Metadata = { title: "Find events" };
 
 export default function BrowsingGuide() {
-  return <>
-    <h1>Find events</h1>
-    <p>Browse without signing in. Sign in to save filters or queue registrations.</p>
-    <PageContents links={[{ href: "#filters", label: "Search and filters" }, { href: "#views", label: "Views and calendar" }, { href: "#sources", label: "Sources and entities" }]} />
+  return <GuidePage
+    title="Find events"
+    intro={<p>Browse without signing in. Sign in to save filters or queue registrations.</p>}
+    contents={[{ href: "#filters", label: "Search and filters" }, { href: "#views", label: "Views and calendar" }, { href: "#sources", label: "Sources and entities" }]}
+  >
     <h2 id="filters" tabIndex={-1}>Search and filters</h2>
     <ul>
       <li>Search event names, people, organizations and venues. Filter by source, place, topic, dates, price or registration status.</li>
       <li>The initial selection is <strong>San Francisco · This week</strong>. This week includes events that have not started yet.</li>
       <li>If no events match, change the dates or place. <strong>Reset</strong> removes the filters.</li>
-      <li><strong>Save filters</strong> stores the selection in your account. Reuse it from <Link href="/settings/saved-filters">Saved filters</Link>.</li>
+      <li><strong>Save filters</strong> stores the selection in your account. In <Link href="/settings/saved-filters">Saved filters</Link>, <strong>Open</strong> reapplies a selection, <strong>Rename</strong> changes its name and <strong>Delete</strong> removes it after confirmation.</li>
     </ul>
     <CodeBlock label="Example: free San Francisco events">{"/?view=events&when=all&city=sanfrancisco&price=free"}</CodeBlock>
     <p><Link href="/?view=events&when=all&city=sanfrancisco&price=free">Open this search</Link>. The URL keeps the filters, so you can bookmark or share it.</p>
@@ -32,5 +33,5 @@ export default function BrowsingGuide() {
       <li>A profile link comes from the source. It does not independently verify identity.</li>
     </ul>
     <RelatedGuides links={[{ href: "/docs/account#saved-filters", label: "Save and reuse filters" }, { href: "/docs/muse#start", label: "Register with Muse" }]} />
-  </>;
+  </GuidePage>;
 }

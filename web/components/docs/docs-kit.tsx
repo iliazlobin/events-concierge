@@ -1,12 +1,33 @@
 import styles from "@/app/docs/docs.module.css";
+import type { ReactNode } from "react";
 
 interface GuideLink { href: string; label: string }
 
-export function PageContents({ links }: { links: GuideLink[] }) {
+function PageContents({ links, label = true }: { links: GuideLink[]; label?: boolean }) {
   return <nav className={styles.contents} aria-label="On this page">
-    <span>On this page</span>
+    {label ? <span>On this page</span> : null}
     <ul>{links.map(link => <li key={link.href}><a href={link.href}>{link.label}</a></li>)}</ul>
   </nav>;
+}
+
+/** Explicit headings keep the contents usable in the prerendered, JavaScript-free page. */
+export function GuidePage({ title, intro, contents, children }: {
+  title: string; intro: ReactNode; contents: GuideLink[]; children: ReactNode;
+}) {
+  return <div className={styles.articleLayout}>
+    <article className={styles.reading}>
+      <h1>{title}</h1>
+      {intro}
+      {contents.length ? <details className={styles.mobileContents}>
+        <summary>On this page</summary>
+        <PageContents links={contents} label={false} />
+      </details> : null}
+      {children}
+    </article>
+    {contents.length ? <aside className={styles.tocRail}>
+      <PageContents links={contents} />
+    </aside> : null}
+  </div>;
 }
 
 export function RelatedGuides({ links }: { links: GuideLink[] }) {
