@@ -215,6 +215,104 @@ async def test_company_index_never_exposes_fixture_or_stale_source_names(db: Non
         await owner.dispose()
 
 
+async def test_name_candidates_keep_partial_indexed_aliases_with_literal_characters(db: None) -> None:
+    source, events, _, catalog = await _source_with_current_events()
+    other_source, other_events, _, _ = await _source_with_current_events()
+    tag = uuid4().hex
+    company = f"Projected %_ C++ \\ Labs \u03a4\u039f {tag}"
+    profile = f"https://www.linkedin.com/company/name-candidates-{tag}"
+
+    def named(event, name):
+        return replace(
+            event, title=f"Workshop {uuid4().hex}", organizer_name=None,
+            host_names=(name,), partner_names=(), description="Unrelated public text.",
+            entity_profiles=(EventEntityProfile(
+                name=name, role="host", kind="organization", profile_url=profile,
+            ),), registration_status=RegistrationStatus.OPEN,
+        )
+
+    # The index's current company name belongs to an event whose older card uses a
+    # different recorded name. Matching only card fields would silently lose this alias.
+    await _publish_names(source, [named(events[0], f"Recorded host {tag}")], catalog)
+    await _publish_names(other_source, [named(other_events[0], company)], catalog)
+    for query in ("projected", "%_", "C++", r"\ Labs", "το"):
+        matches = await catalog.suggest_names(query=query, source_keys=(source,))
+        assert [(m.name, m.kinds, m.event_count) for m in matches] == [
+            (company, ("organization",), 1),
+        ]
+    assert await catalog.suggest_names(
+        query=company, source_keys=(source,), cities=("Oakland",),
+    ) == []
+
+
+async def test_name_candidate_upgrade_matches_old_results_and_preserves_security(db: None) -> None:
+    source, events, _, catalog = await _source_with_current_events(event_count=76)
+    tag = uuid4().hex
+    events[-1] = replace(
+        events[-1], title=f"Name Candidate Workshop {tag}", venue_name=f"Venue {tag}",
+        host_names=(f"Host %_ {tag}",), partner_names=(f"Partner C++ {tag}",),
+        registration_status=RegistrationStatus.OPEN,
+        description="Name Candidate appears only in earlier event prose.",
+    )
+    await _publish_names(source, events, catalog)
+    selections = [
+        {"query": "name candidate", "source_keys": (source,), "limit": 1},
+        {"query": tag, "source_keys": (source,)},
+        {"query": "%_", "source_keys": (source,), "availability": "available"},
+        {"query": "C++", "source_keys": (source,), "cities": ("Oakland",)},
+    ]
+
+    async def results():
+        return [await catalog.suggest_names(**selection) for selection in selections]
+
+    expected = await results()
+    path = Path(__file__).parents[2] / "migrations/versions/0215_catalog_name_search_candidates.py"
+    spec = spec_from_file_location("name_candidate_migration", path)
+    assert spec is not None and spec.loader is not None
+    migration = module_from_spec(spec)
+    spec.loader.exec_module(migration)
+    owner = create_async_engine(os.environ["EC_MIGRATION_URL"])
+
+    async def change(direction):
+        async with owner.begin() as connection:
+            def apply(sync_connection):
+                with Operations.context(MigrationContext.configure(sync_connection)):
+                    direction()
+            await connection.run_sync(apply)
+
+    downgraded = False
+    try:
+        await change(migration.downgrade)
+        downgraded = True
+        assert await results() == expected
+        await change(migration.upgrade)
+        downgraded = False
+        assert await results() == expected
+        async with owner.connect() as connection:
+            signatures = [migration._NAMES, migration._BROWSE_NAME + migration._ARGUMENTS,
+                          migration._CANDIDATE_NAME + migration._ARGUMENTS]
+            for signature in signatures:
+                row = (await connection.execute(text("""
+                    SELECT has_function_privilege('ec_app', CAST(:signature AS regprocedure),
+                                                   'EXECUTE') AS app_execute,
+                           prosecdef, provolatile, proconfig, proowner
+                    FROM pg_proc WHERE oid=CAST(:signature AS regprocedure)
+                """), {"signature": signature})).one()
+                assert row.app_execute is (signature == migration._NAMES)
+                assert row.prosecdef and row.provolatile == "s"
+                assert row.proconfig == ["search_path=pg_catalog, public"]
+            assert (await connection.execute(text("""
+                SELECT a.proowner=b.proowner
+                FROM pg_proc a, pg_proc b
+                WHERE a.oid=CAST(:candidate AS regprocedure)
+                  AND b.oid=CAST(:browse AS regprocedure)
+            """), {"candidate": signatures[2], "browse": signatures[1]})).scalar_one()
+    finally:
+        if downgraded:
+            await change(migration.upgrade)
+        await owner.dispose()
+
+
 async def test_company_name_upgrade_and_downgrade_preserve_security_and_data(db: None) -> None:
     owner = create_async_engine(os.environ["EC_MIGRATION_URL"])
     migration_file = Path(__file__).parents[2] / "migrations/versions/0213_indexed_company_names.py"
