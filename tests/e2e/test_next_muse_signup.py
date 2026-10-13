@@ -461,8 +461,16 @@ def test_settings_secret_is_one_time_with_instructions_in_docs(page_factory, wid
     expect(page.get_by_text("Shown once", exact=True)).to_be_visible()
     assert secret.input_value() == FIXTURE_KEY
     assert FIXTURE_KEY not in page.evaluate("JSON.stringify([localStorage, sessionStorage])")
-    page.get_by_role("button", name="Copy connection key", exact=True).click()
+    copy_key = page.get_by_role("button", name="Copy connection key", exact=True)
+    copy_key.scroll_into_view_if_needed()
+    key_bounds = secret.bounding_box()
+    button_bounds = copy_key.bounding_box()
+    copy_key.click()
     expect(page.get_by_role("status")).to_contain_text("Key copied.")
+    expect(page.get_by_role("status")).to_have_class("sr-only")
+    assert secret.bounding_box() == key_bounds
+    assert copy_key.bounding_box() == button_bounds
+    assert page.evaluate("window.__fixtureCopied") == FIXTURE_KEY
     expect(page.get_by_text("Active", exact=True)).to_be_visible()
     expect(page.get_by_text("Expires", exact=True)).to_be_visible()
     expect(page.get_by_role("navigation", name="Muse links").get_by_role("link", name="Registrations", exact=True)).to_be_visible()
@@ -521,6 +529,7 @@ def test_settings_help_supports_hover_keyboard_touch_and_copy_without_writes(pag
     page.get_by_role("button", name="Copy URL", exact=True).click()
     expect(tooltip).to_have_count(0)
     expect(page.get_by_role("status")).to_contain_text("URL copied.")
+    expect(page.get_by_role("status")).to_have_class("sr-only")
     assert page.evaluate("window.__fixtureCopied") == connector.input_value()
     assert api.writes == []
     assert page.evaluate("document.documentElement.scrollWidth <= innerWidth")
