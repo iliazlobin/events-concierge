@@ -64,11 +64,10 @@ does not merge identities.
 
 The search box combines these names with existing filter and saved-selection suggestions.
 Selecting a name sets the text query and preserves active filters; URL navigation and saved
-filters retain it. When a successful scoped read finds no names, the client makes one additional
-read without event filters. These catalog matches are labeled as outside the active filters;
-their counts are catalog counts, not counts for the current event selection. Choosing one still
-preserves the filters. Loading, empty results and unavailable suggestions remain visible instead
-of silently closing the dropdown; failures do not trigger a broader read.
+filters retain it. The client requests names using the active filters and offers only names with
+at least one matching event. Counts describe recorded name associations within that filtered
+selection. An empty lookup stays empty; loading, empty results and unavailable suggestions have
+distinct messages.
 Requests are debounced and cancelled when the query or filters change. Browsing
 and autocomplete read published data without starting collection or requiring sign-in.
 
