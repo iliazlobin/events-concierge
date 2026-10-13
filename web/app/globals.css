@@ -6781,6 +6781,7 @@ textarea:focus-visible {
 }
 
 .settings-card--danger { border-color: rgba(255, 143, 131, 0.34); }
+.settings-card--danger .settings-hint { color: var(--muted); }
 
 .settings-card__title {
   font-size: 12px;
