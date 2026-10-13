@@ -1,9 +1,11 @@
 "use client";
 
 import { Check, LoaderCircle, X } from "lucide-react";
+import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 
 import { useSession } from "@/components/session-provider";
+import { SettingsHelp } from "@/components/settings/settings-help";
 import { readableError, updatePreferences } from "@/lib/api";
 import { releaseProfile } from "@/lib/release-profile";
 
@@ -100,13 +102,16 @@ export function TastePanel() {
     <div className="settings-panel">
       <header className="settings-panel__head">
         <h1>Interests</h1>
-        <p>{releaseProfile(config) === "full"
-          ? "A starting signal, not a filter. What you engage with keeps refining the order."
-          : "Your saved interests. Use topic filters to choose which events you see."}</p>
+        <Link className="settings-guide-link" href="/docs/account#interests">Guide <span aria-hidden="true">→</span></Link>
       </header>
 
       <section className="settings-card">
-        <h2 className="settings-card__title">Suggested</h2>
+        <div className="settings-title-row">
+          <h2 className="settings-card__title">Suggested</h2>
+          <SettingsHelp label="Interests">{releaseProfile(config) === "full"
+            ? "Saved preferences help order recommendations. Use topic filters to restrict results."
+            : "Saved preferences do not filter event results. Use topic filters in the catalog."}</SettingsHelp>
+        </div>
         <div className="chip-cloud">
           {SUGGESTED.map((suggestion) => {
             const active = interests.includes(suggestion.value);
@@ -126,7 +131,10 @@ export function TastePanel() {
       </section>
 
       <section className="settings-card">
-        <h2 className="settings-card__title">Anything else</h2>
+        <div className="settings-title-row">
+          <h2 className="settings-card__title">Custom</h2>
+          <SettingsHelp label="Custom interests">Save up to 20 interests, with up to 64 characters each.</SettingsHelp>
+        </div>
         {custom.length > 0 ? (
           <div className="chip-cloud">
             {custom.map((value) => (
@@ -149,7 +157,7 @@ export function TastePanel() {
             type="text"
             value={draft}
             maxLength={MAX_LENGTH}
-            placeholder="Board games, tango, urbanism…"
+            placeholder="Add an interest"
             aria-label="Add an interest"
             onChange={(event) => setDraft(event.target.value)}
             onKeyDown={(event) => {
@@ -164,7 +172,7 @@ export function TastePanel() {
           </button>
         </div>
         <p className="settings-hint">
-          {interests.length} of {MAX_INTERESTS} kept.
+          {interests.length} / {MAX_INTERESTS}
         </p>
       </section>
 

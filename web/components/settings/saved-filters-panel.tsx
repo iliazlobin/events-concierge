@@ -1,6 +1,7 @@
 "use client";
 
 import { Bookmark, ExternalLink, LoaderCircle, Pencil, Trash2 } from "lucide-react";
+import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
 
 import { useSession } from "@/components/session-provider";
@@ -157,9 +158,7 @@ export function SavedFiltersPanel() {
     <div className="settings-panel">
       <header className="settings-panel__head">
         <h1>Saved filters</h1>
-        <p>
-          The selections you kept from the events view. Open one, rename it, or delete it for good.
-        </p>
+        <Link className="settings-guide-link" href="/docs/browsing#filters">Guide <span aria-hidden="true">→</span></Link>
       </header>
 
       {error ? (
@@ -169,13 +168,12 @@ export function SavedFiltersPanel() {
       ) : null}
 
       <section className="settings-card">
-        <h2 className="settings-card__title">Your saved filters</h2>
         {loading ? (
           <p className="settings-hint">Loading…</p>
         ) : rows.length === 0 ? (
           <p className="settings-empty">
             <Bookmark aria-hidden="true" />
-            Nothing saved yet. Keep a selection from the filter strip and it appears here.
+            No saved filters.
           </p>
         ) : (
           <ul className="saved-list">
@@ -239,7 +237,7 @@ export function SavedFiltersPanel() {
                       </p>
                     ) : (
                       <p className="saved-list__parts">
-                        <span className="saved-list__part">Everything, unfiltered</span>
+                        <span className="saved-list__part">All events</span>
                       </p>
                     )}
 

@@ -1,6 +1,7 @@
 "use client";
 
 import { CalendarClock, Inbox, LoaderCircle } from "lucide-react";
+import Link from "next/link";
 import { useEffect, useState } from "react";
 
 import { useSession } from "@/components/session-provider";
@@ -81,7 +82,7 @@ export function ActivityPanel() {
         crypto.randomUUID(),
         tenantId,
       );
-      setNotice("Withdrawal accepted. Your calendar reconciles shortly.");
+      setNotice("Withdrawal accepted. Calendar update pending.");
     } catch (withdrawError) {
       // A conflict means the registration saga has not reached a withdrawable stage yet.
       setNotice(
@@ -97,8 +98,7 @@ export function ActivityPanel() {
   if (!fullRelease) {
     return <div className="settings-panel">
       <h1>Event discovery</h1>
-      <p>Browse events and visit their provider pages for registration.</p>
-      <a href="/?view=events">Browse events</a>
+      <Link href="/?view=events">Browse events</Link>
     </div>;
   }
 
@@ -106,7 +106,7 @@ export function ActivityPanel() {
     return (
       <div className="settings-state" role="status">
         <LoaderCircle className="spin" aria-hidden="true" />
-        <p>Loading your activity…</p>
+        <p>Loading…</p>
       </div>
     );
   }
@@ -115,7 +115,6 @@ export function ActivityPanel() {
     <div className="settings-panel">
       <header className="settings-panel__head">
         <h1>Activity</h1>
-        <p>What you asked for, what the concierge did, and anything still waiting on you.</p>
       </header>
 
       {error ? (
@@ -130,11 +129,11 @@ export function ActivityPanel() {
       ) : null}
 
       <section className="settings-card">
-        <h2 className="settings-card__title">A step from you</h2>
+        <h2 className="settings-card__title">Needs input</h2>
         {tasks.length === 0 ? (
           <p className="settings-empty">
             <Inbox aria-hidden="true" />
-            Nothing needs you right now.
+            No pending tasks.
           </p>
         ) : (
           <ul className="activity-list">
@@ -152,7 +151,7 @@ export function ActivityPanel() {
                   target="_blank"
                   rel="noreferrer noopener"
                 >
-                  Finish on the event site
+                  Open event
                 </a>
               </li>
             ))}
@@ -161,11 +160,11 @@ export function ActivityPanel() {
       </section>
 
       <section className="settings-card">
-        <h2 className="settings-card__title">Registered for you</h2>
+        <h2 className="settings-card__title">Registrations</h2>
         {registrations.length === 0 ? (
           <p className="settings-empty">
             <CalendarClock aria-hidden="true" />
-            Nothing registered yet.
+            No registrations.
           </p>
         ) : (
           <ul className="activity-list">
@@ -179,7 +178,7 @@ export function ActivityPanel() {
                 </p>
                 <p className="activity-list__meta">
                   <span className="activity-state">{registration.state.replaceAll("_", " ")}</span>
-                  {registration.conflict_warning ? " · overlaps something else" : ""}
+                  {registration.conflict_warning ? " · schedule conflict" : ""}
                 </p>
                 {registration.can_withdraw ? (
                   <button
@@ -198,11 +197,11 @@ export function ActivityPanel() {
       </section>
 
       <section className="settings-card">
-        <h2 className="settings-card__title">What you asked for</h2>
+        <h2 className="settings-card__title">Requests</h2>
         {requests.length === 0 ? (
           <p className="settings-empty">
             <Inbox aria-hidden="true" />
-            No saved briefs yet.
+            No requests.
           </p>
         ) : (
           <ul className="activity-list">
@@ -214,7 +213,7 @@ export function ActivityPanel() {
                   <span className="activity-state">{request.state.replaceAll("_", " ")}</span>
                 </p>
                 {request.outcome ? (
-                  <p className="activity-list__meta">Chose: {request.outcome.title}</p>
+                  <p className="activity-list__meta">{request.outcome.title}</p>
                 ) : null}
               </li>
             ))}
