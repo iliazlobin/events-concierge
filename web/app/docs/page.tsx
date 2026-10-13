@@ -1,9 +1,11 @@
 import Link from "next/link";
+import { GuideBreadcrumb } from "@/components/docs/docs-kit";
 import styles from "./docs.module.css";
 
 export default function DocsPage() {
   return <>
-    <h1>Documentation</h1>
+    <GuideBreadcrumb title="Overview" />
+    <h1>Overview</h1>
     <p>Guides for finding events, managing your account and registrations.</p>
     <div className={styles.cards}>
       <Link className={styles.card} href="/docs/browsing"><strong>Find events</strong><span>Search, filters, map, calendar and sources.</span></Link>
