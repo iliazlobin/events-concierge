@@ -8,7 +8,12 @@ from urllib.parse import parse_qs, urlsplit
 
 import pytest
 from playwright.sync_api import Route, expect
-from tests.e2e.test_next_release_profile import ReleaseApi, catalog_event, second_catalog_event
+from tests.e2e.test_next_release_profile import (
+    ENTITY_ID,
+    ReleaseApi,
+    catalog_event,
+    second_catalog_event,
+)
 
 BASE = os.environ.get("EC_CONSUMER_WEB_URL") or os.environ.get("EC_ADMIN_WEB_URL")
 pytestmark = [
@@ -34,6 +39,8 @@ class MuseApi(ReleaseApi):
         self.acknowledged = []
         self.queue_error = False
         self.writes = []
+        self.providers = []
+        self.catalog_reads = []
         self.events = [
             catalog_event()
             | {
@@ -89,12 +96,13 @@ class MuseApi(ReleaseApi):
             self.harness.allowed_console_error_fragments.append("401")
             self.respond(route, {"detail": "Sign in required"}, 401)
         elif path == "/v1/catalog/events":
+            self.catalog_reads.append(route.request.url)
             self.respond(
                 route,
                 {
                     "items": self.events,
                     "next_cursor": None,
-                    "providers": [],
+                    "providers": self.providers,
                     "topic_facets": [],
                     "city_facets": [],
                 },
@@ -108,6 +116,9 @@ class MuseApi(ReleaseApi):
             )
         elif path == "/v1/me/muse/connection":
             self.connection(route)
+        elif path == "/v1/me/muse/registrations/by-event":
+            ids = parse_qs(urlsplit(route.request.url).query).get("event_id", [])
+            self.respond(route, [item for item in self.registrations if item["event"]["canonical_event_id"] in ids])
         elif path == "/v1/me/muse/registrations":
             self.queue(route)
         elif path == "/v1/me/muse/registrations/seen":
@@ -144,6 +155,9 @@ class MuseApi(ReleaseApi):
             items = self.registrations[start:start + limit]
             self.respond(route, {"items": items, "total": len(self.registrations),
                                  "unread_count": sum(item["unread"] for item in self.registrations),
+                                 "status_counts": {status: sum(item["status"] == status for item in self.registrations)
+                                                   for status in ("queued", "in_progress", "needs_input", "awaiting_approval",
+                                                                  "waitlisted", "registered", "failed", "uncertain")},
                                  "next_cursor": items[-1]["event"]["canonical_event_id"]
                                  if items and start + limit < len(self.registrations) else None})
 
@@ -255,13 +269,27 @@ def test_one_icon_queues_each_event_and_progress_panel_retains_filters(page_fact
     page.goto(BASE + "/?view=events&when=all&city=")
     expect(page.get_by_role("heading", name="Friday Night Jazz", exact=True)).to_be_visible()
     expect(page.get_by_role("checkbox", name=re.compile("Muse"))).to_have_count(0)
+    expect(page.get_by_role("link", name="Documentation", exact=True)).to_be_visible()
     expect(page.locator(".event-card__muse")).to_have_count(0)
     first = page.get_by_role("button", name="Sign up with Muse for Friday Night Jazz", exact=True)
     expect(first).to_have_attribute("title", "Sign up with Muse")
+    expect(first).to_have_attribute("data-registration-state", "available")
+    expect(first.locator(".event-muse-action__badge")).to_have_count(0)
     first.click()
-    expect(page.get_by_role("button", name="View registration for Friday Night Jazz")).to_be_visible()
+    dialog = page.get_by_role("dialog", name="Registrations", exact=True)
+    expect(dialog).to_contain_text("Friday Night Jazz")
+    dialog.get_by_role("button", name="Close registrations").click()
+    queued = page.get_by_role("button", name="View registration for Friday Night Jazz", exact=True)
+    expect(queued).to_have_attribute("data-registration-state", "queued")
+    expect(queued.locator(".event-muse-action__badge")).to_be_visible()
+    expect(queued.locator(".sr-only")).to_have_text("Queued")
+    queued.hover()
+    assert queued.locator(".event-muse-action__badge").evaluate("element => getComputedStyle(element).color") == "rgb(184, 162, 255)"
     page.get_by_role("button", name="Sign up with Muse for Saturday Night Jazz").click()
+    expect(dialog).to_contain_text("Saturday Night Jazz")
+    dialog.get_by_role("button", name="Close registrations").click()
     expect(page.get_by_role("button", name="View registration for Saturday Night Jazz")).to_be_visible()
+    assert queued.get_attribute("aria-describedby") != page.get_by_role("button", name="View registration for Saturday Night Jazz", exact=True).get_attribute("aria-describedby")
     assert [item["event_id"] for item in api.queued] == [event["canonical_event_id"] for event in api.events]
     assert all(set(item) == {"request_id", "event_id"} for item in api.queued)
     assert all(write[2]["x-fixture-csrf"] == "bound-fixture" for write in api.writes)
@@ -273,8 +301,8 @@ def test_one_icon_queues_each_event_and_progress_panel_retains_filters(page_fact
     assert "view=events" in page.url and "when=all" in page.url and "registrations=1" in page.url
     expect(dialog.get_by_role("button", name="Copy Muse instruction")).to_have_count(0)
     expect(dialog.get_by_role("textbox", name="Muse signup instruction")).to_have_count(0)
-    expect(dialog.get_by_role("link", name="Registration settings", exact=True)).to_have_attribute("href", "/settings/registrations")
-    expect(dialog).to_contain_text("Waiting for you to start Muse.")
+    expect(dialog.get_by_role("link", name="Muse settings", exact=True)).to_have_attribute("href", "/settings/registrations")
+    expect(dialog.locator('[data-status="queued"]').first).to_have_text("Queued")
     expect(dialog.get_by_role("link", name="Open Muse", exact=True)).to_have_attribute("href", "https://muse.ai/")
     assert page.evaluate("document.documentElement.scrollWidth <= innerWidth")
     page.screenshot(path=str(tmp_path / f"muse-queue-{width}.png"))
@@ -295,7 +323,10 @@ def test_unread_badge_and_results_acknowledge_observed_versions_only(page_factor
     page = harness.page
     page.goto(BASE + "/?view=events&when=all&city=")
     button = page.get_by_role("button", name=re.compile("^Registrations"))
-    expect(button).to_contain_text("2")
+    expect(button.locator('[aria-label="2 unread registration updates"]')).to_be_visible()
+    needs_input = page.get_by_role("button", name="View registration for Friday Night Jazz", exact=True)
+    expect(needs_input).to_have_attribute("data-registration-state", "needs_input")
+    assert needs_input.locator(".event-muse-action__badge").evaluate("element => getComputedStyle(element).color") == "rgb(230, 180, 92)"
     assert api.acknowledged == []
     button.click()
     dialog = page.get_by_role("dialog", name="Registrations", exact=True)
@@ -303,7 +334,7 @@ def test_unread_badge_and_results_acknowledge_observed_versions_only(page_factor
     expect(dialog).to_contain_text("Needs verification")
     expect(dialog).to_contain_text("Login needed in Muse")
     expect(dialog.locator('[aria-label="Unread update"]')).to_have_count(0)
-    expect(button).not_to_contain_text("2")
+    expect(button.locator('[aria-label$="unread registration updates"]')).to_have_count(0)
     assert {item["version"] for item in api.acknowledged} == {2, 3}
     assert not any(item["unread"] for item in api.registrations)
     # A subsequent connector report is an update, even if a prior version was viewed.
@@ -312,11 +343,20 @@ def test_unread_badge_and_results_acknowledge_observed_versions_only(page_factor
                                          "confirmation_reference": "fixture-confirmation",
                                          "evidence_url": "https://lu.ma/friday-jazz"})
     dialog.get_by_role("button", name="Refresh registrations").click()
-    expect(dialog).to_contain_text("Registered · reported by Muse")
+    expect(dialog.locator('[data-status="registered"]')).to_have_text("Registered · reported by Muse")
     expect(dialog).to_contain_text("fixture-confirmation")
     expect(dialog.get_by_role("link", name=re.compile("evidence", re.I))).to_have_attribute("href", "https://lu.ma/friday-jazz")
     expect(dialog.locator('[aria-label="Unread update"]')).to_have_count(0)
     assert api.acknowledged[-1] == {"event_id": api.events[0]["canonical_event_id"], "version": 3}
+    dialog.get_by_role("button", name="Close registrations", exact=True).click()
+    registered = page.get_by_role("button", name="View registration for Friday Night Jazz", exact=True)
+    expect(registered).to_have_attribute("data-registration-state", "registered")
+    expect(registered.locator(".sr-only")).to_have_text("Registered · reported by Muse")
+    expect(registered.locator(".event-muse-action__badge")).to_be_visible()
+    assert registered.locator(".event-muse-action__badge").evaluate("element => getComputedStyle(element).color") == "rgb(151, 217, 163)"
+    registered.click()
+    expect(dialog).to_contain_text("fixture-confirmation")
+    assert api.queued == []
     assert api.unexpected == []
 
 
@@ -337,25 +377,30 @@ def test_queue_failure_is_recoverable_without_duplicate_intent(page_factory):
     assert api.unexpected == []
 
 
-def test_guest_click_resumes_one_event_after_sign_in_without_anonymous_writes(page_factory):
-    harness, api = install(page_factory)
+@pytest.mark.parametrize("width", [1440, 320])
+def test_guest_has_no_muse_controls_or_automatic_queue_after_sign_in(page_factory, width):
+    harness, api = install(page_factory, width)
     api.signed_in = False
     page = harness.page
     return_path = "/?view=events&when=all&city="
     page.goto(BASE + return_path)
-    page.get_by_role("button", name="Sign up with Muse for Friday Night Jazz").click()
-    page.wait_for_url(re.compile(r".*/sign-in\?return_to="))
-    stored = page.evaluate("JSON.parse(sessionStorage.getItem('ec:muse:intent'))")
-    assert stored["eventId"] == api.events[0]["canonical_event_id"]
-    assert set(stored) == {"eventId", "savedAt"}
-    assert api.queued == [] and not any(path.startswith("/v1/me/muse/") for _, path, _ in api.writes)
-    # Identity provider behavior has its own suite; resume only after a verified session.
+    expect(page.get_by_role("heading", name="Friday Night Jazz", exact=True)).to_be_visible()
+    expect(page.get_by_role("button", name=re.compile("Muse for"))).to_have_count(0)
+    expect(page.get_by_role("button", name="Registrations", exact=True)).to_have_count(0)
+    expect(page.get_by_role("link", name="Documentation", exact=True)).to_be_visible()
+    assert page.evaluate("document.documentElement.scrollWidth <= innerWidth")
+    page.get_by_role("button", name="Map", exact=True).click()
+    expect(page.get_by_role("heading", name="Event map", exact=True)).to_be_visible()
+    expect(page.locator(".event-muse-action")).to_have_count(0)
+    page.get_by_role("button", name="Calendar", exact=True).click()
+    expect(page.locator(".calendar-agenda")).to_be_visible()
+    expect(page.locator(".event-muse-action")).to_have_count(0)
+    assert api.muse_calls == [] and api.writes == []
     api.signed_in = True
     page.goto(BASE + return_path)
-    expect(page.get_by_role("button", name="View registration for Friday Night Jazz")).to_be_visible()
-    assert len(api.queued) == 1
-    assert page.evaluate("sessionStorage.getItem('ec:muse:intent')") is None
-    page.reload()
+    expect(page.get_by_role("button", name="Sign up with Muse for Friday Night Jazz")).to_be_visible()
+    assert api.queued == []
+    page.get_by_role("button", name="Sign up with Muse for Friday Night Jazz").click()
     expect(page.get_by_role("button", name="View registration for Friday Night Jazz")).to_be_visible()
     assert len(api.queued) == 1
     assert api.unexpected == []
@@ -385,7 +430,7 @@ def test_older_registrations_remain_accessible_beyond_first_page(page_factory):
     old_card = dialog.locator("li").filter(has=page.get_by_role("link", name="Queued event 0", exact=True))
     old_card.scroll_into_view_if_needed()
     expect(old_card.locator('[aria-label="Unread update"]')).to_have_count(0)
-    expect(page.get_by_role("button", name=re.compile("^Registrations"))).not_to_contain_text("1")
+    expect(page.get_by_role("button", name="Registrations", exact=True).locator('[aria-label$="unread registration updates"]')).to_have_count(0)
     assert not older["unread"]
     older.update(status="registered", version=3, unread=True,
                  outcome={"status": "registered", "note": "Older event confirmed",
@@ -395,7 +440,7 @@ def test_older_registrations_remain_accessible_beyond_first_page(page_factory):
     expect(old_card).to_contain_text("older-confirmation")
     old_card.scroll_into_view_if_needed()
     expect(old_card.locator('[aria-label="Unread update"]')).to_have_count(0)
-    expect(page.get_by_role("button", name=re.compile("^Registrations"))).not_to_contain_text("1")
+    expect(page.get_by_role("button", name="Registrations", exact=True).locator('[aria-label$="unread registration updates"]')).to_have_count(0)
     assert api.acknowledged[-1] == {"event_id": older["event"]["canonical_event_id"], "version": 3}
     assert api.unexpected == []
 
@@ -495,4 +540,164 @@ def test_registration_settings_preserve_bookmarks_and_sign_in_destination(page_f
     expect(page.get_by_role("button", name="Continue with Google", exact=True)).to_be_visible()
     assert api.muse_calls == []
     assert api.writes == []
+    assert api.unexpected == []
+
+
+def assert_title_action_geometry(row):
+    expect(row.locator(".event-muse-action")).to_be_visible()
+    dimensions = row.evaluate("""row => {
+        const text = row.querySelector('.event-title-text');
+        const button = row.querySelector('.event-muse-action');
+        const icon = button.querySelector('svg');
+        const title = text.getBoundingClientRect(), action = button.getBoundingClientRect();
+        const glyph = icon.getBoundingClientRect(), style = getComputedStyle(text);
+        return { font: parseFloat(style.fontSize), line: parseFloat(style.lineHeight),
+                 titleTop: title.top, titleRight: title.right, actionLeft: action.left,
+                 actionCenter: action.top + action.height / 2, width: action.width,
+                 height: action.height, iconSize: glyph.height };
+    }""")
+    assert abs(dimensions["iconSize"] - dimensions["font"]) < 0.5
+    assert dimensions["width"] >= 24 and dimensions["height"] >= 24
+    assert 0 <= dimensions["actionLeft"] - dimensions["titleRight"] <= dimensions["font"]
+    assert abs(dimensions["actionCenter"] - dimensions["titleTop"] - dimensions["line"] / 2) < 1.5
+
+
+@pytest.mark.parametrize("width", [1440, 320])
+def test_source_view_and_map_calendar_card_actions_use_shared_controls(page_factory, width):
+    harness, api = install(page_factory, width)
+    key = "fixture-techweek"
+    api.providers = [{"source_key": key, "label": "SF Tech Week 2026", "display_name": "SF Tech Week 2026",
+                      "publisher": "Tech Week", "provider": "luma", "seed_url": "https://www.tech-week.com/", "event_count": 2}]
+    api.events = [event | {"source_keys": [key], "calendar_labels": ["SF Tech Week 2026"],
+                           "latitude": 37.7749, "longitude": -122.4194,
+                           "sources": [{"source": "public_jsonld", "source_key": key, "label": "SF Tech Week 2026",
+                                        "registration_url": event["registration_urls"][0]}]} for event in api.events]
+    page = harness.page
+    page.goto(BASE + "/?view=events&when=all&city=")
+    first_card = page.locator("article").filter(has=page.get_by_role("heading", name="Friday Night Jazz", exact=True))
+    expect(first_card.locator(".event-card__title-row").get_by_role("button", name="Sign up with Muse for Friday Night Jazz")).to_be_visible()
+    assert_title_action_geometry(first_card.locator(".event-title-row"))
+    first_card.get_by_role("button", name="View source SF Tech Week 2026", exact=True).click()
+    expect(page.get_by_role("heading", name="SF Tech Week 2026", exact=True)).to_be_visible()
+    assert "view=source" in page.url and "source=" + key in page.url
+    expect(page.get_by_text("Events in range", exact=True)).to_be_visible()
+    expect(page.get_by_role("link", name="Website")).to_have_attribute("href", "https://www.tech-week.com/")
+    expect(page.get_by_role("heading", name="Friday Night Jazz", exact=True)).to_be_visible()
+    assert parse_qs(urlsplit(api.catalog_reads[-1]).query)["source_key"] == [key]
+    page.get_by_role("button", name="Back", exact=True).click()
+    expect(page.get_by_role("heading", name="Events", exact=True)).to_be_visible()
+    assert "view=events" in page.url and "when=all" in page.url
+    first_card.get_by_role("button", name="View source SF Tech Week 2026", exact=True).click()
+    expect(page.get_by_role("heading", name="SF Tech Week 2026", exact=True)).to_be_visible()
+    page.get_by_role("button", name="Map", exact=True).last.click()
+    expect(page.get_by_role("heading", name="Event map", exact=True)).to_be_visible()
+    mini = page.locator(".map-preview").filter(has=page.get_by_role("link", name="Friday Night Jazz", exact=True))
+    date_link = mini.locator(".map-preview__date-link")
+    expect(date_link).to_have_attribute("href", re.compile("^https://calendar.google.com/calendar/render"))
+    expect(mini.locator(".map-preview__calendar-link")).to_have_attribute("href", date_link.get_attribute("href"))
+    expect(mini.get_by_role("button", name="Sign up with Muse for Friday Night Jazz", exact=True)).to_be_visible()
+    assert_title_action_geometry(mini.locator(".event-title-row"))
+    expect(mini.get_by_role("button", name="View source SF Tech Week 2026", exact=True)).to_be_visible()
+    mini.get_by_role("button", name="View source SF Tech Week 2026", exact=True).click()
+    expect(page.get_by_role("heading", name="SF Tech Week 2026", exact=True)).to_be_visible()
+    page.get_by_role("button", name="Calendar", exact=True).last.click()
+    expect(page.get_by_role("button", name="Sign up with Muse for Friday Night Jazz", exact=True)).to_be_visible()
+    assert_title_action_geometry(page.locator(".event-title-row").filter(has=page.get_by_role("button", name="Sign up with Muse for Friday Night Jazz", exact=True)))
+    assert "source=" + key in page.url
+    api.events[0]["title"] = "Friday Night Jazz with a very long title that wraps across several lines on a narrow screen"
+    page.goto(BASE + "/?view=events&when=all&city=")
+    long_card = page.locator("article").filter(has=page.get_by_role("heading", name=api.events[0]["title"], exact=True))
+    assert_title_action_geometry(long_card.locator(".event-title-row"))
+    assert page.evaluate("document.documentElement.scrollWidth <= innerWidth")
+    assert api.queued == [] and api.unexpected == []
+
+
+@pytest.mark.parametrize("width", [1440, 320])
+@pytest.mark.parametrize("signed_in", [True, False], ids=["signed-in", "guest"])
+def test_graph_event_actions_keep_selection_and_require_sign_in(page_factory, width, signed_in):
+    harness, api = install(page_factory, width)
+    api.signed_in = signed_in
+    page = harness.page
+    page.goto(BASE + f"/?view=entities&entity={ENTITY_ID}&when=custom&start=2030-06-01&end=2030-06-30")
+    event_id = api.events[0]["canonical_event_id"]
+    page.locator(f'button[data-node-id="event:{event_id}"]').click()
+    card = page.get_by_role("complementary", name="Event detail", exact=True).locator(".event-card")
+    expect(card.get_by_role("heading", name="Friday Night Jazz", exact=True)).to_be_visible()
+    action = card.get_by_role("button", name="Sign up with Muse for Friday Night Jazz", exact=True)
+    if not signed_in:
+        expect(action).to_have_count(0)
+        assert api.muse_calls == [] and api.writes == []
+    else:
+        assert_title_action_geometry(card.locator(".event-title-row"))
+        expect(card.get_by_role("link", name=re.compile("^Add Friday Night Jazz .* to Google Calendar$"))).to_have_attribute(
+            "href", re.compile("^https://calendar.google.com/calendar/render")
+        )
+        action.click()
+        dialog = page.get_by_role("dialog", name="Registrations", exact=True)
+        expect(dialog).to_contain_text("Friday Night Jazz")
+        expect(dialog.get_by_role("link", name="Muse settings", exact=True)).to_have_attribute("href", "/settings/registrations")
+        dialog.get_by_role("button", name="Close registrations", exact=True).click()
+        saved = card.get_by_role("button", name="View registration for Friday Night Jazz", exact=True)
+        expect(saved).to_have_attribute("data-registration-state", "queued")
+        saved.click()
+        expect(dialog).to_be_visible()
+        assert len(api.queued) == 1
+        assert parse_qs(urlsplit(page.url).query)["entity"] == [ENTITY_ID]
+        assert parse_qs(urlsplit(page.url).query)["view"] == ["entities"]
+    assert page.evaluate("document.documentElement.scrollWidth <= innerWidth")
+    assert api.unexpected == []
+
+
+def test_registration_summary_counts_full_queue_and_filter_keeps_unseen_tasks_unread(page_factory):
+    harness, api = install(page_factory)
+    api.registrations = [api.registration(api.events[0] | {
+        "canonical_event_id": f"{index:08x}-1111-4111-8111-111111111111", "title": f"Queued event {index}"
+    }, "registered" if index < 5 else "queued", unread=True) for index in reversed(range(55))]
+    page = harness.page
+    page.goto(BASE + "/?view=events&when=all&city=")
+    widget = page.get_by_role("button", name="Registrations", exact=True)
+    expect(widget).to_have_attribute("title", "50 queued, 0 in progress, 5 registered, 0 needs attention")
+    widget.click()
+    dialog = page.get_by_role("dialog", name="Registrations", exact=True)
+    expect(dialog.get_by_role("combobox", name="Registration provider", exact=True)).to_have_value("muse")
+    dialog.get_by_role("button", name=re.compile("^Registered")).click()
+    expect(dialog).to_contain_text("More registrations available.")
+    assert all(item["unread"] for item in api.registrations[-5:])
+    dialog.get_by_role("button", name="Load more registrations").click()
+    expect(dialog).to_contain_text("Queued event 0")
+    assert api.unexpected == []
+
+
+def test_visible_past_event_opens_existing_registration_beyond_first_queue_page(page_factory):
+    harness, api = install(page_factory)
+    api.events[0]["start_at"] = "2020-06-14T19:30:00-07:00"
+    older = api.registration(api.events[0], "needs_input", version=3, unread=True)
+    older["outcome"] = {"status": "needs_input", "note": "Provider needs a profile response"}
+    api.registrations = [api.registration(api.events[1] | {
+        "canonical_event_id": f"{index:08x}-1111-4111-8111-111111111111", "title": f"Recent event {index}"
+    }) for index in reversed(range(50))] + [older]
+    page = harness.page
+    page.goto(BASE + "/?view=events&when=source&source=fixture-jazz&city=")
+    control = page.get_by_role("button", name="View registration for Friday Night Jazz", exact=True)
+    expect(control).to_be_enabled()
+    control.click()
+    dialog = page.get_by_role("dialog", name="Registrations", exact=True)
+    expect(dialog).to_contain_text("Provider needs a profile response")
+    assert any(path == "/v1/me/muse/registrations/by-event" for _, path in api.muse_calls)
+    assert api.queued == [] and not any(method == "POST" and path == "/v1/me/muse/registrations" for method, path, _ in api.writes)
+
+    # The panel must refresh this cached task even after its catalog card unmounts.
+    dialog.get_by_role("button", name="Close registrations", exact=True).click()
+    api.events = [api.events[1]]
+    page.get_by_role("button", name="Map", exact=True).click()
+    expect(page.get_by_role("heading", name="Event map", exact=True)).to_be_visible()
+    expect(page.get_by_role("button", name="View registration for Friday Night Jazz", exact=True)).not_to_be_visible()
+    older["version"] = 4
+    older["status"] = "registered"
+    older["outcome"] = {"status": "registered", "note": "Provider confirmed this past registration",
+                        "confirmation_reference": "older-rsvp", "evidence_url": "https://lu.ma/friday-jazz"}
+    older["unread"] = True
+    page.get_by_role("button", name="Registrations", exact=True).click()
+    expect(dialog).to_contain_text("older-rsvp")
+    assert api.queued == []
     assert api.unexpected == []

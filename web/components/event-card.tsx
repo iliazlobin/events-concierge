@@ -8,7 +8,6 @@ import {
   MapPin,
   Mic2,
   Tags,
-  LoaderCircle,
   UsersRound,
 } from "lucide-react";
 import { useId, type ReactNode } from "react";
@@ -27,8 +26,8 @@ import {
   googleMapsUrl,
 } from "@/lib/event-links";
 import { formatEventPrice } from "@/lib/event-price";
-import { museEligibility, museStatusLabel, type MuseStatus } from "@/lib/muse";
-import { MuseIcon } from "@/components/muse-icon";
+import { eventSourceFilter, useEventActions } from "@/components/event-actions-context";
+import { EventMuseAction } from "@/components/event-muse-action";
 import { eventTopicLabel, eventTopicTone } from "@/lib/event-topics";
 import type {
   EventEntityKind,
@@ -39,9 +38,6 @@ import type {
 } from "@/lib/types";
 
 interface EventCardProps {
-  museStatus?: MuseStatus;
-  musePending?: boolean;
-  onMuseSignup?: (event: EventItem) => void;
   event: EventItem;
   expanded: boolean;
   onToggle?: () => void;
@@ -54,29 +50,6 @@ interface EventCardProps {
   compact?: boolean;
   /** Optional graph navigation alongside the complete shared event facts. */
   entityDetails?: ReactNode;
-}
-
-function providerName(event: EventItem): string {
-  return (
-    event.calendar_labels?.[0]
-    ?? event.sources[0]?.label
-    ?? event.providers?.[0]
-    ?? event.sources[0]?.provider
-    ?? event.sources[0]?.source
-    ?? "Event"
-  );
-}
-
-function providerFilter(event: EventItem): { label: string; sourceKey: string } | null {
-  const label = providerName(event);
-  const matchingSource = event.sources.find((source) => (
-    source.source_key
-    && source.label?.trim() === label.trim()
-  ));
-  const sourceKey = matchingSource?.source_key
-    ?? event.source_keys?.find((value) => value.trim())
-    ?? event.sources.find((source) => source.source_key)?.source_key;
-  return sourceKey ? { label, sourceKey } : null;
 }
 
 function descriptionPreview(value: string): string {
@@ -168,9 +141,6 @@ function EntityLinks({
 }
 
 export function EventCard({
-  museStatus,
-  musePending = false,
-  onMuseSignup,
   event,
   expanded,
   onToggle,
@@ -218,7 +188,9 @@ export function EventCard({
   const titleId = `event-title-${instanceId}`;
   const time = formatEventTime(event.start_at, event.end_at);
   const location = eventLocationLabel(event);
-  const provider = providerFilter(event);
+  const actions = useEventActions();
+  const provider = eventSourceFilter(event);
+  const selectSource = onSourceSelect ?? actions?.onSourceSelect;
 
   return (
     <article
@@ -252,12 +224,12 @@ export function EventCard({
 
         <div className="event-card__body">
           <span className="event-card__eyebrow">
-            {provider && onSourceSelect ? (
+            {provider.sourceKey && selectSource ? (
               <button
                 className="event-card__source-filter"
                 type="button"
-                aria-label={`Filter events by source ${provider.label}`}
-                title={`Show events from ${provider.label}`}
+                aria-label={`View source ${provider.label}`}
+                title={`View source ${provider.label}`}
                 onPointerDown={(interaction) => {
                   interaction.preventDefault();
                   interaction.stopPropagation();
@@ -265,12 +237,12 @@ export function EventCard({
                 onClick={(interaction) => {
                   interaction.preventDefault();
                   interaction.stopPropagation();
-                  onSourceSelect(provider.sourceKey);
+                  selectSource(provider.sourceKey!);
                 }}
               >
                 {provider.label}
               </button>
-            ) : providerName(event)}
+            ) : provider.label}
             {price ? (
               <>
                 <span aria-hidden="true">/</span>
@@ -308,12 +280,15 @@ export function EventCard({
               </>
             ) : null}
           </span>
-          <h2 className="event-card__title" id={titleId}>
-            {url ? <a className="event-card__title-link" href={url} target="_blank"
-              rel="noopener noreferrer" title="Open provider event page (opens in new tab)">
-              {event.title}
-            </a> : event.title}
-          </h2>
+          <div className="event-card__title-row event-title-row">
+            <h2 className="event-card__title event-title-text" id={titleId}>
+              {url ? <a className="event-card__title-link" href={url} target="_blank"
+                rel="noopener noreferrer" title="Open provider event page (opens in new tab)">
+                {event.title}
+              </a> : event.title}
+            </h2>
+            <EventMuseAction event={event} />
+          </div>
           <div className="event-card__meta">
             {calendarUrl ? (
               <a
@@ -352,16 +327,6 @@ export function EventCard({
                 {location}
               </span>
             )}
-            {onMuseSignup ? <button
-              type="button"
-              className={`event-card__muse-action${museStatus ? " is-queued" : ""}`}
-              disabled={musePending || (!museStatus && Boolean(museEligibility(event)))}
-              title={museStatus ? `${museStatusLabel[museStatus]} · View registration` : museEligibility(event) ?? "Sign up with Muse"}
-              aria-label={museStatus ? `View registration for ${event.title}` : `Sign up with Muse for ${event.title}`}
-              onClick={interaction => { interaction.stopPropagation(); onMuseSignup(event); }}
-            >{musePending ? <LoaderCircle className="spin" aria-hidden="true" /> : <MuseIcon />}
-              {museStatus ? <span className="event-card__muse-dot" aria-hidden="true" /> : null}
-            </button> : null}
           </div>
           {summaryFacts.length ? (
             <ul className="event-card__summary-facts" aria-label="Event highlights">
@@ -509,9 +474,7 @@ export function EventCard({
               ) : null}
             </dl>
           ) : null}
-          <p className="event-card__description">
-            {description || "The organizer has not added a description yet."}
-          </p>
+          {description ? <p className="event-card__description">{description}</p> : null}
           {entityDetails}
         </div>
       </div>

@@ -122,11 +122,31 @@ class SignupRegistration(SignupItem):
     unread: bool
 
 
+class SignupStatusCounts(MuseModel):
+    queued: int = Field(default=0, ge=0, strict=True)
+    in_progress: int = Field(default=0, ge=0, strict=True)
+    needs_input: int = Field(default=0, ge=0, strict=True)
+    awaiting_approval: int = Field(default=0, ge=0, strict=True)
+    waitlisted: int = Field(default=0, ge=0, strict=True)
+    registered: int = Field(default=0, ge=0, strict=True)
+    failed: int = Field(default=0, ge=0, strict=True)
+    uncertain: int = Field(default=0, ge=0, strict=True)
+
+
 class SignupRegistrations(MuseModel):
     items: list[SignupRegistration]
     total: int = Field(ge=0)
     unread_count: int = Field(ge=0)
+    status_counts: SignupStatusCounts
     next_cursor: UUID | None = None
+
+    @model_validator(mode="after")
+    def consistent_totals(self) -> SignupRegistrations:
+        if sum(self.status_counts.model_dump().values()) != self.total:
+            raise ValueError("registration status counts must sum to the account total")
+        if self.unread_count > self.total:
+            raise ValueError("unread registrations cannot exceed the account total")
+        return self
 
 
 class SeenRegistration(MuseModel):

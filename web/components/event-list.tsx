@@ -4,13 +4,9 @@ import { LoaderCircle } from "lucide-react";
 
 import { groupEventSessions } from "@/lib/event-discovery";
 import { EventCard } from "@/components/event-card";
-import type { MuseStatus } from "@/lib/muse";
 import type { EventEntityReference, EventItem } from "@/lib/types";
 
 interface EventListProps {
-  museStatuses?: ReadonlyMap<string, MuseStatus>;
-  musePendingIds?: ReadonlySet<string>;
-  onMuseSignup?: (event: EventItem) => void;
   events: EventItem[];
   groupSessions?: boolean;
   expandedId: string | null;
@@ -29,15 +25,12 @@ interface EventListProps {
 }
 
 export function EventList({
-  museStatuses,
-  musePendingIds,
-  onMuseSignup,
   events,
   groupSessions = false,
   expandedId,
   onExpandedChange,
-  emptyTitle = "Nothing here yet",
-  emptyCopy = "Try a broader date range or clear a filter.",
+  emptyTitle = "No matching events",
+  emptyCopy = "",
   compact = false,
   hasMore = false,
   loadingMore = false,
@@ -53,7 +46,7 @@ export function EventList({
       <div className="empty-state">
         <span aria-hidden="true" />
         <h2>{emptyTitle}</h2>
-        <p>{emptyCopy}</p>
+        {emptyCopy ? <p>{emptyCopy}</p> : null}
       </div>
     );
   }
@@ -64,9 +57,6 @@ export function EventList({
         {(groupSessions ? groupEventSessions(events) : events.map((event) => [event])).map((group) => {
           const renderEvent = (event: EventItem) => (
           <EventCard
-            museStatus={museStatuses?.get(event.canonical_event_id)}
-            musePending={musePendingIds?.has(event.canonical_event_id)}
-            onMuseSignup={onMuseSignup}
             key={event.canonical_event_id}
             event={event}
             compact={compact}

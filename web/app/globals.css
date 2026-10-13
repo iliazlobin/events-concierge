@@ -2359,18 +2359,13 @@ textarea:focus-visible {
   outline-offset: 4px;
 }
 
-.event-card__title {
-  display: -webkit-box;
+.event-card__title-row {
   font-size: clamp(16px, 1.65vw, 20px);
   font-weight: 560;
   letter-spacing: -0.027em;
   line-height: 1.18;
-  margin: 0;
-  overflow: hidden;
-  text-wrap: balance;
-  -webkit-box-orient: vertical;
-  -webkit-line-clamp: 2;
 }
+.event-card__title { font: inherit; margin: 0; text-wrap: balance; }
 
 .event-card__title-link,
 .map-preview__title-link {
@@ -2818,7 +2813,7 @@ textarea:focus-visible {
   font-size: 22px;
 }
 
-.event-card.is-compact .event-card__title {
+.event-card.is-compact .event-card__title-row {
   font-size: 14px;
 }
 
@@ -4079,15 +4074,15 @@ textarea:focus-visible {
   width: 10px;
 }
 
-.map-preview__copy > strong {
-  display: -webkit-box;
+.map-preview__copy > .map-preview__title-row {
+  align-items: flex-start;
+  color: var(--ink);
   font-size: 12px;
   font-weight: 620;
   line-height: 1.3;
   margin: 4px 0 5px;
-  overflow: hidden;
-  -webkit-box-orient: vertical;
-  -webkit-line-clamp: 2;
+  overflow: visible;
+  white-space: normal;
 }
 
 .map-preview__copy > span {
@@ -4563,7 +4558,7 @@ textarea:focus-visible {
   min-height: 560px;
 }
 
-.calendar-week-grid > button {
+.calendar-week-grid > .calendar-week-day {
   align-items: stretch;
   background: transparent;
   border-right: 1px solid var(--line);
@@ -4575,15 +4570,15 @@ textarea:focus-visible {
   text-align: left;
 }
 
-.calendar-week-grid > button:last-child {
+.calendar-week-grid > .calendar-week-day:last-child {
   border-right: 0;
 }
 
-.calendar-week-grid > button:hover {
+.calendar-week-grid > .calendar-week-day:hover {
   background: var(--panel-soft);
 }
 
-.calendar-week-grid > button.is-selected {
+.calendar-week-grid > .calendar-week-day.is-selected {
   background: color-mix(in srgb, var(--accent) 10%, var(--panel-soft));
   box-shadow: inset 0 0 0 1px var(--accent);
   color: var(--ink);
@@ -4653,13 +4648,13 @@ textarea:focus-visible {
 }
 
 .calendar-grid > button.is-counting,
-.calendar-week-grid > button.is-counting {
+.calendar-week-grid > .calendar-week-day.is-counting {
   opacity: 0.45;
 }
 
 @media (prefers-reduced-motion: no-preference) {
   .calendar-grid > button.is-counting,
-  .calendar-week-grid > button.is-counting {
+  .calendar-week-grid > .calendar-week-day.is-counting {
     animation: calendar-counting-pulse 1.4s ease-in-out infinite;
   }
 }
@@ -4669,33 +4664,30 @@ textarea:focus-visible {
   50% { opacity: 0.6; }
 }
 
-.calendar-week-event > span {
-  display: -webkit-box;
+.calendar-week-event__title-row {
   font-size: 10px;
   font-weight: 650;
   line-height: 1.25;
-  overflow: hidden;
-  -webkit-box-orient: vertical;
-  -webkit-line-clamp: 3;
 }
+.calendar-week-event__title-row .event-title-text { -webkit-line-clamp: 3; }
 
 .calendar-week-more,
 .calendar-week-empty {
   padding: 4px 7px;
 }
 
-.calendar-week-grid > button.is-selected .calendar-week-event {
+.calendar-week-grid > .calendar-week-day.is-selected .calendar-week-event {
   background: color-mix(in srgb, var(--topic-color) 18%, transparent);
   border-left-color: var(--topic-color);
 }
 
-.calendar-week-grid > button.is-selected .calendar-week-event time,
-.calendar-week-grid > button.is-selected .calendar-week-more,
-.calendar-week-grid > button.is-selected .calendar-week-empty {
+.calendar-week-grid > .calendar-week-day.is-selected .calendar-week-event time,
+.calendar-week-grid > .calendar-week-day.is-selected .calendar-week-more,
+.calendar-week-grid > .calendar-week-day.is-selected .calendar-week-empty {
   color: var(--muted);
 }
 
-.calendar-week-grid > button.is-selected .calendar-week-day__heading small {
+.calendar-week-grid > .calendar-week-day.is-selected .calendar-week-day__heading small {
   color: var(--accent);
 }
 
@@ -6266,7 +6258,7 @@ textarea:focus-visible {
     font-size: 25px;
   }
 
-  .event-card__title {
+  .event-card__title-row {
     font-size: 17px;
   }
 
@@ -7849,16 +7841,46 @@ textarea:focus-visible {
   }
 }
 
-/* Muse shares the existing time/location action row; it adds no card section. */
-.event-card__muse-action { align-items: center; display: inline-flex; position: relative; z-index: 2; background: transparent; color: var(--muted); padding: 3px; border-radius: 5px; }
-.event-card__muse-action svg { width: 17px; height: 17px; color: inherit; }
-.event-card__muse-action:hover:not(:disabled), .event-card__muse-action.is-queued { color: var(--accent); }
-.event-card__muse-action:disabled { opacity: .4; cursor: not-allowed; }
-.event-card__muse-action:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
-.event-card__muse-dot { width: 4px; height: 4px; background: var(--accent); border-radius: 50%; position: absolute; top: 0; right: 0; }
-@media (max-width: 760px) {
-  .event-card__meta:has(.event-card__muse-action) { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; column-gap: 10px; }
-  .event-card__meta:has(.event-card__muse-action) > :first-child { grid-column: 1 / -1; }
-  .event-card__meta:has(.event-card__muse-action) > :nth-child(2) { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .event-card__muse-action { grid-column: 2; grid-row: 2; }
-}
+/* Title text wraps independently so the shared action remains beside its first line. */
+.event-title-row { align-items: flex-start; display: flex; gap: .3em; min-width: 0; }
+.event-title-text { display: -webkit-box; flex: 0 1 auto; min-width: 0; overflow: hidden; overflow-wrap: anywhere; -webkit-box-orient: vertical; -webkit-line-clamp: 2; }
+.muse-icon { color: #78a7ff; }
+.event-muse-action { --registration-color: #78a7ff; align-items: center; background: transparent; border: 1px solid transparent; border-radius: 999px; color: var(--registration-color); display: inline-flex; flex: 0 0 auto; font: inherit; height: 1.25em; justify-content: center; margin-top: calc((1lh - max(24px, 1.25em)) / 2); min-height: 24px; min-width: 24px; padding: 0; position: relative; width: 1.25em; z-index: 2; transition: background 180ms ease, border-color 180ms ease, color 180ms ease; }
+.event-title-row .event-muse-action > svg { color: inherit; height: 1em; width: 1em; }
+.event-muse-action[data-registration-state="queued"] { --registration-color: #b8a2ff; }
+.event-muse-action[data-registration-state="in_progress"] { --registration-color: #6bd8e5; }
+.event-muse-action[data-registration-state="needs_input"], .event-muse-action[data-registration-state="uncertain"] { --registration-color: #e6b45c; }
+.event-muse-action[data-registration-state="registered"] { --registration-color: #97d9a3; }
+.event-muse-action[data-registration-state="failed"] { --registration-color: #f28b82; }
+.event-muse-action[data-registration-state="waitlisted"], .event-muse-action[data-registration-state="awaiting_approval"] { --registration-color: #b1afbf; }
+.event-muse-action:not([data-registration-state="available"]):not([data-registration-state="unavailable"]):not([data-registration-state="saving"]) { background: color-mix(in srgb, var(--registration-color) 12%, transparent); border-color: color-mix(in srgb, var(--registration-color) 35%, transparent); }
+.event-muse-action:hover:not(:disabled), .event-muse-action:focus-visible { background: color-mix(in srgb, var(--registration-color) 22%, transparent); border-color: color-mix(in srgb, var(--registration-color) 55%, transparent); color: color-mix(in srgb, var(--registration-color) 80%, white); }
+.event-muse-action:focus-visible { outline: 2px solid var(--registration-color); outline-offset: 2px; }
+.event-muse-action[data-registration-state="unavailable"] { color: var(--quiet); cursor: not-allowed; opacity: .45; }
+.event-muse-action[data-registration-state="saving"] { cursor: wait; }
+.site-docs-link { align-items: center; border-radius: 50%; color: var(--muted); display: inline-flex; flex: 0 0 auto; height: 30px; justify-content: center; width: 30px; }
+.site-docs-link svg { height: 17px; width: 17px; }
+.site-docs-link:hover { background: var(--panel-raised); color: var(--ink); }
+.site-docs-link:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+.event-muse-action__badge { align-items: center; background: var(--panel); border: 1px solid currentColor; border-radius: 50%; bottom: -.1em; color: var(--registration-color); display: flex; height: max(10px, .6em); justify-content: center; position: absolute; right: -.1em; width: max(10px, .6em); }
+.event-title-row .event-muse-action__badge svg { color: inherit; height: 100%; stroke-width: 2.5; width: 100%; }
+.map-preview__source-filter { background: transparent; border-radius: 3px; color: inherit; font: inherit; letter-spacing: inherit; padding: 0; text-align: left; text-transform: inherit; }
+.map-preview__source-filter:hover, .map-preview__source-filter:focus-visible { color: var(--accent); }
+.map-preview__source-filter:focus-visible, .map-preview__calendar-link:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+.map-preview__calendar-link { align-items: center; border-radius: 3px; color: inherit; display: inline-flex; gap: 5px; text-decoration: none; }
+.map-preview__calendar-link:hover { color: var(--ink); }
+.map-preview__calendar-link:hover svg { color: var(--accent); }
+.map-preview__highlights { align-items: center; display: flex; flex-wrap: wrap; gap: 5px; list-style: none; margin: 0 8px 8px 72px; padding: 0; }
+.map-preview__highlights > li { border: 1px solid var(--line); border-radius: 999px; color: var(--quiet); font-size: 8px; font-weight: 650; line-height: 1; padding: 4px 7px; }
+.map-preview__highlights > li:first-child { border-color: color-mix(in srgb, var(--accent) 28%, var(--line)); color: var(--accent); }
+
+.map-preview__date-link { border-radius: 9px; display: block; height: 54px; text-decoration: none; width: 54px; }
+.map-preview__date-link:hover .map-preview__date { border-color: var(--accent); }
+.map-preview__date-link:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+.map-preview__location-focus { max-width: 100%; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; align-items: center; background: transparent; border-radius: 3px; color: var(--quiet); display: flex; font-size: 9px; gap: 5px; padding: 0; text-align: left; }
+.map-preview__location-focus svg { flex: 0 0 auto; height: 10px; width: 10px; }
+.map-preview__location-focus:hover, .map-preview__location-focus:focus-visible { color: var(--accent); }
+.map-preview__location-focus:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+
+.calendar-week-day { cursor: pointer; }
+.calendar-week-day:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }

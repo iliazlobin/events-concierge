@@ -1,9 +1,8 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
-  getMuseRegistrations, markMuseRegistrationsSeen, mergeMuseRegistrations, museEligibility, museInstruction,
+  getMuseRegistrations, getMuseRegistrationsForEvents, markMuseRegistrationsSeen, mergeMuseRegistrations, museEligibility, museInstruction,
   museProviderUrl, museRegistrationUpdates, museStatusLabel, museUnreadCount, queueMuseRegistration,
-  saveMuseIntent, takeMuseIntent,
 } from "../lib/muse.ts";
 
 const id = "22222222-2222-4222-8222-222222222222";
@@ -32,27 +31,6 @@ test("provider URLs reject credential links and unapproved origins", () => {
   for (const url of ["javascript:alert(1)", "https://lu.ma.evil.test/event", "https://lu.ma/",
     "https://user:secret@lu.ma/event", "https://lu.ma:444/event", "https://lu.ma/event#token",
     "https://lu.ma/event\n", "https://lu.ma/\\evil"]) assert.equal(museProviderUrl(url), null);
-});
-
-function storage() {
-  const entries = new Map();
-  return { entries, setItem: (key, value) => entries.set(key, value),
-    getItem: key => entries.get(key) ?? null, removeItem: key => entries.delete(key) };
-}
-test("one explicit signup intent stores only its public ID and is consumed once", () => {
-  const store = storage();
-  saveMuseIntent(store, id, now);
-  assert.deepEqual(JSON.parse([...store.entries.values()][0]), { eventId: id, savedAt: now });
-  assert.equal(takeMuseIntent(store, now + 1), id);
-  assert.equal(takeMuseIntent(store, now + 2), null);
-  saveMuseIntent(store, id, now);
-  assert.equal(takeMuseIntent(store, now + 31 * 60 * 1000), null);
-  saveMuseIntent(store, id, now);
-  assert.equal(takeMuseIntent(store, now - 1), null);
-  saveMuseIntent(store, "not-an-id", now);
-  assert.equal(store.entries.size, 0);
-  store.setItem("ec:muse:intent", JSON.stringify({ eventIds: [id], savedAt: now }));
-  assert.equal(takeMuseIntent(store, now), null);
 });
 
 test("a delayed list response cannot roll back progress or duplicate an existing task", () => {
@@ -98,10 +76,12 @@ test("queue, page and seen requests use the owner API, exact IDs and cancellatio
     await queueMuseRegistration("owner", id, id, signal);
     await getMuseRegistrations("owner", id, signal);
     await markMuseRegistrationsSeen("owner", [{ event_id: id, version: 3 }], signal);
+    await getMuseRegistrationsForEvents("owner", [id, "33333333-3333-4333-8333-333333333333"], signal);
     assert.equal(calls[0].path, "/v1/me/muse/registrations");
     assert.deepEqual(JSON.parse(calls[0].options.body), { request_id: id, event_id: id });
     assert.equal(calls[1].path, `/v1/me/muse/registrations?limit=50&cursor=${id}`);
     assert.deepEqual(JSON.parse(calls[2].options.body), { items: [{ event_id: id, version: 3 }] });
+    assert.equal(calls[3].path, `/v1/me/muse/registrations/by-event?event_id=${id}&event_id=33333333-3333-4333-8333-333333333333`);
     for (const call of calls) {
       assert.equal(call.options.signal, signal);
       assert.equal(call.options.headers.get("X-EC-Tenant-ID"), "owner");

@@ -30,16 +30,16 @@ export default function MuseGuide() {
       { title: "Reported result", detail: "Track progress in the app" },
     ]} />
     <ol>
-      <li>In <strong>Events</strong>, choose <strong>Sign up with Muse</strong> on an event card. This saves a registration task.</li>
+      <li>While signed in, choose <strong>Sign up with Muse</strong> beside an event title. The same action is available in Events, Map, Calendar, source pages and graph details.</li>
       <li>Review the queued events in <Link href="/?registrations=1">Registrations</Link>. Clicking an already queued event opens its progress.</li>
       <li>Copy the instruction below, <a href={MUSE_URL} target="_blank" rel="noopener noreferrer">open Muse</a>, and paste it to start.</li>
     </ol>
     <p>Opening Muse does not start registrations. Muse may ask you to sign in to the event provider or answer required questions.</p>
     <MuseInstructions />
     <h2 id="progress" tabIndex={-1}>Registration progress</h2>
-    <p>Open <Link href="/?registrations=1">Registrations</Link> to see queued events and results. Unread updates are marked until viewed.</p>
+    <p>The header shows queued, in-progress, registered and needs-attention totals. Open <Link href="/?registrations=1">Registrations</Link> to filter tasks by status or provider. Only the displayed unread versions are marked as read.</p>
     <table aria-label="Registration statuses"><thead><tr><th scope="col">Status</th><th scope="col">Meaning</th></tr></thead><tbody>
-      <tr><td>Ready for Muse</td><td>Saved; waiting for Muse to claim the task.</td></tr>
+      <tr><td>Queued</td><td>Saved; waiting for Muse to claim the task. A lavender clock marks queued cards.</td></tr>
       <tr><td>In progress</td><td>Muse claimed the task.</td></tr>
       <tr><td>Needs your input</td><td>Muse needs a login, answer or approval from you.</td></tr>
       <tr><td>Awaiting organizer approval</td><td>Submitted; the organizer’s decision is pending.</td></tr>

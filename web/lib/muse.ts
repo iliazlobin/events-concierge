@@ -1,10 +1,11 @@
 import { api } from "./api.ts";
 import type { EventItem } from "./types.ts";
+import type { RegistrationStatus, RegistrationStatusCounts, RegistrationTask } from "./registrations.ts";
 
 export const MUSE_URL = "https://muse.ai/";
 const hosts = new Set(["lu.ma", "www.lu.ma", "luma.com", "www.luma.com", "meetup.com", "www.meetup.com"]);
 
-export type MuseStatus = "queued" | "in_progress" | "needs_input" | "awaiting_approval" | "waitlisted" | "registered" | "failed" | "uncertain";
+export type MuseStatus = RegistrationStatus;
 export interface MuseConnection { connected: boolean; expires_at: string | null }
 export interface MuseSignupItem {
   event: { canonical_event_id: string; title: string; start_at: string; end_at: string | null;
@@ -35,36 +36,13 @@ export function museEligibility(event: EventItem, now = Date.now()): string | nu
   return null;
 }
 
-export interface MuseRegistration extends MuseSignupItem {
-  batch_id: string;
-  created_at: string;
-  version: number;
-  unread: boolean;
-}
+export interface MuseRegistration extends RegistrationTask {}
 export interface MuseRegistrationPage {
   items: MuseRegistration[];
   total: number;
   unread_count: number;
   next_cursor: string | null;
-}
-
-const intentKey = "ec:muse:intent";
-const intentLifetime = 30 * 60 * 1000;
-const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-
-/** Only the public event ID survives the user's explicit sign-in navigation. */
-export function saveMuseIntent(storage: Pick<Storage, "setItem">, eventId: string, now = Date.now()): void {
-  if (uuid.test(eventId)) storage.setItem(intentKey, JSON.stringify({ eventId, savedAt: now }));
-}
-export function takeMuseIntent(storage: Pick<Storage, "getItem" | "removeItem">, now = Date.now()): string | null {
-  const raw = storage.getItem(intentKey);
-  storage.removeItem(intentKey);
-  try {
-    const intent = JSON.parse(raw ?? "null");
-    return intent && typeof intent.eventId === "string" && uuid.test(intent.eventId)
-      && typeof intent.savedAt === "number" && intent.savedAt <= now && now - intent.savedAt <= intentLifetime
-      ? intent.eventId : null;
-  } catch { return null; }
+  status_counts?: RegistrationStatusCounts;
 }
 
 export function museInstruction(): string {
@@ -106,7 +84,7 @@ export function museEventDate(value: string): string {
 }
 
 export const museStatusLabel: Record<MuseStatus, string> = {
-  queued: "Ready for Muse", in_progress: "In progress", needs_input: "Needs your input",
+  queued: "Queued", in_progress: "In progress", needs_input: "Needs your input",
   awaiting_approval: "Awaiting organizer approval", waitlisted: "Waitlisted",
   registered: "Registered · reported by Muse", failed: "Failed", uncertain: "Needs verification",
 };
@@ -132,4 +110,11 @@ export function getMuseRegistrations(tenantId: string | null, cursor: string | n
 }
 export function markMuseRegistrationsSeen(tenantId: string | null, items: Array<{ event_id: string; version: number }>, signal?: AbortSignal) {
   return api<void>("/v1/me/muse/registrations/seen", { method: "POST", tenantId, signal, bodyJson: { items } });
+}
+
+/** Look up saved tasks for visible cards without paging through the account queue. */
+export function getMuseRegistrationsForEvents(tenantId: string | null, eventIds: string[], signal?: AbortSignal) {
+  const query = new URLSearchParams();
+  eventIds.forEach(id => query.append("event_id", id));
+  return api<MuseRegistration[]>(`/v1/me/muse/registrations/by-event?${query}`, { tenantId, signal });
 }

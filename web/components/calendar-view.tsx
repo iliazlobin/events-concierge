@@ -4,6 +4,7 @@ import { ChevronLeft, ChevronRight, LoaderCircle, Search, X } from "lucide-react
 import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 
 import { EventList } from "@/components/event-list";
+import { EventMuseAction } from "@/components/event-muse-action";
 import {
   calendarRangeLabel,
   calendarSummaryByDate,
@@ -406,11 +407,12 @@ function CalendarWeekGrid({
           day: "numeric",
         }).format(date);
         return (
-          <button
-            type="button"
+          <div
             role="gridcell"
+            tabIndex={0}
             key={key}
             className={[
+              "calendar-week-day",
               selected ? "is-selected" : "",
               unknown && counting ? "is-counting" : "",
             ].filter(Boolean).join(" ")}
@@ -418,23 +420,33 @@ function CalendarWeekGrid({
             aria-label={`${dateLabel}: ${unknown
               ? "Counting events"
               : `${dayEventCount} event${dayEventCount === 1 ? "" : "s"}`}`}
-            onClick={() => onSelect(key)}
+            onClick={interaction => {
+              if (interaction.target instanceof Element && !interaction.target.closest("a, button")) onSelect(key);
+            }}
+            onKeyDown={interaction => {
+              if (interaction.target === interaction.currentTarget && (interaction.key === "Enter" || interaction.key === " ")) {
+                interaction.preventDefault(); onSelect(key);
+              }
+            }}
           >
             <span className="calendar-week-day__heading">
               <span>{new Intl.DateTimeFormat(undefined, { weekday: "short" }).format(date)}</span>
               <strong>{date.getDate()}</strong>
               <small>{unknown ? "" : dayEventCount}</small>
             </span>
-            <span className="calendar-week-day__events" aria-hidden="true">
+            <div className="calendar-week-day__events">
               {visibleEvents.map((event) => (
-                <span
+                <div
                   className="calendar-week-event"
                   data-topic-tone={eventTopicTone(event.topics?.[0])}
                   key={event.canonical_event_id}
                 >
                   <time>{formatWeekEventTime(event.start_at)}</time>
-                  <span>{event.title}</span>
-                </span>
+                  <div className="calendar-week-event__title-row event-title-row">
+                    <span className="calendar-week-event__title event-title-text">{event.title}</span>
+                    <EventMuseAction event={event} />
+                  </div>
+                </div>
               ))}
               {unknown
                 ? <span className="calendar-week-counting">{counting ? "Counting…" : "—"}</span>
@@ -442,8 +454,8 @@ function CalendarWeekGrid({
               {hiddenEventCount ? (
                 <span className="calendar-week-more">+{hiddenEventCount} more</span>
               ) : null}
-            </span>
-          </button>
+            </div>
+          </div>
         );
       })}
     </div>
@@ -688,7 +700,6 @@ export function CalendarView({
     <section className="workspace calendar-view">
       <header className="workspace-heading">
         <div>
-          <p>EXPLORE BY DATE</p>
           <h1>Calendar</h1>
         </div>
         <div className="view-result-state">
@@ -701,7 +712,7 @@ export function CalendarView({
             {!counted || !summary
               ? error ? "Count unavailable" : "Counting events…"
               : `${summary.total_event_count.toLocaleString()} events${
-                loading ? " · refreshing…" : " · range complete"
+                loading ? " · refreshing…" : ""
               }`}
           </span>
           {loading ? (
@@ -823,7 +834,6 @@ export function CalendarView({
             >
               <header>
                 <div>
-                  <p>COLOR KEY + FILTER</p>
                   <h3 id="calendar-topic-key-title">Event types</h3>
                 </div>
                 {activeTopics.length ? (
@@ -838,7 +848,7 @@ export function CalendarView({
               </header>
               <div className="calendar-topic-key__options">
                 <p className="calendar-topic-key__hint">
-                  Select a color to filter this calendar. Counts reflect the visible events.
+                  Counts cover visible events.
                 </p>
                 {/*
                   The search is here from the start rather than behind the expand.
@@ -954,14 +964,14 @@ export function CalendarView({
               ? "Select a day"
               : dayLoading
                 ? "Loading the agenda…"
-                : selectedHistorical ? "No retained events" : "A quiet day"}
+                : "No matching events"}
             emptyCopy={!selectedDate
-              ? "Choose any day in the month to inspect its agenda."
+              ? ""
               : dayLoading
-                ? "Reading this day's events."
+                ? ""
               : selectedHistorical
-                ? "No matching event is retained for the selected day. Older listings may have rolled off before archival capture."
-                : "Nothing is scheduled for this day. Pick another day or adjust the active filters."}
+                ? "Older listings may be missing."
+                : ""}
           />
           {dayHasMore ? (
             <button

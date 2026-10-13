@@ -44,13 +44,12 @@ test("calendar and map links remain independent controls above the summary targe
 });
 
 test("event source labels apply the exact provider filter without opening the card", () => {
-  assert.match(card, /function providerFilter\(event: EventItem\)/);
-  assert.match(card, /event\.source_keys\?\.find/);
+  assert.match(card, /eventSourceFilter\(event\)/);
   assert.match(card, /className="event-card__source-filter"/);
-  assert.match(card, /aria-label=\{`Filter events by source \$\{provider\.label\}`\}/);
+  assert.match(card, /aria-label=\{`View source \$\{provider\.label\}`\}/);
   assert.match(
     card,
-    /interaction\.preventDefault\(\);[\s\S]*interaction\.stopPropagation\(\);[\s\S]*onSourceSelect\(provider\.sourceKey\);/,
+    /interaction\.preventDefault\(\);[\s\S]*interaction\.stopPropagation\(\);[\s\S]*selectSource\(provider\.sourceKey!\);/,
   );
   assert.match(list, /onSourceSelect=\{onSourceSelect\}/);
   assert.match(
@@ -60,7 +59,7 @@ test("event source labels apply the exact provider filter without opening the ca
   assert.match(styles, /\.event-card__source-filter:focus-visible/);
   assert.match(
     app,
-    /const handleSourceSelect = useCallback[\s\S]*createConsumerHistorySnapshot\("events"[\s\S]*sourceKeys: \[sourceKey\],[\s\S]*datePreset: "source",[\s\S]*cities: \[\],[\s\S]*pushConsumerSnapshot/,
+    /const handleSourceSelect = useCallback[\s\S]*createConsumerHistorySnapshot\("source"[\s\S]*sourceKeys: \[sourceKey\],[\s\S]*datePreset: "source",[\s\S]*cities: \[\],[\s\S]*pushConsumerSnapshot/,
   );
 });
 

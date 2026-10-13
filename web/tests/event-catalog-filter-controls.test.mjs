@@ -199,7 +199,7 @@ test("category-first typing opens a scoped composer without becoming event searc
   assert.match(filterBar, /searchInputRef\.current\?\.focus\(\)/);
   assert.match(filterBar, /setSuggestionsSuppressed\(true\)/);
   assert.match(filterBar, /searchFocused && !suggestionsSuppressed/);
-  assert.match(filterBar, /Search events, people, businesses, venues, or add a filter/);
+  assert.match(filterBar, /Search events, people, or places/);
   assert.doesNotMatch(
     readFileSync(new URL("../components/concierge-app.tsx", import.meta.url), "utf8"),
     /next\.sourceKey && next\.sourceKey !== filters\.sourceKey/,
@@ -261,7 +261,7 @@ test("a rolling window is named on the chip, and still says which dates it means
   assert.match(dateRange, /title=\{summaryTitle\}/);
   // Only the chip standing in for the whole date filter can be rolling; an additive range is
   // two fixed dates by construction.
-  assert.match(filterBar, /range\.legacy \? rollingWindowLabel\(filters\.datePreset\) : null/);
+  assert.match(filterBar, /range\.legacy\s*\? filters\.datePreset === "source" \? "Source history" : rollingWindowLabel\(filters\.datePreset\)\s*: null/);
   // Swapping a pinned range for a rolling window is the move worth offering, so the windows
   // are reachable from a single date chip whether or not it is pinned -- and hidden once
   // several ranges are in play, where choosing one would silently drop the others.

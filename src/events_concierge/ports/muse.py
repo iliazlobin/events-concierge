@@ -49,6 +49,9 @@ class MuseRepository(Protocol):
     async def registrations(
         self, tenant_id: UUID, limit: int = 50, cursor: UUID | None = None
     ) -> SignupRegistrations: ...
+    async def registrations_for_events(
+        self, tenant_id: UUID, event_ids: list[UUID]
+    ) -> list[SignupRegistration]: ...
     async def see_registrations(self, tenant_id: UUID, items: list[SeenRegistration]) -> None: ...
     async def claim(
         self,

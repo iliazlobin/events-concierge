@@ -96,7 +96,6 @@ test("filter reloads do not display results from the previous filter scope", () 
 });
 
 test("historical empty states describe retained evidence instead of claiming absence", () => {
-  assert.match(calendarView, /No retained events/);
-  assert.match(calendarView, /rolled off before archival capture/);
-  assert.match(eventsView, /No retained events match/);
+  assert.match(calendarView, /selectedHistorical\s*\? "Older listings may be missing\."/);
+  assert.match(eventsView, /historicalWindow\s*\? "Older listings may be missing\."/);
 });
