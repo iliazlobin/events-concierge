@@ -6754,10 +6754,18 @@ textarea:focus-visible {
 
 .settings-panel { display: flex; flex-direction: column; gap: 20px; }
 
+.settings-panel__head { align-items: baseline; display: flex; flex-wrap: wrap; gap: 8px 20px; justify-content: space-between; }
+.settings-guide-link { color: var(--muted); font-size: 13px; text-decoration: none; }
+.settings-guide-link:hover { color: var(--ink); }
+.settings-guide-link:focus-visible { outline: 2px solid var(--accent); outline-offset: 4px; }
+.settings-field-label { align-items: center; display: flex; gap: 5px; }
+.settings-title-row { align-items: center; display: flex; flex-wrap: wrap; gap: 8px; justify-content: space-between; }
+.settings-card--danger > .button { align-self: flex-start; }
+
 .settings-panel__head h1 {
   font-size: 26px;
   letter-spacing: -0.02em;
-  margin: 0 0 6px;
+  margin: 0;
 }
 
 .settings-panel__head p { color: var(--muted); font-size: 14.5px; margin: 0; }
@@ -6768,11 +6776,12 @@ textarea:focus-visible {
   border-radius: 14px;
   display: flex;
   flex-direction: column;
-  gap: 18px;
-  padding: 20px 22px;
+  gap: 14px;
+  padding: 16px 18px;
 }
 
 .settings-card--danger { border-color: rgba(255, 143, 131, 0.34); }
+.settings-card--danger .settings-hint { color: var(--muted); }
 
 .settings-card__title {
   font-size: 12px;
@@ -6805,16 +6814,6 @@ textarea:focus-visible {
 .settings-error { color: var(--danger); font-size: 13px; margin: 0; }
 .settings-notice { color: var(--accent); font-size: 13px; margin: 0; }
 
-.settings-readonly { display: flex; flex-direction: column; gap: 5px; }
-.settings-readonly dt { color: var(--muted); font-size: 12.5px; }
-.settings-readonly dd {
-  align-items: center;
-  display: flex;
-  font-size: 14px;
-  gap: 10px;
-  margin: 0;
-}
-
 .settings-mono { font-family: ui-monospace, "SF Mono", Menlo, monospace; font-size: 13px; }
 
 .settings-fixed {
@@ -6830,8 +6829,8 @@ textarea:focus-visible {
 
 .settings-facts { display: flex; flex-direction: column; gap: 12px; margin: 0; }
 .settings-facts > div { display: flex; justify-content: space-between; gap: 16px; }
-.settings-facts dt { color: var(--muted); font-size: 13px; }
-.settings-facts dd { font-size: 13.5px; margin: 0; text-align: right; }
+.settings-facts dt { color: var(--muted); font-size: 13px; min-width: 0; }
+.settings-facts dd { font-size: 13.5px; margin: 0; min-width: 0; overflow-wrap: anywhere; text-align: right; }
 
 .settings-actions {
   align-items: center;
@@ -6898,18 +6897,6 @@ textarea:focus-visible {
 
 .choice-chip__remove svg { height: 13px; width: 13px; }
 
-.control-ladder {
-  color: var(--muted);
-  display: flex;
-  flex-direction: column;
-  font-size: 13.5px;
-  gap: 12px;
-  margin: 0;
-  padding-left: 20px;
-}
-
-.control-ladder strong { color: var(--ink); }
-
 .danger-confirm { display: flex; flex-direction: column; gap: 10px; }
 .danger-confirm label { font-size: 13.5px; }
 .danger-confirm code { color: var(--danger); font-size: 12.5px; }
@@ -6961,6 +6948,10 @@ textarea:focus-visible {
   .settings-nav a { border: 1px solid var(--line); white-space: nowrap; }
   .settings-header__who { display: none; }
   .settings-actions { flex-wrap: wrap; }
+}
+
+@media (max-width: 420px) {
+  .settings-facts > div { flex-wrap: wrap; gap: 5px 12px; }
 }
 
 /* ---------- buttons and chips (settings surfaces) ---------- */

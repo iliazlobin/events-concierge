@@ -1,9 +1,11 @@
 "use client";
 
 import { Check, Copy, KeyRound, LoaderCircle, Trash2 } from "lucide-react";
+import Link from "next/link";
 import { useEffect, useState } from "react";
 
 import { useSession } from "@/components/session-provider";
+import { SettingsHelp } from "@/components/settings/settings-help";
 import { createApiKey, getApiKeys, readableError, revokeApiKey } from "@/lib/api";
 import { releaseProfile } from "@/lib/release-profile";
 import type { ApiKey } from "@/lib/types";
@@ -55,7 +57,7 @@ export function ApiKeysPanel() {
   const create = async () => {
     const trimmed = name.trim();
     if (!trimmed) {
-      setError("Give the key a name so you can recognize it later.");
+      setError("Enter a key name.");
       return;
     }
     setCreating(true);
@@ -101,8 +103,8 @@ export function ApiKeysPanel() {
   if (!fullRelease) {
     return <div className="settings-panel">
       <h1>Account access</h1>
-      <p>API keys are not available in this release. Manage your sign-in and account controls in Account and data.</p>
-      <a href="/settings/account">Account and data</a>
+      <p className="settings-hint">API keys are not enabled.</p>
+      <Link href="/settings/account">Account</Link>
     </div>;
   }
 
@@ -110,16 +112,16 @@ export function ApiKeysPanel() {
     <div className="settings-panel">
       <header className="settings-panel__head">
         <h1>API keys</h1>
-        <p>Manage development API key records. Authentication with these keys is not available yet.</p>
+        <Link className="settings-guide-link" href="/docs/account#access">Guide <span aria-hidden="true">→</span></Link>
       </header>
+      <p className="settings-hint">Development records. Authentication is not enabled.</p>
 
       {issued ? (
         <section className="settings-card settings-card--reveal">
-          <h2 className="settings-card__title">Copy your new key now</h2>
-          <p className="settings-hint">
-            This is the only time <strong>{issued.name}</strong> will be shown. We store only a
-            fingerprint, so it cannot be retrieved later.
-          </p>
+          <div className="settings-title-row">
+            <h2 className="settings-card__title">{issued.name} <span className="settings-fixed">Shown once</span></h2>
+            <SettingsHelp label="New API key">Save this key before hiding it. Only its fingerprint is stored, so the key cannot be retrieved later.</SettingsHelp>
+          </div>
           <div className="secret-reveal">
             <code>{issued.secret}</code>
             <button type="button" className="button button-quiet" onClick={copySecret}>
@@ -132,19 +134,19 @@ export function ApiKeysPanel() {
             className="button button-primary"
             onClick={() => setIssued(null)}
           >
-            I&rsquo;ve saved it
+            Hide key
           </button>
         </section>
       ) : null}
 
       <section className="settings-card">
-        <h2 className="settings-card__title">Create a key</h2>
+        <h2 className="settings-card__title">New key</h2>
         <div className="settings-inline-add">
           <input
             type="text"
             value={name}
             maxLength={64}
-            placeholder="Laptop script, CI job, …"
+            placeholder="Key name"
             aria-label="Key name"
             onChange={(event) => setName(event.target.value)}
             onKeyDown={(event) => {
@@ -173,7 +175,7 @@ export function ApiKeysPanel() {
       ) : null}
 
       <section className="settings-card">
-        <h2 className="settings-card__title">Your keys</h2>
+        <h2 className="settings-card__title">Keys</h2>
         {loading ? (
           <p className="settings-hint">Loading…</p>
         ) : keys.length === 0 ? (

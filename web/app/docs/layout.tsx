@@ -5,7 +5,7 @@ import styles from "./docs.module.css";
 
 export const metadata: Metadata = {
   title: { default: "Documentation · Events Concierge", template: "%s · Events Concierge docs" },
-  description: "Events Concierge guides: browsing, accounts and Muse registrations.",
+  description: "Events Concierge guides: browsing, accounts and registrations.",
 };
 
 /** Public, prerendered guides; no account or backend access is required. */

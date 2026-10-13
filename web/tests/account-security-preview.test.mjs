@@ -41,11 +41,10 @@ test("the page says plainly that it is not connected", () => {
 });
 
 test("sample data is labelled as sample data", () => {
-  assert.match(SOURCE, /Not real activity/i);
+  assert.match(SOURCE, /Sample data; controls disabled/i);
 });
 
-test("signing out everywhere is never gated behind proving yourself again", () => {
-  // De-escalation must stay reachable: the person who most needs this button may be sharing their
-  // account with an attacker right now.
-  assert.match(SOURCE, /never ask you to prove yourself again/i);
+test("the security preview cannot start reauthentication", () => {
+  // No credential flow may run from an inert design preview.
+  assert.doesNotMatch(SOURCE, /reauth_url|reauthenticate|startReauth|window\.location/);
 });

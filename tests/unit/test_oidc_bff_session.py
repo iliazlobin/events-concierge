@@ -194,7 +194,8 @@ def _settings(**overrides: Any) -> Settings:
     return Settings(**values)
 
 
-async def test_oidc_bff_login_session_csrf_and_revocation_are_one_coherent_boundary() -> None:
+@pytest.mark.parametrize("return_to", ["/app#/plans", "/settings/registrations"])
+async def test_oidc_bff_login_session_csrf_and_revocation_are_one_coherent_boundary(return_to: str) -> None:
     tenant_id = uuid4()
     store = _MemorySessionStore()
     nonce: dict[str, str] = {}
@@ -221,7 +222,7 @@ async def test_oidc_bff_login_session_csrf_and_revocation_are_one_coherent_bound
         identity_verifier=_verifier(),
     )
 
-    login = await adapter.start_login("/app#/plans")
+    login = await adapter.start_login(return_to)
     authorization = urlsplit(login.authorization_url)
     query = parse_qs(authorization.query)
     nonce["value"] = query["nonce"][0]
@@ -249,7 +250,7 @@ async def test_oidc_bff_login_session_csrf_and_revocation_are_one_coherent_bound
     assert query["code_challenge"] == [expected_challenge]
     assert completion == BrowserLoginCompletion(
         identity=BrowserIdentity(tenant_id, "oidc|fixture-user"),
-        return_to="/app#/plans",
+        return_to=return_to,
     )
     assert await adapter.resolve_tenant_id({"Cookie": cookie}) == tenant_id
     await adapter.verify_state_change(
@@ -407,6 +408,8 @@ async def test_oidc_bff_reauthentication_is_purpose_session_and_identity_bound(
         "/auth/callback",
         "/app\\redirect",
         "/app\nredirect",
+        "/settings/registrations/../admin",
+        "/settings/registrations/%2e%2e/admin",
     ),
 )
 async def test_oidc_bff_rejects_open_or_non_application_return_paths(return_to: str) -> None:

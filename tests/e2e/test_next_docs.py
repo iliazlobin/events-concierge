@@ -75,8 +75,8 @@ def test_docs_are_public_and_all_guides_work_without_backend(page_factory, width
     )
     guides = [
         ("Find events", "browsing"),
-        ("Muse signups", "muse"),
-        ("Your account", "account"),
+        ("Registrations", "muse"),
+        ("Account", "account"),
         ("How it works", "how-it-works"),
     ]
     for title, slug in guides:
@@ -87,7 +87,26 @@ def test_docs_are_public_and_all_guides_work_without_backend(page_factory, width
             "aria-current", "page"
         )
         assert page.evaluate("document.documentElement.scrollWidth <= innerWidth")
+        article = page.get_by_role("article")
+        article_box = article.bounding_box()
+        assert article_box and article_box["width"] <= 620
+        disclosure = page.get_by_role("main").locator("details")
+        if width == 320:
+            expect(disclosure).not_to_have_attribute("open", "")
+            disclosure.locator("summary").click()
         contents = page.get_by_role("navigation", name="On this page", exact=True)
+        contents_box = contents.bounding_box()
+        assert contents_box
+        if width == 1440:
+            assert contents_box["x"] >= article_box["x"] + article_box["width"]
+            assert contents_box["width"] <= 180
+            rail = page.get_by_role("complementary")
+            assert rail.evaluate("element => getComputedStyle(element).position") == "sticky"
+        else:
+            assert contents_box["x"] >= article_box["x"]
+            assert (
+                contents_box["x"] + contents_box["width"] <= article_box["x"] + article_box["width"]
+            )
         for link in contents.get_by_role("link").all():
             href = link.get_attribute("href")
             heading = page.locator(href)
@@ -108,6 +127,7 @@ def test_guides_remain_readable_and_crosslinked_without_javascript(browser):
     try:
         page = context.new_page()
         page.goto(BASE + "/docs/browsing")
+        page.get_by_role("main").locator("details summary").click()
         contents = page.get_by_role("navigation", name="On this page", exact=True)
         contents.get_by_role("link", name="Views and calendar", exact=True).click()
         expect(

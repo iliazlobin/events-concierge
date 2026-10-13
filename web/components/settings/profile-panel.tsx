@@ -1,9 +1,11 @@
 "use client";
 
 import { Check, LoaderCircle, Trash2, Upload } from "lucide-react";
+import Link from "next/link";
 import { useEffect, useMemo, useRef, useState } from "react";
 
 import { useSession } from "@/components/session-provider";
+import { SettingsHelp } from "@/components/settings/settings-help";
 import { useAvatarSource } from "@/components/use-avatar-source";
 import { deleteAvatar, readableError, updateProfile, uploadAvatar } from "@/lib/api";
 import { AvatarPrepareError, prepareAvatar } from "@/lib/avatar-image";
@@ -153,11 +155,14 @@ export function ProfilePanel() {
     <form className="settings-panel" onSubmit={handleSubmit}>
       <header className="settings-panel__head">
         <h1>Profile</h1>
-        <p>How the concierge addresses you.</p>
+        <Link className="settings-guide-link" href="/docs/account#profile">Guide <span aria-hidden="true">→</span></Link>
       </header>
 
       <section className="settings-card">
-        <h2 className="settings-card__title">Photo</h2>
+        <div className="settings-title-row">
+          <h2 className="settings-card__title">Photo</h2>
+          <SettingsHelp label="Photo">PNG, JPEG or WebP. Cropped to a 256-pixel square with camera metadata removed.</SettingsHelp>
+        </div>
         <div className="profile-photo">
           {avatarSource ? (
             <img className="profile-photo__image" src={avatarSource} alt="Your profile photo" />
@@ -197,11 +202,7 @@ export function ProfilePanel() {
               <p className="settings-error" role="alert">
                 {avatarError}
               </p>
-            ) : (
-              <p className="settings-hint">
-                PNG, JPEG, or WebP. Cropped to a {256}px square and stripped of camera metadata.
-              </p>
-            )}
+            ) : null}
           </div>
           <input
             ref={fileRef}
@@ -217,55 +218,50 @@ export function ProfilePanel() {
 
       <section className="settings-card">
         <div className="settings-field">
-          <label htmlFor="display-name">Display name</label>
+          <div className="settings-field-label">
+            <label htmlFor="display-name">Display name</label>
+            <SettingsHelp label="Display name">Optional. Up to 64 characters.</SettingsHelp>
+          </div>
           <input
             id="display-name"
             type="text"
             maxLength={64}
             autoComplete="name"
             value={displayName}
-            placeholder="How should the concierge address you?"
+            placeholder="Name"
             aria-invalid={nameError ? true : undefined}
-            aria-describedby={nameError ? "display-name-error" : "display-name-hint"}
-            onChange={(event) => setDisplayName(event.target.value)}
+            aria-describedby={nameError ? "display-name-error" : undefined}
+            onChange={(event) => {
+              setDisplayName(event.target.value);
+              if (nameError) setNameError(validateDisplayName(event.target.value));
+            }}
             onBlur={() => setNameError(validateDisplayName(displayName))}
           />
           {nameError ? (
             <p className="settings-error" id="display-name-error" role="alert">
               {nameError}
             </p>
-          ) : (
-            <p className="settings-hint" id="display-name-hint">
-              Up to 64 characters.
-            </p>
-          )}
+          ) : null}
         </div>
 
-        <div className="settings-readonly">
-          <dt>Notification email</dt>
-          <dd>
-            {me?.notify_email ?? "—"}
-            <span className="settings-fixed">fixed</span>
-          </dd>
-          <p className="settings-hint">
-            {fullRelease ? "This is where the concierge sends confirmations and anything that needs you. " : "The email used for this account. "}
-            It is bound to your sign-in identity and cannot be changed here yet.
-          </p>
-        </div>
-
-        {fullRelease && me?.relay_inbox ? (
-          <div className="settings-readonly">
-            <dt>Relay inbox</dt>
-            <dd className="settings-mono">{me.relay_inbox}</dd>
-            <p className="settings-hint">
-              Where sign-in codes from event sites are received on your behalf. Inbound only — it
-              never sends, and it cannot be changed.
-            </p>
+        <dl className="settings-facts">
+          <div>
+            <dt className="settings-field-label">Email <SettingsHelp label="Email">From your sign-in identity. It cannot be changed here.</SettingsHelp></dt>
+            <dd>{me?.notify_email ?? "—"}</dd>
           </div>
-        ) : null}
+          {fullRelease && me?.relay_inbox ? (
+            <div>
+              <dt className="settings-field-label">Relay inbox <SettingsHelp label="Relay inbox">Receives sign-in codes from event providers. It is inbound only and cannot be changed.</SettingsHelp></dt>
+              <dd className="settings-mono">{me.relay_inbox}</dd>
+            </div>
+          ) : null}
+        </dl>
 
         <div className="settings-field">
-          <label htmlFor="time-zone">Time zone</label>
+          <div className="settings-field-label">
+            <label htmlFor="time-zone">Time zone</label>
+            <SettingsHelp label="Time zone">{fullRelease ? "Used to interpret time requests such as “this evening”." : "Saved with your profile. Event times use this device’s time zone."}</SettingsHelp>
+          </div>
           <select
             id="time-zone"
             value={timeZone}
@@ -278,7 +274,6 @@ export function ProfilePanel() {
               </option>
             ))}
           </select>
-          <p className="settings-hint">{fullRelease ? "Used when the concierge reasons about “this evening”." : "Saved with your profile. Event times use this device’s time zone."}</p>
         </div>
       </section>
 

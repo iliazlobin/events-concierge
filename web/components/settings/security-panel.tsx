@@ -8,6 +8,7 @@ import {
   ShieldCheck,
   Smartphone,
 } from "lucide-react";
+import Link from "next/link";
 
 import { useSession } from "@/components/session-provider";
 import { releaseProfile } from "@/lib/release-profile";
@@ -78,8 +79,7 @@ export function SecurityPanel() {
   if (releaseProfile(config) !== "full") {
     return <div className="settings-panel">
       <h1>Account security</h1>
-      <p>View your sign-in details and account controls in Account and data.</p>
-      <a href="/settings/account">Account and data</a>
+      <Link href="/settings/account">Account</Link>
     </div>;
   }
 
@@ -87,27 +87,22 @@ export function SecurityPanel() {
     <div className="settings-panel">
       <header className="settings-panel__head">
         <h1>Security</h1>
-        <p>How you prove it&rsquo;s you, and how to shut things down if it isn&rsquo;t.</p>
+        <Link className="settings-guide-link" href="/docs/account#access">Guide <span aria-hidden="true">→</span></Link>
       </header>
 
       <p className="preview-banner" role="note">
         <ShieldCheck aria-hidden="true" />
         <span>
-          <strong>Design preview.</strong> Nothing on this page is connected yet — the controls are
-          inert and no settings will change. It is here to react to, not to use.
+          <strong>Design preview.</strong> Sample data; controls disabled.
         </span>
       </p>
 
       {delegated ? (
         <section className="settings-card">
-          <h2 className="settings-card__title">Where these live</h2>
-          <p>
-            You sign in through your identity provider, so your password, two-factor methods and
-            account recovery are managed there rather than here. The most likely shape for this
-            section is a short summary plus a link into that provider&rsquo;s security settings.
-          </p>
+          <h2 className="settings-card__title">Sign-in provider</h2>
+          <p className="settings-hint">Manages password, two-factor authentication and recovery.</p>
           <button type="button" className="button button-quiet" disabled>
-            Open provider security settings
+            Provider settings
             <span className="preview-tag">Preview</span>
           </button>
         </section>
@@ -121,7 +116,7 @@ export function SecurityPanel() {
             <p className="security-row__title">Password</p>
             <p className="security-row__detail">
               {delegated
-                ? "Set and changed with your identity provider."
+                ? "Managed by your sign-in provider."
                 : "Last changed 4 months ago."}
             </p>
           </div>
@@ -134,10 +129,6 @@ export function SecurityPanel() {
 
       <section className="settings-card">
         <h2 className="settings-card__title">Two-factor authentication</h2>
-        <p className="settings-hint">
-          A second factor helps keep a stolen password from becoming a stolen account.
-          Manage your sign-in protection with your identity provider.
-        </p>
         <div className="security-rows">
           {FACTORS.map((factor) => {
             const Icon = factor.icon;
@@ -164,7 +155,7 @@ export function SecurityPanel() {
       </section>
 
       <section className="settings-card">
-        <h2 className="settings-card__title">Where you&rsquo;re signed in</h2>
+        <h2 className="settings-card__title">Sessions</h2>
         <div className="security-rows">
           {SESSIONS.map((session) => (
             <div className="security-row" key={session.device}>
@@ -192,10 +183,6 @@ export function SecurityPanel() {
             Sign out everywhere
             <span className="preview-tag">Preview</span>
           </button>
-          <p className="settings-hint">
-            Signing out everywhere should never ask you to prove yourself again first. If someone
-            else is in your account, that prompt is the thing standing between you and stopping them.
-          </p>
         </div>
       </section>
 
@@ -211,7 +198,6 @@ export function SecurityPanel() {
             </li>
           ))}
         </ul>
-        <p className="settings-hint">Sample entries. Not real activity from your account.</p>
       </section>
     </div>
   );

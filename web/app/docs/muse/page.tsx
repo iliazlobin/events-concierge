@@ -2,18 +2,18 @@ import type { Metadata } from "next";
 import Link from "next/link";
 import { MuseInstructions } from "@/components/docs/muse-instructions";
 import { MUSE_URL } from "@/lib/muse";
-import { CodeBlock, FlowDiagram, PageContents, RelatedGuides } from "@/components/docs/docs-kit";
-export const metadata: Metadata = { title: "Muse signups" };
+import { CodeBlock, FlowDiagram, GuidePage, RelatedGuides } from "@/components/docs/docs-kit";
+export const metadata: Metadata = { title: "Registrations" };
 
 export default function MuseGuide() {
-  return <>
-    <h1>Muse signups</h1>
-    <p>Queue upcoming free Luma or Meetup events. Muse completes registration in its own browser.</p>
-    <p>Muse signups appear only when enabled for this app.</p>
-    <PageContents links={[{ href: "#connect", label: "Connect" }, { href: "#start", label: "Queue and start" }, { href: "#progress", label: "Progress" }, { href: "#recovery", label: "Limits and recovery" }]} />
+  return <GuidePage
+    title="Registrations"
+    intro={<p>Queue upcoming free Luma or Meetup events. Muse completes registration in its own browser.</p>}
+    contents={[{ href: "#connect", label: "Connect" }, { href: "#start", label: "Queue and start" }, { href: "#progress", label: "Progress" }, { href: "#recovery", label: "Limits and recovery" }]}
+  >
     <h2 id="connect" tabIndex={-1}>Connect Muse</h2>
     <ol>
-      <li>Sign in and open <Link href="/settings/muse">Muse settings</Link>.</li>
+      <li>Sign in and open <Link href="/settings/registrations">Registration settings</Link>.</li>
       <li>Copy the <strong>Connector URL</strong> directly from settings. The app must use a public HTTPS address; local preview addresses are unavailable to Muse.</li>
       <li>Configure a Muse connector with that URL and <strong>Bearer token</strong> authentication.</li>
       <li>Choose <strong>Create key</strong> in Events Concierge. Paste the key into the connector’s credential field.</li>
@@ -54,9 +54,9 @@ export default function MuseGuide() {
       <li>Only upcoming, scheduled, free Luma/Meetup events that are not sold out are supported. The app requires provider details observed within the last 48 hours.</li>
       <li>If event details are too old, wait for a source refresh or register on the provider’s website.</li>
       <li>Tasks are not automatically retried. Repeated clicks open existing progress.</li>
-      <li>In <Link href="/settings/muse">Muse settings</Link>, <strong>Replace key</strong> revokes the old key. <strong>Revoke key</strong> removes connector access.</li>
+      <li>In <Link href="/settings/registrations">Registration settings</Link>, <strong>Replace key</strong> revokes the old key. <strong>Revoke key</strong> removes connector access.</li>
       <li>Key revocation cannot stop an already running Muse browser task or withdraw a registration. Stop the task in Muse separately.</li>
     </ul>
     <RelatedGuides links={[{ href: "/docs/account#access", label: "Account and connector access" }, { href: "/docs/how-it-works#registrations", label: "How registration tasks work" }]} />
-  </>;
+  </GuidePage>;
 }
