@@ -19,6 +19,8 @@ from events_concierge.domain.muse import (
     SignupItem,
     SignupOutcome,
     SignupRegistration,
+    SignupRegistrations,
+    SignupStatusCounts,
     provider_url,
 )
 from events_concierge.ports.auth import AuthenticationFailedError
@@ -299,3 +301,38 @@ async def test_queue_conflicting_request_is_rejected_without_new_selection():
     with pytest.raises(MuseConflictError):
         await service.queue(uuid4(), uuid4(), uuid4())
     catalog.get_browse_event.assert_not_awaited()
+
+
+def test_registration_counts_include_zero_categories_and_cover_the_entire_queue():
+    counts = SignupStatusCounts(queued=50, registered=3, needs_input=2)
+    result = SignupRegistrations(items=[], total=55, unread_count=5, status_counts=counts)
+    assert result.status_counts.model_dump() == {
+        "queued": 50,
+        "in_progress": 0,
+        "needs_input": 2,
+        "awaiting_approval": 0,
+        "waitlisted": 0,
+        "registered": 3,
+        "failed": 0,
+        "uncertain": 0,
+    }
+
+
+@pytest.mark.parametrize("status", list(SignupStatusCounts.model_fields))
+def test_registration_status_counts_reject_negative_categories(status):
+    with pytest.raises(ValidationError):
+        SignupStatusCounts.model_validate({status: -1})
+
+
+@pytest.mark.parametrize("value", [True, 1.5, "2"])
+def test_registration_status_counts_require_integer_counts(value):
+    with pytest.raises(ValidationError):
+        SignupStatusCounts(queued=value)
+
+
+@pytest.mark.parametrize("total, unread", [(51, 0), (50, 51)])
+def test_registration_totals_cannot_disagree_with_status_or_unread_counts(total, unread):
+    with pytest.raises(ValidationError):
+        SignupRegistrations(
+            items=[], total=total, unread_count=unread, status_counts=SignupStatusCounts(queued=50)
+        )

@@ -54,11 +54,14 @@ import { clearEntityGraphCache } from "@/lib/entity-graph-cache";
 import { clipCalendarSummary } from "@/lib/calendar";
 import { streamChatTurn } from "@/lib/agent-stream";
 import type { SelectionEntry } from "@/lib/agent-stream";
-import { MuseRegistrations } from "@/components/muse-registrations";
-import { MuseIcon } from "@/components/muse-icon";
+import { RegistrationWorkspace } from "@/components/registration-workspace";
+import { RegistrationSummary } from "@/components/registration-summary";
+import { museRegistrationProvider } from "@/components/registration-providers";
+import { EventActionsProvider } from "@/components/event-actions-context";
+import { SourceView } from "@/components/source-view";
 import { useMuseRegistrations } from "@/components/use-muse-registrations";
 import museStyles from "@/components/muse.module.css";
-import { museEligibility, saveMuseIntent, takeMuseIntent } from "@/lib/muse";
+import { museEligibility } from "@/lib/muse";
 import { catalogFilterKey, initialCatalogFilters } from "@/lib/catalog-filters";
 import { addDays, localDateKey, normalizeDateRangeFilters, parseLocalDate } from "@/lib/date";
 import {
@@ -298,19 +301,15 @@ export function ConciergeApp() {
     window.history.replaceState(window.history.state, "", `${url.pathname}${url.search}${url.hash}`);
   }, []);
   function queueMuse(event: EventItem) {
-    if (!museEnabled) return;
+    if (!museEnabled || !me || signingOut) return;
     setMuseIntentError(null);
     if (museStatuses.has(event.canonical_event_id)) {
       showMuseRegistrations(event.canonical_event_id); return;
     }
     if (museEligibility(event)) { setMuseIntentError(museEligibility(event)); return; }
-    if (!me) {
-      try { saveMuseIntent(window.sessionStorage, event.canonical_event_id); }
-      catch { setMuseIntentError("Sign in, then use the Muse icon again. This browser cannot keep your signup request."); return; }
-      window.location.assign(signInFailurePath(401, window.location.pathname + window.location.search));
-      return;
-    }
-    void museQueue.queue(event.canonical_event_id);
+    void museQueue.queue(event.canonical_event_id).then(item => {
+      if (item) showMuseRegistrations(item.event.canonical_event_id);
+    });
   }
   const [selectedEntityId, setSelectedEntityId] = useState<string | null>(null);
   const [turns, setTurns] = useState<ChatTurn[]>([]);
@@ -347,13 +346,7 @@ export function ConciergeApp() {
   useEffect(() => {
     if (!museEnabled || sessionState !== "ready" || !historyReady || !me) return;
     if (new URLSearchParams(window.location.search).get("registrations") === "1") setMuseOpen(true);
-    const timer = window.setTimeout(() => {
-      let id: string | null = null;
-      try { id = takeMuseIntent(window.sessionStorage); } catch { return; }
-      if (id) void museQueue.queue(id);
-    }, 0);
-    return () => window.clearTimeout(timer);
-  }, [historyReady, me, museEnabled, museQueue.queue, sessionState]);
+  }, [historyReady, me, museEnabled, sessionState]);
   useEffect(() => {
     if (!museEnabled) return;
     const restore = () => setMuseOpen(Boolean(me) && new URLSearchParams(window.location.search).get("registrations") === "1");
@@ -1213,14 +1206,16 @@ export function ConciergeApp() {
           dateRanges: [],
       };
     }
+    const nextView = view === "source" && normalized.sourceKeys.length !== 1 ? "events" : view;
     if (history === "push") {
       pushConsumerSnapshot(createConsumerHistorySnapshot(
-        view,
+        nextView,
         normalized,
         null,
         calendarMode,
       ));
     } else {
+      if (nextView !== view) setView(nextView);
       applyFilters(normalized);
     }
   }, [calendarMode, filters, pushConsumerSnapshot, view]);
@@ -1279,11 +1274,18 @@ export function ConciergeApp() {
   }, [refreshSavedFilters, tenantId]);
 
   const handleSourceSelect = useCallback((sourceKey: string) => {
-    if (!sourceKey.trim()) return;
-    pushConsumerSnapshot(createConsumerHistorySnapshot("events", {
+    if (!sourceKey.trim() || (view === "source" && filters.sourceKeys[0] === sourceKey)) return;
+    const sourceReturn = createConsumerHistorySnapshot(view, filters, expandedId, calendarMode, selectedEntityId);
+    pushConsumerSnapshot(createConsumerHistorySnapshot("source", {
       ...filters,
       query: "",
       sourceKeys: [sourceKey],
+      topics: [],
+      price: "any",
+      priceComparison: "any",
+      priceMinDollars: "",
+      priceMaxDollars: "",
+      availability: "any",
       datePreset: "source",
       customStart: "",
       customEnd: "",
@@ -1292,10 +1294,13 @@ export function ConciergeApp() {
       cities: [],
       locationScopes: [],
     }, null, calendarMode));
+    window.history.replaceState({ ...window.history.state, eventsConciergeSourceReturn: {
+      sourceKey, state: createConsumerHistoryState(sourceReturn, {}),
+    } }, "", window.location.href);
     window.requestAnimationFrame(() => {
       window.scrollTo({ top: 0, left: 0, behavior: "smooth" });
     });
-  }, [calendarMode, filters, pushConsumerSnapshot]);
+  }, [calendarMode, expandedId, filters, pushConsumerSnapshot, selectedEntityId, view]);
   const handleCalendarRangeChange = useCallback((anchor: Date, mode: CalendarMode) => {
     pushConsumerSnapshot(createConsumerHistorySnapshot(
       "calendar",
@@ -1332,6 +1337,8 @@ export function ConciergeApp() {
   }
 
   return (
+    <EventActionsProvider value={{ onSourceSelect: handleSourceSelect,
+      muse: museEnabled && me && !signingOut ? { statuses: museStatuses, pendingIds: museQueue.pending, onSignup: queueMuse, watchEvent: museQueue.watchEvent } : undefined }}>
     <div className="app-shell">
       <header className="site-header">
         <button className="brand" type="button" onClick={() => changeView(releaseHome(profile))}>
@@ -1354,15 +1361,9 @@ export function ConciergeApp() {
         </nav>
 
         <div className={museStyles.headerActions}>
-          {museEnabled && me ? <button type="button" className={museStyles.trigger}
-            aria-label="Registrations" aria-expanded={museOpen} aria-haspopup="dialog"
-            aria-describedby={museQueue.unread > 0 ? "muse-registration-unread" : undefined}
-            onClick={() => showMuseRegistrations()}><MuseIcon /><span>Registrations</span>
-            {museQueue.unread > 0 ? <span id="muse-registration-unread" className={museStyles.badge} aria-label={`${museQueue.unread} unread registration updates`}>{museQueue.unread}</span> : null}
-          </button> : null}
-          <a href="/docs" className={museStyles.iconButton} aria-label="Documentation" title="Documentation">
-            <BookOpen aria-hidden="true" />
-          </a>
+          {museEnabled && me && !signingOut ? <RegistrationSummary counts={museQueue.counts} unread={museQueue.unread}
+            loading={museQueue.loading} open={museOpen} onOpen={() => showMuseRegistrations()} /> : null}
+          <a className="site-docs-link" href="/docs" aria-label="Documentation" title="Documentation"><BookOpen aria-hidden="true" /></a>
           <AccountMenu
             me={me}
             config={config}
@@ -1422,9 +1423,6 @@ export function ConciergeApp() {
         ) : null}
         {view === "events" ? (
           <EventsView
-            museStatuses={museStatuses}
-            musePendingIds={museQueue.pending}
-            onMuseSignup={museEnabled ? queueMuse : undefined}
             broadDiscovery={!filters.query.trim() && !filters.topics.length && !filters.sourceKeys.length}
             events={events}
             sort={filters.sort}
@@ -1458,6 +1456,18 @@ export function ConciergeApp() {
             onTopicSelect={handleTopicSelect}
           />
         ) : null}
+        {view === "source" ? <SourceView source={currentProvider ?? null} sourceKey={filters.sourceKeys[0] ?? ""}
+          events={events} expandedId={expandedId} loading={catalogLoading} error={catalogError}
+          hasMore={Boolean(nextCursor)} loadingMore={loadingMore} onLoadMore={handleLoadMore}
+          onExpandedChange={next => pushConsumerSnapshot(createConsumerHistorySnapshot("source", filters, next, calendarMode))}
+          onBack={() => {
+            const entry = window.history.state?.eventsConciergeSourceReturn;
+            const previous = entry?.sourceKey === filters.sourceKeys[0] ? readConsumerHistorySnapshot(entry.state) : null;
+            if (previous) pushConsumerSnapshot(previous); else changeView("events");
+          }}
+          onViewEvents={() => changeView("events")}
+          onMap={() => changeView("map")} onCalendar={() => changeView("calendar")}
+          onRetry={() => void loadCatalog(filters)} onEntitySelect={handleEntitySelect} onTopicSelect={handleTopicSelect} /> : null}
         {view === "map" ? (
           <MapView
             events={events}
@@ -1530,10 +1540,12 @@ export function ConciergeApp() {
           <button type="button" className={museStyles.iconButton} aria-label="Dismiss registration update"
             onClick={() => { museQueue.clearNotice(); setMuseIntentError(null); }}><X aria-hidden="true" /></button>
         </aside> : null}
-      {museEnabled && museOpen && me ? <MuseRegistrations items={museQueue.items} total={museQueue.total}
-        selectedId={museSelectedId} loading={museQueue.loading} error={museQueue.error}
-        hasMore={Boolean(museQueue.cursor)} onClose={closeMuseRegistrations}
-        onRefresh={museQueue.refresh} onLoadMore={museQueue.loadMore} onSeen={museQueue.markSeen} /> : null}
+      {museEnabled && museOpen && me && !signingOut ? <RegistrationWorkspace
+        selectedId={museSelectedId} onClose={closeMuseRegistrations} providers={[{
+          provider: museRegistrationProvider, items: museQueue.items, total: museQueue.total, unread: museQueue.unread,
+          counts: museQueue.counts, loading: museQueue.loading, error: museQueue.error, hasMore: Boolean(museQueue.cursor),
+          onRefresh: museQueue.refresh, onLoadMore: museQueue.loadMore, onSeen: museQueue.markSeen,
+        }]} /> : null}
 
       <nav className="mobile-nav" aria-label="Main navigation">
         {navItems.map(({ value, label, icon: Icon }) => (
@@ -1556,5 +1568,6 @@ export function ConciergeApp() {
         {config?.product_name}; {currentProvider?.display_name ?? "all providers"}
       </span>
     </div>
+    </EventActionsProvider>
   );
 }

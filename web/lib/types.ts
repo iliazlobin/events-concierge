@@ -1,6 +1,6 @@
 import type { AgentBlock, AgentToolStep, SelectionEntry } from "./agent-stream.ts";
 
-export type ViewName = "chat" | "events" | "map" | "calendar" | "entities";
+export type ViewName = "chat" | "events" | "map" | "calendar" | "entities" | "source";
 
 export type CalendarMode = "week" | "month" | "six-months";
 

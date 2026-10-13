@@ -25,7 +25,7 @@ const THIRD_PREVIOUS_HISTORY_VERSION = 3;
 const FOURTH_PREVIOUS_HISTORY_VERSION = 2;
 const LEGACY_HISTORY_VERSION = 1;
 
-const VIEWS = new Set<ViewName>(["chat", "events", "map", "calendar", "entities"]);
+const VIEWS = new Set<ViewName>(["chat", "events", "map", "calendar", "entities", "source"]);
 const CALENDAR_MODES = new Set<CalendarMode>(["week", "month", "six-months"]);
 const LEGACY_THREE_MONTH_MODE = "three-months";
 const DATE_PRESETS = new Set<DatePreset>([

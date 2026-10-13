@@ -121,7 +121,7 @@ test("the calendar reads its range as counts and only its open day as events", (
   assert.match(conciergeApp, /getCatalogSummary\(tenantId, nextFilters, timeZone\)/);
   assert.match(conciergeApp, /getCatalogDayPage\(\s*tenantId,\s*requestFilters,\s*dayKey,/);
   assert.match(conciergeApp, /const dayKey = selectedDayKey/);
-  assert.match(calendarView, /range complete/);
+  assert.match(calendarView, /summary\.total_event_count\.toLocaleString\(\)/);
 });
 
 test("a day agenda lists the day the grid counted, not yesterday's leftovers", () => {
@@ -227,8 +227,8 @@ test("an explicitly selected empty day remains selected", () => {
   assert.match(calendarView, /selectedKey && selectedKey >= startKey && selectedKey <= endKey/);
   assert.doesNotMatch(calendarView, /!byDate\.has\(selectedKey\)/);
   assert.match(calendarView, /selectedKey < localDateKey\(new Date\(\)\)/);
-  assert.match(calendarView, /selectedHistorical \? "No retained events" : "A quiet day"/);
-  assert.match(calendarView, /Nothing is scheduled for this day/);
+  assert.match(calendarView, /No matching events/);
+  assert.match(calendarView, /Older listings may be missing/);
 });
 
 test("calendar exposes Today and persisted week, month, and six-month modes", () => {
@@ -255,7 +255,7 @@ test("selecting a day marks it with an accent ring, not an inverted light fill",
   assert.doesNotMatch(styles, /\.calendar-grid button\.is-selected \{[^}]*background: var\(--ink\)/);
   assert.doesNotMatch(
     styles,
-    /\.calendar-week-grid > button\.is-selected \{[^}]*background: var\(--ink\)/,
+    /\.calendar-week-grid > \.calendar-week-day\.is-selected \{[^}]*background: var\(--ink\)/,
   );
   assert.match(
     styles,
@@ -263,7 +263,7 @@ test("selecting a day marks it with an accent ring, not an inverted light fill",
   );
   assert.match(
     styles,
-    /\.calendar-week-grid > button\.is-selected \{[^}]*box-shadow: inset 0 0 0 1px var\(--accent\)/,
+    /\.calendar-week-grid > \.calendar-week-day\.is-selected \{[^}]*box-shadow: inset 0 0 0 1px var\(--accent\)/,
   );
   // Nothing inside a selected cell may assume a light background any more.
   assert.doesNotMatch(styles, /is-selected[^{]*\{[^}]*color: rgba\(0, 0, 0/);
@@ -313,13 +313,13 @@ test("calendar views share a deterministic event-topic color system", () => {
 
 test("calendar agenda explains colors and exposes persistent interactive topic filters", () => {
   assert.match(calendarView, /calendar-topic-key/);
-  assert.match(calendarView, /COLOR KEY \+ FILTER/);
+  assert.match(calendarView, /id="calendar-topic-key-title">Event types/);
   assert.match(calendarView, /data-topic-tone=\{eventTopicTone\(topic\.topic\)\}/);
   assert.match(calendarView, /aria-pressed=\{active\}/);
   assert.match(calendarView, /onClick=\{\(\) => onTopicSelect\(topic\.topic\)\}/);
   assert.match(calendarView, /onClick=\{onTopicsClear\}/);
   assert.match(calendarView, /calendarSummaryLegendTopics\(summary, topics, activeTopics\)/);
-  assert.match(calendarView, /Counts reflect the visible events/);
+  assert.match(calendarView, /Counts cover visible events/);
   assert.match(styles, /\.calendar-topic-key[\s\S]*border-bottom: 1px solid var\(--line\)/);
   assert.match(styles, /\.calendar-topic-key ul[\s\S]*grid-template-columns: repeat\(2, minmax\(0, 1fr\)\)/);
   assert.match(calendarView, /calendar-layout[\s\S]*calendar-agenda[\s\S]*calendar-topic-key[\s\S]*<EventList/);

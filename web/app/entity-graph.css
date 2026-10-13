@@ -425,7 +425,7 @@
   padding: 14px 18px;
 }
 
-.entity-graph-inspector--event .event-card.is-static .event-card__title {
+.entity-graph-inspector--event .event-card.is-static .event-card__title-row {
   font-size: 19px;
   overflow-wrap: anywhere;
 }

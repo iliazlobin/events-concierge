@@ -20,6 +20,7 @@ from ...domain.muse import (
     SignupOutcome,
     SignupRegistration,
     SignupRegistrations,
+    SignupStatusCounts,
 )
 from ...infra.db import tenant_session_scope
 from ...ports.auth import AuthenticationFailedError
@@ -403,7 +404,15 @@ class PostgresMuseRepository:
                     await session.execute(
                         text("""
                         SELECT count(*) AS total,
-                            count(*) FILTER (WHERE version > seen_version) AS unread_count
+                            count(*) FILTER (WHERE version > seen_version) AS unread_count,
+                            count(*) FILTER (WHERE status = 'queued') AS queued,
+                            count(*) FILTER (WHERE status = 'in_progress') AS in_progress,
+                            count(*) FILTER (WHERE status = 'needs_input') AS needs_input,
+                            count(*) FILTER (WHERE status = 'awaiting_approval') AS awaiting_approval,
+                            count(*) FILTER (WHERE status = 'waitlisted') AS waitlisted,
+                            count(*) FILTER (WHERE status = 'registered') AS registered,
+                            count(*) FILTER (WHERE status = 'failed') AS failed,
+                            count(*) FILTER (WHERE status = 'uncertain') AS uncertain
                         FROM public.muse_signup_items WHERE tenant_id = :tenant_id
                     """),
                         {"tenant_id": tenant_id},
@@ -440,8 +449,36 @@ class PostgresMuseRepository:
                 items=items,
                 total=totals["total"],
                 unread_count=totals["unread_count"],
+                status_counts=SignupStatusCounts(
+                    **{status: totals[status] for status in SignupStatusCounts.model_fields}
+                ),
                 next_cursor=items[-1].event.canonical_event_id if len(rows) > limit else None,
             )
+
+    async def registrations_for_events(
+        self, tenant_id: UUID, event_ids: list[UUID]
+    ) -> list[SignupRegistration]:
+        if not 1 <= len(event_ids) <= _MAX_PAGE_SIZE or len(set(event_ids)) != len(event_ids):
+            raise ValueError("look up one to 100 distinct event dates")
+        async with tenant_session_scope(tenant_id) as session:
+            await _account_lock(session, tenant_id)
+            rows = (
+                (
+                    await session.execute(
+                        text(f"""
+                        SELECT {_REGISTRATION_FIELDS} FROM public.muse_signup_items i
+                        JOIN public.muse_signup_batches b USING (tenant_id, batch_id)
+                        WHERE i.tenant_id = :tenant_id AND
+                            i.canonical_event_id = ANY(CAST(:event_ids AS uuid[]))
+                        ORDER BY b.created_at DESC, i.canonical_event_id DESC
+                    """),
+                        {"tenant_id": tenant_id, "event_ids": event_ids},
+                    )
+                )
+                .mappings()
+                .all()
+            )
+            return [SignupRegistration.model_validate(dict(row)) for row in rows]
 
     async def see_registrations(self, tenant_id: UUID, items: list[SeenRegistration]) -> None:
         if len(items) > _MAX_PAGE_SIZE or len({item.event_id for item in items}) != len(items):
