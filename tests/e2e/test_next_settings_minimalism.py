@@ -74,6 +74,11 @@ def settings_page(page_factory, request):
 def test_corrected_profile_name_saves_on_the_first_click(settings_page):
     page, api = settings_page
     page.goto(f"{BASE}/settings")
+    nav = page.get_by_role("navigation", name="Settings sections", exact=True)
+    expect(nav.get_by_role("link", name="Documentation", exact=True)).to_have_count(0)
+    expect(page.get_by_role("main").get_by_role("link", name="Guide")).to_have_attribute(
+        "href", "/docs/account#profile"
+    )
     name = page.get_by_role("textbox", name="Display name", exact=True)
     name.fill("!!!")
     page.get_by_label("Time zone", exact=True).focus()

@@ -1,7 +1,18 @@
 import styles from "@/app/docs/docs.module.css";
+import Link from "next/link";
 import type { ReactNode } from "react";
 
 interface GuideLink { href: string; label: string }
+
+export function GuideBreadcrumb({ title }: { title: string }) {
+  return <nav className={styles.breadcrumb} aria-label="Breadcrumb">
+    <ol>
+      <li><Link href="/">Events</Link></li>
+      <li><Link href="/docs">Docs</Link></li>
+      <li><span aria-current="page">{title}</span></li>
+    </ol>
+  </nav>;
+}
 
 function PageContents({ links, label = true }: { links: GuideLink[]; label?: boolean }) {
   return <nav className={styles.contents} aria-label="On this page">
@@ -16,6 +27,7 @@ export function GuidePage({ title, intro, contents, children }: {
 }) {
   return <div className={styles.articleLayout}>
     <article className={styles.reading}>
+      <GuideBreadcrumb title={title} />
       <h1>{title}</h1>
       {intro}
       {contents.length ? <details className={styles.mobileContents}>

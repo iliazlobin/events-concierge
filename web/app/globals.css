@@ -6733,7 +6733,7 @@ textarea:focus-visible {
   border-right: 1px solid var(--line);
   display: flex;
   flex-direction: column;
-  gap: 2px;
+  gap: 1px;
   padding-right: 16px;
   position: sticky;
   top: calc(var(--header-height) + 24px);
@@ -6743,7 +6743,8 @@ textarea:focus-visible {
   border-radius: 8px;
   color: var(--muted);
   font-size: 13.5px;
-  padding: 8px 11px;
+  line-height: 1.5;
+  padding: 5px 11px;
   text-decoration: none;
 }
 
@@ -6945,7 +6946,7 @@ textarea:focus-visible {
     padding: 0 0 12px;
     position: static;
   }
-  .settings-nav a { border: 1px solid var(--line); white-space: nowrap; }
+  .settings-nav a { border: 1px solid var(--line); min-height: 34px; padding: 6px 11px; white-space: nowrap; }
   .settings-header__who { display: none; }
   .settings-actions { flex-wrap: wrap; }
 }

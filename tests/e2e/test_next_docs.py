@@ -67,8 +67,9 @@ def test_docs_are_public_and_all_guides_work_without_backend(page_factory, width
     page.route("**/auth/**", refuse_api)
     response = page.goto(BASE + "/docs")
     assert response and response.status == 200
-    assert "Documentation" in response.text()
-    expect(page.get_by_role("heading", name="Documentation", exact=True)).to_be_visible()
+    expect(page.get_by_role("heading", name="Overview", exact=True)).to_be_visible()
+    breadcrumb = page.get_by_role("navigation", name="Breadcrumb", exact=True)
+    expect(breadcrumb.locator('[aria-current="page"]')).to_have_text("Overview")
     nav = page.get_by_role("navigation", name="Documentation", exact=True)
     expect(nav.get_by_role("link", name="Overview", exact=True)).to_have_attribute(
         "aria-current", "page"
@@ -83,6 +84,10 @@ def test_docs_are_public_and_all_guides_work_without_backend(page_factory, width
         nav.get_by_role("link", name=title, exact=True).click()
         expect(page).to_have_url(re.compile(rf"/docs/{slug}$"))
         expect(page.get_by_role("heading", name=title, exact=True)).to_be_visible()
+        expect(breadcrumb.locator('[aria-current="page"]')).to_have_text(title)
+        expect(breadcrumb.get_by_role("link", name="Docs", exact=True)).to_have_attribute(
+            "href", "/docs"
+        )
         expect(nav.get_by_role("link", name=title, exact=True)).to_have_attribute(
             "aria-current", "page"
         )
@@ -127,6 +132,8 @@ def test_guides_remain_readable_and_crosslinked_without_javascript(browser):
     try:
         page = context.new_page()
         page.goto(BASE + "/docs/browsing")
+        breadcrumb = page.get_by_role("navigation", name="Breadcrumb", exact=True)
+        expect(breadcrumb.locator('[aria-current="page"]')).to_have_text("Find events")
         page.get_by_role("main").locator("details summary").click()
         contents = page.get_by_role("navigation", name="On this page", exact=True)
         contents.get_by_role("link", name="Views and calendar", exact=True).click()

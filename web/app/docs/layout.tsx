@@ -4,7 +4,7 @@ import { DocsNav } from "@/components/docs/docs-nav";
 import styles from "./docs.module.css";
 
 export const metadata: Metadata = {
-  title: { default: "Documentation · Events Concierge", template: "%s · Events Concierge docs" },
+  title: { default: "Docs · Events Concierge", template: "%s · Events Concierge docs" },
   description: "Events Concierge guides: browsing, accounts and registrations.",
 };
 
@@ -13,8 +13,9 @@ export default function DocsLayout({ children }: { children: React.ReactNode }) 
   return <div className={styles.shell}>
     <a className={styles.skip} href="#docs-content">Skip to content</a>
     <header className={styles.header}>
-      <Link className={styles.brand} href="/">
-        <span className="brand-symbol" aria-hidden="true"><i /><i /></span>Events Concierge
+      <Link className={styles.brand} href="/docs">
+        <span className="brand-symbol" aria-hidden="true"><i /><i /></span>
+        <span>Events Concierge</span><span className={styles.brandSection}>Docs</span>
       </Link>
       <Link href="/">Back to events</Link>
     </header>
