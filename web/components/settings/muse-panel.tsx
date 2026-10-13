@@ -10,12 +10,14 @@ import {
 } from "@/lib/muse";
 import styles from "./muse-panel.module.css";
 
+const CLIPBOARD_ERROR = "Clipboard unavailable. Copy the field manually.";
+
 export function MuseConnectionPanel() {
   const { tenantId } = useSession();
   const [connection, setConnection] = useState<MuseConnection | null>(null);
   const [token, setToken] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
-  const [message, setMessage] = useState<string | null>(null);
+  const [message, setMessage] = useState<{ text: string; inline: boolean } | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [origin, setOrigin] = useState("");
   const refresh = useCallback(async () => {
@@ -37,18 +39,22 @@ export function MuseConnectionPanel() {
     setBusy(true); setError(null);
     try {
       await revokeMuseConnection(tenantId); setToken(null); setConnection({ connected: false, expires_at: null });
-      setMessage("Key revoked.");
+      setMessage({ text: "Key revoked.", inline: true });
     } catch (problem) { setError(readableError(problem, "Could not revoke the connection key.")); }
     finally { setBusy(false); }
   }
   async function copy(value: string, label: string) {
-    try { await navigator.clipboard.writeText(value); setMessage(label); }
-    catch { setError("Clipboard unavailable. Copy the field manually."); }
+    try {
+      await navigator.clipboard.writeText(value);
+      setError(current => current === CLIPBOARD_ERROR ? null : current);
+      setMessage({ text: label, inline: false });
+    }
+    catch { setMessage(null); setError(CLIPBOARD_ERROR); }
   }
   const schema = origin ? `${origin}/v1/muse/openapi.json` : "";
   return <div className="settings-panel">
     {error ? <p role="alert" className="settings-error">{error}</p> : null}
-    {message ? <p role="status" className="settings-notice">{message}</p> : null}
+    <p role="status" aria-live="polite" aria-atomic="true" className={message?.inline ? "settings-notice" : "sr-only"}>{message?.text}</p>
     <section className="settings-card" aria-labelledby="muse-connection-heading">
       <h2 id="muse-connection-heading" className="settings-card__title">Connection</h2>
       <dl className={`settings-facts ${styles.facts}`}>
