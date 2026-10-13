@@ -25,7 +25,6 @@ import {
   normalizeDateRangeFilters,
   serializeDateRangeFilterForApi,
 } from "./date.ts";
-import { catalogFilterKey, emptyCatalogFilters } from "./catalog-filters.ts";
 
 export const SESSION_KEY = "events-concierge.local-session.v1";
 
@@ -199,42 +198,19 @@ function catalogFilterQuery(
   return query;
 }
 
-export function getCatalogNameSuggestions(
+/** Names and counts always describe events within the caller's selected filters. */
+export async function getCatalogNameSuggestions(
   filters: CatalogFilters,
   term: string,
   signal?: AbortSignal,
 ): Promise<CatalogNameSuggestion[]> {
-  if (term.trim().length < 2) return Promise.resolve([]);
+  if (term.trim().length < 2) return [];
+  signal?.throwIfAborted();
   const query = catalogFilterQuery({ ...filters, query: term });
   query.set("limit", "8");
-  return api<CatalogNameSuggestion[]>(`/v1/catalog/name-suggestions?${query}`, { signal });
-}
-
-export interface CatalogNameMatches {
-  items: CatalogNameSuggestion[];
-  outsideFilters: boolean;
-}
-
-/** Keep known names discoverable when the current event filters exclude them. */
-export async function getCatalogNameMatches(
-  filters: CatalogFilters,
-  term: string,
-  signal?: AbortSignal,
-): Promise<CatalogNameMatches> {
-  const items = await getCatalogNameSuggestions(filters, term, signal);
+  const items = await api<CatalogNameSuggestion[]>(`/v1/catalog/name-suggestions?${query}`, { signal });
   signal?.throwIfAborted();
-  const allFilters = emptyCatalogFilters();
-  const keyOptions = { includeSort: false };
-  const unfiltered = catalogFilterKey({ ...filters, query: term }, keyOptions)
-    === catalogFilterKey({ ...allFilters, query: term }, keyOptions);
-  if (items.length || unfiltered || term.trim().length < 2) {
-    return { items, outsideFilters: false };
-  }
-  // An empty successful read permits one broader read. Failures must stay failures,
-  // and neither read changes the caller's event filters or starts collection.
-  const broaderItems = await getCatalogNameSuggestions(allFilters, term, signal);
-  signal?.throwIfAborted();
-  return { items: broaderItems, outsideFilters: true };
+  return items;
 }
 
 export function getCatalogPage(

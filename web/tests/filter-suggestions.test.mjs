@@ -80,12 +80,16 @@ test("catalog name matching preserves non-Latin names and meaningful punctuation
   }
 });
 
-test("broader name counts are labeled as catalog counts", () => {
+test("only names with matching events are offered", () => {
   const [suggestion] = getCatalogNameFilterSuggestions("nebi", [
     { name: "Nebius", kinds: ["organization", "host"], event_count: 7 },
-  ], true);
-  assert.equal(suggestion.description, "Host · 7 catalog events");
+    { name: "Nebius Studio", kinds: ["venue"], event_count: 0 },
+  ]);
+  assert.equal(suggestion.description, "Host · 7 events");
   assert.equal(suggestion.value, "Nebius");
+  assert.deepEqual(getCatalogNameFilterSuggestions("nebi", [
+    { name: "Nebius", kinds: ["organization"], event_count: 0 },
+  ]), []);
 });
 
 test("category-first expressions separate the filter kind from its term", () => {
