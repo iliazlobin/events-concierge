@@ -22,7 +22,7 @@ import {
 } from "@/components/filter-chip-editor";
 import { SavedFilterPicker } from "@/components/saved-filter-picker";
 import { signInFailurePath } from "@/lib/sign-in";
-import { getCatalogNameMatches } from "@/lib/api";
+import { getCatalogNameSuggestions } from "@/lib/api";
 import { suggestSavedFilterName, uniqueSavedFilterName } from "@/lib/catalog-filter-name";
 import {
   PriceFilterEditor,
@@ -363,7 +363,7 @@ export function FilterBar({
   const literalQuery = useRef<string | null>(filters.query || null);
   const [catalogNames, setCatalogNames] = useState<{
     key: string; items: CatalogNameSuggestion[];
-    status: "loading" | "ready" | "error"; outsideFilters: boolean;
+    status: "loading" | "ready" | "error";
   } | null>(null);
   const suggestionListRef = useRef<HTMLDivElement>(null);
   /**
@@ -415,18 +415,18 @@ export function FilterBar({
     if (!searchNames) return;
     const controller = new AbortController();
     let cancelled = false;
-    setCatalogNames({ key: nameSearchKey, items: [], status: "loading", outsideFilters: false });
+    setCatalogNames({ key: nameSearchKey, items: [], status: "loading" });
     setActiveSuggestion(-1);
     const timer = window.setTimeout(() => {
-      void getCatalogNameMatches(latestFilters.current, composerTerm, controller.signal)
-        .then(({ items, outsideFilters }) => {
+      void getCatalogNameSuggestions(latestFilters.current, composerTerm, controller.signal)
+        .then((items) => {
           if (cancelled) return;
-          setCatalogNames({ key: nameSearchKey, items, status: "ready", outsideFilters });
+          setCatalogNames({ key: nameSearchKey, items, status: "ready" });
           setActiveSuggestion(-1);
         })
         .catch(() => {
           if (!cancelled) {
-            setCatalogNames({ key: nameSearchKey, items: [], status: "error", outsideFilters: false });
+            setCatalogNames({ key: nameSearchKey, items: [], status: "error" });
           }
         });
     }, 220);
@@ -469,7 +469,7 @@ export function FilterBar({
       ].slice(0, 8);
     }
     const names = !effectiveComposerContext && searchNames && catalogNames?.key === nameSearchKey
-      ? getCatalogNameFilterSuggestions(composerTerm, catalogNames.items, catalogNames.outsideFilters) : [];
+      ? getCatalogNameFilterSuggestions(composerTerm, catalogNames.items) : [];
     return [...savedMatches, ...[...scoped, ...names].sort((a, b) => b.score - a.score)]
       .slice(0, 8);
   }, [
@@ -515,8 +515,7 @@ export function FilterBar({
   const nameSearchMessage = !searchNames ? null
     : !nameState || nameState.status === "loading" ? "Searching names…"
     : nameState.status === "error" ? "Name suggestions unavailable. You can still search."
-    : !nameState.items.length ? "No matching names in the catalog."
-    : nameState.outsideFilters ? "No names match these filters. Showing catalog matches." : null;
+    : !nameState.items.length ? "No matching names for these filters." : null;
   const showSuggestions = searchFocused && !suggestionsSuppressed
     && (suggestions.length > 0 || nameSearchMessage !== null);
   const hasActiveSuggestion = activeSuggestion >= 0 && activeSuggestion < suggestions.length;

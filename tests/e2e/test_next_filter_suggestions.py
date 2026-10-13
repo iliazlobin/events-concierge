@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 import re
+from datetime import datetime
 from urllib.parse import parse_qs, urlsplit
 
 import pytest
@@ -269,48 +270,78 @@ def test_catalog_name_failure_and_old_response_do_not_replace_current_suggestion
 
 
 @pytest.mark.parametrize("width", [1440, 390])
-def test_companies_outside_filters_remain_discoverable_without_changing_event_filters(
+def test_vendors_without_filtered_events_are_hidden_and_matching_selection_has_results(
     catalog_names_page, tmp_path, width,
 ):
     harness, api, queries = catalog_names_page
     page = harness.page
     page.set_viewport_size({"width": width, "height": 900})
     name_queries = []
+    vendor = catalog_event() | {
+        "title": "Nebius Builders Night", "host_names": ["Nebius"], "city": "sanfrancisco",
+        "start_at": "2030-10-16T18:00:00-07:00", "end_at": None,
+        "topics": ["ai"], "source_keys": ["tech-week-sf-2026"],
+    }
+    event_start = datetime.fromisoformat(vendor["start_at"])
+
+    def matches(query):
+        # The vendor is known globally, but its event lies outside the initial date range.
+        if "starts_after" in query and event_start < datetime.fromisoformat(query["starts_after"][0]):
+            return False
+        if "starts_before" in query and event_start >= datetime.fromisoformat(query["starts_before"][0]):
+            return False
+        return all(not query.get(key) or query[key] == [value] for key, value in {
+            "source_key": "tech-week-sf-2026", "city": "sanfrancisco", "topic": "ai",
+            "price": "free", "availability": "available",
+        }.items())
 
     def names(route: Route):
         query = parse_qs(urlsplit(route.request.url).query)
         name_queries.append(query)
         api.calls.append((route.request.method, "/v1/catalog/name-suggestions"))
-        filtered = "starts_after" in query
-        api.respond(route, [] if filtered else [
-            {"name": "Nebius", "kinds": ["organization"], "event_count": 7},
-        ])
+        api.respond(route, [{"name": "Nebius", "kinds": ["organization"], "event_count": 1}]
+                    if matches(query) else [])
+
+    def catalog(route: Route):
+        query = parse_qs(urlsplit(route.request.url).query)
+        queries.append(query)
+        api.calls.append((route.request.method, "/v1/catalog/events"))
+        api.respond(route, {"items": [vendor] if matches(query) else [], "next_cursor": None,
+                            "providers": [], "topic_facets": [], "city_facets": []})
 
     page.route("**/v1/catalog/name-suggestions?*", names)
-    page.goto(f"{BASE}/?view=events&source=tech-week-sf-2026&city=sanfrancisco&when=custom"
-              "&start=2030-10-09&end=2030-10-11&price=free&topic=ai&availability=available")
+    page.route("**/v1/catalog/events?*", catalog)
+    restricted = (f"{BASE}/?view=events&source=tech-week-sf-2026&city=sanfrancisco&when=custom"
+                  "&start=2030-10-09&end=2030-10-11&price=free&topic=ai&availability=available")
+    page.goto(restricted)
     search = page.get_by_role("combobox", name=SEARCH_NAME)
+    search.fill("nebi")
+    expect(page.get_by_role("status").filter(has_text="No matching names for these filters")).to_be_visible()
+    expect(page.get_by_role("option").filter(has_text="Nebius")).to_have_count(0)
+    assert len(name_queries) == 1
+    assert "starts_after" in name_queries[0] and "starts_before" in name_queries[0]
+    page.screenshot(path=str(tmp_path / f"vendor-without-filtered-events-{width}.png"), animations="disabled")
+
+    # Extending the date selection admits the real fixture event, so its vendor is now offered.
+    page.goto(restricted.replace("start=2030-10-09&end=2030-10-11",
+                                 "start=2030-10-14&end=2030-10-20"))
     search.fill("nebi")
     option = page.get_by_role("option").filter(has_text="Nebius")
     expect(option).to_be_visible()
-    expect(page.get_by_role("status").filter(has_text="Showing catalog matches")).to_be_visible()
-    expect(option).to_contain_text("7 catalog events")
-    assert name_queries[-1] == {"q": ["nebi"], "limit": ["8"]}
-    page.screenshot(path=str(tmp_path / f"company-outside-filters-{width}.png"), animations="disabled")
-    search.press("ArrowDown")
-    search.press("Enter")
+    expect(option).to_contain_text("1 event")
+    option.click()
     expect(search).to_have_value("Nebius")
+    expect(page.get_by_role("heading", name="Nebius Builders Night", exact=True)).to_be_visible()
     page.wait_for_function("new URL(location.href).searchParams.get('q') === 'Nebius'")
-    for query in (name_queries[0], queries[-1]):
-        assert query["source_key"] == ["tech-week-sf-2026"]
-        assert query["city"] == ["sanfrancisco"]
-        assert query["price"] == ["free"]
-        assert query["topic"] == ["ai"]
-        assert query["availability"] == ["available"]
+    for query in (name_queries[-1], queries[-1]):
+        for key, value in {"source_key": "tech-week-sf-2026", "city": "sanfrancisco",
+                           "price": "free", "topic": "ai", "availability": "available"}.items():
+            assert query[key] == [value]
         assert "starts_after" in query and "starts_before" in query
     page.reload()
-    expect(page.get_by_role("combobox", name=SEARCH_NAME)).to_have_value("Nebius")
-    assert parse_qs(urlsplit(page.url).query)["start"] == ["2030-10-09"]
+    expect(search).to_have_value("Nebius")
+    expect(page.get_by_role("heading", name="Nebius Builders Night", exact=True)).to_be_visible()
+    assert parse_qs(urlsplit(page.url).query)["start"] == ["2030-10-14"]
     assert page.evaluate("document.documentElement.scrollWidth <= innerWidth")
 
 

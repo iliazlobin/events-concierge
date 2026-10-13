@@ -89,7 +89,6 @@ export interface NameFilterSuggestion {
 export function getCatalogNameFilterSuggestions(
   query: string,
   names: CatalogNameSuggestion[],
-  outsideFilters = false,
 ): NameFilterSuggestion[] {
   const labels = {
     organization: "Organization", person: "Person", organizer: "Organizer", host: "Host",
@@ -98,6 +97,7 @@ export function getCatalogNameFilterSuggestions(
   const term = query.trim().toLowerCase();
   if (!term) return [];
   return names.flatMap((entry) => {
+    if (entry.event_count <= 0) return [];
     // Names may contain non-Latin letters or punctuation (for example C++). Keep them
     // literal, as the catalog search does, instead of using the facet alias normalizer.
     const name = entry.name.toLowerCase();
@@ -107,7 +107,7 @@ export function getCatalogNameFilterSuggestions(
     const kinds = Object.keys(labels).filter((kind) => entry.kinds.includes(
       kind as keyof typeof labels,
     )) as Array<keyof typeof labels>;
-    const count = `${entry.event_count}${outsideFilters ? " catalog" : ""} event${entry.event_count === 1 ? "" : "s"}`;
+    const count = `${entry.event_count} event${entry.event_count === 1 ? "" : "s"}`;
     return [{
       kind: "name" as const, value: entry.name, label: entry.name,
       nameKind: labels[kinds[0]] ?? "Name",
