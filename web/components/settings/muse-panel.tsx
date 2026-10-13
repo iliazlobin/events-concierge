@@ -54,7 +54,7 @@ export function MuseConnectionPanel() {
   const schema = origin ? `${origin}/v1/muse/openapi.json` : "";
   return <div className="settings-panel">
     {error ? <p role="alert" className="settings-error">{error}</p> : null}
-    {message ? <p role="status" className={message.inline ? "settings-notice" : "sr-only"}>{message.text}</p> : null}
+    <p role="status" aria-live="polite" aria-atomic="true" className={message?.inline ? "settings-notice" : "sr-only"}>{message?.text}</p>
     <section className="settings-card" aria-labelledby="muse-connection-heading">
       <h2 id="muse-connection-heading" className="settings-card__title">Connection</h2>
       <dl className={`settings-facts ${styles.facts}`}>

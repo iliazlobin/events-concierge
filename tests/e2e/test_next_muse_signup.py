@@ -451,6 +451,7 @@ def test_settings_secret_is_one_time_with_instructions_in_docs(page_factory, wid
     page = harness.page
     page.goto(BASE + "/settings/registrations")
     expect(page.get_by_role("heading", name="Registrations", exact=True)).to_be_visible()
+    expect(page.get_by_role("status")).to_have_class("sr-only")
     selector = page.get_by_role("combobox", name="Provider", exact=True)
     expect(selector).to_have_value("muse")
     assert selector.locator("option").all_text_contents() == ["Muse"]
@@ -462,7 +463,6 @@ def test_settings_secret_is_one_time_with_instructions_in_docs(page_factory, wid
     assert secret.input_value() == FIXTURE_KEY
     assert FIXTURE_KEY not in page.evaluate("JSON.stringify([localStorage, sessionStorage])")
     copy_key = page.get_by_role("button", name="Copy connection key", exact=True)
-    copy_key.scroll_into_view_if_needed()
     bounds = (secret.bounding_box(), copy_key.bounding_box())
     copy_key.click()
     expect(page.get_by_role("status")).to_contain_text("Key copied.")
