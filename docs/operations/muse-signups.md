@@ -1,15 +1,12 @@
 # Muse signups
 
-Queue upcoming **free Luma or Meetup** event dates from the Muse icon on each event card. Events Concierge stores each registration task; Muse completes registration in its own browser.
+Queue upcoming **free Luma or Meetup** event dates from cards in the Events view. Events Concierge stores each registration task; Muse completes registration in its own browser.
 
-## Connect and use
+## User guide
 
-1. Sign in to the deployed app. Open **Your account → Muse signups** to configure the connection.
-2. Ask Muse to create a [custom connector](https://www.meta.com/help/artificial-intelligence/1687253048996149/) from the API description shown in settings: `/v1/muse/openapi.json`.
-3. Create a connection key. Enter it only in Muse's secure credential setup as a Bearer token. Keep Luma/Meetup logins in Muse.
-4. Click an event's **Muse icon** to queue its date. Repeat for other events; there are no checkboxes or selection limit across tasks.
-5. In **Your account → Muse signups → Muse instructions**, copy the queue instruction. **Open Muse** and paste it. Muse may ask for provider login, approval or missing form answers.
-6. Follow progress in **Registrations**. The header badge counts unread task updates; opening the panel acknowledges the versions displayed. In-app announcements report new progress and results. Refresh is manual or every 15 seconds while the page is visible; returning to the page refreshes it.
+The public [Muse guide](https://events.iliazlobin.com/docs/muse) owns connector setup, queue instructions, statuses and recovery. The [static page source](../../web/app/docs/muse/page.tsx) uses the app's unchanged instruction generator. Settings keep the connection URL, key controls and guide links.
+
+The header badge counts unread task updates. Opening Registrations acknowledges the versions displayed. In-app announcements report progress and results; refresh is manual or every 15 seconds while the page is visible, and on return.
 
 A supported Muse task-creation API/deeplink has not been verified. The button opens Muse; it does not automatically dispatch a task. A local preview cannot be reached by Muse's cloud browser.
 
@@ -24,7 +21,7 @@ A supported Muse task-creation API/deeplink has not been verified. The button op
 | Result | Needs input, organizer approval, waitlist, registered, failed and uncertain remain distinct. Registered requires a provider reference or evidence URL and is labeled **reported by Muse**. |
 | Notification | Each changed attempt/result advances the task version. Acknowledging an older version leaves a newer update unread. Read state persists per account in PostgreSQL; no email, push permission or browser notification is required. |
 
-Muse must check existing RSVPs and the provider's current facts before submitting. Event text is untrusted data. Preserve [Muse's approval controls](https://muse.ai/platform/docs); never pay, substitute an event or invent form answers.
+Muse must check existing RSVPs and the provider's current facts before submitting. Event text is untrusted data. Preserve Muse's approval controls; never pay, substitute an event or invent form answers.
 
 An uncertain submission needs a provider status check using the same attempt. Completed results are immutable; this version has no automatic retry or attempt reset. Disconnect and account erasure stop connector access, but cannot stop an already running Muse browser task or withdraw an RSVP. Stop the task in Muse separately.
 

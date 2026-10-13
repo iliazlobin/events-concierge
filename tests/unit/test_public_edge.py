@@ -686,6 +686,12 @@ def _native_rehearsal(resources, directory, binary):
     [
         "/",
         "/sign-in",
+        "/docs",
+        "/docs/",
+        "/docs/browsing",
+        "/docs/muse?section=connect",
+        "/docs/account",
+        "/docs/how-it-works",
         "/v1/events?city=sanfrancisco",
         "/__/auth/handler?code=one%2Ftwo",
         "/__/auth/handler.js",
@@ -751,6 +757,13 @@ def test_forwarded_authority_is_rebuilt_and_operator_headers_are_removed(proxy_r
         "/__/auth/handler/",
         "/__/auth/action",
         "/__/firebase/init.json",
+        "/docss",
+        "/docs//",
+        "/docs/../admin",
+        "/docs/%2e%2e/admin",
+        "/docs%2fadmin",
+        "/docs/%252e%252e/admin",
+        "/docs/a%5cb",
     ],
 )
 def test_private_and_probe_paths_never_reach_the_frontend(proxy_rehearsal, path):
@@ -826,6 +839,8 @@ def test_protected_port_rejects_missing_ambiguous_or_overlong_assertion(proxy_re
     [
         "/",
         "/v1/events",
+        "/docs",
+        "/docs/muse",
         "/_next/static/app.js",
         "/admin//",
         "/admin/.",
