@@ -30,8 +30,9 @@ export function RegistrationPanel() {
           if (next) setSelected(next.id);
         }}>{providers.map(item => <option key={item.id} value={item.id}>{item.label}</option>)}</select>
       </div>
-      <RegistrationAccountPanel key={`${provider.id}-account`} executor={provider.id} />
-      <Panel key={provider.id} />
+      <RegistrationAccountPanel key={`${provider.id}-account`} executor={provider.id}>
+        <Panel key={provider.id} />
+      </RegistrationAccountPanel>
     </> : <p className="settings-hint">Not enabled.</p>}
   </section>;
 }
