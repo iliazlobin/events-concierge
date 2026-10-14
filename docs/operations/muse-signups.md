@@ -4,7 +4,7 @@ Signed-in users queue upcoming **free Luma or Meetup** dates. The title action i
 
 ## User guide
 
-The public [Muse guide](https://events.iliazlobin.com/docs/muse) owns connector setup, queue instructions, statuses and recovery. The [static page source](../../web/app/docs/muse/page.tsx) uses the app's unchanged instruction generator. Settings keep the connection URL, key controls and guide links.
+The public [Muse guide](https://events.iliazlobin.com/docs/muse) owns connector setup, registration accounts, queue instructions, statuses and recovery. The [static page source](../../web/app/docs/muse/page.tsx) shares the app's instruction generator. Settings keep the registration email, connection URL, key controls and guide links.
 
 The header widget counts queued, in-progress, registered and needs-attention tasks across the full account queue. Registrations opens a right panel with provider and status filters. The badge counts unread updates; only visible task versions are acknowledged. In-app announcements report progress and results; refresh is manual or every 15 seconds while the page is visible, and on return.
 
@@ -15,6 +15,7 @@ A supported Muse task-creation API/deeplink has not been verified. The button op
 | Boundary | Behavior |
 | --- | --- |
 | Account | Google/Apple app session creates selections and keys; owner writes require CSRF. Muse cannot edit the account or choose events. |
+| Registration identity | A private preference selects the expected provider email independently of the app sign-in. A default email and Luma/Meetup overrides are scoped to the executor, currently Muse. Empty default means the current provider browser account; an absent override inherits the default. This is selection metadata, not verified provider identity, credentials or an access grant. |
 | Connection | One 30-day key per account, shown once; PostgreSQL stores its hash. Replace revokes the old key; **Revoke key** removes access. An active key does not verify Muse's connection. |
 | Queue | One durable task per account/event. Repeated clicks return the existing task. Request UUIDs are idempotent and cannot be reused for another date. Published, scheduled, future, free dates require a Luma/Meetup observation within 48 hours. |
 | Attempt | Claim with a stable UUID before browser action. A claim rechecks title, date, location, availability and freshness. Competing attempts conflict. Replays return progress, never authorize another submission. |
@@ -22,6 +23,13 @@ A supported Muse task-creation API/deeplink has not been verified. The button op
 | Notification | Each changed attempt/result advances the task version. Acknowledging an older version leaves a newer update unread. Read state persists per account in PostgreSQL; no email, push permission or browser notification is required. |
 
 Muse must check existing RSVPs and the provider's current facts before submitting. Event text is untrusted data. Preserve Muse's approval controls; never pay, substitute an event or invent form answers.
+
+Tasks carry `registration_account` with executor, provider and optional `expected_email`.
+Muse checks the visible provider account against this selection; it never infers a provider
+login from the Events Concierge owner email. A mismatch requires the owner's instruction,
+not an automatic sign-out. Saving a preference updates queued tasks and advances their
+unread version only when the selection changes. Claimed attempts retain their selection;
+changing settings cannot retarget an active or completed attempt.
 
 An uncertain submission needs a provider status check using the same attempt. Completed results are immutable; this version has no automatic retry or attempt reset. Key revocation and account erasure stop connector access, but cannot stop an already running Muse browser task or withdraw an RSVP. Stop the task in Muse separately.
 
@@ -42,8 +50,11 @@ The [connector schema](../../src/events_concierge/api/muse.py) includes only fou
 | PUT | `/batches/{batch_id}/items/{event_id}/outcome` — `attempt_id`, `outcome` |
 
 - Owner session endpoints: `POST /v1/me/muse/registrations` queues `{request_id, event_id}`; `GET` returns tasks, total/unread counts and `next_cursor`; `POST /registrations/seen` acknowledges `{items: [{event_id, version}]}`. Pages contain up to 100 tasks. `GET /registrations/by-event?event_id=…` looks up up to 100 distinct visible event dates. `status_counts` returns all eight status totals independently of the page/cursor; waitlisted and organizer approval do not count as registered. Existing batch endpoints remain compatible with saved handoffs.
+- `GET/PUT /v1/me/registration-accounts/{executor}` reads/replaces the owner's selection; only `muse` is supported currently. The response contains `executor`, `expected_email`, `provider_overrides`, `revision` and `updated_at`. PUT sends the email fields and exactly the current revision plus one; stale revisions return 409. Unset preferences start at revision 0. The connector key cannot read or change this settings endpoint.
 - [Owner API](../../src/events_concierge/api/muse.py), [queue service](../../src/events_concierge/application/muse.py) and [persistence](../../src/events_concierge/adapters/postgres/muse.py) own the contract. Migrations 0209 and 0214 retain existing attempts and add request aliases, versions and read state. Tenant RLS and the account-erasure fence apply to every Muse table.
 - Responses use `no-store`. Never send credentials, cookies, payment details or personal form answers in outcomes; store only a short result and provider reference.
+- Registration-account settings use tenant RLS, the account-erasure fence and tenant deletion cascade. Revoking a connector key retains the owner's preference without granting connector access. Migration 0219 adds the settings storage; legacy task selections default to the current browser account, never the owner email.
+- Retain additive schema 0219 during application rollback. Before reverting to code that predates account selection, disable Muse signups and stop active browser work in Muse; that code cannot honor saved account mappings. Re-enable only after the snapshot contract is restored. The downgrade refuses to delete saved preferences or task snapshots; never clear that data to force a downgrade.
 - Release through the existing [migration and immutable-image procedure](release.md). Source checks do not prove that Muse is connected or that a provider signup succeeded.
 - Before acceptance, verify the deployed schema, owner CSRF, key replacement/revocation, separate-account isolation, and one explicitly authorized free signup. Confirm both the provider RSVP and the reported result. Real signups require the user's authorization.
 

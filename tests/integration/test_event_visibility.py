@@ -145,7 +145,7 @@ async def test_read_capability_rollback_preserves_visibility_data_and_private_gr
         candidates[0], visibility="private", location_withheld=True, geo=None, venue_name=None,
     )], catalog)
     [item], _ = await catalog.browse_current(source_keys=(source,), after=None, limit=10)
-    migration = import_module("migrations.versions.0219_catalog_read_performance")
+    migration = import_module("migrations.versions.0220_catalog_read_performance")
     owner = create_async_engine(os.environ["EC_MIGRATION_URL"])
     try:
         async with owner.begin() as connection:

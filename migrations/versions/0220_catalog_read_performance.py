@@ -1,7 +1,7 @@
 """Avoid repeated catalog admission scans and fence short-lived public read caches.
 
-Revision ID: 0219
-Revises: 0218
+Revision ID: 0220
+Revises: 0219
 """
 
 from collections.abc import Sequence
@@ -9,8 +9,8 @@ from collections.abc import Sequence
 from alembic import op
 from sqlalchemy import text
 
-revision: str = "0219"
-down_revision: str | None = "0218"
+revision: str = "0220"
+down_revision: str | None = "0219"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 

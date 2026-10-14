@@ -60,6 +60,11 @@ test("handoff covers every page, protects attempts, and distinguishes reported r
   const instruction = museInstruction();
   assert.ok(instruction.includes("every page") && instruction.includes("cursor") && instruction.includes("Claim each queued event"));
   assert.ok(instruction.includes("approval") && instruction.includes("uncertain") && instruction.includes("without claiming a new attempt"));
+  assert.match(instruction, /registration_account from the claim response/);
+  assert.match(instruction, /resuming an existing attempt, keep its saved account/);
+  assert.match(instruction, /expected_email.*visible provider account/);
+  assert.match(instruction, /otherwise use the current browser account/);
+  assert.match(instruction, /Never infer a provider account from my Events Concierge sign-in or switch accounts without my instruction/);
   assert.equal(museStatusLabel.registered, "Registered · reported by Muse");
   assert.notEqual(museStatusLabel.awaiting_approval, museStatusLabel.registered);
 });

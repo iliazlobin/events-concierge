@@ -33,6 +33,9 @@ class MuseApi(ReleaseApi):
         self.muse_calls = []
         self.event_detail_calls = []
         self.connected = False
+        self.registration_account = {"executor": "muse", "expected_email": None, "provider_overrides": {}, "revision": 0, "updated_at": None}
+        self.account_saves = []
+        self.account_error = None
         self.batches = []
         self.queued = []
         self.registrations = []
@@ -86,12 +89,15 @@ class MuseApi(ReleaseApi):
             },
         )
 
-    def handle(self, route: Route):
-        path, method = urlsplit(route.request.url).path, route.request.method
+    def record_request(self, route, path, method):
         if path.startswith(("/v1/me/muse/", "/v1/muse/")):
             self.muse_calls.append((method, path))
         if method not in {"GET", "HEAD"}:
             self.writes.append((method, path, route.request.headers))
+
+    def handle(self, route: Route):
+        path, method = urlsplit(route.request.url).path, route.request.method
+        self.record_request(route, path, method)
         if path == "/v1/me" and not self.signed_in:
             self.harness.allowed_console_error_fragments.append("401")
             self.respond(route, {"detail": "Sign in required"}, 401)
@@ -114,6 +120,8 @@ class MuseApi(ReleaseApi):
                 route,
                 next(event for event in self.events if event["canonical_event_id"] == event_id),
             )
+        elif path == "/v1/me/registration-accounts/muse":
+            self.account_preferences(route)
         elif path == "/v1/me/muse/connection":
             self.connection(route)
         elif path == "/v1/me/muse/registrations/by-event":
@@ -129,6 +137,22 @@ class MuseApi(ReleaseApi):
             self.respond(route, {"state": "s" * 43})
         else:
             super().handle(route)
+
+    def account_preferences(self, route):
+        if route.request.method != "PUT":
+            self.respond(route, self.registration_account)
+            return
+        body = route.request.post_data_json
+        self.account_saves.append(body)
+        if self.account_error:
+            self.harness.allowed_console_error_fragments.append(str(self.account_error))
+            self.respond(route, {"detail": "Account settings unavailable"}, self.account_error)
+        elif body["revision"] != self.registration_account["revision"] + 1:
+            self.harness.allowed_console_error_fragments.append("409")
+            self.respond(route, {"detail": "Registration account changed"}, 409)
+        else:
+            self.registration_account = body | {"executor": "muse", "updated_at": "2030-06-01T00:00:00Z"}
+            self.respond(route, self.registration_account)
 
     def queue(self, route):
         if route.request.method == "POST":
@@ -708,3 +732,109 @@ def test_visible_past_event_opens_existing_registration_beyond_first_queue_page(
     expect(dialog).to_contain_text("older-rsvp")
     assert api.queued == []
     assert api.unexpected == []
+
+
+@pytest.mark.parametrize("width", [1440, 320])
+def test_registration_account_is_independent_saved_and_clearable(page_factory, width, tmp_path):
+    harness, api = install(page_factory, width)
+    page = harness.page
+    page.goto(BASE + "/settings/registrations")
+    form = page.get_by_role("form", name="Registration account", exact=True)
+    email = form.get_by_role("textbox", name="Default email", exact=True)
+    expect(email).to_be_enabled()
+    expect(email).to_have_value("")
+    expect(email).to_have_attribute("placeholder", "Current browser account")
+    expect(form.get_by_role("button", name="Save", exact=True)).to_be_disabled()
+    assert api.account_saves == []
+    form.get_by_role("button", name="Registration account help", exact=True).focus()
+    expect(page.get_by_role("tooltip")).to_contain_text("Can differ from your Events Concierge sign-in")
+    page.keyboard.press("Escape")
+    email.fill("Provider+events@EXAMPLE.TEST")
+    form.get_by_role("button", name="Per site", exact=True).click()
+    form.get_by_role("textbox", name="Luma email", exact=True).fill("luma@example.test")
+    form.get_by_role("button", name="Save", exact=True).click()
+    expect(form.get_by_text("Saved.", exact=True)).to_be_visible()
+    assert api.account_saves == [{"expected_email": "Provider+events@example.test", "provider_overrides": {"luma": "luma@example.test"}, "revision": 1}]
+    account_write = next(item for item in api.writes if item[1] == "/v1/me/registration-accounts/muse")
+    assert account_write[2]["x-fixture-csrf"] == "bound-fixture"
+    assert "authorization" not in account_write[2]
+    expect(page.locator(".settings-header__who")).to_have_text("browser@example.test")
+    expect(form.get_by_role("link", name="Account guide", exact=True)).to_have_attribute("href", "/docs/muse#account")
+    page.reload()
+    expect(email).to_have_value("Provider+events@example.test")
+    expect(form.get_by_role("textbox", name="Luma email", exact=True)).to_have_value("luma@example.test")
+    page.screenshot(path=str(tmp_path / f"registration-account-{width}.png"))
+    email.fill("")
+    form.get_by_role("textbox", name="Luma email", exact=True).fill("")
+    form.get_by_role("button", name="Save", exact=True).click()
+    expect(form.get_by_text("Saved.", exact=True)).to_be_visible()
+    assert api.account_saves[-1] == {"expected_email": None, "provider_overrides": {}, "revision": 2}
+    page.reload()
+    expect(email).to_have_value("")
+    assert page.evaluate("document.documentElement.scrollWidth <= innerWidth")
+    assert api.unexpected == []
+
+
+def test_registration_account_validation_and_failed_save_keep_the_draft(page_factory):
+    harness, api = install(page_factory)
+    page = harness.page
+    page.goto(BASE + "/settings/registrations")
+    form = page.get_by_role("form", name="Registration account", exact=True)
+    email = form.get_by_role("textbox", name="Default email", exact=True)
+    expect(email).to_be_enabled()
+    email.fill("person@example")
+    form.get_by_role("button", name="Save", exact=True).click()
+    expect(form.get_by_role("alert")).to_contain_text("Enter a valid email address.")
+    assert api.account_saves == []
+    email.fill("provider@example.test")
+    api.account_error = 503
+    form.get_by_role("button", name="Save", exact=True).click()
+    expect(form.get_by_role("alert")).to_contain_text("Account settings unavailable")
+    expect(email).to_have_value("provider@example.test")
+    expect(form.get_by_role("button", name="Save", exact=True)).to_be_enabled()
+    assert api.registration_account["expected_email"] is None
+    api.account_error = None
+    form.get_by_role("button", name="Save", exact=True).click()
+    expect(form.get_by_text("Saved.", exact=True)).to_be_visible()
+    assert len(api.account_saves) == 2
+    assert api.account_saves[0] == api.account_saves[1]
+    assert api.unexpected == []
+
+
+def test_registration_account_conflict_requires_reload_and_preserves_unsaved_identity(page_factory):
+    harness, api = install(page_factory)
+    page = harness.page
+    page.goto(BASE + "/settings/registrations")
+    form = page.get_by_role("form", name="Registration account", exact=True)
+    email = form.get_by_role("textbox", name="Default email", exact=True)
+    expect(email).to_be_enabled()
+    email.fill("draft@example.test")
+    api.registration_account = api.registration_account | {"expected_email": "other-tab@example.test", "revision": 1}
+    form.get_by_role("button", name="Save", exact=True).click()
+    expect(form.get_by_role("alert")).to_contain_text("Settings changed. Reload and review before saving.")
+    expect(form.get_by_role("button", name="Save", exact=True)).to_be_disabled()
+    expect(email).to_have_value("draft@example.test")
+    assert len(api.account_saves) == 1
+    form.get_by_role("button", name="Reload", exact=True).click()
+    expect(form.get_by_role("button", name="Save", exact=True)).to_be_enabled()
+    expect(email).to_have_value("draft@example.test")
+    assert len(api.account_saves) == 1
+    form.get_by_role("button", name="Save", exact=True).click()
+    expect(form.get_by_text("Saved.", exact=True)).to_be_visible()
+    assert api.account_saves[-1] == {"expected_email": "draft@example.test", "provider_overrides": {}, "revision": 2}
+    assert api.unexpected == []
+
+
+def test_registration_drawer_uses_the_attempt_account_snapshot(page_factory):
+    harness, api = install(page_factory)
+    event = api.events[0]
+    api.registration_account = api.registration_account | {"expected_email": "new-setting@example.test", "revision": 1}
+    api.registrations = [api.registration(event, status="in_progress") | {
+        "registration_account": {"executor": "muse", "provider": "luma", "expected_email": "claimed@example.test"}
+    }]
+    page = harness.page
+    page.goto(BASE + "/?view=events&when=all&city=")
+    page.get_by_role("button", name="Registrations", exact=True).click()
+    status = page.get_by_role("dialog").locator('[data-status="in_progress"]')
+    expect(status).to_have_attribute("title", "Registration account: claimed@example.test")
+    assert api.account_saves == []

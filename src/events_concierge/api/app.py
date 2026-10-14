@@ -2253,7 +2253,7 @@ async def _database_is_ready() -> bool:
     try:
         async with asyncio.timeout(_READINESS_TIMEOUT_SECONDS):
             async with system_session_scope() as session:
-                # The serving image requires 0219's restricted cache fence.
+                # The serving image requires 0220's restricted cache fence.
                 # An unmigrated or incorrectly granted database must not be ready.
                 await session.execute(text("SELECT public.fn_catalog_public_read_token_v1()"))
     except Exception as exc:

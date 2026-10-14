@@ -42,6 +42,12 @@ const nextConfig: NextConfig = {
         ],
       },
       {
+        source: "/v1/me/registration-accounts/:path*",
+        headers: [
+          { key: "Cache-Control", value: "no-store, max-age=0" },
+        ],
+      },
+      {
         // Browser-bound sign-in challenges and session responses must never be cached.
         source: "/auth/:path*",
         headers: [
