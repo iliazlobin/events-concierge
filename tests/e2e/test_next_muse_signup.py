@@ -588,7 +588,10 @@ def assert_title_action_geometry(row):
                  height: action.height, iconSize: glyph.height };
     }""")
     assert abs(dimensions["iconSize"] - dimensions["font"]) < 0.5
-    assert dimensions["width"] >= 24 and dimensions["height"] >= 24
+    # Rectangles may lose a fraction of a pixel when their coordinates are
+    # subtracted (for example, a 24px control reads as 23.99994px in Chromium).
+    minimum_size = min(dimensions["width"], dimensions["height"])
+    assert minimum_size >= 24 or minimum_size == pytest.approx(24, abs=0.001)
     assert 0 <= dimensions["actionLeft"] - dimensions["titleRight"] <= dimensions["font"]
     assert abs(dimensions["actionCenter"] - dimensions["titleTop"] - dimensions["line"] / 2) < 1.5
 
