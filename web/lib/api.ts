@@ -218,6 +218,7 @@ export function getCatalogPage(
   filters: CatalogFilters,
   cursor: string | null = null,
   requestTime = new Date(),
+  signal?: AbortSignal,
 ): Promise<CatalogPage> {
   // A continuation cursor is bound to the first page's exact date interval.
   // Reuse that page's clock anchor when a rolling preset is paginated.
@@ -225,7 +226,7 @@ export function getCatalogPage(
   query.set("limit", "72");
   query.set("sort", filters.sort ?? "soonest");
   if (cursor) query.set("cursor", cursor);
-  return api<CatalogPage>(`/v1/catalog/events?${query}`, { tenantId });
+  return api<CatalogPage>(`/v1/catalog/events?${query}`, { tenantId, signal });
 }
 
 /**

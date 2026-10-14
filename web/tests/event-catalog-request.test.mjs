@@ -116,3 +116,23 @@ test("each eligibility filter changes the request and calendar cache identity", 
   assert.notEqual(catalogFilterKey({ ...base, datePreset: "week" }), baseKey);
   assert.notEqual(catalogFilterKey({ ...base, dateRanges: FILTERS.dateRanges }), baseKey);
 });
+
+test("a superseded event-page request carries cancellation to fetch", async () => {
+  const original = globalThis.fetch;
+  const controller = new AbortController();
+  let observed;
+  globalThis.fetch = async (_path, options) => {
+    observed = options.signal;
+    return new Promise((_resolve, reject) => {
+      options.signal.addEventListener("abort", () => reject(options.signal.reason));
+    });
+  };
+  try {
+    const request = getCatalogPage(null, FILTERS, null, new Date(), controller.signal);
+    controller.abort();
+    await assert.rejects(request, { name: "AbortError" });
+    assert.equal(observed, controller.signal);
+  } finally {
+    globalThis.fetch = original;
+  }
+});

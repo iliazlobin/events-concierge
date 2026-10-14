@@ -41,6 +41,7 @@ from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
 from ..adapters.identity_platform import IdentityPlatformBrowserSessionAdapter
 from ..adapters.oidc.session import _safe_return_path
+from ..api.catalog_reads import CatalogReadCoordinator, CatalogReadMiddleware
 from ..api.firebase_auth_helper import install_firebase_auth_helper
 from ..api.muse import is_muse_path, muse_router
 from ..api.release_profile import apply_release_profile
@@ -2252,7 +2253,9 @@ async def _database_is_ready() -> bool:
     try:
         async with asyncio.timeout(_READINESS_TIMEOUT_SECONDS):
             async with system_session_scope() as session:
-                await session.execute(text("SELECT 1"))
+                # The serving image requires 0220's restricted cache fence.
+                # An unmigrated or incorrectly granted database must not be ready.
+                await session.execute(text("SELECT public.fn_catalog_public_read_token_v1()"))
     except Exception as exc:
         _log.warning("database_readiness_failed", error=type(exc).__name__)
         return False
@@ -2454,6 +2457,9 @@ def create_app() -> FastAPI:
         app.state.container = build_container(
             settings, runtime_ports=preflight_application_runtime(settings)
         )
+        app.state.catalog_reads = CatalogReadCoordinator(
+            settings.database_pool_size + settings.database_max_overflow
+        )
         operator_database = None
         try:
             if settings.admin_ingestion_enabled:
@@ -2471,6 +2477,7 @@ def create_app() -> FastAPI:
     app = FastAPI(title="Events Concierge", version="0.1.0", lifespan=lifespan)
     app.state.settings = settings
     app.state.ingestion_admin = None
+    app.add_middleware(CatalogReadMiddleware, state=app.state)
     install_firebase_auth_helper(app, settings)
 
     @app.exception_handler(RequestValidationError)
@@ -3617,26 +3624,23 @@ def create_app() -> FastAPI:
             sort=sort,
             include_providers=include_facets,
         )
-        city_facets, topic_facets = (
-            await asyncio.gather(
-                app.state.container.catalog.list_city_facets(),
-                app.state.container.catalog.list_topic_facets(
-                    source_keys=source_keys,
-                    starts_after=None,
-                    starts_before=None,
-                    date_ranges=date_ranges,
-                    query=query,
-                    cities=city_filters,
-                    location_scopes=location_scopes,
-                    price=price,
-                    price_max_cents=price_max_cents,
-                    price_min_cents=price_min_cents,
-                    availability=availability,
-                ),
+        city_facets, topic_facets = [], []
+        if cursor is None and include_facets:
+            # One catalog request uses at most one database connection at once.
+            city_facets = await app.state.container.catalog.list_city_facets()
+            topic_facets = await app.state.container.catalog.list_topic_facets(
+                source_keys=source_keys,
+                starts_after=None,
+                starts_before=None,
+                date_ranges=date_ranges,
+                query=query,
+                cities=city_filters,
+                location_scopes=location_scopes,
+                price=price,
+                price_max_cents=price_max_cents,
+                price_min_cents=price_min_cents,
+                availability=availability,
             )
-            if cursor is None and include_facets
-            else ([], [])
-        )
         items = rows[:limit]
         next_cursor = (
             _catalog_cursor_out(items[-1], filter_scope) if len(rows) > limit and items else None
