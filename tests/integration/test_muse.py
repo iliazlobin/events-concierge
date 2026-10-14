@@ -1,14 +1,17 @@
 """Real RLS, credential expiry, attempt races and erasure on a disposable database."""
 
 import asyncio
+import importlib
 import os
 import sys
 from datetime import UTC, datetime, timedelta
+from types import SimpleNamespace
 from uuid import uuid4
 
 import pytest
 from sqlalchemy import text
 from sqlalchemy.exc import DBAPIError
+from sqlalchemy.ext.asyncio import create_async_engine
 from tests.support.integration_database import (
     isolated_database_name,
     replace_database,
@@ -529,3 +532,59 @@ async def test_registration_account_downgrade_refuses_retained_data(muse_migrati
         assert (await repository.registration_account(tenant, "muse")).expected_email == "provider@example.test"
     else:
         assert (await repository.registrations(tenant)).total == 1
+
+
+@pytest.mark.parametrize("retained", ["preference", "snapshot"])
+async def test_registration_account_downgrade_fails_closed_for_filtered_table_owner(
+    muse_migration_db, monkeypatch, retained,
+):
+    tenant, repository = await account(), PostgresMuseRepository()
+    if retained == "preference":
+        await repository.replace_registration_account(
+            tenant, "muse", RegistrationAccountUpdate(
+                expected_email="provider@example.test", provider_overrides={}, revision=1
+            ),
+        )
+    else:
+        event = selected_event()
+        await repository.queue_registration(tenant, uuid4(), event.canonical_event_id, event)
+    migration = importlib.import_module("migrations.versions.0219_registration_accounts")
+    owner_engine = create_async_engine(muse_migration_db["EC_MIGRATION_URL"])
+    role = "ec_registration_owner_" + uuid4().hex
+
+    def run_downgrade(connection):
+        with monkeypatch.context() as patch:
+            patch.setattr(migration, "op", SimpleNamespace(execute=connection.exec_driver_sql))
+            migration.downgrade()
+
+    try:
+        # Role creation and ownership changes belong to this transaction. Refusal rolls
+        # all of them back, leaving no cluster role or changed table owner behind.
+        with pytest.raises(DBAPIError, match="query would be affected by row-level security policy"):
+            async with owner_engine.begin() as connection:
+                await connection.exec_driver_sql(f'CREATE ROLE "{role}" NOLOGIN NOSUPERUSER NOBYPASSRLS')
+                await connection.exec_driver_sql(f'GRANT USAGE, CREATE ON SCHEMA public TO "{role}"')
+                await connection.exec_driver_sql(f'ALTER TABLE public.registration_account_settings OWNER TO "{role}"')
+                await connection.exec_driver_sql(f'ALTER TABLE public.muse_signup_items OWNER TO "{role}"')
+                await connection.exec_driver_sql(f'SET LOCAL ROLE "{role}"')
+                # This is the exact dangerous condition: retained data appears absent
+                # even to its table owner because FORCE RLS has no tenant context.
+                assert (await connection.execute(text("SELECT count(*) FROM public.registration_account_settings"))).scalar_one() == 0
+                assert (await connection.execute(text("SELECT count(*) FROM public.muse_signup_items"))).scalar_one() == 0
+                await connection.run_sync(run_downgrade)
+    finally:
+        await owner_engine.dispose()
+    if retained == "preference":
+        assert (await repository.registration_account(tenant, "muse")).expected_email == "provider@example.test"
+    else:
+        assert (await repository.registrations(tenant)).total == 1
+
+
+async def test_registration_account_empty_superuser_downgrade_and_upgrade(muse_migration_db):
+    # The integration runner's disposable PostgreSQL migration role is a superuser.
+    # Complete visibility allows removing an empty additive schema, then recreating it.
+    await _migrate_muse_test_database(muse_migration_db, "downgrade", "0218")
+    await _migrate_muse_test_database(muse_migration_db, "upgrade", "head")
+    tenant = await account()
+    settings = await PostgresMuseRepository().registration_account(tenant, "muse")
+    assert settings.revision == 0 and settings.expected_email is None

@@ -39,6 +39,10 @@ def upgrade() -> None:
 
 def downgrade() -> None:
     op.execute("""
+        -- Prove full visibility: FORCE RLS otherwise lets a non-BYPASSRLS table owner
+        -- see zero rows and then drop retained tenant data. PostgreSQL errors when
+        -- row_security=off would require filtering instead of silently bypassing it.
+        SET LOCAL row_security = off;
         LOCK TABLE public.registration_account_settings, public.muse_signup_items IN ACCESS EXCLUSIVE MODE;
         DO $$
         BEGIN
