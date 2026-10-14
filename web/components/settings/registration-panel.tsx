@@ -5,6 +5,7 @@ import { useState, type ComponentType } from "react";
 import { useSession } from "@/components/session-provider";
 import { availableRegistrationProviders, type RegistrationProviderId } from "@/lib/registration-providers";
 import { MuseConnectionPanel } from "./muse-panel";
+import { RegistrationAccountPanel } from "./registration-account-panel";
 import styles from "./muse-panel.module.css";
 
 const PANELS: Record<RegistrationProviderId, ComponentType> = { muse: MuseConnectionPanel };
@@ -29,6 +30,7 @@ export function RegistrationPanel() {
           if (next) setSelected(next.id);
         }}>{providers.map(item => <option key={item.id} value={item.id}>{item.label}</option>)}</select>
       </div>
+      <RegistrationAccountPanel key={`${provider.id}-account`} executor={provider.id} />
       <Panel key={provider.id} />
     </> : <p className="settings-hint">Not enabled.</p>}
   </section>;

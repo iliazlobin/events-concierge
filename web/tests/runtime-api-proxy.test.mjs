@@ -24,6 +24,7 @@ test("Muse schema, connector rejection and owner responses retain no-store throu
   for (const [path, status, headers] of [
     ["/v1/muse/openapi.json", 200, {}],
     ["/v1/muse/connector/batches?limit=100", 401, { Authorization: "Bearer invalid-fixture" }],
+    ["/v1/me/registration-accounts/muse", 200, { Cookie: "__Host-ec_session=owner-fixture" }],
     ["/v1/me/muse/registrations", 200, { Cookie: "__Host-ec_session=owner-fixture" }],
   ]) {
     await t.test(`${path} (${status})`, async () => {
