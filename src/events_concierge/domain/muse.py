@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import re
+from collections.abc import Mapping
 from datetime import datetime
-from typing import Literal
+from typing import Any, Literal
 from urllib.parse import urlsplit
 from uuid import UUID
 
@@ -16,6 +18,14 @@ _DELETE = 127
 MUSE_HOSTS = frozenset(
     {"lu.ma", "www.lu.ma", "luma.com", "www.luma.com", "meetup.com", "www.meetup.com"}
 )
+type RegistrationExecutor = Literal["muse"]
+type RegistrationProvider = Literal["luma", "meetup"]
+_EMAIL_LOCAL = re.compile(r"[A-Za-z0-9!#$%&'*+/=?^_`{|}~-]+(?:\.[A-Za-z0-9!#$%&'*+/=?^_`{|}~-]+)*")
+_EMAIL_LABEL = re.compile(r"[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?")
+_EMAIL_TLD = re.compile(r"[A-Za-z]{2,63}")
+_MAX_EMAIL_LENGTH = 254
+_MAX_EMAIL_LOCAL_LENGTH = 64
+_MIN_EMAIL_DOMAIN_LABELS = 2
 type SignupStatus = Literal[
     "queued",
     "in_progress",
@@ -49,6 +59,73 @@ def provider_url(value: str) -> str:
 
 class MuseModel(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
+
+
+def registration_email(value: str) -> str:
+    """A user-authored account selector, never a verified identity or access grant."""
+    if not value.isascii() or any(ord(char) < _SPACE or ord(char) == _DELETE for char in value):
+        raise ValueError("use an email address")
+    value = value.strip(" ")
+    local, separator, domain = value.rpartition("@")
+    labels = domain.split(".")
+    if (
+        not separator
+        or len(value) > _MAX_EMAIL_LENGTH
+        or len(local) > _MAX_EMAIL_LOCAL_LENGTH
+        or _EMAIL_LOCAL.fullmatch(local) is None
+        or len(labels) < _MIN_EMAIL_DOMAIN_LABELS
+        or any(_EMAIL_LABEL.fullmatch(label) is None for label in labels)
+        or _EMAIL_TLD.fullmatch(labels[-1]) is None
+    ):
+        raise ValueError("use an email address")
+    return local + "@" + domain.lower()
+
+
+def _optional_email(value: str | None) -> str | None:
+    return registration_email(value) if value is not None else None
+
+
+def _email_overrides(value: dict[RegistrationProvider, str]) -> dict[RegistrationProvider, str]:
+    return {provider: registration_email(email) for provider, email in value.items()}
+
+
+class RegistrationAccountUpdate(MuseModel):
+    expected_email: str | None
+    provider_overrides: dict[RegistrationProvider, str]
+    revision: int = Field(ge=1, strict=True)
+
+    _email = field_validator("expected_email")(_optional_email)
+    _overrides = field_validator("provider_overrides")(_email_overrides)
+
+
+class RegistrationAccountSettings(MuseModel):
+    executor: RegistrationExecutor = "muse"
+    expected_email: str | None = None
+    provider_overrides: dict[RegistrationProvider, str] = Field(default_factory=dict)
+    revision: int = Field(default=0, ge=0, strict=True)
+    updated_at: datetime | None = None
+
+    _email = field_validator("expected_email")(_optional_email)
+    _overrides = field_validator("provider_overrides")(_email_overrides)
+
+    def for_event(self, event: SignupEvent) -> RegistrationAccount:
+        provider: RegistrationProvider = (
+            "meetup" if urlsplit(event.registration_url).hostname in {"meetup.com", "www.meetup.com"}
+            else "luma"
+        )
+        return RegistrationAccount(
+            executor=self.executor,
+            provider=provider,
+            expected_email=self.provider_overrides.get(provider, self.expected_email),
+        )
+
+
+class RegistrationAccount(MuseModel):
+    executor: RegistrationExecutor = "muse"
+    provider: RegistrationProvider
+    expected_email: str | None = None
+
+    _email = field_validator("expected_email")(_optional_email)
 
 
 class SignupEvent(MuseModel):
@@ -102,10 +179,20 @@ class SignupOutcome(MuseModel):
 
 class SignupItem(MuseModel):
     event: SignupEvent
+    registration_account: RegistrationAccount
     status: SignupStatus = "queued"
     attempt_id: UUID | None = None
     outcome: SignupOutcome | None = None
     updated_at: datetime
+
+    @model_validator(mode="before")
+    @classmethod
+    def legacy_browser_account(cls, value: Any) -> Any:
+        # Retained attempts have no recorded provider identity. Never infer the app login email.
+        if isinstance(value, Mapping) and "event" in value and value.get("registration_account") is None:
+            event = SignupEvent.model_validate(value["event"])
+            return {**value, "registration_account": RegistrationAccountSettings().for_event(event)}
+        return value
 
 
 class SignupBatch(MuseModel):

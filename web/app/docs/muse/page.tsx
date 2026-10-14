@@ -9,7 +9,7 @@ export default function MuseGuide() {
   return <GuidePage
     title="Registrations"
     intro={<p>Queue upcoming free Luma or Meetup events. Muse completes registration in its own browser.</p>}
-    contents={[{ href: "#connect", label: "Connect" }, { href: "#start", label: "Queue and start" }, { href: "#progress", label: "Progress" }, { href: "#recovery", label: "Limits and recovery" }]}
+    contents={[{ href: "#connect", label: "Connect" }, { href: "#account", label: "Registration account" }, { href: "#start", label: "Queue and start" }, { href: "#progress", label: "Progress" }, { href: "#recovery", label: "Limits and recovery" }]}
   >
     <h2 id="connect" tabIndex={-1}>Connect Muse</h2>
     <ol>
@@ -22,6 +22,16 @@ export default function MuseGuide() {
     <p>Bearer authentication sends the connection key in the request’s authorization header:</p>
     <CodeBlock label="Connector request format — placeholder key">{"GET /v1/muse/connector/batches?limit=100\nAuthorization: Bearer YOUR_CONNECTION_KEY"}</CodeBlock>
     <p>The <a href="/v1/muse/openapi.json">connector schema</a> describes the operations Muse can use when signups are enabled. Your event-provider logins stay in Muse.</p>
+    <h2 id="account" tabIndex={-1}>Registration account</h2>
+    <p>Your Events Concierge sign-in owns the queue. The account Muse uses on Luma or Meetup can be different.</p>
+    <ol>
+      <li>Open <Link href="/settings/registrations">Registration settings</Link> and select Muse.</li>
+      <li>Set the default registration email. Use <strong>Per site</strong> to override it for Luma or Meetup.</li>
+      <li>Save. Muse checks the selected email against the provider account before submitting.</li>
+    </ol>
+    <p>Leave the default empty to use the current browser account. An empty site override inherits the default. This preference stores no credentials, changes no login and grants no Google or provider access.</p>
+    <CodeBlock label="Different app and provider accounts">{"Events Concierge: owner@example.test\nMuse default:      registrations@example.test\nLuma override:    events@example.test"}</CodeBlock>
+    <p>Changes apply to queued tasks. Claimed attempts keep their account selection, including when resumed. If the browser account differs from the selected email, Muse stops for your instruction; it does not switch accounts automatically.</p>
     <h2 id="start" tabIndex={-1}>Queue and start</h2>
     <FlowDiagram id="signup-flow" label="From selection to registration" steps={[
       { title: "Queue event", detail: "Save a task in the app" },

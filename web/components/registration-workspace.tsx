@@ -127,7 +127,7 @@ export function RegistrationWorkspace({ providers, selectedId, onClose }: {
             <div><a className={styles.eventTitle} href={eventUrl ?? undefined} target="_blank" rel="noopener noreferrer">{item.event.title}<ExternalLink aria-hidden="true" /></a>
               <p className={styles.taskDate}>{date.weekday} · {formatEventTime(item.event.start_at, item.event.end_at)}{item.event.city ? ` · ${formatCity(item.event.city)}` : ""}</p></div>
             {item.unread ? <span className={styles.unreadDot} aria-label="Unread update" /> : null}</div>
-          <p className={styles.status} data-status={item.status}><span aria-hidden="true" />{provider.statusLabels[item.status]}</p>
+          <p className={styles.status} data-status={item.status} title={item.registration_account ? `Registration account: ${item.registration_account.expected_email ?? "current browser account"}` : undefined}><span aria-hidden="true" />{provider.statusLabels[item.status]}</p>
           {item.status === "uncertain" ? <p className={styles.note}>Check provider confirmation before retrying.</p> : null}
           {item.outcome?.note ? <p className={styles.note}>{item.outcome.note}</p> : null}
           {item.outcome?.confirmation_reference ? <p className={styles.note}>Confirmation: {item.outcome.confirmation_reference}</p> : null}

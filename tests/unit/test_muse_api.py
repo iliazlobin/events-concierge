@@ -42,6 +42,8 @@ async def test_disabled_muse_omits_routes_before_authentication_or_io(
     batch_id, event_id = uuid4(), uuid4()
     async with AsyncClient(transport=ASGITransport(app=app), base_url=ORIGIN) as client:
         for method, path in [
+            ("GET", "/v1/me/registration-accounts/muse"),
+            ("PUT", "/v1/me/registration-accounts/muse"),
             ("GET", "/v1/me/muse/connection"),
             ("POST", "/v1/me/muse/connection"),
             ("DELETE", "/v1/me/muse/connection"),
@@ -193,6 +195,7 @@ async def test_connector_contract_exposes_only_selected_batch_operations(monkeyp
     assert schema["servers"] == [{"url": ORIGIN}]
     assert sum(len(verbs) for verbs in schema["paths"].values()) == 4
     assert all(path.startswith("/v1/muse/connector/") for path in schema["paths"])
+    assert "/v1/me/registration-accounts/{executor}" not in schema["paths"]
     assert schema["components"]["securitySchemes"]["MuseConnection"]["scheme"] == "bearer"
     for verbs in schema["paths"].values():
         for operation in verbs.values():

@@ -1,5 +1,6 @@
 import { api } from "./api.ts";
 import type { EventItem } from "./types.ts";
+import type { RegistrationAccountSnapshot } from "./registration-accounts.ts";
 import type { RegistrationStatus, RegistrationStatusCounts, RegistrationTask } from "./registrations.ts";
 
 export const MUSE_URL = "https://muse.ai/";
@@ -8,6 +9,7 @@ const hosts = new Set(["lu.ma", "www.lu.ma", "luma.com", "www.luma.com", "meetup
 export type MuseStatus = RegistrationStatus;
 export interface MuseConnection { connected: boolean; expires_at: string | null }
 export interface MuseSignupItem {
+  registration_account: RegistrationAccountSnapshot;
   event: { canonical_event_id: string; title: string; start_at: string; end_at: string | null;
     venue_name: string | null; city: string | null; registration_url: string; price_status: "free"; observed_at: string };
   status: MuseStatus;
@@ -46,7 +48,7 @@ export interface MuseRegistrationPage {
 }
 
 export function museInstruction(): string {
-  return "Use my Events Concierge connector to read every page of my signup batches (limit 100; cursor is the last batch ID). Register only the free events I queued. Skip registered and failed tasks. Check waitlisted or awaiting-approval results without submitting again. Claim each queued event before acting, check for an existing RSVP, and verify title, date, price and availability. Resume an existing attempt without claiming a new attempt; if a submission is uncertain, check its status before retrying. Preserve your approval checks. Ask me for login or unanswered form questions; do not invent answers, pay or substitute events. Report each outcome with provider confirmation evidence.";
+  return "Use my Events Concierge connector to read every page of my signup batches (limit 100; cursor is the last batch ID). Register only the free events I queued. Skip registered and failed tasks. Check waitlisted or awaiting-approval results without submitting again. Claim each queued event before acting. Use registration_account from the claim response; when resuming an existing attempt, keep its saved account. When expected_email is set, verify the visible provider account matches it before provider action; otherwise use the current browser account. Never infer a provider account from my Events Concierge sign-in or switch accounts without my instruction. Check for an existing RSVP and verify title, date, price and availability. Resume an existing attempt without claiming a new attempt; if a submission is uncertain, check its status before retrying. Preserve your approval checks. Ask me for login or unanswered form questions; do not invent answers, pay or substitute events. Report each outcome with provider confirmation evidence.";
 }
 
 /** Newer responses cannot roll back a task that a queue or outcome response already advanced. */

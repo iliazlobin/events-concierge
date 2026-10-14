@@ -1,6 +1,9 @@
+import type { RegistrationAccountSnapshot } from "./registration-accounts.ts";
+
 export type RegistrationStatus = "queued" | "in_progress" | "needs_input" | "awaiting_approval" | "waitlisted" | "registered" | "failed" | "uncertain";
 export type RegistrationStatusCounts = Record<RegistrationStatus, number>;
 export interface RegistrationTask {
+  registration_account?: RegistrationAccountSnapshot;
   event: { canonical_event_id: string; title: string; start_at: string; end_at: string | null;
     venue_name: string | null; city: string | null; registration_url: string; price_status: "free"; observed_at: string };
   status: RegistrationStatus;

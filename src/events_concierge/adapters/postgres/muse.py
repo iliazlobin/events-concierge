@@ -13,6 +13,9 @@ from ...domain.muse import (
     MuseConflictError,
     MuseConnection,
     MuseNotFoundError,
+    RegistrationAccountSettings,
+    RegistrationAccountUpdate,
+    RegistrationExecutor,
     SeenRegistration,
     SignupBatch,
     SignupEvent,
@@ -27,9 +30,32 @@ from ...ports.auth import AuthenticationFailedError
 
 _MAX_PAGE_SIZE = 100
 _REGISTRATION_FIELDS = """
-    i.event, i.status, i.attempt_id, i.outcome, i.updated_at, i.batch_id,
+    i.event, i.registration_account, i.status, i.attempt_id, i.outcome, i.updated_at, i.batch_id,
     b.created_at, i.version, i.version > i.seen_version AS unread
 """
+
+
+async def _registration_account(
+    session: AsyncSession, tenant_id: UUID, executor: RegistrationExecutor = "muse"
+) -> RegistrationAccountSettings:
+    row = (
+        (
+            await session.execute(
+                text("""
+                    SELECT executor, expected_email, provider_overrides, revision, updated_at
+                    FROM public.registration_account_settings
+                    WHERE tenant_id = :tenant_id AND executor = :executor
+                """),
+                {"tenant_id": tenant_id, "executor": executor},
+            )
+        )
+        .mappings()
+        .one_or_none()
+    )
+    return (
+        RegistrationAccountSettings.model_validate(dict(row))
+        if row is not None else RegistrationAccountSettings(executor=executor)
+    )
 
 
 async def _request_batch_id(
@@ -107,6 +133,7 @@ async def _insert_batch(
     session: AsyncSession, tenant_id: UUID, request_id: UUID, events: list[SignupEvent]
 ) -> UUID:
     batch_id = uuid4()
+    account = await _registration_account(session, tenant_id)
     await session.execute(
         text("""
             INSERT INTO public.muse_signup_batches (tenant_id, batch_id, request_id)
@@ -117,14 +144,17 @@ async def _insert_batch(
     for event in events:
         await session.execute(
             text("""
-                INSERT INTO public.muse_signup_items (tenant_id, batch_id, canonical_event_id, event)
-                VALUES (:tenant_id, :batch_id, :event_id, CAST(:event AS jsonb))
+                INSERT INTO public.muse_signup_items (
+                    tenant_id, batch_id, canonical_event_id, event, registration_account
+                )
+                VALUES (:tenant_id, :batch_id, :event_id, CAST(:event AS jsonb), CAST(:account AS jsonb))
             """),
             {
                 "tenant_id": tenant_id,
                 "batch_id": batch_id,
                 "event_id": event.canonical_event_id,
                 "event": event.model_dump_json(),
+                "account": account.for_event(event).model_dump_json(),
             },
         )
     return batch_id
@@ -171,7 +201,7 @@ async def _batch(session: AsyncSession, tenant_id: UUID, batch_id: UUID) -> Sign
         (
             await session.execute(
                 text("""
-        SELECT event, status, attempt_id, outcome, updated_at FROM public.muse_signup_items
+        SELECT event, registration_account, status, attempt_id, outcome, updated_at FROM public.muse_signup_items
         WHERE tenant_id = :tenant_id AND batch_id = :batch_id
         ORDER BY event->>'start_at', canonical_event_id
     """),
@@ -194,7 +224,7 @@ async def _item(
         (
             await session.execute(
                 text("""
-        SELECT event, status, attempt_id, outcome, updated_at FROM public.muse_signup_items
+        SELECT event, registration_account, status, attempt_id, outcome, updated_at FROM public.muse_signup_items
         WHERE tenant_id = :tenant_id AND batch_id = :batch_id AND canonical_event_id = :event_id
         FOR UPDATE
     """),
@@ -210,6 +240,84 @@ async def _item(
 
 
 class PostgresMuseRepository:
+    async def registration_account(
+        self, tenant_id: UUID, executor: RegistrationExecutor
+    ) -> RegistrationAccountSettings:
+        async with tenant_session_scope(tenant_id) as session:
+            await _account_lock(session, tenant_id)
+            return await _registration_account(session, tenant_id, executor)
+
+    async def replace_registration_account(
+        self, tenant_id: UUID, executor: RegistrationExecutor, update: RegistrationAccountUpdate
+    ) -> RegistrationAccountSettings:
+        async with tenant_session_scope(tenant_id) as session:
+            # Serialize preference changes, queue insertion, claims and erasure on the same lock.
+            await _account_lock(session, tenant_id)
+            current = await _registration_account(session, tenant_id, executor)
+            if update.revision != current.revision + 1:
+                raise MuseConflictError("registration account revision conflicts")
+            row = (
+                (
+                    await session.execute(
+                        text("""
+                            INSERT INTO public.registration_account_settings (
+                                tenant_id, executor, expected_email, provider_overrides, revision
+                            ) VALUES (
+                                :tenant_id, :executor, :email, CAST(:overrides AS jsonb), :revision
+                            )
+                            ON CONFLICT (tenant_id, executor) DO UPDATE SET
+                                expected_email = EXCLUDED.expected_email,
+                                provider_overrides = EXCLUDED.provider_overrides,
+                                revision = EXCLUDED.revision,
+                                updated_at = clock_timestamp()
+                            RETURNING executor, expected_email, provider_overrides, revision, updated_at
+                        """),
+                        {
+                            "tenant_id": tenant_id, "executor": executor,
+                            "email": update.expected_email,
+                            "overrides": json.dumps(update.provider_overrides),
+                            "revision": update.revision,
+                        },
+                    )
+                )
+                .mappings()
+                .one()
+            )
+            saved = RegistrationAccountSettings.model_validate(dict(row))
+            queued = (
+                (
+                    await session.execute(
+                        text("""
+                            SELECT event, registration_account, status, attempt_id, outcome, updated_at
+                            FROM public.muse_signup_items
+                            WHERE tenant_id = :tenant_id AND status = 'queued'
+                            FOR UPDATE
+                        """),
+                        {"tenant_id": tenant_id},
+                    )
+                )
+                .mappings()
+                .all()
+            )
+            for raw in queued:
+                item = SignupItem.model_validate(dict(raw))
+                account = saved.for_event(item.event)
+                if account == item.registration_account:
+                    continue
+                await session.execute(
+                    text("""
+                        UPDATE public.muse_signup_items SET registration_account = CAST(:account AS jsonb),
+                            updated_at = clock_timestamp(), version = version + 1
+                        WHERE tenant_id = :tenant_id AND canonical_event_id = :event_id
+                            AND status = 'queued'
+                    """),
+                    {
+                        "tenant_id": tenant_id, "event_id": item.event.canonical_event_id,
+                        "account": account.model_dump_json(),
+                    },
+                )
+            return saved
+
     async def connection(self, tenant_id: UUID) -> MuseConnection:
         async with tenant_session_scope(tenant_id) as session:
             await _account_lock(session, tenant_id)
