@@ -5,6 +5,7 @@ import Link from "next/link";
 import { useEffect, useMemo, useRef, useState } from "react";
 
 import { useSession } from "@/components/session-provider";
+import { SettingsActions, SettingsSaveButton } from "@/components/settings/settings-actions";
 import { SettingsHelp } from "@/components/settings/settings-help";
 import { useAvatarSource } from "@/components/use-avatar-source";
 import { deleteAvatar, readableError, updateProfile, uploadAvatar } from "@/lib/api";
@@ -283,9 +284,9 @@ export function ProfilePanel() {
         </p>
       ) : null}
 
-      <footer className="settings-actions">
-        <span className="settings-actions__state" role="status">
-          {saved ? (
+      <SettingsActions
+        status={
+          saved ? (
             <>
               <Check aria-hidden="true" /> Profile saved.
             </>
@@ -293,8 +294,9 @@ export function ProfilePanel() {
             "Unsaved changes."
           ) : (
             ""
-          )}
-        </span>
+          )
+        }
+      >
         <button
           type="button"
           className="button button-quiet"
@@ -308,11 +310,8 @@ export function ProfilePanel() {
         >
           Cancel
         </button>
-        <button type="submit" className="button button-primary" disabled={!dirty || saving}>
-          {saving ? <LoaderCircle className="spin" aria-hidden="true" /> : null}
-          Save changes
-        </button>
-      </footer>
+        <SettingsSaveButton type="submit" saving={saving} disabled={!dirty} />
+      </SettingsActions>
     </form>
   );
 }

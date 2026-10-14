@@ -475,7 +475,7 @@ def test_settings_secret_is_one_time_with_instructions_in_docs(page_factory, wid
     page = harness.page
     page.goto(BASE + "/settings/registrations")
     expect(page.get_by_role("heading", name="Registrations", exact=True)).to_be_visible()
-    expect(page.get_by_role("status")).to_have_class("sr-only")
+    expect(page.locator('.settings-panel > [role="status"]')).to_have_class("sr-only")
     selector = page.get_by_role("combobox", name="Provider", exact=True)
     expect(selector).to_have_value("muse")
     assert selector.locator("option").all_text_contents() == ["Muse"]
@@ -489,8 +489,8 @@ def test_settings_secret_is_one_time_with_instructions_in_docs(page_factory, wid
     copy_key = page.get_by_role("button", name="Copy connection key", exact=True)
     bounds = (secret.bounding_box(), copy_key.bounding_box())
     copy_key.click()
-    expect(page.get_by_role("status")).to_contain_text("Key copied.")
-    expect(page.get_by_role("status")).to_have_class("sr-only")
+    expect(page.locator('.settings-panel > [role="status"]')).to_contain_text("Key copied.")
+    expect(page.locator('.settings-panel > [role="status"]')).to_have_class("sr-only")
     assert (secret.bounding_box(), copy_key.bounding_box()) == bounds
     assert page.evaluate("window.__fixtureCopied") == FIXTURE_KEY
     expect(page.get_by_text("Active", exact=True)).to_be_visible()
@@ -499,7 +499,7 @@ def test_settings_secret_is_one_time_with_instructions_in_docs(page_factory, wid
     page.get_by_role("button", name="Hide key", exact=True).click()
     expect(secret).not_to_be_visible()
     page.get_by_role("button", name="Revoke key", exact=True).click()
-    expect(page.get_by_role("status")).to_contain_text("Key revoked.")
+    expect(page.locator('.settings-panel > [role="status"]')).to_contain_text("Key revoked.")
     page.reload()
     expect(page.get_by_text("No active key", exact=True)).to_be_visible()
     instructions = page.get_by_role("textbox", name="Muse signup instruction")
@@ -550,8 +550,8 @@ def test_settings_help_supports_hover_keyboard_touch_and_copy_without_writes(pag
     assert tooltip.evaluate("element => { const box = element.getBoundingClientRect(); return box.left >= 0 && box.right <= innerWidth; }")
     page.get_by_role("button", name="Copy URL", exact=True).click()
     expect(tooltip).to_have_count(0)
-    expect(page.get_by_role("status")).to_contain_text("URL copied.")
-    expect(page.get_by_role("status")).to_have_class("sr-only")
+    expect(page.locator('.settings-panel > [role="status"]')).to_contain_text("URL copied.")
+    expect(page.locator('.settings-panel > [role="status"]')).to_have_class("sr-only")
     assert page.evaluate("window.__fixtureCopied") == connector.input_value()
     assert api.writes == []
     assert page.evaluate("document.documentElement.scrollWidth <= innerWidth")

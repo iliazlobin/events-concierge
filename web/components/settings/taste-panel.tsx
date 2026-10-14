@@ -1,10 +1,11 @@
 "use client";
 
-import { Check, LoaderCircle, X } from "lucide-react";
+import { Check, X } from "lucide-react";
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 
 import { useSession } from "@/components/session-provider";
+import { SettingsActions, SettingsSaveButton } from "@/components/settings/settings-actions";
 import { SettingsHelp } from "@/components/settings/settings-help";
 import { readableError, updatePreferences } from "@/lib/api";
 import { releaseProfile } from "@/lib/release-profile";
@@ -182,9 +183,9 @@ export function TastePanel() {
         </p>
       ) : null}
 
-      <footer className="settings-actions">
-        <span className="settings-actions__state" role="status">
-          {saved ? (
+      <SettingsActions
+        status={
+          saved ? (
             <>
               <Check aria-hidden="true" /> Interests saved.
             </>
@@ -192,8 +193,9 @@ export function TastePanel() {
             "Unsaved changes."
           ) : (
             ""
-          )}
-        </span>
+          )
+        }
+      >
         <button
           type="button"
           className="button button-quiet"
@@ -205,16 +207,8 @@ export function TastePanel() {
         >
           Cancel
         </button>
-        <button
-          type="button"
-          className="button button-primary"
-          disabled={!dirty || saving}
-          onClick={save}
-        >
-          {saving ? <LoaderCircle className="spin" aria-hidden="true" /> : null}
-          Save interests
-        </button>
-      </footer>
+        <SettingsSaveButton saving={saving} disabled={!dirty} onClick={save} />
+      </SettingsActions>
     </div>
   );
 }

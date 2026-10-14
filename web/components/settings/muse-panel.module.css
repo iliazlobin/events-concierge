@@ -22,6 +22,4 @@
 .overrideToggle[aria-expanded="true"] svg { transform: rotate(180deg); }
 .overrideToggle:focus-visible { outline: 2px solid var(--accent); outline-offset: 4px; }
 .overrides { display: grid; gap: 12px; grid-template-columns: repeat(2, minmax(0, 1fr)); }
-.accountActions { align-items: center; display: flex; flex-wrap: wrap; gap: 8px; min-height: 36px; }
-.accountActions :global(.button) { font-size: 12px; min-height: 36px; padding: 8px 12px; }
 @media (max-width: 520px) { .overrides { grid-template-columns: 1fr; } }
