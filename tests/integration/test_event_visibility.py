@@ -15,7 +15,7 @@ from sqlalchemy.ext.asyncio import create_async_engine
 from tests.integration.test_catalog_browse import _source_with_current_events
 from tests.integration.test_catalog_name_suggestions import _publish_names
 
-from events_concierge.api.app import _catalog_browse_item_out, create_app
+from events_concierge.api.app import _catalog_browse_item_out, _database_is_ready, create_app
 from events_concierge.api.catalog_reads import CatalogReadCoordinator
 from events_concierge.infra.db import system_session_scope
 
@@ -153,12 +153,19 @@ async def test_read_capability_rollback_preserves_visibility_data_and_private_gr
                 "SELECT count(*) FROM catalog_event_observations WHERE visibility='private'"
             ))).scalar_one()
 
-            def round_trip(sync):
+            def downgrade(sync):
                 with Operations.context(MigrationContext.configure(sync)):
                     migration.downgrade()
+
+            await connection.run_sync(downgrade)
+        assert await _database_is_ready() is False
+        async with owner.begin() as connection:
+
+            def upgrade(sync):
+                with Operations.context(MigrationContext.configure(sync)):
                     migration.upgrade()
 
-            await connection.run_sync(round_trip)
+            await connection.run_sync(upgrade)
             after = (await connection.execute(text(
                 "SELECT count(*) FROM catalog_event_observations WHERE visibility='private'"
             ))).scalar_one()
@@ -176,6 +183,7 @@ async def test_read_capability_rollback_preserves_visibility_data_and_private_gr
                       WHERE proc.oid=CAST(:signature AS regprocedure)
                         AND acl.grantee=0 AND acl.privilege_type='EXECUTE')
                 """), {"signature": signature})).scalar_one()
+        assert await _database_is_ready() is True
         detail = await catalog.get_browse_event(item.canonical_event.canonical_event_id)
         assert detail is not None and detail.sources[0].visibility == "private"
     finally:
