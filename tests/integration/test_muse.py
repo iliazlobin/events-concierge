@@ -26,6 +26,7 @@ from events_concierge.domain.credentials import Tenant
 from events_concierge.domain.muse import (
     MuseConflictError,
     MuseNotFoundError,
+    RegistrationAccountUpdate,
     SeenRegistration,
     SignupEvent,
     SignupOutcome,
@@ -489,6 +490,10 @@ async def test_queue_migration_preserves_existing_batches_and_starts_notificatio
         SignupOutcome(status="needs_input", note="Provider login required"),
     )
     existing = await repository.batch(tenant, batch.batch_id)
+    # Model a retained pre-0219 attempt: it never had an account snapshot. The 0219
+    # downgrade must refuse to destroy snapshots created by the new application.
+    async with tenant_session_scope(tenant) as session:
+        await session.execute(text("UPDATE muse_signup_items SET registration_account = NULL"))
     # The isolated schema holds only this test's Muse history, never another feature's records.
     for direction, revision in (("downgrade", "0213"), ("upgrade", "head")):
         await _migrate_muse_test_database(muse_migration_db, direction, revision)
@@ -499,3 +504,28 @@ async def test_queue_migration_preserves_existing_batches_and_starts_notificatio
     assert (
         await repository.queue_registration(tenant, uuid4(), event.canonical_event_id) == upgraded
     )
+
+
+@pytest.mark.parametrize("retained", ["preference", "snapshot"])
+async def test_registration_account_downgrade_refuses_retained_data(muse_migration_db, retained):
+    tenant, repository = await account(), PostgresMuseRepository()
+    if retained == "preference":
+        await repository.replace_registration_account(
+            tenant, "muse", RegistrationAccountUpdate(
+                expected_email="provider@example.test", provider_overrides={}, revision=1
+            ),
+        )
+    else:
+        event = selected_event()
+        await repository.queue_registration(tenant, uuid4(), event.canonical_event_id, event)
+    process = await asyncio.create_subprocess_exec(
+        sys.executable, "-m", "alembic", "downgrade", "0218", env=muse_migration_db,
+        stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
+    )
+    _, stderr = await process.communicate()
+    assert process.returncode != 0
+    assert b"registration account data is retained" in stderr
+    if retained == "preference":
+        assert (await repository.registration_account(tenant, "muse")).expected_email == "provider@example.test"
+    else:
+        assert (await repository.registrations(tenant)).total == 1

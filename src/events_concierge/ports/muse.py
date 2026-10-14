@@ -7,6 +7,9 @@ from uuid import UUID
 from ..domain.catalog_browse import CatalogBrowseEvent
 from ..domain.muse import (
     MuseConnection,
+    RegistrationAccountSettings,
+    RegistrationAccountUpdate,
+    RegistrationExecutor,
     SeenRegistration,
     SignupBatch,
     SignupEvent,
@@ -22,6 +25,12 @@ class MuseCatalogPort(Protocol):
 
 
 class MuseRepository(Protocol):
+    async def registration_account(
+        self, tenant_id: UUID, executor: RegistrationExecutor
+    ) -> RegistrationAccountSettings: ...
+    async def replace_registration_account(
+        self, tenant_id: UUID, executor: RegistrationExecutor, update: RegistrationAccountUpdate
+    ) -> RegistrationAccountSettings: ...
     async def connection(self, tenant_id: UUID) -> MuseConnection: ...
     async def connect(
         self, tenant_id: UUID, digest: str, expires_at: datetime
