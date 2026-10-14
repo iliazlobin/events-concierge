@@ -113,6 +113,12 @@ _ADAPTERS: dict[CatalogSourceMode, CatalogAdapterDescriptor] = {
     CatalogSourceMode.TECH_WEEK_MCP: CatalogAdapterDescriptor(
         "src/events_concierge/adapters/tech_week/source.py", "TechWeekCatalogFetcher.fetch"
     ),
+    CatalogSourceMode.LANGCHAIN_HTML: CatalogAdapterDescriptor(
+        "src/events_concierge/adapters/langchain/source.py", "LangChainCatalogFetcher.fetch"
+    ),
+    CatalogSourceMode.LUMA_EVENT_HTML: CatalogAdapterDescriptor(
+        "src/events_concierge/adapters/luma_event/source.py", "LumaEventCatalogFetcher.fetch"
+    ),
 }
 
 

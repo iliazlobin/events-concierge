@@ -5,6 +5,7 @@ import {
   eventFacetSignals,
   eventFormatLabel,
   eventRegistrationLabel,
+  eventVisibilityLabel,
   safeEntityProfile,
 } from "../lib/event-facets.ts";
 
@@ -74,6 +75,13 @@ test("registration status produces truthful status labels", () => {
     const event = { registration_status };
     assert.equal(eventRegistrationLabel(event), status);
   }
+});
+
+test("private or unlisted labels reflect provider metadata without guessing missing visibility", () => {
+  assert.equal(eventVisibilityLabel({ visibility: "private" }), "Private event");
+  assert.equal(eventVisibilityLabel({ visibility: "unlisted" }), "Unlisted event");
+  assert.equal(eventVisibilityLabel({ visibility: "public" }), null);
+  assert.equal(eventVisibilityLabel({}), null);
 });
 
 test("facet signals favor title evidence, use a fixed vocabulary, and stop at four", () => {

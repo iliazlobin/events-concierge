@@ -28,6 +28,58 @@ from events_concierge.infra.db import system_session_scope
 pytestmark = pytest.mark.integration
 
 
+async def test_spaced_company_names_preserve_filters_and_original_display_identity(
+    db: None,
+) -> None:
+    source, events, _, catalog = await _source_with_current_events(event_count=2)
+    events = [
+        replace(
+            event,
+            organizer_name="SemiAnalysis",
+            title=f"Publisher workshop {uuid4().hex}",
+            entity_profiles=(
+                EventEntityProfile(
+                    "SemiAnalysis",
+                    "organizer",
+                    "organization",
+                    "https://semianalysis.com/",
+                ),
+            ),
+            registration_status=RegistrationStatus.OPEN,
+        )
+        for event in events
+    ]
+    await _publish_names(source, events, catalog)
+    matches = await catalog.suggest_names(query="semi analysis", source_keys=(source,))
+    assert [(item.name, item.event_count) for item in matches] == [("SemiAnalysis", 2)]
+    assert (
+        await catalog.suggest_names(
+            query="semi analysis",
+            source_keys=(source,),
+            cities=("Oakland",),
+        )
+        == []
+    )
+    selected, _ = await catalog.browse_current(
+        query=matches[0].name,
+        source_keys=(source,),
+        after=None,
+        limit=10,
+    )
+    assert len(selected) == 2
+    async with system_session_scope() as session:
+        permitted = (
+            await session.execute(
+                text("""
+            SELECT has_function_privilege(current_user,
+                'public.fn_catalog_name_candidates_v2(text[],timestamptz,timestamptz,text,text[],text[],text,integer,integer,text[],text,timestamptz,uuid,integer)',
+                'EXECUTE')
+        """)
+            )
+        ).scalar_one()
+        assert permitted is False
+
+
 async def _publish_names(source: str, candidates: list[CandidateEvent], catalog) -> None:
     runs = PostgresCatalogSourceRepository()
     run_key = f"manual:company-names-{uuid4().hex}"

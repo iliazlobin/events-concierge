@@ -72,6 +72,22 @@ test("catalog names retain their known types and are separate from facet composi
   }
 });
 
+test("spaced brand queries retain matching server names and meaningful punctuation", () => {
+  for (const [query, name] of [
+    ["semi analysis", "SemiAnalysis"], ["lang chain", "LangChain"], ["C++ Labs", "C++Labs"],
+  ]) {
+    const [item] = getCatalogNameFilterSuggestions(query, [
+      { name, kinds: ["organization"], event_count: 1 },
+    ]);
+    assert.equal(item.value, name);
+    assert.equal(item.label, name);
+    assert.equal(item.description, "1 event");
+  }
+  assert.deepEqual(getCatalogNameFilterSuggestions("C Labs", [
+    { name: "C++Labs", kinds: ["organization"], event_count: 1 },
+  ]), []);
+});
+
 test("catalog name matching preserves non-Latin names and meaningful punctuation", () => {
   for (const [query, name] of [["東京", "東京 Community"], ["++", "C++ Builders"], ["%_", "A%_B Collective"]]) {
     assert.equal(getCatalogNameFilterSuggestions(query, [
@@ -90,6 +106,18 @@ test("only names with matching events are offered", () => {
   assert.deepEqual(getCatalogNameFilterSuggestions("nebi", [
     { name: "Nebius", kinds: ["organization"], event_count: 0 },
   ]), []);
+});
+
+test("vendor source suggestions require events in the selected range", () => {
+  const source = { ...PROVIDERS[0], source_key: "luma-semianalysis",
+    display_name: "SemiAnalysis", label: "SemiAnalysis", event_count: 0 };
+  assert.deepEqual(getSmartFilterSuggestions("semianalysis", CITIES, [source], TOPICS), []);
+  assert.deepEqual(getPopularSmartFilterSuggestions("source", CITIES, [source], TOPICS), []);
+  const available = { ...source, event_count: 1 };
+  assert.equal(getSmartFilterSuggestions("semianalysis", CITIES, [available], TOPICS)[0].value,
+    source.source_key);
+  assert.equal(getPopularSmartFilterSuggestions("source", CITIES, [available], TOPICS)[0].value,
+    source.source_key);
 });
 
 test("category-first expressions separate the filter kind from its term", () => {

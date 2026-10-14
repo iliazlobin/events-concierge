@@ -9,6 +9,12 @@ from uuid import uuid4
 import pytest
 from sqlalchemy import text
 from sqlalchemy.exc import DBAPIError
+from tests.support.integration_database import (
+    isolated_database_name,
+    replace_database,
+    validate_isolated_test_environment,
+)
+from tests.support.run_isolated_integration import _create_database, _drop_database
 from tests.unit.test_muse import published_event
 
 from events_concierge.adapters.postgres.account_erasure import PostgresAccountErasureRepository
@@ -25,7 +31,12 @@ from events_concierge.domain.muse import (
     SignupOutcome,
     SignupStatusCounts,
 )
-from events_concierge.infra.db import system_session_scope, tenant_session_scope
+from events_concierge.infra.db import (
+    dispose_engine,
+    init_engine,
+    system_session_scope,
+    tenant_session_scope,
+)
 from events_concierge.ports.auth import AuthenticationFailedError
 
 pytestmark = pytest.mark.integration
@@ -433,7 +444,38 @@ async def test_legacy_batches_appear_in_queue_and_keep_connector_attempt_ownersh
     assert (await repository.registrations(tenant)).unread_count == 1
 
 
-async def test_queue_migration_preserves_existing_batches_and_starts_notifications_seen(db):
+async def _migrate_muse_test_database(environ, direction, revision):
+    process = await asyncio.create_subprocess_exec(
+        sys.executable, "-m", "alembic", direction, revision, env=environ,
+        stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
+    )
+    stdout, stderr = await process.communicate()
+    assert process.returncode == 0, (stdout.decode(), stderr.decode())
+
+
+@pytest.fixture
+async def muse_migration_db(db):
+    """A whole-schema downgrade must not cross another feature's retained fixtures."""
+    run_id = uuid4().hex
+    database = isolated_database_name(run_id)
+    owner, app = os.environ["EC_MIGRATION_URL"], os.environ["EC_DATABASE_URL"]
+    child = {**os.environ, "EC_INTEGRATION_TEST_RUN_ID": run_id,
+             "EC_MIGRATION_URL": replace_database(owner, database),
+             "EC_DATABASE_URL": replace_database(app, database)}
+    validate_isolated_test_environment(child)
+    _create_database(owner, database)
+    try:
+        await _migrate_muse_test_database(child, "upgrade", "head")
+        await dispose_engine()
+        init_engine(child["EC_DATABASE_URL"])
+        yield child
+    finally:
+        await dispose_engine()
+        _drop_database(owner, database)
+        init_engine(app)
+
+
+async def test_queue_migration_preserves_existing_batches_and_starts_notifications_seen(muse_migration_db):
     tenant = await account()
     repository, event = PostgresMuseRepository(), selected_event()
     batch = await repository.create(tenant, uuid4(), [event])
@@ -447,20 +489,9 @@ async def test_queue_migration_preserves_existing_batches_and_starts_notificatio
         SignupOutcome(status="needs_input", note="Provider login required"),
     )
     existing = await repository.batch(tenant, batch.batch_id)
-    # The integration harness guarantees both URLs name this random, disposable test database.
+    # The isolated schema holds only this test's Muse history, never another feature's records.
     for direction, revision in (("downgrade", "0213"), ("upgrade", "head")):
-        process = await asyncio.create_subprocess_exec(
-            sys.executable,
-            "-m",
-            "alembic",
-            direction,
-            revision,
-            env=os.environ.copy(),
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
-        )
-        stdout, stderr = await process.communicate()
-        assert process.returncode == 0, (stdout.decode(), stderr.decode())
+        await _migrate_muse_test_database(muse_migration_db, direction, revision)
     assert await repository.batch(tenant, batch.batch_id) == existing
     upgraded = (await repository.registrations(tenant)).items[0]
     assert upgraded.status == "needs_input" and upgraded.attempt_id == attempt

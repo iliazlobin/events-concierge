@@ -1102,12 +1102,14 @@ def build_catalog_fetchers(
         from .adapters.communico.source import CommunicoCatalogFetcher
         from .adapters.crawl.source import PublicJsonLdSource
         from .adapters.datasf.source import DataSfOur415CatalogFetcher
+        from .adapters.langchain.source import LangChainCatalogFetcher
         from .adapters.legistar.source import LegistarCatalogFetcher
         from .adapters.libcal.source import LibCalIcsCatalogFetcher
         from .adapters.livewhale.source import LiveWhaleCatalogFetcher
         from .adapters.localist.source import LocalistCatalogFetcher
         from .adapters.luma_calendar.source import LumaCalendarCatalogFetcher
         from .adapters.luma_discover.source import LumaDiscoverCatalogFetcher
+        from .adapters.luma_event.source import LumaEventCatalogFetcher
         from .adapters.meetup_city.source import MeetupCityCatalogFetcher
         from .adapters.meetup_group.source import MeetupGroupCalendarCatalogFetcher
         from .adapters.midpen.source import MidpenCatalogFetcher
@@ -1122,6 +1124,12 @@ def build_catalog_fetchers(
             seed_urls=settings.crawl_seeds,
         )
         catalog_fetchers[CatalogSourceMode.PUBLIC_JSONLD] = configured_public_crawler
+        catalog_fetchers[CatalogSourceMode.LANGCHAIN_HTML] = LangChainCatalogFetcher(
+            user_agent=settings.crawl_user_agent,
+        )
+        catalog_fetchers[CatalogSourceMode.LUMA_EVENT_HTML] = LumaEventCatalogFetcher(
+            user_agent=settings.crawl_user_agent,
+        )
         catalog_fetchers[CatalogSourceMode.LIVEWHALE_JSON] = LiveWhaleCatalogFetcher(
             user_agent=settings.crawl_user_agent,
         )

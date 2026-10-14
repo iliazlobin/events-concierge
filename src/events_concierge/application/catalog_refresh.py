@@ -13,7 +13,12 @@ from datetime import UTC, datetime
 from enum import StrEnum
 from uuid import UUID
 
-from ..domain.catalog_sources import CatalogRefreshCommit, CatalogSource
+from ..domain.catalog_sources import (
+    DIRECTORY_FETCH_TIMEOUT_SECONDS,
+    MAX_LINKED_DIRECTORY_EVENTS,
+    CatalogRefreshCommit,
+    CatalogSource,
+)
 from ..domain.catalog_window import filter_collection_window
 from ..domain.enums import CatalogRefreshClaimOutcome, CatalogSourceMode, Modality, Source
 from ..domain.policy import PolicyDecision, PolicyDecisionCode
@@ -337,26 +342,34 @@ class CatalogRefreshService:
         if self._collection_windows is not None:
             try:
                 window = await self._collection_windows.prepare_collection_window(
-                    source_key, run_key, lease_token=lease_token,
+                    source_key,
+                    run_key,
+                    lease_token=lease_token,
                     expected_revision=source.source_revision,
                 )
             except CatalogCollectionWindowUnavailableError as exc:
                 released = await self._sources.fail_refresh(
-                    source_key, run_key, lease_token=lease_token,
+                    source_key,
+                    run_key,
+                    lease_token=lease_token,
                     error=f"source changed: {exc.code}",
                 )
                 return CatalogRefreshResult(
-                    source_key, run_key,
+                    source_key,
+                    run_key,
                     CatalogRefreshOutcome.SKIPPED if released else CatalogRefreshOutcome.BUSY,
                     detail=collection_window_unavailable_detail(exc.code),
                 )
             if window is None:
                 released = await self._sources.fail_refresh(
-                    source_key, run_key, lease_token=lease_token,
+                    source_key,
+                    run_key,
+                    lease_token=lease_token,
                     error="source changed: collection window admission changed",
                 )
                 return CatalogRefreshResult(
-                    source_key, run_key,
+                    source_key,
+                    run_key,
                     CatalogRefreshOutcome.DEFERRED if released else CatalogRefreshOutcome.BUSY,
                     detail="collection window could not be admitted under the current source lease",
                     retry_after_seconds=1.0 if released else None,
@@ -481,7 +494,6 @@ class CatalogRefreshService:
     def _lease_seconds_for(self, source: CatalogSource) -> int | None:
         """Reserve enough time for every bounded, source-paced request plus final persistence."""
         return catalog_refresh_lease_seconds(source, floor_seconds=self._lease_seconds)
-
 
     async def _release_if_source_exceeds_claimed_lease(
         self,
@@ -878,6 +890,15 @@ def catalog_refresh_lease_seconds(source: CatalogSource, *, floor_seconds: int) 
     paced_seconds = (request_units * source.min_interval_ms + 999) // 1_000
     persistence_seconds = 0
     transport_seconds = 0
+    if source.mode is CatalogSourceMode.LANGCHAIN_HTML:
+        # The directory's one list GET is followed by up to 100 registration GETs.
+        request_units += MAX_LINKED_DIRECTORY_EVENTS
+        paced_seconds = (request_units * source.min_interval_ms + 999) // 1_000
+        transport_seconds = request_units * DIRECTORY_FETCH_TIMEOUT_SECONDS
+        persistence_seconds = (MAX_LINKED_DIRECTORY_EVENTS * 250 + 999) // 1_000
+    if source.mode is CatalogSourceMode.LUMA_EVENT_HTML:
+        transport_seconds = DIRECTORY_FETCH_TIMEOUT_SECONDS
+        persistence_seconds = 1
     if source.mode is CatalogSourceMode.MEETUP_GROUP_ICS:
         transport_seconds = request_units * _MEETUP_GROUP_TIMEOUT_SECONDS
     if source.mode is CatalogSourceMode.TECH_WEEK_MCP:
@@ -894,8 +915,9 @@ def catalog_refresh_lease_seconds(source: CatalogSource, *, floor_seconds: int) 
             * _BIBLIOCOMMONS_PERSISTENCE_BUDGET_MS_PER_EVENT
         )
         persistence_seconds = (persistence_milliseconds + 999) // 1_000
-    required_seconds = (paced_seconds + transport_seconds + persistence_seconds
-                        + _LEASE_COMPLETION_BUFFER_SECONDS)
+    required_seconds = (
+        paced_seconds + transport_seconds + persistence_seconds + _LEASE_COMPLETION_BUFFER_SECONDS
+    )
     lease_seconds = max(floor_seconds, required_seconds)
     if lease_seconds > _MAX_CATALOG_REFRESH_LEASE_SECONDS:
         return None

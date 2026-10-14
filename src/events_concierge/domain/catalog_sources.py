@@ -22,7 +22,7 @@ from .enums import (
     PriceStatus,
     Source,
 )
-from .events import CandidateEvent, event_entity_profiles_payload
+from .events import CandidateEvent, EventVisibility, event_entity_profiles_payload
 
 _SOURCE_KEY = re.compile(r"[a-z0-9][a-z0-9-]{1,79}")
 _MAX_PAGED_CATALOG_RECORDS = 100
@@ -57,6 +57,8 @@ def _https_origin(url: str) -> str | None:
 # call (ADR-005).
 MAX_SOURCE_REFRESH_INTERVAL_MINUTES = 1_440
 MAX_COLLECTION_HORIZON_DAYS = 90
+MAX_LINKED_DIRECTORY_EVENTS = 100
+DIRECTORY_FETCH_TIMEOUT_SECONDS = 20
 
 
 @dataclass(frozen=True, slots=True)
@@ -418,6 +420,8 @@ class CatalogSourceObservation:
     first_seen_at: datetime | None = None
     last_seen_at: datetime | None = None
     last_run_key: str | None = None
+    visibility: EventVisibility | None = None
+    location_withheld: bool = False
 
 
 def observation_for(
@@ -435,6 +439,8 @@ def observation_for(
         price_min_cents=candidate.price_min_cents,
         price_max_cents=candidate.price_max_cents,
         price_currency=candidate.price_currency,
+        visibility=candidate.visibility,
+        location_withheld=candidate.location_withheld,
     )
 
 
@@ -479,6 +485,10 @@ def catalog_candidate_content_hash(candidate: CandidateEvent) -> str:
     # to an empty array, so an empty profile set must retain the pre-0128 content hash.
     if candidate.entity_profiles:
         payload["entity_profiles"] = event_entity_profiles_payload(candidate.entity_profiles)
+    if candidate.visibility is not None:
+        payload["visibility"] = candidate.visibility
+    if candidate.location_withheld:
+        payload["location_withheld"] = True
     content_hash = sha256(
         json.dumps(payload, sort_keys=True, separators=(",", ":")).encode()
     ).hexdigest()

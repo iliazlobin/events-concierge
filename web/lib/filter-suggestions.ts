@@ -94,13 +94,13 @@ export function getCatalogNameFilterSuggestions(
     organization: "Organization", person: "Person", organizer: "Organizer", host: "Host",
     speaker: "Speaker", partner: "Partner", venue: "Venue", event: "Event",
   };
-  const term = query.trim().toLowerCase();
+  const term = query.trim().toLowerCase().replace(/\s+/g, "");
   if (!term) return [];
   return names.flatMap((entry) => {
     if (entry.event_count <= 0) return [];
-    // Names may contain non-Latin letters or punctuation (for example C++). Keep them
-    // literal, as the catalog search does, instead of using the facet alias normalizer.
-    const name = entry.name.toLowerCase();
+    // Match the SQL reader's whitespace folding while preserving punctuation, non-Latin
+    // letters and the original display name. Do not discard a returned brand-name variant.
+    const name = entry.name.toLowerCase().replace(/\s+/g, "");
     const position = name.indexOf(term);
     if (position < 0) return [];
     const score = name === term ? 140 : position === 0 ? 120 : 85;
@@ -242,6 +242,7 @@ export function getPopularSmartFilterSuggestions(
   }
   if (context === "source") {
     return [...providers]
+      .filter((provider) => provider.event_count > 0)
       .sort((left, right) => (
         right.event_count - left.event_count
         || left.display_name.localeCompare(right.display_name)
@@ -876,6 +877,7 @@ export function getSmartFilterSuggestions(
   }
 
   for (const provider of providers) {
+    if (provider.event_count <= 0) continue;
     const score = bestScore(query, [
       provider.display_name,
       provider.label,

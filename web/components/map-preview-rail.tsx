@@ -5,7 +5,7 @@ import type { RefObject } from "react";
 
 import { formatEventDate, formatEventTime } from "@/lib/date";
 import { eventImageUrl } from "@/lib/event-image";
-import { eventRegistrationLabel } from "@/lib/event-facets";
+import { eventRegistrationLabel, eventVisibilityLabel } from "@/lib/event-facets";
 import { discoveryLabels } from "@/lib/event-discovery";
 import { eventSourceFilter, useEventActions } from "@/components/event-actions-context";
 import { EventMuseAction } from "@/components/event-muse-action";
@@ -60,7 +60,7 @@ function MapPreviewCard({ event, selected, muted, onSelect, onEntitySelect }: Ma
   const source = eventSourceFilter(event);
   const calendarUrl = googleCalendarUrl(event);
   const time = formatEventTime(event.start_at, event.end_at);
-  const highlights = [...discoveryLabels(event), eventRegistrationLabel(event)]
+  const highlights = [...discoveryLabels(event), eventRegistrationLabel(event), eventVisibilityLabel(event)]
     .filter((value): value is string => Boolean(value));
   return (
     <article
