@@ -359,6 +359,7 @@ export function ConciergeApp() {
     return () => window.clearTimeout(timer);
   }, [museQueue.notice, museQueue.clearNotice]);
   const catalogGeneration = useRef(0);
+  const catalogAbort = useRef<AbortController | null>(null);
   const catalogRequestTime = useRef(new Date());
   const summaryGeneration = useRef(0);
   /** The filter the rail's inventory was last read for, so it is read once per filter. */
@@ -497,6 +498,9 @@ export function ConciergeApp() {
   const loadCatalog = useCallback(async (nextFilters: CatalogFilters) => {
     if (sessionState !== "ready") return;
     const generation = ++catalogGeneration.current;
+    catalogAbort.current?.abort();
+    const controller = new AbortController();
+    catalogAbort.current = controller;
     const requestTime = new Date();
     catalogRequestTime.current = requestTime;
     loadingCursor.current = null;
@@ -512,7 +516,7 @@ export function ConciergeApp() {
       setExpandedId(null);
     }
     try {
-      const page = await getCatalogPage(tenantId, nextFilters, null, requestTime);
+      const page = await getCatalogPage(tenantId, nextFilters, null, requestTime, controller.signal);
       if (generation !== catalogGeneration.current) return;
       setEvents(dedupeEvents(page.items));
       setNextCursor(page.next_cursor);
@@ -534,7 +538,7 @@ export function ConciergeApp() {
         [...new Set([...current, ...facetCities, ...cities])].sort()
       ));
     } catch (error) {
-      if (generation !== catalogGeneration.current) return;
+      if (generation !== catalogGeneration.current || controller.signal.aborted) return;
       setCatalogError(readableError(error));
       setEvents([]);
       setNextCursor(null);
@@ -549,6 +553,10 @@ export function ConciergeApp() {
     // counts for the range and events only for the day a person selected.
     if (view === "calendar") return;
     void loadCatalog(filters);
+    return () => {
+      catalogAbort.current?.abort();
+      catalogGeneration.current += 1;
+    };
   }, [filters, historyReady, loadCatalog, sessionState, view]);
 
   /**
@@ -861,7 +869,9 @@ export function ConciergeApp() {
     loadingCursor.current = cursor;
     setLoadingMore(true);
     try {
-      const page = await getCatalogPage(tenantId, requestFilters, cursor, catalogRequestTime.current);
+      const page = await getCatalogPage(
+        tenantId, requestFilters, cursor, catalogRequestTime.current, catalogAbort.current?.signal,
+      );
       if (generation !== catalogGeneration.current) return;
       setEvents((current) => dedupeEvents([...current, ...page.items]));
       setNextCursor(page.next_cursor);
