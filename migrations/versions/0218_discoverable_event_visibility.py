@@ -7,6 +7,7 @@ Revises: 0217
 from collections.abc import Sequence
 
 from alembic import op
+from migrations.source_seeds import remove_unused_seed
 from sqlalchemy import text
 
 revision: str = "0218"
@@ -139,15 +140,37 @@ def downgrade() -> None:
         op.get_bind()
         .execute(
             text("""
-        SELECT EXISTS (SELECT 1 FROM public.catalog_sources WHERE mode='luma_event_html')
-            OR EXISTS (SELECT 1 FROM public.catalog_event_observations
-                       WHERE visibility IS NOT NULL)
+        SELECT EXISTS (SELECT 1 FROM public.catalog_event_observations
+                       WHERE visibility IS NOT NULL OR location_withheld)
     """)
         )
         .scalar_one()
     )
     if retained:
         raise RuntimeError("retain linked event visibility and source history; use code rollback")
+    remove_unused_seed(
+        "luma-silicon-after-dark-2026",
+        {
+            "display_name": "SemiAnalysis: Silicon After Dark",
+            "publisher": "SemiAnalysis",
+            "seed_url": "https://luma.com/siliconafterdark",
+            "region": "bayarea",
+            "mode": "luma_event_html",
+            "refresh_interval_minutes": 360,
+            "min_interval_ms": 1500,
+            "page_limit": 1,
+            "collection_horizon_days": 90,
+            "approved_origins": ["https://luma.com"],
+        },
+    )
+    if (
+        op.get_bind()
+        .execute(
+            text("SELECT EXISTS(SELECT 1 FROM public.catalog_sources WHERE mode='luma_event_html')")
+        )
+        .scalar_one()
+    ):
+        raise RuntimeError("retain additional linked event sources; use code rollback")
     op.execute(
         "DROP FUNCTION public.fn_list_filtered_catalog_providers_v1"
         "(text,timestamptz,timestamptz,text[],text[],text,integer,integer,text[],text)"

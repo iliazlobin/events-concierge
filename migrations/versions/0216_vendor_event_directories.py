@@ -11,6 +11,7 @@ LangChain's linked Luma/Goldcast registrations; external conference sites are ou
 from collections.abc import Sequence
 
 from alembic import op
+from migrations.source_seeds import remove_unused_seed
 from sqlalchemy import text
 
 revision: str = "0216"
@@ -99,6 +100,43 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
+    remove_unused_seed(
+        "langchain-events",
+        {
+            "display_name": "LangChain Events",
+            "publisher": "LangChain",
+            "seed_url": "https://www.langchain.com/events",
+            "region": "global",
+            "mode": "langchain_html",
+            "refresh_interval_minutes": 1440,
+            "min_interval_ms": 1500,
+            "page_limit": 1,
+            "collection_horizon_days": 90,
+            "approved_origins": [
+                "https://www.langchain.com",
+                "https://events.langchain.com",
+                "https://luma.com",
+            ],
+        },
+    )
+    for key, name, calendar_id in _CALENDARS:
+        remove_unused_seed(
+            key,
+            {
+                "display_name": name,
+                "publisher": "Luma Calendar",
+                "region": "global",
+                "seed_url": "https://api.luma.com/calendar/get-items?calendar_api_id="
+                + calendar_id
+                + "&pagination_limit=20&period=future",
+                "mode": "luma_calendar_json",
+                "refresh_interval_minutes": 360,
+                "min_interval_ms": 1500,
+                "page_limit": 30,
+                "collection_horizon_days": 90,
+                "approved_origins": ["https://api.luma.com", "https://api2.luma.com"],
+            },
+        )
     retained = (
         op.get_bind()
         .execute(text("SELECT count(*) FROM public.catalog_sources WHERE mode='langchain_html'"))

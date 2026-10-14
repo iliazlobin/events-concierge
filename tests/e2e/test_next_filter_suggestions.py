@@ -546,7 +546,9 @@ def test_private_event_card_shows_provider_visibility_without_an_exact_location(
     event = catalog_event() | {"title": "Silicon After Dark", "visibility": "private",
         "city": "sanjose", "venue_name": None, "latitude": None, "longitude": None,
         "registration_status": "unknown", "source_keys": ["silicon-after-dark"],
-        "calendar_labels": ["SemiAnalysis"]}
+        "calendar_labels": ["SemiAnalysis"], "organizer_name": "SemiAnalysis",
+        "host_names": [], "speaker_names": [], "partner_names": [], "entity_profiles": [],
+        "description": "", "topics": [], "attendance_count": None}
     def catalog(route: Route):
         api.calls.append((route.request.method, "/v1/catalog/events"))
         api.respond(route, {"items": [event], "next_cursor": None,
@@ -555,5 +557,5 @@ def test_private_event_card_shows_provider_visibility_without_an_exact_location(
     page.goto(f"{BASE}/?view=events&city=&when=custom&start=2030-10-01&end=2030-10-31")
     card = page.locator(".event-card").filter(has_text="Silicon After Dark")
     expect(card).to_contain_text("Private event")
-    expect(card).to_contain_text("San Jose")
-    assert parse_qs(urlsplit(card.get_by_role("link", name="Open San Jose in Google Maps").get_attribute("href")).query)["query"] == ["San Jose"]
+    expect(card).to_contain_text("San José")
+    assert parse_qs(urlsplit(card.get_by_role("link", name="Open San José in Google Maps").get_attribute("href")).query)["query"] == ["San José"]
