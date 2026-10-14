@@ -1,9 +1,10 @@
 "use client";
 
-import { ChevronDown, LoaderCircle } from "lucide-react";
+import { ChevronDown } from "lucide-react";
 import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
 import { useSession } from "@/components/session-provider";
+import { SettingsActions, SettingsSaveButton } from "@/components/settings/settings-actions";
 import { SettingsHelp } from "@/components/settings/settings-help";
 import { ApiError, readableError } from "@/lib/api";
 import type { RegistrationProviderId } from "@/lib/registration-providers";
@@ -117,12 +118,11 @@ export function RegistrationAccountPanel({ executor }: { executor: RegistrationP
       </div>)}
     </div> : null}
     {error ? <p className="settings-error" role="alert">{error}</p> : null}
-    <div className={styles.accountActions}>
-      <Link className={styles.link} href="/docs/muse#account">Account guide</Link>
-      <span className="settings-actions__state" aria-live="polite">{loading ? "Loading…" : saved ? "Saved." : dirty ? "Unsaved changes." : ""}</span>
+    <SettingsActions
+      leading={<Link className={styles.link} href="/docs/muse#account">Account guide</Link>}
+      status={loading ? "Loading…" : saved ? "Saved." : dirty ? "Unsaved changes." : ""}>
       {conflict || (!account && error) ? <button type="button" className="button" disabled={loading || saving} onClick={() => void reload()}>Reload</button> : null}
-      <button type="submit" className="button button-primary" disabled={disabled || !dirty || conflict}>
-        {saving ? <LoaderCircle className="spin" aria-hidden="true" /> : null}Save</button>
-    </div>
+      <SettingsSaveButton type="submit" saving={saving} disabled={disabled || !dirty || conflict} />
+    </SettingsActions>
   </form>;
 }

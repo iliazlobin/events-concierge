@@ -5,6 +5,7 @@ import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
 
 import { useSession } from "@/components/session-provider";
+import { SettingsSaveButton } from "@/components/settings/settings-actions";
 import {
   deleteSavedFilter,
   getCatalogFacets,
@@ -206,15 +207,11 @@ export function SavedFiltersPanel() {
                             }
                           }}
                         />
-                        <button
-                          type="button"
-                          className="button button-primary"
-                          disabled={busy || draft.trim() === ""}
+                        <SettingsSaveButton
+                          saving={busy}
+                          disabled={draft.trim() === ""}
                           onClick={() => commitRename(entry)}
-                        >
-                          {busy ? <LoaderCircle className="spin" aria-hidden="true" /> : null}
-                          Save
-                        </button>
+                        />
                         <button
                           type="button"
                           className="button button-quiet"

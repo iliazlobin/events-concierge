@@ -29,14 +29,26 @@ class SettingsApi(ReleaseApi):
                       "last_used_at": None}
         self.deleted = False
         self.writes = []
+        self.hold_writes = False
+        self.held_writes = []
+        self.registration_account = {"executor": "muse", "expected_email": None,
+                                     "provider_overrides": {}, "revision": 0, "updated_at": None}
+
+    def config(self, route: Route) -> None:
+        self.respond(route, {"product_name": "Events Concierge", "release_profile": "discovery",
+                             "local_demo": True, "auth_mode": "local_demo", "muse_enabled": True})
 
     def handle(self, route: Route) -> None:
         path = urlsplit(route.request.url).path
         method = route.request.method
         handled = {"/v1/me", "/v1/me/profile", "/v1/preferences", "/v1/me/saved-filters",
-                   f"/v1/me/saved-filters/{FILTER_ID}"}
+                   f"/v1/me/saved-filters/{FILTER_ID}", "/v1/me/registration-accounts/muse",
+                   "/v1/me/muse/connection"}
         if path not in handled:
             super().handle(route)
+            return
+        if method != "GET" and self.hold_writes:
+            self.held_writes.append(route)
             return
         self.calls.append((method, path))
         if method != "GET":
@@ -55,6 +67,12 @@ class SettingsApi(ReleaseApi):
             self.respond(route, payload)
         elif path == "/v1/me/saved-filters":
             self.respond(route, [] if self.deleted else [self.saved])
+        elif path == "/v1/me/muse/connection":
+            self.respond(route, {"connected": False, "expires_at": None})
+        elif path == "/v1/me/registration-accounts/muse":
+            if method == "PUT":
+                self.registration_account.update(route.request.post_data_json)
+            self.respond(route, self.registration_account)
         elif method == "PUT":
             self.saved.update(route.request.post_data_json)
             self.respond(route, self.saved)
@@ -63,7 +81,7 @@ class SettingsApi(ReleaseApi):
             route.fulfill(status=204, body="")
 
 
-@pytest.fixture(params=[1280, 375], ids=["desktop", "mobile"])
+@pytest.fixture(params=[1280, 375, 320], ids=["desktop", "mobile", "narrow-mobile"])
 def settings_page(page_factory, request):
     harness = page_factory(width=request.param, authenticated=True)
     api = SettingsApi()
@@ -88,7 +106,7 @@ def test_corrected_profile_name_saves_on_the_first_click(settings_page):
     name.fill("Preview Person")
     # Clearing the old error only on blur moves Save during the click and cancels submission.
     expect(page.locator("#display-name-error")).to_have_count(0)
-    page.get_by_role("button", name="Save changes", exact=True).click()
+    page.get_by_role("button", name="Save", exact=True).click()
     expect(page.get_by_role("status")).to_contain_text("Profile saved.")
     assert api.writes == [("PUT", "/v1/me/profile", {
         "display_name": "Preview Person", "time_zone": None, "revision": 2,
@@ -108,7 +126,7 @@ def test_compact_interests_keep_chip_selection_normalization_and_save(settings_p
     page.get_by_role("button", name="Add", exact=True).click()
     expect(page.get_by_role("button", name="Remove board games", exact=True)).to_be_visible()
     assert not api.writes
-    page.get_by_role("button", name="Save interests", exact=True).click()
+    page.get_by_role("button", name="Save", exact=True).click()
     expect(page.get_by_role("status")).to_contain_text("Interests saved.")
     assert api.writes == [("PUT", "/v1/preferences", {
         "interests": ["art", "board games"], "revision": 2,
@@ -137,3 +155,64 @@ def test_compact_saved_filters_keep_the_selection_and_require_delete_confirmatio
     expect(page.get_by_text("No saved filters.", exact=True)).to_be_visible()
     assert api.writes[-1][0:2] == ("DELETE", f"/v1/me/saved-filters/{FILTER_ID}")
     assert len(api.writes) == 2
+
+
+def test_save_controls_match_and_stay_in_place_while_saving(settings_page):
+    page, api = settings_page
+    appearance = None
+    for index, (path, field, value) in enumerate([
+        ("/settings", "Display name", "Preview Person"),
+        ("/settings/taste", None, None),
+        ("/settings/registrations", "Default email", "provider@example.test"),
+        ("/settings/saved-filters", "Rename SF events", "SF favorites"),
+    ]):
+        page.goto(BASE + path)
+        if index == 3:
+            page.get_by_role("button", name="Rename", exact=True).click()
+        save = page.get_by_role("button", name="Save", exact=True)
+        expect(save).to_be_visible()
+        if index < 3:
+            expect(save).to_be_disabled()
+        original_box = save.bounding_box()
+        if field:
+            page.get_by_role("textbox", name=field, exact=True).fill(value)
+        else:
+            page.get_by_role("button", name="Art & design", exact=True).click()
+        expect(save).to_be_enabled()
+        # Empty and dirty feedback must not push Save to another row.
+        assert save.bounding_box() == original_box
+        current = save.evaluate("""element => {
+            const style = getComputedStyle(element);
+            const box = element.getBoundingClientRect();
+            return [box.width, box.height, style.fontSize, style.padding,
+                    style.backgroundColor, style.borderRadius];
+        }""")
+        if appearance is None:
+            appearance = current
+        assert current == appearance
+        save.press("Shift+Tab")
+        page.keyboard.press("Tab")
+        expect(save).to_be_focused()
+        assert save.evaluate("element => getComputedStyle(element).outlineWidth") == "2px"
+        if index < 3:
+            footer_box = page.locator(".settings-actions").bounding_box()
+            assert abs(original_box["x"] + original_box["width"]
+                       - footer_box["x"] - footer_box["width"]) < 1
+        api.hold_writes = True
+        save.click()
+        expect(save).to_have_attribute("aria-busy", "true")
+        expect(save).to_be_disabled()
+        assert save.bounding_box() == original_box
+        assert len(api.held_writes) == 1
+        api.hold_writes = False
+        api.handle(api.held_writes.pop())
+        if index < 3:
+            expect(save).to_have_attribute("aria-busy", "false")
+            expect(save).to_be_disabled()
+            expect(page.locator(".settings-actions").get_by_role("status")).to_contain_text("saved", ignore_case=True)
+            assert save.bounding_box() == original_box
+        else:
+            expect(page.get_by_text("SF favorites", exact=True)).to_be_visible()
+        assert len(api.writes) == index + 1
+        assert page.evaluate("document.documentElement.scrollWidth <= innerWidth")
+    assert api.unexpected == []

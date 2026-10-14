@@ -6828,8 +6828,27 @@ textarea:focus-visible {
 .settings-actions {
   align-items: center;
   display: flex;
+  flex-wrap: wrap;
   gap: 10px;
   justify-content: flex-end;
+}
+
+.settings-actions__context {
+  align-items: center;
+  display: flex;
+  flex: 1 1 auto;
+  flex-wrap: wrap;
+  gap: 8px 16px;
+  min-height: 20px;
+  min-width: 0;
+}
+
+.settings-actions__buttons {
+  align-items: center;
+  display: flex;
+  flex: 0 0 auto;
+  gap: 10px;
+  margin-left: auto;
 }
 
 .settings-actions__state {
@@ -6838,7 +6857,6 @@ textarea:focus-visible {
   display: inline-flex;
   font-size: 13px;
   gap: 6px;
-  margin-right: auto;
 }
 
 .settings-actions__state svg { color: var(--accent); height: 15px; width: 15px; }
@@ -6940,7 +6958,10 @@ textarea:focus-visible {
   }
   .settings-nav a { border: 1px solid var(--line); min-height: 34px; padding: 6px 11px; white-space: nowrap; }
   .settings-header__who { display: none; }
-  .settings-actions { flex-wrap: wrap; }
+}
+
+@media (max-width: 520px) {
+  .settings-actions__context { flex-basis: 100%; }
 }
 
 @media (max-width: 420px) {
@@ -6995,6 +7016,19 @@ textarea:focus-visible {
 .button-primary:hover:not(:disabled) {
   background: #d7ff8a;
   border-color: #d7ff8a;
+}
+
+.settings-save-button {
+  flex: 0 0 auto;
+  line-height: 20px;
+  min-height: 40px;
+  min-width: 88px;
+  position: relative;
+}
+
+.settings-save-button svg {
+  left: 10px;
+  position: absolute;
 }
 
 .button-quiet {
@@ -7276,7 +7310,7 @@ textarea:focus-visible {
   padding: 8px 11px;
 }
 
-.saved-list__rename .button {
+.saved-list__rename .button:not(.settings-save-button) {
   font-size: 12.5px;
   padding: 7px 13px;
 }

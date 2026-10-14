@@ -23,7 +23,7 @@ export default function AccountGuide() {
       <li>Reuse or remove it in <Link href="/settings/saved-filters">Saved filters</Link>.</li>
     </ol>
     <h2 id="interests" tabIndex={-1}>Interests</h2>
-    <p>Choose or add interests in <Link href="/settings/taste">Interests</Link>, then select <strong>Save interests</strong>. Saved interests do not filter discovery results; use <Link href="/docs/browsing#filters">topic filters</Link> to choose which events you see.</p>
+    <p>Choose or add interests in <Link href="/settings/taste">Interests</Link>, then select <strong>Save</strong>. Saved interests do not filter discovery results; use <Link href="/docs/browsing#filters">topic filters</Link> to choose which events you see.</p>
     <h2 id="access" tabIndex={-1}>Sign-in and access</h2>
     <table aria-label="Account permissions"><thead><tr><th scope="col">Access</th><th scope="col">Allowed</th></tr></thead><tbody>
       <tr><td>Guest</td><td>Browse the shared catalog.</td></tr>
