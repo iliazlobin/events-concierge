@@ -161,6 +161,18 @@ EC_ADMIN_WEB_URL=http://127.0.0.1:3001 uv run python -m pytest \
   -o addopts='-ra --import-mode=importlib' -q tests/e2e/test_admin_operations.py
 ```
 
+## Vendor directories
+
+- The source registry carries each company's public calendar separately. A city Discover shelf samples calendars; it does not contain every event a company publishes.
+- Migration `0216` prepares disabled, unreviewed profiles for [LangChain](https://www.langchain.com/events), [LangChain on Luma](https://luma.com/langchain), [SemiAnalysis](https://luma.com/SemiAnalysis), [Claude Startups](https://luma.com/claude-startups) and [Tavily](https://luma.com/eventstavily). Baseten already has a registered [calendar](https://luma.com/baseten); reuse its existing source. Review and enable only the specific profiles intended for collection; this migration changes no source policy or automatic cadence.
+- `langchain_html` reads the complete directory, including cards hidden by browser pagination, then resolves up to 100 linked Luma/Goldcast registration records. Provider timestamps supply the offsets; directory display times are not guessed. Only `www.langchain.com`, `events.langchain.com` and `luma.com` are admitted. Other conference systems, including `fieldevents.langchain.com`, require a separate collector contract.
+- Luma calendars use the existing complete public cursor and detail reader. Private/unlisted records returned only by calendar API enumeration stay excluded. An exact owner-reviewed event link or an event linked on an admitted public directory can contribute basic title, times, organizer, city and price, with a **Private event** or **Unlisted event** label. No login, invite token or hidden-ID discovery is attempted.
+- Migration `0218` adds source-specific visibility and withheld-location metadata, plus a disabled, unreviewed exact-page source for [Silicon After Dark](https://luma.com/siliconafterdark). Its event is in San Jose, so Los Angeles filters exclude it. Enable/review this source separately; retire its cadence after this occurrence while preserving source history.
+- Withheld street addresses and coordinates are discarded before normalization, including when present in anonymous page state. The browse API also suppresses retained canonical location details for an admitted withheld-location observation. Staff, attendees and forms are excluded from these basic private cards; registration remains a provider handoff.
+- Public organizers, hosts, speakers and sponsors feed the company/name index. JSON-LD collection preserves explicit organizer and sponsor roles. Staff, attendees, email addresses and registration-form data are not indexed. Autocomplete still requires matching events under the selected source, place, dates, topic, price and registration filters.
+- Migration `0217` adds whitespace-tolerant name lookup: `semi analysis` can match a recorded `SemiAnalysis`. Display names and company identities remain unchanged. The original SQL reader remains available for older serving images during rollout; the consumer API uses the new bounded reader.
+- A malformed supported detail, redirect, access denial or response-size violation fails the refresh and retains the previous projection. Each directory's lease includes all bounded detail requests and publication time. Registration remains a handoff to the provider.
+
 ## Local source-policy opt-in
 
 - Public browser collection starts fail-closed. Enabling it admits every individually enabled, reviewed registry source; inspect that list first.

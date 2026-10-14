@@ -11,13 +11,14 @@ import json
 from collections import Counter
 from dataclasses import replace
 from datetime import UTC, datetime
-from typing import Any
+from typing import Any, Literal
 
 from selectolax.parser import HTMLParser
 
 from ...domain.enums import Source
 from ...domain.events import (
     CandidateEvent,
+    EventEntityProfile,
     GeoPoint,
     aggregate_price_range,
     aggregate_price_status,
@@ -27,6 +28,7 @@ from ...infra.logging import get_logger
 _log = get_logger("crawl.acl")
 
 _FREE_PRICES = frozenset({"0", "0.0", "0.00", "free"})
+_MAX_ROLE_RECORDS = 128
 
 
 def parse_jsonld(html: str, base_url: str, *, strict: bool = False) -> list[CandidateEvent]:
@@ -140,7 +142,11 @@ def _occurrence_id(event: CandidateEvent) -> str:
 def _metadata_score(event: CandidateEvent) -> tuple[int, bool, bool, bool, bool]:
     """Favor the normalized duplicate that carries the most useful non-price catalog fields."""
     return (
-        len(event.description),
+        len(event.description)
+        + len(event.entity_profiles)
+        + len(event.partner_names)
+        + len(event.host_names)
+        + int(event.organizer_name is not None),
         event.end_at is not None,
         event.venue_name is not None,
         event.geo is not None,
@@ -222,6 +228,14 @@ def _map_event(obj: dict[str, Any], base_url: str) -> CandidateEvent | None:
         if not isinstance(description, str):
             description = ""
 
+        organizers = _named_roles(obj.get("organizer"))
+        sponsors = _named_roles(obj.get("sponsor"))
+        profiles = (
+            *_role_profiles(organizers[:1], "organizer"),
+            *_role_profiles(organizers[1:], "host"),
+            *_role_profiles(sponsors, "partner"),
+        )
+
         return CandidateEvent(
             source=Source.PUBLIC_JSONLD,
             source_event_id=source_event_id,
@@ -234,10 +248,57 @@ def _map_event(obj: dict[str, Any], base_url: str) -> CandidateEvent | None:
             city=city,
             description=description,
             is_free=_parse_is_free(obj.get("offers")),
+            organizer_name=organizers[0]["name"] if organizers else None,
+            host_names=tuple(item["name"] for item in organizers[1:]),
+            partner_names=tuple(item["name"] for item in sponsors),
+            entity_profiles=profiles,
         )
     except Exception as exc:  # never let one object abort the crawl
         _log.warning("jsonld_map_failed", base_url=base_url, error=str(exc))
         return None
+
+
+def _named_roles(value: Any) -> list[dict[str, Any]]:
+    """Keep only explicit organizer/sponsor names, never guests or names mined from prose."""
+    records = value if isinstance(value, list) else [value]
+    if len(records) > _MAX_ROLE_RECORDS:
+        raise ValueError("catalog JSON-LD role list exceeds its public metadata limit")
+    named: dict[str, dict[str, Any]] = {}
+    for record in records:
+        if not isinstance(record, dict):
+            continue
+        name = record.get("name")
+        if not isinstance(name, str) or not name.strip():
+            continue
+        named.setdefault(name.strip(), {**record, "name": name.strip()})
+    return list(named.values())
+
+
+def _role_profiles(
+    records: list[dict[str, Any]],
+    role: Literal["organizer", "host", "partner"],
+) -> tuple[EventEntityProfile, ...]:
+    profiles: list[EventEntityProfile] = []
+    for record in records:
+        kind: Literal["person", "organization"]
+        if _has_schema_type(record, "Person"):
+            kind = "person"
+        elif any(
+            _has_schema_type(record, value)
+            for value in ("Organization", "Corporation", "LocalBusiness")
+        ):
+            kind = "organization"
+        else:
+            continue
+        url = record.get("url")
+        if not isinstance(url, str):
+            continue
+        try:
+            profiles.append(EventEntityProfile(record["name"], role, kind, url))
+        except ValueError:
+            # An optional unverified URL contributes no profile or guessed company identity.
+            continue
+    return tuple(profiles)
 
 
 def _parse_iso(value: str | None) -> datetime | None:

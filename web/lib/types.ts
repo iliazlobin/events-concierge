@@ -131,6 +131,7 @@ export interface AccountErasureReceipt {
 }
 
 export interface EventSource {
+  visibility?: "public" | "unlisted" | "private" | null;
   source: string;
   registration_url: string;
   source_key?: string;
@@ -292,6 +293,7 @@ export interface EventExtractionEvidence {
 }
 
 export interface EventItem {
+  visibility?: "public" | "unlisted" | "private" | null;
   discovery_state?: "upcoming" | "ongoing" | "past" | "cancelled" | "uncertain";
   source_freshness?: "recent" | "stale" | "unknown";
   additional_dates?: {

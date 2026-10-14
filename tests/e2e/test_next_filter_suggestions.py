@@ -307,7 +307,11 @@ def test_vendors_without_filtered_events_are_hidden_and_matching_selection_has_r
         queries.append(query)
         api.calls.append((route.request.method, "/v1/catalog/events"))
         api.respond(route, {"items": [vendor] if matches(query) else [], "next_cursor": None,
-                            "providers": [], "topic_facets": [], "city_facets": []})
+                            "providers": [{"source_key": "nebius-events", "label": "Nebius",
+                                "display_name": "Nebius", "publisher": "Nebius", "provider": "luma",
+                                "seed_url": "https://luma.com/nebius",
+                                "event_count": 1 if matches(query) else 0}],
+                            "topic_facets": [], "city_facets": []})
 
     page.route("**/v1/catalog/name-suggestions?*", names)
     page.route("**/v1/catalog/events?*", catalog)
@@ -326,7 +330,7 @@ def test_vendors_without_filtered_events_are_hidden_and_matching_selection_has_r
     page.goto(restricted.replace("start=2030-10-09&end=2030-10-11",
                                  "start=2030-10-14&end=2030-10-20"))
     search.fill("nebi")
-    option = page.get_by_role("option").filter(has_text="Nebius")
+    option = page.get_by_role("option").filter(has_text="Nebius").filter(has_text="Organization")
     expect(option).to_be_visible()
     expect(option).to_contain_text("1 event")
     option.click()
@@ -517,3 +521,39 @@ def test_registration_open_is_searchable_editable_and_retained(discovery_filters
     expect(chip).to_contain_text("Open")
     expect(page.locator(".event-card")).to_have_count(1)
     assert page.evaluate("document.documentElement.scrollWidth <= innerWidth")
+
+
+@pytest.mark.parametrize("query,name", [("semi analysis", "SemiAnalysis"), ("lang chain", "LangChain")])
+def test_spaced_company_names_select_canonical_name_without_losing_filters(catalog_names_page, query, name):
+    harness, api, _ = catalog_names_page
+    page = harness.page
+    def names(route: Route):
+        api.calls.append((route.request.method, "/v1/catalog/name-suggestions"))
+        api.respond(route, [{"name": name, "kinds": ["organization"], "event_count": 1}])
+    page.route("**/v1/catalog/name-suggestions?*", names)
+    page.goto(f"{BASE}/?view=events&source=tech-week-sf-2026&when=custom&start=2030-10-01&end=2030-10-31")
+    search = page.get_by_role("combobox", name=SEARCH_NAME)
+    search.fill(query)
+    page.get_by_role("option").filter(has_text=name).click()
+    expect(search).to_have_value(name)
+    assert parse_qs(urlsplit(page.url).query)["q"] == [name]
+    assert parse_qs(urlsplit(page.url).query)["source"] == ["tech-week-sf-2026"]
+
+
+def test_private_event_card_shows_provider_visibility_without_an_exact_location(catalog_names_page):
+    harness, api, _ = catalog_names_page
+    page = harness.page
+    event = catalog_event() | {"title": "Silicon After Dark", "visibility": "private",
+        "city": "sanjose", "venue_name": None, "latitude": None, "longitude": None,
+        "registration_status": "unknown", "source_keys": ["silicon-after-dark"],
+        "calendar_labels": ["SemiAnalysis"]}
+    def catalog(route: Route):
+        api.calls.append((route.request.method, "/v1/catalog/events"))
+        api.respond(route, {"items": [event], "next_cursor": None,
+                            "providers": [], "topic_facets": [], "city_facets": []})
+    page.route("**/v1/catalog/events?*", catalog)
+    page.goto(f"{BASE}/?view=events&city=&when=custom&start=2030-10-01&end=2030-10-31")
+    card = page.locator(".event-card").filter(has_text="Silicon After Dark")
+    expect(card).to_contain_text("Private event")
+    expect(card).to_contain_text("San Jose")
+    assert parse_qs(urlsplit(card.get_by_role("link", name="Open San Jose in Google Maps").get_attribute("href")).query)["query"] == ["San Jose"]

@@ -420,12 +420,14 @@ class CatalogBrowseSourceOut(FeedSourceOut):
     source_event_id: str
     last_seen_at: str
     refresh_run_key: str
+    visibility: Literal["public", "unlisted", "private"] | None = None
 
 
 class CatalogBrowseItemOut(BaseModel):
     """Feed-shaped catalog data with explicit not-ranked/not-conflict-checked sentinels."""
 
     discovery_state: str = "upcoming"
+    visibility: Literal["public", "unlisted", "private"] | None = None
     source_freshness: str = "unknown"
     canonical_event_id: UUID
     title: str
@@ -1559,11 +1561,14 @@ def _catalog_browse_item_out(item: CatalogBrowseEvent) -> CatalogBrowseItemOut:
             source_event_id=source.source_event_id,
             last_seen_at=source.last_seen_at.isoformat(),
             refresh_run_key=source.refresh_run_key,
+            visibility=source.visibility,
         )
         for source in item.sources
     ]
     now = datetime.now(UTC)
     source_checked = max((source.last_seen_at for source in item.sources), default=None)
+    location_withheld = any(source.location_withheld
+                            or source.visibility in {"private", "unlisted"} for source in item.sources)
     source_freshness = (
         "unknown"
         if source_checked is None or source_checked > now
@@ -1572,6 +1577,10 @@ def _catalog_browse_item_out(item: CatalogBrowseEvent) -> CatalogBrowseItemOut:
         else "recent"
     )
     return CatalogBrowseItemOut(
+        # Visibility belongs to observations, not a guessed global property. Prefer the
+        # restrictive published label if several admitted sources disagree.
+        visibility=next((value for value in ("private", "unlisted", "public")
+                         if any(source.visibility == value for source in item.sources)), None),
         discovery_state=lifecycle(event, now),
         source_freshness=source_freshness,
         canonical_event_id=event.canonical_event_id,
@@ -1589,12 +1598,12 @@ def _catalog_browse_item_out(item: CatalogBrowseEvent) -> CatalogBrowseItemOut:
         lanes=["handoff"],
         registration_urls=_unique([source.registration_url for source in item.sources]),
         end_at=event.end_at.isoformat() if event.end_at is not None else None,
-        venue_name=event.venue_name,
+        venue_name=None if location_withheld else event.venue_name,
         city=event.city_norm,
         description=event.description[:800],
         event_status=event.event_status.value,
-        latitude=event.geo.lat if event.geo is not None else None,
-        longitude=event.geo.lon if event.geo is not None else None,
+        latitude=event.geo.lat if event.geo is not None and not location_withheld else None,
+        longitude=event.geo.lon if event.geo is not None and not location_withheld else None,
         registerable=None,
         source_keys=_unique([source.source_key for source in item.sources]),
         providers=_unique([source.provider for source in item.sources]),

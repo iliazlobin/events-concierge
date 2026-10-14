@@ -30,6 +30,7 @@ _DELETE_CODEPOINT = 0x7F
 
 type EventEntityRole = Literal["host", "organizer", "speaker", "partner"]
 type EventEntityKind = Literal["person", "organization"]
+type EventVisibility = Literal["public", "unlisted", "private"]
 _EVENT_ENTITY_ROLES = frozenset({"host", "organizer", "speaker", "partner"})
 _EVENT_ENTITY_KINDS = frozenset({"person", "organization"})
 
@@ -369,9 +370,17 @@ class CandidateEvent:
     entity_social_links: tuple[EventEntitySocialLink, ...] = ()
     attendance_count: int | None = None
     registration_status: RegistrationStatus = RegistrationStatus.UNKNOWN
+    visibility: EventVisibility | None = None
+    location_withheld: bool = False
 
     def __post_init__(self) -> None:
         """Reconcile legacy fields and bound public role metadata before persistence."""
+        if self.visibility not in {None, "public", "unlisted", "private"}:
+            raise ValueError("event visibility is invalid")
+        if not isinstance(self.location_withheld, bool):
+            raise ValueError("event location_withheld must be a boolean")
+        if self.location_withheld and (self.geo is not None or self.venue_name is not None):
+            raise ValueError("withheld event location cannot retain a venue or coordinates")
         inferred = PriceStatus.from_is_free(self.is_free)
         explicit = PriceStatus(self.price_status)
         if (

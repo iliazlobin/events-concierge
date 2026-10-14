@@ -6,6 +6,12 @@ type LocatedEvent = Pick<
 >;
 
 type RegistrationEvent = Pick<EventItem, "registration_status">;
+type VisibilityEvent = Pick<EventItem, "visibility">;
+
+export function eventVisibilityLabel(event: VisibilityEvent): string | null {
+  return event.visibility === "private" ? "Private event"
+    : event.visibility === "unlisted" ? "Unlisted event" : null;
+}
 
 type DescribedEvent = Pick<EventItem, "title" | "description">;
 

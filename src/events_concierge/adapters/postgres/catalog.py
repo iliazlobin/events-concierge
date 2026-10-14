@@ -46,6 +46,7 @@ from ...domain.events import (
     CanonicalEvent,
     EventEntityProfile,
     EventSourceLink,
+    EventVisibility,
     aggregate_price_range,
     aggregate_price_status,
     event_entity_profiles_payload,
@@ -1039,7 +1040,11 @@ class PostgresCatalogRepository:
                                observation.publisher, observation.provider, observation.seed_url,
                                observation.observation_source, observation.source_event_id,
                                observation.registration_url, observation.last_seen_at,
-                               observation.refresh_run_key
+                               observation.refresh_run_key,
+                               public.fn_catalog_observation_card_v1(
+                                   observation.source_key, observation.observation_source,
+                                   observation.source_event_id, event.canonical_event_id
+                               ) AS card_projection
                         FROM public.canonical_events AS event
                         CROSS JOIN LATERAL public.fn_list_retained_catalog_browse_observations_v2(
                             '{}'::text[], event.start_at - interval '1 microsecond',
@@ -1070,6 +1075,8 @@ class PostgresCatalogRepository:
                     registration_url=str(row.registration_url),
                     last_seen_at=row.last_seen_at,
                     refresh_run_key=str(row.refresh_run_key),
+                    visibility=cast(EventVisibility | None, (row.card_projection or {}).get("visibility")),
+                    location_withheld=bool((row.card_projection or {}).get("location_withheld", False)),
                 )
                 for row in rows
             ),
@@ -1109,7 +1116,7 @@ class PostgresCatalogRepository:
         async with self._session_scope() as session:
             rows = (await session.execute(
                 text("""
-                    SELECT * FROM public.fn_suggest_catalog_names_v1(
+                    SELECT * FROM public.fn_suggest_catalog_names_v2(
                         :query, CAST(:source_keys AS text[]),
                         CAST(:window_starts AS timestamptz[]), CAST(:window_ends AS timestamptz[]),
                         CAST(:cities AS text[]), CAST(:location_scopes AS text[]),
@@ -1218,14 +1225,18 @@ class PostgresCatalogRepository:
                         await session.execute(
                             text(
                                 """
-                                SELECT *
+                                SELECT observation.*,
+                                       public.fn_catalog_observation_card_v1(
+                                           observation.source_key, observation.observation_source,
+                                           observation.source_event_id, observation.canonical_event_id
+                                       ) AS card_projection
                                 FROM public.fn_browse_filtered_current_catalog_events_v10(
                                     CAST(:source_keys AS text[]), :window_start, :window_end,
                                     :query, CAST(:cities AS text[]),
                                     CAST(:location_scopes AS text[]), :price, :price_max_cents,
                                     :price_min_cents, CAST(:topics AS text[]), :availability,
                                     :sort, :after_start, :after_id, :limit
-                                )
+                                ) AS observation
                                 """
                             ),
                             window_params,
@@ -1233,7 +1244,9 @@ class PostgresCatalogRepository:
                     ).all()
                 )
                 # Ordinary facets are global so the client can replace its source list, including
-                # admitted sources with zero events in this range. A long archive remains source-only.
+                # admitted sources with zero matches. Counts apply place, price, topic and
+                # registration restrictions, excluding the text query being composed.
+                # A long archive remains source-only.
                 #
                 # The rollup scans the whole admitted catalog, so it costs about as much as the page
                 # it accompanies. A caller that never renders a source list skips it outright rather
@@ -1257,12 +1270,16 @@ class PostgresCatalogRepository:
                                 text(
                                     """
                                 SELECT *
-                                FROM public.fn_list_current_catalog_providers_v3(
-                                    :source_key, :window_start, :window_end
+                                FROM public.fn_list_filtered_catalog_providers_v1(
+                                    :source_key, :window_start, :window_end,
+                                    CAST(:cities AS text[]), CAST(:location_scopes AS text[]),
+                                    :price, :price_max_cents, :price_min_cents,
+                                    CAST(:topics AS text[]), :availability
                                 )
                                 """
                                 ),
                                 {
+                                    **params,
                                     "source_key": provider_source_key,
                                     "window_start": window_start,
                                     "window_end": window_end,
@@ -1288,6 +1305,8 @@ class PostgresCatalogRepository:
                     registration_url=str(row.registration_url),
                     last_seen_at=row.last_seen_at,
                     refresh_run_key=str(row.refresh_run_key),
+                    visibility=cast(EventVisibility | None, (row.card_projection or {}).get("visibility")),
+                    location_withheld=bool((row.card_projection or {}).get("location_withheld", False)),
                 )
             )
         items = [

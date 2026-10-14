@@ -554,6 +554,8 @@ def _run_from_row(row: Row[Any]) -> CatalogRefreshRun:
 
 def _staged_candidate_payload(candidate: CandidateEvent) -> dict[str, object]:
     """Serialize only P15b's normalized candidate fields, deliberately excluding ``raw`` (NFR-1)."""
+    if candidate.visibility is not None or candidate.location_withheld:
+        raise ValueError("paged Legistar staging does not support provider event visibility")
     return {
         "source": candidate.source.value,
         "source_event_id": candidate.source_event_id,

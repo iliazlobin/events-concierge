@@ -15,7 +15,7 @@ from typing import Literal
 from uuid import UUID
 
 from .enums import Source
-from .events import CanonicalEvent
+from .events import CanonicalEvent, EventVisibility
 
 CatalogBrowseSort = Literal["soonest", "latest"]
 MIN_CATALOG_NAME_QUERY_LENGTH = 2
@@ -60,6 +60,8 @@ class CatalogBrowseSource:
     registration_url: str
     last_seen_at: datetime
     refresh_run_key: str
+    visibility: EventVisibility | None = None
+    location_withheld: bool = False
 
 
 @dataclass(frozen=True, slots=True)

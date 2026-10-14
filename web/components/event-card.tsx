@@ -17,6 +17,7 @@ import { formatEventDate, formatEventTime } from "@/lib/date";
 import {
   eventFormatLabel,
   eventRegistrationLabel,
+  eventVisibilityLabel,
   safeEntityProfile,
 } from "@/lib/event-facets";
 import {
@@ -224,6 +225,10 @@ export function EventCard({
 
         <div className="event-card__body">
           <span className="event-card__eyebrow">
+            {eventVisibilityLabel(event) ? (
+              <><span>{eventVisibilityLabel(event)}</span>
+                <span aria-hidden="true">/</span></>
+            ) : null}
             {provider.sourceKey && selectSource ? (
               <button
                 className="event-card__source-filter"

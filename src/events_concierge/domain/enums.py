@@ -154,6 +154,8 @@ class CatalogSourceMode(StrEnum):
     MEETUP_CITY_JSONLD = "meetup_city_jsonld"
     MEETUP_GROUP_ICS = "meetup_group_ics"
     TECH_WEEK_MCP = "tech_week_mcp"
+    LANGCHAIN_HTML = "langchain_html"
+    LUMA_EVENT_HTML = "luma_event_html"
 
 
 class CatalogRefreshRunStatus(StrEnum):

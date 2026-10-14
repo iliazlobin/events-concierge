@@ -2,13 +2,14 @@
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, cast
 
 from sqlalchemy import Row, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ...domain.catalog_sources import CatalogSourceObservation
 from ...domain.enums import PriceStatus, Source
+from ...domain.events import EventVisibility
 from ...infra.db import system_session_scope
 
 
@@ -36,11 +37,12 @@ class PostgresCatalogObservationRepository:
                     INSERT INTO catalog_event_observations
                         (source_key, source, source_event_id, canonical_event_id, registration_url,
                          price_status, price_min_cents, price_max_cents, price_currency,
-                         content_hash, first_seen_at, last_seen_at, last_run_key)
+                         content_hash, first_seen_at, last_seen_at, last_run_key, visibility,
+                         location_withheld)
                     VALUES
                         (:source_key, :source, :source_event_id, :canonical_event_id, :registration_url,
                          :price_status, :price_min_cents, :price_max_cents, :price_currency,
-                         :content_hash, now(), now(), :run_key)
+                         :content_hash, now(), now(), :run_key, :visibility, :location_withheld)
                     ON CONFLICT (source_key, source, source_event_id) DO UPDATE SET
                         canonical_event_id = EXCLUDED.canonical_event_id,
                         registration_url = EXCLUDED.registration_url,
@@ -50,7 +52,9 @@ class PostgresCatalogObservationRepository:
                         price_currency = EXCLUDED.price_currency,
                         content_hash = EXCLUDED.content_hash,
                         last_seen_at = now(),
-                        last_run_key = EXCLUDED.last_run_key
+                        last_run_key = EXCLUDED.last_run_key,
+                        visibility = EXCLUDED.visibility,
+                        location_withheld = EXCLUDED.location_withheld
                     """
                 ),
                 {
@@ -65,6 +69,8 @@ class PostgresCatalogObservationRepository:
                     "price_currency": observation.price_currency,
                     "content_hash": observation.content_hash,
                     "run_key": run_key,
+                    "visibility": observation.visibility,
+                    "location_withheld": observation.location_withheld,
                 },
             )
 
@@ -100,4 +106,6 @@ def _observation_from_row(row: Row[Any]) -> CatalogSourceObservation:
         first_seen_at=row.first_seen_at,
         last_seen_at=row.last_seen_at,
         last_run_key=row.last_run_key,
+        visibility=cast(EventVisibility | None, getattr(row, "visibility", None)),
+        location_withheld=bool(getattr(row, "location_withheld", False)),
     )
