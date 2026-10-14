@@ -54,7 +54,7 @@ _LUMA_SLUG = re.compile(r"/[A-Za-z0-9][A-Za-z0-9_.-]{0,199}")
 _GOLDCAST_ASSIGNMENT = "window.uberdata = "
 
 
-class LangChainFetchError(ValueError):
+class LangChainFetchError(RuntimeError):
     """The reviewed directory or a supported registration record changed its contract."""
 
 

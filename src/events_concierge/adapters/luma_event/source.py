@@ -31,7 +31,7 @@ _MIN_INTERVAL_MS = 1500
 _SLUG_PATH = re.compile(r"/[A-Za-z0-9][A-Za-z0-9_.-]{0,199}")
 
 
-class LumaEventFetchError(ValueError):
+class LumaEventFetchError(RuntimeError):
     """The admitted anonymous event link no longer matches its reviewed contract."""
 
 

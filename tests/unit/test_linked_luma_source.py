@@ -106,7 +106,7 @@ def test_public_event_with_guest_only_address_also_withholds_hidden_coordinates(
 def test_identity_or_visibility_drift_fails_closed(field, value) -> None:
     data = _data()
     data["event"][field] = value
-    with pytest.raises(LumaEventFetchError):
+    with pytest.raises(LumaEventFetchError, match="changed its linked identity"):
         linked_luma_event(HTMLParser(_html(data)), _URL, "linked-event")
 
 
