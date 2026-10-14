@@ -7,8 +7,9 @@ Revises: 0217
 from collections.abc import Sequence
 
 from alembic import op
-from migrations.source_seeds import remove_unused_seed
 from sqlalchemy import text
+
+from events_concierge.deployment.catalog_source_seeds import remove_unused_seed
 
 revision: str = "0218"
 down_revision: str | None = "0217"

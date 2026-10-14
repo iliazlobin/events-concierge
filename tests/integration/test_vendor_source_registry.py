@@ -6,11 +6,11 @@ from uuid import uuid4
 import pytest
 from alembic.migration import MigrationContext
 from alembic.operations import Operations
-from migrations.source_seeds import remove_unused_seed
 from sqlalchemy import create_engine, text
 
 from events_concierge.adapters.postgres.catalog_sources import PostgresCatalogSourceRepository
 from events_concierge.application.catalog_refresh import catalog_refresh_lease_seconds
+from events_concierge.deployment.catalog_source_seeds import remove_unused_seed
 from events_concierge.domain.enums import CatalogSourceMode
 
 pytestmark = pytest.mark.integration
