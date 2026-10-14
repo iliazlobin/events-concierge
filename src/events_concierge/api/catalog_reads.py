@@ -37,6 +37,7 @@ _MAX_ENTRY_BYTES = 1024 * 1024
 _MAX_WAITERS = 32
 _WAIT_SECONDS = 5.0
 _MAX_KEY_BYTES = 16_384
+_MAX_REQUEST_BODY_BYTES = 64 * 1024
 
 
 async def catalog_public_read_token() -> str:
@@ -58,6 +59,50 @@ class _CachedResponse:
 
 class _CatalogBusyError(Exception):
     pass
+
+
+class _CatalogBodyTooLargeError(Exception):
+    pass
+
+
+class _CatalogReceive:
+    """Keep reading disconnects without losing or unboundedly queuing request bodies."""
+
+    def __init__(self) -> None:
+        self._body = bytearray()
+        self._body_bytes = 0
+        self._more_body = True
+        self._disconnected = False
+        self._ready = asyncio.Event()
+
+    async def watch(self, receive: Receive) -> None:
+        while True:
+            message = await receive()
+            if message["type"] == "http.disconnect":
+                self._disconnected = True
+                self._ready.set()
+                return
+            if message["type"] == "http.request":
+                chunk = message.get("body", b"")
+                self._body_bytes += len(chunk)
+                if self._body_bytes > _MAX_REQUEST_BODY_BYTES:
+                    raise _CatalogBodyTooLargeError
+                self._body.extend(chunk)
+                self._more_body = message.get("more_body", False)
+                self._ready.set()
+
+    async def __call__(self) -> Message:
+        await self._ready.wait()
+        if self._disconnected:
+            return {"type": "http.disconnect"}
+        message: Message = {
+            "type": "http.request",
+            "body": bytes(self._body),
+            "more_body": self._more_body,
+        }
+        self._body.clear()
+        self._ready.clear()
+        return message
 
 
 class CatalogReadCoordinator:
@@ -151,6 +196,7 @@ class CatalogReadCoordinator:
         async def capture(message: Message) -> None:
             messages.append(message)
 
+        read_started = self._clock()
         await load(capture)
         snapshot = tuple(messages)
         size = sum(len(message.get("body", b"")) for message in snapshot)
@@ -162,8 +208,9 @@ class CatalogReadCoordinator:
             and b"application/json" in headers.get(b"content-type", b"")
             and b"set-cookie" not in headers
             and await self._token() == token
+            and self._clock() - read_started < _TTL_SECONDS
         ):
-            self._cache[key] = _CachedResponse(token, self._clock(), snapshot, size)
+            self._cache[key] = _CachedResponse(token, read_started, snapshot, size)
             self._bytes += size
             while len(self._cache) > _MAX_ENTRIES or self._bytes > _MAX_BYTES:
                 self._remove(next(iter(self._cache)))
@@ -226,7 +273,41 @@ class CatalogReadMiddleware:
             else None
         )
 
-        async def load(target: Send) -> None:
-            await self.app(scope, receive, target)
+        relay = _CatalogReceive()
+        response_started = False
 
-        await coordinator.serve(key, load, send)
+        async def load(target: Send) -> None:
+            await self.app(scope, relay, target)
+
+        async def send_response(message: Message) -> None:
+            nonlocal response_started
+            if message["type"] == "http.response.start":
+                response_started = True
+            await send(message)
+
+        request = asyncio.create_task(coordinator.serve(key, load, send_response))
+        disconnected = asyncio.create_task(relay.watch(receive))
+        body_too_large = False
+        try:
+            done, _ = await asyncio.wait(
+                {request, disconnected}, return_when=asyncio.FIRST_COMPLETED
+            )
+            if request in done:
+                await request
+            else:
+                # A socket disconnect does not cancel Uvicorn's handler. Cancel
+                # this requester, including its queued key lock/slot/SQL session.
+                await disconnected
+        except _CatalogBodyTooLargeError:
+            body_too_large = True
+        finally:
+            for task in (request, disconnected):
+                task.cancel()
+            await asyncio.gather(request, disconnected, return_exceptions=True)
+        if body_too_large and not response_started:
+            response = JSONResponse(
+                {"detail": "request body too large"},
+                status_code=413,
+                headers={"Cache-Control": "no-store"},
+            )
+            await response(scope, receive, send)
