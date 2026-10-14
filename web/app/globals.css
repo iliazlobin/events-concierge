@@ -7238,6 +7238,9 @@ textarea:focus-visible {
 }
 
 .saved-list__name {
+  align-items: center;
+  display: flex;
+  min-height: 38px;
   font-size: 14px;
   font-weight: 600;
   margin: 0;
@@ -7271,8 +7274,11 @@ textarea:focus-visible {
 .saved-list__confirm {
   align-items: center;
   display: flex;
-  flex: 0 0 auto;
+  flex: 0 1 auto;
+  flex-wrap: wrap;
   gap: 8px;
+  max-width: 100%;
+  min-width: 0;
 }
 
 .saved-list__confirm p {
@@ -7299,6 +7305,7 @@ textarea:focus-visible {
 }
 
 .saved-list__rename input {
+  height: 38px;
   background: var(--panel-soft);
   border: 1px solid var(--line-strong);
   border-radius: 9px;
@@ -7308,11 +7315,6 @@ textarea:focus-visible {
   min-width: 0;
   outline: none;
   padding: 8px 11px;
-}
-
-.saved-list__rename .button:not(.settings-save-button) {
-  font-size: 12.5px;
-  padding: 7px 13px;
 }
 
 /* ---- concierge chat blocks ---------------------------------------------- */

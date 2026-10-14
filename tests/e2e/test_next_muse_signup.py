@@ -747,7 +747,7 @@ def test_registration_account_is_independent_saved_and_clearable(page_factory, w
     expect(email).to_be_enabled()
     expect(email).to_have_value("")
     expect(email).to_have_attribute("placeholder", "Current browser account")
-    expect(form.get_by_role("button", name="Save", exact=True)).to_be_disabled()
+    expect(page.get_by_role("button", name="Save", exact=True)).to_be_disabled()
     assert api.account_saves == []
     form.get_by_role("button", name="Registration account help", exact=True).focus()
     expect(page.get_by_role("tooltip")).to_contain_text("Can differ from your Events Concierge sign-in")
@@ -755,22 +755,22 @@ def test_registration_account_is_independent_saved_and_clearable(page_factory, w
     email.fill("Provider+events@EXAMPLE.TEST")
     form.get_by_role("button", name="Per site", exact=True).click()
     form.get_by_role("textbox", name="Luma email", exact=True).fill("luma@example.test")
-    form.get_by_role("button", name="Save", exact=True).click()
-    expect(form.get_by_text("Saved.", exact=True)).to_be_visible()
+    page.get_by_role("button", name="Save", exact=True).click()
+    expect(page.locator(".settings-actions").get_by_text("Saved.", exact=True)).to_be_visible()
     assert api.account_saves == [{"expected_email": "Provider+events@example.test", "provider_overrides": {"luma": "luma@example.test"}, "revision": 1}]
     account_write = next(item for item in api.writes if item[1] == "/v1/me/registration-accounts/muse")
     assert account_write[2]["x-fixture-csrf"] == "bound-fixture"
     assert "authorization" not in account_write[2]
     expect(page.locator(".settings-header__who")).to_have_text("browser@example.test")
-    expect(form.get_by_role("link", name="Account guide", exact=True)).to_have_attribute("href", "/docs/muse#account")
+    expect(page.get_by_role("link", name="Account guide", exact=True)).to_have_attribute("href", "/docs/muse#account")
     page.reload()
     expect(email).to_have_value("Provider+events@example.test")
     expect(form.get_by_role("textbox", name="Luma email", exact=True)).to_have_value("luma@example.test")
     page.screenshot(path=str(tmp_path / f"registration-account-{width}.png"))
     email.fill("")
     form.get_by_role("textbox", name="Luma email", exact=True).fill("")
-    form.get_by_role("button", name="Save", exact=True).click()
-    expect(form.get_by_text("Saved.", exact=True)).to_be_visible()
+    page.get_by_role("button", name="Save", exact=True).click()
+    expect(page.locator(".settings-actions").get_by_text("Saved.", exact=True)).to_be_visible()
     assert api.account_saves[-1] == {"expected_email": None, "provider_overrides": {}, "revision": 2}
     page.reload()
     expect(email).to_have_value("")
@@ -786,19 +786,19 @@ def test_registration_account_validation_and_failed_save_keep_the_draft(page_fac
     email = form.get_by_role("textbox", name="Default email", exact=True)
     expect(email).to_be_enabled()
     email.fill("person@example")
-    form.get_by_role("button", name="Save", exact=True).click()
+    page.get_by_role("button", name="Save", exact=True).click()
     expect(form.get_by_role("alert")).to_contain_text("Enter a valid email address.")
     assert api.account_saves == []
     email.fill("provider@example.test")
     api.account_error = 503
-    form.get_by_role("button", name="Save", exact=True).click()
+    page.get_by_role("button", name="Save", exact=True).click()
     expect(form.get_by_role("alert")).to_contain_text("Account settings unavailable")
     expect(email).to_have_value("provider@example.test")
-    expect(form.get_by_role("button", name="Save", exact=True)).to_be_enabled()
+    expect(page.get_by_role("button", name="Save", exact=True)).to_be_enabled()
     assert api.registration_account["expected_email"] is None
     api.account_error = None
-    form.get_by_role("button", name="Save", exact=True).click()
-    expect(form.get_by_text("Saved.", exact=True)).to_be_visible()
+    page.get_by_role("button", name="Save", exact=True).click()
+    expect(page.locator(".settings-actions").get_by_text("Saved.", exact=True)).to_be_visible()
     assert len(api.account_saves) == 2
     assert api.account_saves[0] == api.account_saves[1]
     assert api.unexpected == []
@@ -813,17 +813,17 @@ def test_registration_account_conflict_requires_reload_and_preserves_unsaved_ide
     expect(email).to_be_enabled()
     email.fill("draft@example.test")
     api.registration_account = api.registration_account | {"expected_email": "other-tab@example.test", "revision": 1}
-    form.get_by_role("button", name="Save", exact=True).click()
+    page.get_by_role("button", name="Save", exact=True).click()
     expect(form.get_by_role("alert")).to_contain_text("Settings changed. Reload and review before saving.")
-    expect(form.get_by_role("button", name="Save", exact=True)).to_be_disabled()
+    expect(page.get_by_role("button", name="Save", exact=True)).to_be_disabled()
     expect(email).to_have_value("draft@example.test")
     assert len(api.account_saves) == 1
-    form.get_by_role("button", name="Reload", exact=True).click()
-    expect(form.get_by_role("button", name="Save", exact=True)).to_be_enabled()
+    page.get_by_role("button", name="Reload", exact=True).click()
+    expect(page.get_by_role("button", name="Save", exact=True)).to_be_enabled()
     expect(email).to_have_value("draft@example.test")
     assert len(api.account_saves) == 1
-    form.get_by_role("button", name="Save", exact=True).click()
-    expect(form.get_by_text("Saved.", exact=True)).to_be_visible()
+    page.get_by_role("button", name="Save", exact=True).click()
+    expect(page.locator(".settings-actions").get_by_text("Saved.", exact=True)).to_be_visible()
     assert api.account_saves[-1] == {"expected_email": "draft@example.test", "provider_overrides": {}, "revision": 2}
     assert api.unexpected == []
 

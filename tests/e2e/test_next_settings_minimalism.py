@@ -5,7 +5,7 @@ import os
 from urllib.parse import urlsplit
 
 import pytest
-from playwright.sync_api import Route, expect
+from playwright.sync_api import Locator, Route, expect
 from tests.e2e.test_next_release_profile import ReleaseApi
 
 BASE = os.environ.get("EC_CONSUMER_WEB_URL") or os.environ.get("EC_ADMIN_WEB_URL")
@@ -133,19 +133,34 @@ def test_compact_interests_keep_chip_selection_normalization_and_save(settings_p
     })]
 
 
+def assert_saved_filter_actions_contained(page):
+    assert page.locator(".saved-list__actions, .saved-list__confirm").evaluate_all("""groups =>
+        groups.length > 0 && groups.every(group => {
+            const row = group.closest('li').getBoundingClientRect();
+            return [...group.querySelectorAll('a, button')].every(control => {
+                const box = control.getBoundingClientRect();
+                return box.left >= row.left - 1 && box.right <= row.right + 1;
+            });
+        })
+    """)
+
+
 def test_compact_saved_filters_keep_the_selection_and_require_delete_confirmation(settings_page):
     page, api = settings_page
     page.goto(f"{BASE}/settings/saved-filters")
     expect(page.get_by_text("SF events", exact=True)).to_be_visible()
+    assert_saved_filter_actions_contained(page)
     page.get_by_role("button", name="Rename", exact=True).click()
     page.get_by_role("textbox", name="Rename SF events", exact=True).fill("SF favorites")
     page.get_by_role("button", name="Save", exact=True).click()
     expect(page.get_by_text("SF favorites", exact=True)).to_be_visible()
+    assert_saved_filter_actions_contained(page)
     assert api.writes == [("PUT", f"/v1/me/saved-filters/{FILTER_ID}", {
         "name": "SF favorites", "filters": api.filters,
     })]
     page.get_by_role("button", name="Delete SF favorites", exact=True).click()
     expect(page.get_by_text("Delete for good?", exact=True)).to_be_visible()
+    assert_saved_filter_actions_contained(page)
     assert len(api.writes) == 1
     page.get_by_role("button", name="Keep", exact=True).click()
     expect(page.get_by_text("Delete for good?", exact=True)).to_have_count(0)
@@ -155,6 +170,14 @@ def test_compact_saved_filters_keep_the_selection_and_require_delete_confirmatio
     expect(page.get_by_text("No saved filters.", exact=True)).to_be_visible()
     assert api.writes[-1][0:2] == ("DELETE", f"/v1/me/saved-filters/{FILTER_ID}")
     assert len(api.writes) == 2
+
+
+def document_box(locator: Locator):
+    # Keyboard and click focus may scroll a long settings page; compare page layout, not scroll.
+    return locator.evaluate("""element => {
+        const box = element.getBoundingClientRect();
+        return { x: box.x + scrollX, y: box.y + scrollY, width: box.width, height: box.height };
+    }""")
 
 
 def test_save_controls_match_and_stay_in_place_while_saving(settings_page):
@@ -167,20 +190,19 @@ def test_save_controls_match_and_stay_in_place_while_saving(settings_page):
         ("/settings/saved-filters", "Rename SF events", "SF favorites"),
     ]):
         page.goto(BASE + path)
-        if index == 3:
-            page.get_by_role("button", name="Rename", exact=True).click()
         save = page.get_by_role("button", name="Save", exact=True)
         expect(save).to_be_visible()
-        if index < 3:
-            expect(save).to_be_disabled()
-        original_box = save.bounding_box()
+        expect(save).to_be_disabled()
+        original_box = document_box(save)
+        if index == 3:
+            page.get_by_role("button", name="Rename", exact=True).click()
         if field:
             page.get_by_role("textbox", name=field, exact=True).fill(value)
         else:
             page.get_by_role("button", name="Art & design", exact=True).click()
         expect(save).to_be_enabled()
         # Empty and dirty feedback must not push Save to another row.
-        assert save.bounding_box() == original_box
+        assert document_box(save) == original_box
         current = save.evaluate("""element => {
             const style = getComputedStyle(element);
             const box = element.getBoundingClientRect();
@@ -194,25 +216,86 @@ def test_save_controls_match_and_stay_in_place_while_saving(settings_page):
         page.keyboard.press("Tab")
         expect(save).to_be_focused()
         assert save.evaluate("element => getComputedStyle(element).outlineWidth") == "2px"
-        if index < 3:
-            footer_box = page.locator(".settings-actions").bounding_box()
-            assert abs(original_box["x"] + original_box["width"]
-                       - footer_box["x"] - footer_box["width"]) < 1
+        footer = page.locator(".settings-actions")
+        footer_box = document_box(footer)
+        assert save.evaluate("element => element.closest('.settings-card, .saved-list') === null")
+        assert save.evaluate("element => element.closest('footer.settings-actions') !== null")
+        for card_box in page.locator(".settings-card").evaluate_all(
+            "elements => elements.map(element => element.getBoundingClientRect().bottom + scrollY)"
+        ):
+            assert footer_box["y"] >= card_box
+        if index == 2:
+            links_box = document_box(page.get_by_role("navigation", name="Muse links", exact=True))
+            assert footer_box["y"] >= links_box["y"] + links_box["height"]
+        assert abs(original_box["x"] + original_box["width"]
+                   - footer_box["x"] - footer_box["width"]) < 1
         api.hold_writes = True
         save.click()
         expect(save).to_have_attribute("aria-busy", "true")
         expect(save).to_be_disabled()
-        assert save.bounding_box() == original_box
+        assert document_box(save) == original_box
         assert len(api.held_writes) == 1
         api.hold_writes = False
         api.handle(api.held_writes.pop())
-        if index < 3:
-            expect(save).to_have_attribute("aria-busy", "false")
-            expect(save).to_be_disabled()
-            expect(page.locator(".settings-actions").get_by_role("status")).to_contain_text("saved", ignore_case=True)
-            assert save.bounding_box() == original_box
-        else:
+        expect(save).to_have_attribute("aria-busy", "false")
+        expect(save).to_be_disabled()
+        expect(footer.get_by_role("status")).to_contain_text("saved", ignore_case=True)
+        assert document_box(save) == original_box
+        if index == 3:
             expect(page.get_by_text("SF favorites", exact=True)).to_be_visible()
         assert len(api.writes) == index + 1
         assert page.evaluate("document.documentElement.scrollWidth <= innerWidth")
+    assert api.unexpected == []
+
+
+def test_registration_footer_submits_only_its_account_form(settings_page):
+    page, api = settings_page
+    page.goto(f"{BASE}/settings/registrations")
+    form = page.get_by_role("form", name="Registration account", exact=True)
+    save = page.get_by_role("button", name="Save", exact=True)
+    email = form.get_by_role("textbox", name="Default email", exact=True)
+    email.fill("provider@example.test")
+    expect(save).to_be_enabled()
+    assert save.evaluate("element => element.form.id") == form.get_attribute("id")
+    connector = page.get_by_role("textbox", name="Connector URL", exact=True)
+    assert connector.evaluate("element => element.form === null")
+    connector.press("Enter")
+    assert api.writes == []
+    email.press("Enter")
+    expect(page.locator(".settings-actions").get_by_role("status")).to_contain_text("Saved.")
+    assert api.writes == [("PUT", "/v1/me/registration-accounts/muse", {
+        "expected_email": "provider@example.test", "provider_overrides": {}, "revision": 1,
+    })]
+    assert api.unexpected == []
+
+
+def test_saved_filter_footer_keeps_keyboard_and_cancel_behavior(settings_page):
+    page, api = settings_page
+    page.goto(f"{BASE}/settings/saved-filters")
+    save = page.get_by_role("button", name="Save", exact=True)
+    cancel = page.get_by_role("button", name="Cancel", exact=True)
+    expect(save).to_be_disabled()
+    expect(cancel).to_be_disabled()
+    page.get_by_role("button", name="Rename", exact=True).click()
+    name = page.get_by_role("textbox", name="Rename SF events", exact=True)
+    name.fill("")
+    expect(save).to_be_disabled()
+    name.fill("Discarded name")
+    cancel.click()
+    expect(name).to_have_count(0)
+    expect(save).to_be_disabled()
+    page.get_by_role("button", name="Rename", exact=True).click()
+    expect(name).to_have_value("SF events")
+    name.fill("Escape this name")
+    name.press("Escape")
+    expect(name).to_have_count(0)
+    assert api.writes == []
+    page.get_by_role("button", name="Rename", exact=True).click()
+    name.fill("SF favorites")
+    name.press("Enter")
+    expect(page.get_by_text("SF favorites", exact=True)).to_be_visible()
+    expect(save).to_be_disabled()
+    assert api.writes == [("PUT", f"/v1/me/saved-filters/{FILTER_ID}", {
+        "name": "SF favorites", "filters": api.filters,
+    })]
     assert api.unexpected == []

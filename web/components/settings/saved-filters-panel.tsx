@@ -5,7 +5,7 @@ import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
 
 import { useSession } from "@/components/session-provider";
-import { SettingsSaveButton } from "@/components/settings/settings-actions";
+import { SettingsActions, SettingsSaveButton } from "@/components/settings/settings-actions";
 import {
   deleteSavedFilter,
   getCatalogFacets,
@@ -64,6 +64,7 @@ export function SavedFiltersPanel() {
   const [draft, setDraft] = useState("");
   const [pendingDelete, setPendingDelete] = useState<string | null>(null);
   const [busyId, setBusyId] = useState<string | null>(null);
+  const [saved, setSaved] = useState(false);
   const labelsRequested = useRef(false);
 
   useEffect(() => {
@@ -109,11 +110,18 @@ export function SavedFiltersPanel() {
 
   const startRename = (entry: SavedFilter) => {
     setPendingDelete(null);
+    setSaved(false);
     setRenaming(entry.saved_filter_id);
     setDraft(entry.name);
   };
 
+  const cancelRename = () => {
+    setRenaming(null);
+    setDraft("");
+  };
+
   const commitRename = async (entry: SavedFilter) => {
+    if (busyId) return;
     const name = draft.trim();
     if (!name || name === entry.name) {
       setRenaming(null);
@@ -131,7 +139,8 @@ export function SavedFiltersPanel() {
       setRows((current) => current.map((row) => (
         row.saved_filter_id === updated.saved_filter_id ? updated : row
       )));
-      setRenaming(null);
+      cancelRename();
+      setSaved(true);
     } catch (renameError) {
       setError(readableError(renameError, "That name could not be saved."));
     } finally {
@@ -154,6 +163,8 @@ export function SavedFiltersPanel() {
       setBusyId(null);
     }
   };
+
+  const renamedEntry = rows.find((entry) => entry.saved_filter_id === renaming);
 
   return (
     <div className="settings-panel">
@@ -196,6 +207,7 @@ export function SavedFiltersPanel() {
                           value={draft}
                           maxLength={80}
                           aria-label={`Rename ${entry.name}`}
+                          disabled={busy}
                           onChange={(event) => setDraft(event.target.value)}
                           onKeyDown={(event) => {
                             if (event.key === "Enter") {
@@ -203,22 +215,10 @@ export function SavedFiltersPanel() {
                               void commitRename(entry);
                             } else if (event.key === "Escape") {
                               event.preventDefault();
-                              setRenaming(null);
+                              cancelRename();
                             }
                           }}
                         />
-                        <SettingsSaveButton
-                          saving={busy}
-                          disabled={draft.trim() === ""}
-                          onClick={() => commitRename(entry)}
-                        />
-                        <button
-                          type="button"
-                          className="button button-quiet"
-                          onClick={() => setRenaming(null)}
-                        >
-                          Cancel
-                        </button>
                       </div>
                     ) : (
                       <p className="saved-list__name">{entry.name}</p>
@@ -272,6 +272,7 @@ export function SavedFiltersPanel() {
                       <button
                         type="button"
                         className="button button-quiet"
+                        disabled={busyId !== null}
                         onClick={() => startRename(entry)}
                       >
                         <Pencil aria-hidden="true" />
@@ -281,8 +282,10 @@ export function SavedFiltersPanel() {
                         type="button"
                         className="button button-quiet-danger"
                         aria-label={`Delete ${entry.name}`}
+                        disabled={busyId !== null}
                         onClick={() => {
-                          setRenaming(null);
+                          cancelRename();
+                          setSaved(false);
                           setPendingDelete(entry.saved_filter_id);
                         }}
                       >
@@ -297,6 +300,21 @@ export function SavedFiltersPanel() {
           </ul>
         )}
       </section>
+      <SettingsActions status={saved ? "Saved." : renamedEntry && draft.trim() !== renamedEntry.name ? "Unsaved changes." : ""}>
+        <button
+          type="button"
+          className="button button-quiet"
+          disabled={!renamedEntry || busyId !== null}
+          onClick={cancelRename}
+        >
+          Cancel
+        </button>
+        <SettingsSaveButton
+          saving={Boolean(renaming && busyId === renaming)}
+          disabled={!renamedEntry || draft.trim() === "" || busyId !== null}
+          onClick={() => { if (renamedEntry) void commitRename(renamedEntry); }}
+        />
+      </SettingsActions>
     </div>
   );
 }
