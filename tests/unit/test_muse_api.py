@@ -204,6 +204,28 @@ async def test_connector_contract_exposes_only_selected_batch_operations(monkeyp
     assert "/v1/me/muse/batches" in app.openapi()["paths"]
 
 
+async def test_connector_schema_carries_signup_email_and_resumed_account_instructions(monkeypatch):
+    app, _, _ = muse_app(monkeypatch)
+    async with AsyncClient(transport=ASGITransport(app=app), base_url=ORIGIN) as client:
+        schema = (await client.get("/v1/muse/openapi.json")).json()
+    account_email = schema["components"]["schemas"]["RegistrationAccount"]["properties"][
+        "expected_email"
+    ]
+    assert "signup/contact email" in account_email["description"]
+    assert "company/work email when accepted" in account_email["description"]
+    assert "never inferring the app login email" in account_email["description"]
+    for path, verb in (
+        ("/v1/muse/connector/batches/{batch_id}", "get"),
+        ("/v1/muse/connector/batches/{batch_id}/items/{event_id}/claim", "post"),
+    ):
+        instructions = " ".join(schema["paths"][path][verb]["description"].split())
+        assert "company/work email when accepted" in instructions
+        assert "business-domain address is required" in instructions
+        assert "never invent or substitute an email" in instructions
+        assert "ask for unanswered email fields" in instructions
+        assert "saved registration_account" in instructions
+
+
 async def test_batch_body_cannot_set_tenant_or_provider_url(monkeypatch):
     app, repository, _ = muse_app(monkeypatch)
     async with AsyncClient(transport=ASGITransport(app=app), base_url=ORIGIN) as client:

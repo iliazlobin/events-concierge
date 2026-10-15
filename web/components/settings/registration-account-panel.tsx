@@ -97,7 +97,7 @@ export function RegistrationAccountPanel({ executor, children }: { executor: Reg
     <form id={formId} className="settings-card" aria-labelledby="registration-account-heading" noValidate onSubmit={submit}>
       <div className={styles.fieldLabel}>
         <h2 id="registration-account-heading" className="settings-card__title">Registration account</h2>
-        <SettingsHelp label="Registration account">Can differ from your Events Concierge sign-in. Empty default: current provider browser account. Empty site override: default account. Changes apply to queued registrations; active attempts keep their account. Saving does not sign in or switch accounts.</SettingsHelp>
+        <SettingsHelp label="Registration account">Can differ from your Events Concierge sign-in. Used for provider sign-in and signup email, including company email when accepted. An empty default uses the current browser account; an empty site override uses the default. Changes apply to queued registrations; active attempts keep their saved email.</SettingsHelp>
       </div>
       <div className="settings-field">
         <label htmlFor="registration-default-email">Default email</label>

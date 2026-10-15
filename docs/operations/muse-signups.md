@@ -19,7 +19,7 @@ A supported Muse task-creation API/deeplink has not been verified. The button op
 | Boundary | Behavior |
 | --- | --- |
 | Account | Google/Apple app session creates selections and keys; owner writes require CSRF. Muse cannot edit the account or choose events. |
-| Registration identity | A private preference selects the expected provider email independently of the app sign-in. A default email and Luma/Meetup overrides are scoped to the executor, currently Muse. Empty default means the current provider browser account; an absent override inherits the default. This is selection metadata, not verified provider identity, credentials or an access grant. |
+| Registration identity | A private preference selects the provider login and signup/contact email independently of the app sign-in. A default email and Luma/Meetup overrides are scoped to the executor, currently Muse. Empty default means the current provider browser account; an absent override inherits the default. This is selection metadata, not verified provider identity, credentials or an access grant. |
 | Connection | One 30-day key per account, shown once; PostgreSQL stores its hash. Replace revokes the old key; **Revoke key** removes access. An active key does not verify Muse's connection. |
 | Queue | One durable task per account/event. Repeated clicks return the existing task. Request UUIDs are idempotent and cannot be reused for another date. Published, scheduled, future, free dates require a Luma/Meetup observation within 48 hours. |
 | Attempt | Claim with a stable UUID before browser action. A claim rechecks title, date, location, availability and freshness. Competing attempts conflict. Replays return progress, never authorize another submission. |
@@ -30,8 +30,12 @@ Muse must check existing RSVPs and the provider's current facts before submittin
 
 Tasks carry `registration_account` with executor, provider and optional `expected_email`.
 Muse checks the visible provider account against this selection; it never infers a provider
-login from the Events Concierge owner email. A mismatch requires the owner's instruction,
-not an automatic sign-out. Saving a preference updates queued tasks and advances their
+login or form email from the Events Concierge owner email. Muse uses the same selected email
+for signup/contact fields, including company/work email when accepted. If a form rejects it
+or requires a business-domain address, Muse asks the owner instead of inventing or substituting
+another email. With no selection, Muse uses the current browser account and asks for unanswered
+email fields. A provider-account mismatch requires the owner's instruction, not an automatic
+sign-out. Saving a preference updates queued tasks and advances their
 unread version only when the selection changes. Claimed attempts retain their selection;
 changing settings cannot retarget an active or completed attempt.
 

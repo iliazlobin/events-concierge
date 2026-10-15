@@ -1101,6 +1101,10 @@ def test_registration_account_is_independent_saved_and_clearable(page_factory, w
     assert api.account_saves == []
     form.get_by_role("button", name="Registration account help", exact=True).focus()
     expect(page.get_by_role("tooltip")).to_contain_text("Can differ from your Events Concierge sign-in")
+    expect(page.get_by_role("tooltip")).to_contain_text("provider sign-in and signup email, including company email when accepted")
+    expect(page.get_by_role("tooltip")).to_contain_text("active attempts keep their saved email")
+    assert page.evaluate("document.documentElement.scrollWidth <= innerWidth")
+    page.screenshot(path=str(tmp_path / f"registration-account-help-{width}.png"))
     page.keyboard.press("Escape")
     email.fill("Provider+events@EXAMPLE.TEST")
     form.get_by_role("button", name="Per site", exact=True).click()
