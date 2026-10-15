@@ -1,7 +1,8 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { ApiError, getCatalogNameSuggestions } from "../lib/api.ts";
+import { ApiError, catalogNameIndexKey, getCatalogNameIndex, getCatalogNameSuggestions } from "../lib/api.ts";
+import { catalogNameIndexExpiry } from "../lib/catalog-name-index.ts";
 import { emptyCatalogFilters } from "../lib/catalog-filters.ts";
 
 const scoped = () => ({
@@ -97,4 +98,32 @@ test("cancelling a lookup discards its old response", async (t) => {
   });
   await assert.rejects(getCatalogNameSuggestions(scoped(), "nebi", controller.signal), reason);
   assert.equal(calls, 1);
+});
+
+test("preload ignores text and sort, but retains the exact event restrictions", async (t) => {
+  const filters = { ...scoped(), query: "semian", sort: "latest" };
+  const key = catalogNameIndexKey(filters);
+  assert.equal(key, catalogNameIndexKey({ ...filters, query: "nebi", sort: "soonest" }));
+  const query = new URLSearchParams(key);
+  for (const name of ["source_key", "city", "location_scope", "topic", "price",
+    "price_min_cents", "price_max_cents", "availability", "starts_after", "starts_before"]) {
+    assert.ok(query.has(name), name);
+  }
+  assert.equal(query.has("q"), false);
+  const payload = { items: [entry], complete: true, expires_at: "2030-10-09T10:00:10Z" };
+  t.mock.method(globalThis, "fetch", async (path) => {
+    assert.equal(path, `/v1/catalog/name-index?${key}`);
+    return response(payload);
+  });
+  assert.deepEqual(await getCatalogNameIndex(key), payload);
+  assert.notEqual(key, catalogNameIndexKey({ ...filters, availability: "sold_out" }));
+  assert.notEqual(key, catalogNameIndexKey({ ...filters, cities: ["Oakland"], city: "Oakland" }));
+});
+
+test("preload expiry includes server-cache age and loading time, with a hard client cap", () => {
+  const started = Date.parse("2030-10-09T10:00:00Z");
+  assert.equal(catalogNameIndexExpiry({ expires_at: "2030-10-09T10:00:03Z" }, started), started + 3000);
+  assert.equal(catalogNameIndexExpiry({ expires_at: "2030-10-09T11:00:00Z" }, started), started + 10000);
+  assert.equal(catalogNameIndexExpiry({ expires_at: "invalid" }, started), 0);
+  assert.ok(catalogNameIndexExpiry({ expires_at: "2030-10-09T09:59:00Z" }, started) < started);
 });

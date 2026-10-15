@@ -1,6 +1,7 @@
 import type {
   CatalogFilters,
   CatalogNameSuggestion,
+  CatalogNameIndex,
   CatalogEntity,
   CatalogEntityDetail,
   CatalogDaySummary,
@@ -211,6 +212,23 @@ export async function getCatalogNameSuggestions(
   const items = await api<CatalogNameSuggestion[]>(`/v1/catalog/name-suggestions?${query}`, { signal });
   signal?.throwIfAborted();
   return items;
+}
+
+/** The compact preload excludes typed text but retains every restrictive filter. */
+export function catalogNameIndexKey(filters: CatalogFilters, now = new Date()): string {
+  const query = catalogFilterQuery({ ...filters, query: "" }, undefined, now);
+  query.sort();
+  return query.toString();
+}
+
+export async function getCatalogNameIndex(
+  key: string,
+  signal?: AbortSignal,
+): Promise<CatalogNameIndex> {
+  signal?.throwIfAborted();
+  const index = await api<CatalogNameIndex>(`/v1/catalog/name-index?${key}`, { signal });
+  signal?.throwIfAborted();
+  return index;
 }
 
 export function getCatalogPage(

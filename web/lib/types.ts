@@ -71,6 +71,7 @@ export interface UiConfig {
   /** Muse remains unavailable unless the deployment explicitly enables it. */
   muse_enabled?: boolean;
   catalog_name_suggestions_enabled?: boolean;
+  catalog_name_index_enabled?: boolean;
   product_name: string;
   local_demo: boolean;
   auth_mode: "local_demo" | "deployment_session";
@@ -173,6 +174,12 @@ export interface CatalogNameSuggestion {
   name: string;
   kinds: CatalogNameKind[];
   event_count: number;
+}
+
+export interface CatalogNameIndex {
+  items: CatalogNameSuggestion[];
+  complete: boolean;
+  expires_at: string;
 }
 
 export type CatalogEntityKind = "person" | "organization" | "unknown";

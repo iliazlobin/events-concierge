@@ -1395,6 +1395,7 @@ export function ConciergeApp() {
         <FilterBar
           filters={filters}
           catalogNameSuggestionsEnabled={config?.catalog_name_suggestions_enabled === true}
+          catalogNameIndexEnabled={historyReady && config?.catalog_name_index_enabled === true}
           providers={providers}
           topics={topicFacets}
           cities={knownCities}

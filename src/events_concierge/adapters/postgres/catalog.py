@@ -17,6 +17,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from ...domain import dedup
 from ...domain.catalog_browse import (
+    MAX_CATALOG_NAME_INDEX,
     MAX_CATALOG_NAME_SUGGESTIONS,
     MIN_CATALOG_NAME_QUERY_LENGTH,
     CatalogBrowseCity,
@@ -1085,7 +1086,7 @@ class PostgresCatalogRepository:
     async def suggest_names(
         self,
         *,
-        query: str,
+        query: str | None,
         source_keys: tuple[str, ...] = (),
         date_ranges: tuple[tuple[datetime, datetime], ...] = (),
         cities: tuple[str, ...] = (),
@@ -1097,9 +1098,11 @@ class PostgresCatalogRepository:
         availability: str | None = None,
         limit: int = 8,
     ) -> list[CatalogNameSuggestion]:
-        if (
-            not MIN_CATALOG_NAME_QUERY_LENGTH <= len(query.strip()) <= _MAX_CATALOG_FILTER_LENGTH
-            or not 1 <= limit <= MAX_CATALOG_NAME_SUGGESTIONS
+        if (query is None and not 1 <= limit <= MAX_CATALOG_NAME_INDEX + 1) or (
+            query is not None and (
+                not MIN_CATALOG_NAME_QUERY_LENGTH <= len(query.strip()) <= _MAX_CATALOG_FILTER_LENGTH
+                or not 1 <= limit <= MAX_CATALOG_NAME_SUGGESTIONS
+            )
         ):
             raise ValueError("catalog name suggestion query is invalid")
         normalized_topics = _validated_catalog_filter_inputs(
@@ -1114,9 +1117,11 @@ class PostgresCatalogRepository:
             ),
         )
         async with self._session_scope() as session:
+            reader = ("fn_catalog_name_index_v1" if query is None
+                      else "fn_suggest_catalog_names_v2")
             rows = (await session.execute(
-                text("""
-                    SELECT * FROM public.fn_suggest_catalog_names_v2(
+                text(f"""
+                    SELECT * FROM public.{reader}(
                         :query, CAST(:source_keys AS text[]),
                         CAST(:window_starts AS timestamptz[]), CAST(:window_ends AS timestamptz[]),
                         CAST(:cities AS text[]), CAST(:location_scopes AS text[]),
@@ -1125,7 +1130,8 @@ class PostgresCatalogRepository:
                     )
                 """),
                 {
-                    "query": query.strip(), "source_keys": list(dict.fromkeys(source_keys)),
+                    "query": query.strip() if query is not None else "",
+                    "source_keys": list(dict.fromkeys(source_keys)),
                     "window_starts": [start for start, _ in windows] if windows else [None],
                     "window_ends": [end for _, end in windows] if windows else [None],
                     "cities": list(dict.fromkeys(cities)),

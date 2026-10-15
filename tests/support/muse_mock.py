@@ -198,7 +198,7 @@ async def proxy_preview(mock: MuseMock, path: str, request: Request) -> Response
             "/v1/me/muse/registrations/seen",
             "/v1/me/muse/batches",
         } or re.fullmatch(
-            r"/v1/catalog/(events|entities|sources|name-suggestions|entity-resolution)(/[a-zA-Z0-9_-]+(/graph)?)?",
+            r"/v1/catalog/(events|entities|sources|name-suggestions|name-index|entity-resolution)(/[a-zA-Z0-9_-]+(/graph)?)?",
             path,
         )
         writable = path in {"/v1/me/muse/registrations", "/v1/me/muse/registrations/seen"}

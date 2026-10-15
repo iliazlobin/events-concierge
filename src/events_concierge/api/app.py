@@ -41,7 +41,11 @@ from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
 from ..adapters.identity_platform import IdentityPlatformBrowserSessionAdapter
 from ..adapters.oidc.session import _safe_return_path
-from ..api.catalog_reads import CatalogReadCoordinator, CatalogReadMiddleware
+from ..api.catalog_reads import (
+    CatalogNameIndexCompression,
+    CatalogReadCoordinator,
+    CatalogReadMiddleware,
+)
 from ..api.firebase_auth_helper import install_firebase_auth_helper
 from ..api.muse import is_muse_path, muse_router
 from ..api.release_profile import apply_release_profile
@@ -55,6 +59,7 @@ from ..config import Settings, get_settings
 from ..deployment.startup import preflight_application_runtime
 from ..domain.account_erasure import AccountErasureStatus
 from ..domain.catalog_browse import (
+    MAX_CATALOG_NAME_INDEX,
     MIN_CATALOG_NAME_QUERY_LENGTH,
     CatalogBrowseCursor,
     CatalogBrowseEvent,
@@ -500,6 +505,12 @@ class CatalogNameSuggestionOut(BaseModel):
     event_count: int
 
 
+class CatalogNameIndexOut(BaseModel):
+    items: list[CatalogNameSuggestionOut]
+    complete: bool
+    expires_at: datetime
+
+
 class CatalogDayTopicOut(BaseModel):
     topic: str
     label: str
@@ -764,6 +775,7 @@ class UiConfigOut(BaseModel):
     release_profile: Literal["full", "discovery"] = "full"
     muse_enabled: bool = False
     catalog_name_suggestions_enabled: bool = False
+    catalog_name_index_enabled: bool = False
     local_demo: bool
     auth_mode: Literal["local_demo", "deployment_session"]
     auth_provider: Literal["custom_claim", "google", "identity_platform"] | None = None
@@ -2253,9 +2265,16 @@ async def _database_is_ready() -> bool:
     try:
         async with asyncio.timeout(_READINESS_TIMEOUT_SECONDS):
             async with system_session_scope() as session:
-                # The serving image requires 0220's restricted cache fence.
+                # The serving image requires the 0220 fence and 0221 preload capability.
                 # An unmigrated or incorrectly granted database must not be ready.
                 await session.execute(text("SELECT public.fn_catalog_public_read_token_v1()"))
+                allowed = (await session.execute(text("""
+                    SELECT has_function_privilege(current_user,
+                      'public.fn_catalog_name_index_v1(text,text[],timestamptz[],timestamptz[],text[],text[],text,integer,integer,text[],text,integer)',
+                      'EXECUTE')
+                """))).scalar_one()
+                if not allowed:
+                    return False
     except Exception as exc:
         _log.warning("database_readiness_failed", error=type(exc).__name__)
         return False
@@ -2478,6 +2497,7 @@ def create_app() -> FastAPI:
     app.state.settings = settings
     app.state.ingestion_admin = None
     app.add_middleware(CatalogReadMiddleware, state=app.state)
+    app.add_middleware(CatalogNameIndexCompression)
     install_firebase_auth_helper(app, settings)
 
     @app.exception_handler(RequestValidationError)
@@ -2624,6 +2644,7 @@ def create_app() -> FastAPI:
             release_profile=settings.release_profile,
             muse_enabled=settings.muse_enabled,
             catalog_name_suggestions_enabled=settings.catalog_name_suggestions_enabled,
+            catalog_name_index_enabled=settings.catalog_name_suggestions_enabled,
             local_demo=settings.mock_cloud,
             auth_mode="local_demo" if settings.mock_cloud else "deployment_session",
             auth_provider=(
@@ -3674,8 +3695,10 @@ def create_app() -> FastAPI:
             ],
         )
 
+    @app.get("/v1/catalog/name-index", response_model=CatalogNameIndexOut)
     @app.get("/v1/catalog/name-suggestions", response_model=list[CatalogNameSuggestionOut])
     async def suggest_catalog_names(
+        request: Request,
         source_key: Annotated[
             list[
                 Annotated[
@@ -3689,7 +3712,7 @@ def create_app() -> FastAPI:
         starts_after: Annotated[datetime | None, Query()] = None,
         starts_before: Annotated[datetime | None, Query()] = None,
         date_range: Annotated[list[str] | None, Query()] = None,
-        q: str = Query(min_length=2, max_length=_MAX_CATALOG_FILTER_LENGTH),
+        q: str | None = Query(default=None, min_length=2, max_length=_MAX_CATALOG_FILTER_LENGTH),
         city: Annotated[list[str] | None, Query()] = None,
         location_scope: Annotated[
             list[Literal["bay_area", "manhattan", "los_angeles_area"]] | None,
@@ -3701,8 +3724,14 @@ def create_app() -> FastAPI:
         topic: Annotated[list[str] | None, Query()] = None,
         availability: Literal["available", "sold_out"] | None = Query(default=None),
         limit: int = Query(default=8, ge=1, le=20),
-    ) -> list[CatalogNameSuggestionOut]:
+    ) -> list[CatalogNameSuggestionOut] | CatalogNameIndexOut:
         """Suggest names across the filtered public catalog, independently of event pagination."""
+        preload = request.url.path == "/v1/catalog/name-index"
+        if (preload and q is not None) or (not preload and q is None):
+            raise HTTPException(status_code=422, detail="catalog name query is invalid")
+        # This absolute expiry survives server cache hits. A slow read never earns
+        # a new client lifetime after it finishes.
+        expires_at = datetime.now(UTC) + timedelta(seconds=10)
         source_keys = tuple(dict.fromkeys(source_key or []))
         if len(source_keys) > _MAX_CATALOG_SOURCE_SELECTIONS:
             raise HTTPException(status_code=422, detail="too many catalog sources")
@@ -3740,17 +3769,33 @@ def create_app() -> FastAPI:
             price_max_cents=price_max_cents,
             price_min_cents=price_min_cents,
         )
-        if selection.query is None or len(selection.query) < MIN_CATALOG_NAME_QUERY_LENGTH:
+        if not preload and (
+            selection.query is None or len(selection.query) < MIN_CATALOG_NAME_QUERY_LENGTH
+        ):
             raise HTTPException(status_code=422, detail="catalog name query is too short")
         rows = await app.state.container.catalog.suggest_names(
             query=selection.query, source_keys=source_keys, date_ranges=date_ranges,
             cities=selection.cities, location_scopes=selection.location_scopes,
             price=price, price_max_cents=price_max_cents, price_min_cents=price_min_cents,
-            topics=selection.topics, availability=availability, limit=limit,
+            topics=selection.topics, availability=availability,
+            limit=MAX_CATALOG_NAME_INDEX + 1 if preload else limit,
         )
-        return [CatalogNameSuggestionOut(
+        items = [CatalogNameSuggestionOut(
             name=row.name, kinds=list(row.kinds), event_count=row.event_count,
         ) for row in rows]
+        if not preload:
+            return items
+        # Bound transfer and browser memory even for unusually long Unicode names.
+        bounded: list[CatalogNameSuggestionOut] = []
+        size = 0
+        for item in items[:MAX_CATALOG_NAME_INDEX]:
+            size += len(item.model_dump_json().encode("utf-8")) + 1
+            if size > 512 * 1024:
+                break
+            bounded.append(item)
+        return CatalogNameIndexOut(
+            items=bounded, complete=len(bounded) == len(items), expires_at=expires_at,
+        )
 
     @app.get("/v1/catalog/events/summary", response_model=CatalogDaySummaryOut)
     async def summarize_catalog_events(
