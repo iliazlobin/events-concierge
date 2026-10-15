@@ -1,5 +1,5 @@
 import { locationScope } from "./location-scopes.ts";
-import { eventMapLocation } from "./map-locations.ts";
+import { eventMapLocation, sourceMapCities } from "./map-locations.ts";
 import type { MapCoordinate, MappableEvent } from "./map-locations.ts";
 import type { LocationScope } from "./types.ts";
 
@@ -120,6 +120,7 @@ export function mapViewportFor(
   events: MappableEvent[],
   city: string | string[],
   scopes: LocationScope[] = [],
+  sourceKeys: readonly string[] = [],
 ): MapViewport {
   const coordinates = events.flatMap((event) => {
     const coordinate = eventMapCoordinate(event);
@@ -130,7 +131,8 @@ export function mapViewportFor(
   }
   if (coordinates.length > 1) return { kind: "bounds", coordinates };
 
-  const cities = typeof city === "string" ? (city ? [city] : []) : city;
+  const selectedCities = typeof city === "string" ? (city ? [city] : []) : city;
+  const cities = selectedCities.length || scopes.length ? selectedCities : sourceMapCities(sourceKeys);
   const fallbackCoordinates: MapCoordinate[] = [];
   for (const selectedScope of scopes) {
     const scope = locationScope(selectedScope);

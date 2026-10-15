@@ -11,6 +11,43 @@ function techWeek(venue, extra = {}) {
   };
 }
 
+function laTechWeek(venue, extra = {}) {
+  return techWeek(venue, { city: "losangeles", source_keys: ["tech-week-la-2026"], ...extra });
+}
+
+test("LA publisher areas share approximate markers without becoming venue coordinates", () => {
+  const event = laTechWeek(" Santa Monica ");
+  const original = structuredClone(event);
+  assert.deepEqual(eventMapLocation(event), {
+    coordinate: [-118.4982, 34.0109], precision: "area",
+    areaKey: "la:Santa Monica", label: "Santa Monica",
+  });
+  assert.deepEqual(event, original);
+  const events = [event, laTechWeek("Santa Monica"), laTechWeek("Venice"),
+    laTechWeek("Brentwood"), laTechWeek("Virtual (LA)"), laTechWeek("Other")];
+  assert.deepEqual(mapMarkerGroups(events).map((group) => group.events.length), [2, 1, 1]);
+  assert.equal(partitionMapEvents(events).unmapped.length, 2);
+  assert.deepEqual(eventMapLocation(laTechWeek("Santa Monica", { latitude: 34.02, longitude: -118.48 })), {
+    coordinate: [-118.48, 34.02], precision: "venue",
+  });
+});
+
+test("LA areas retain source, city, precision and ambiguous-label boundaries", () => {
+  for (const venue of ["Virtual (LA)", "Other", "Sunset", "The Valley", "Westside", "South LA",
+    "Santa Monica studio", "Santa Monica / Virtual (LA)", "constructor", "__proto__", null]) {
+    assert.equal(eventMapLocation(laTechWeek(venue)), null, String(venue));
+  }
+  for (const extra of [
+    { city: "sanfrancisco" }, { city: null }, { source_keys: ["tech-week-sf-2026"] },
+    { source_keys: ["tech-week-la-2027"] }, { source_keys: ["luma-la"] },
+    { latitude: 34, longitude: null }, { latitude: 91, longitude: -118 },
+  ]) assert.equal(eventMapLocation(laTechWeek("Santa Monica", extra)), null);
+  assert.equal(eventMapLocation(laTechWeek("Venice", {
+    city: "Los Angeles", source_keys: [], sources: [{ source_key: "tech-week-la-2026" }],
+  }))?.areaKey, "la:Venice");
+  assert.equal(eventMapLocation(techWeek("Brentwood")), null, "LA Brentwood must not become a Bay Area pin");
+});
+
 test("known publisher areas are display-only and provider coordinates take precedence", () => {
   const event = techWeek(" SOMA ");
   const original = structuredClone(event);

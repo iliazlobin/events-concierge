@@ -18,16 +18,20 @@ pytestmark = [
 ]
 
 
-def _event(index: int, venue: str, *, exact: bool = False) -> dict:
+def _event(index: int, venue: str, *, exact: bool = False, region: str = "sf") -> dict:
+    city = "losangeles" if region == "la" else "sanfrancisco"
+    source_key = f"tech-week-{region}-2026"
+    label = f"{region.upper()} Tech Week 2026"
     return catalog_event() | {
         "canonical_event_id": f"90000000-0000-4000-8000-{index:012d}",
         "title": f"Area fixture event {index}",
-        "city": "sanfrancisco", "venue_name": venue,
+        "city": city, "venue_name": venue,
         "start_at": f"2026-10-{8 + index % 2:02d}T18:00:00-07:00", "end_at": None,
-        "latitude": 37.781 if exact else None, "longitude": -122.408 if exact else None,
-        "source_keys": ["tech-week-sf-2026"], "calendar_labels": ["SF Tech Week 2026"],
-        "sources": [{"source_key": "tech-week-sf-2026", "source": "public_jsonld",
-                     "label": "SF Tech Week 2026", "registration_url": "https://www.tech-week.com/calendar/sf"}],
+        "latitude": (34.012 if region == "la" else 37.781) if exact else None,
+        "longitude": (-118.49 if region == "la" else -122.408) if exact else None,
+        "source_keys": [source_key], "calendar_labels": [label],
+        "sources": [{"source_key": source_key, "source": "public_jsonld",
+                     "label": label, "registration_url": f"https://www.tech-week.com/calendar/{region}"}],
     }
 
 
@@ -41,16 +45,22 @@ def area_map_page(page_factory):
     assert all(method == "GET" for method, _ in api.calls)
 
 
-@pytest.mark.parametrize("width", [1440, 390])
-def test_guest_map_groups_areas_retains_exact_and_unlocated_results_and_paginates(area_map_page, tmp_path, width):
-    harness, api = area_map_page
-    page = harness.page
-    page.set_viewport_size({"width": width, "height": 900})
-    page.emulate_media(reduced_motion="reduce")
+def _install_area_catalog(page, api, region):
+    area = "Santa Monica" if region == "la" else "SOMA"
+    other_area = "Venice" if region == "la" else "FiDi (SF)"
+    area_label = "Santa Monica" if region == "la" else "South of Market"
+    source_key = f"tech-week-{region}-2026"
+    label = f"{region.upper()} Tech Week 2026"
+    city = "losangeles" if region == "la" else "sanfrancisco"
+    virtual = f"Virtual ({region.upper()})"
+
+    def event(index, venue, **options):
+        return _event(index, venue, region=region, **options)
+
     pages = [
-        [_event(0, "SOMA"), _event(1, "SOMA"), _event(2, "FiDi (SF)"),
-         _event(3, "SOMA", exact=True), _event(4, "Virtual (SF)"), _event(5, "Other")],
-        [_event(6, "SOMA")],
+        [event(0, area), event(1, area), event(2, other_area),
+         event(3, area, exact=True), event(4, virtual), event(5, "Other")],
+        [event(6, area)],
     ]
     queries = []
 
@@ -61,21 +71,32 @@ def test_guest_map_groups_areas_retains_exact_and_unlocated_results_and_paginate
         index = int(query.get("cursor", ["0"])[0])
         api.respond(route, {
             "items": pages[index], "next_cursor": "1" if index == 0 else None,
-            "providers": [{"source_key": "tech-week-sf-2026", "label": "SF Tech Week 2026",
-                           "display_name": "SF Tech Week 2026", "publisher": "Tech Week",
-                           "provider": "www.tech-week.com", "seed_url": "https://www.tech-week.com/calendar/sf", "event_count": 7}],
-            "topic_facets": [], "city_facets": [{"city": "sanfrancisco", "event_count": 7}],
+            "providers": [{"source_key": source_key, "label": label,
+                           "display_name": label, "publisher": "Tech Week",
+                           "provider": "www.tech-week.com", "seed_url": f"https://www.tech-week.com/calendar/{region}", "event_count": 7}],
+            "topic_facets": [], "city_facets": [{"city": city, "event_count": 7}],
         })
 
     page.route(re.compile(r"/v1/catalog/events(?:\?.*)?$"), catalog)
-    page.goto(f"{BASE}/?view=map&source=tech-week-sf-2026&city=sanfrancisco&when=custom&start=2026-10-01&end=2026-10-31&price=any")
+    return source_key, area_label, virtual, queries
+
+
+@pytest.mark.parametrize("width", [1440, 390])
+@pytest.mark.parametrize("region", ["sf", "la"])
+def test_guest_map_groups_areas_retains_exact_and_unlocated_results_and_paginates(area_map_page, tmp_path, width, region):
+    harness, api = area_map_page
+    page = harness.page
+    page.set_viewport_size({"width": width, "height": 900})
+    page.emulate_media(reduced_motion="reduce")
+    source_key, area_label, virtual, queries = _install_area_catalog(page, api, region)
+    page.goto(f"{BASE}/?view=map&source={source_key}&city=&when=custom&start=2026-10-01&end=2026-10-31&price=any")
     rail = page.locator(".map-preview-rail")
     expect(page.locator(".map-heading")).to_contain_text("4 mapped (3 approximate) · 2 without map locations")
     expect(page.locator(".map-marker--area")).to_have_count(2)
     expect(page.locator(".map-marker:not(.map-marker--area)")).to_have_count(1)
     expect(rail.locator(".map-preview-rail__notice")).to_have_count(0)
     expect(rail.locator(".map-preview")).to_have_count(4)
-    soma = page.get_by_role("button", name="Show 2 events near South of Market (approximate area)", exact=True)
+    soma = page.get_by_role("button", name=f"Show 2 events near {area_label} (approximate area)", exact=True)
     expect(soma).to_be_visible()
     marker_element = soma.element_handle()
     soma.click()
@@ -89,19 +110,22 @@ def test_guest_map_groups_areas_retains_exact_and_unlocated_results_and_paginate
 
     page.get_by_role("button", name="Load more", exact=True).click()
     expect(rail.locator(".map-preview")).to_have_count(3)
-    expect(page.get_by_role("button", name="Show 3 events near South of Market (approximate area)", exact=True)).to_contain_text("3")
+    expect(page.get_by_role("button", name=f"Show 3 events near {area_label} (approximate area)", exact=True)).to_contain_text("3")
     expect(page.locator(".map-marker")).to_have_count(3)
     assert {key: value for key, value in queries[1].items() if key != "cursor"} == queries[0]
     page.screenshot(path=str(tmp_path / f"map-area-selection-{width}.png"))
 
     rail.get_by_role("button", name="Show all areas").click()
+    # The LA neighborhoods span more ground than the SF fixture. Restore a wider
+    # viewport explicitly: clearing area selection must not reset the user's camera.
+    page.get_by_role("button", name="Zoom out", exact=True).click()
     expect(rail.locator(".map-preview")).to_have_count(5)
     rail.get_by_role("button", name="Focus Area fixture event 3 on map", exact=True).click()
     expect(page.locator(".map-selection__location-note")).to_have_count(0)
     expect(page.locator(".map-selection .event-card")).to_contain_text("Area fixture event 3")
     rail.get_by_role("button", name=re.compile(r"^Without map locations")).click()
     expect(rail.locator(".map-preview")).to_have_count(2)
-    expect(rail).to_contain_text("Virtual (SF)")
+    expect(rail).to_contain_text(virtual)
     expect(rail.get_by_role("button", name="Show details for Area fixture event 5", exact=True)).to_be_visible()
     expect(page.locator(".map-marker")).to_have_count(3)
     assert page.evaluate("document.documentElement.scrollWidth <= window.innerWidth")
