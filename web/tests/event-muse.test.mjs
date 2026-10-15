@@ -10,7 +10,7 @@ const now = Date.parse("2026-10-07T12:00:00Z");
 const event = {
   canonical_event_id: id, start_at: "2030-06-14T19:30:00-07:00", price_status: "free",
   event_status: "scheduled", registration_status: "open", registration_urls: ["https://lu.ma/event"],
-  sources: [],
+  sources: [{ registration_url: "https://lu.ma/event", last_seen_at: "2026-10-07T11:00:00Z" }],
 };
 const item = {
   event: { ...event, title: "Example" }, created_at: "2026-10-07T12:00:00Z",
@@ -22,8 +22,32 @@ test("only upcoming free Luma or Meetup events can be queued", () => {
   for (const changes of [
     { price_status: "paid" }, { price_status: "unknown" }, { event_status: "cancelled" },
     { start_at: "invalid" }, { start_at: "2020-01-01T00:00:00Z" }, { registration_status: "sold_out" },
-    { registration_urls: ["https://unreviewed.test/event"] },
+    { registration_urls: ["https://unreviewed.test/event"], sources: [] },
   ]) assert.ok(museEligibility({ ...event, ...changes }, now));
+});
+
+test("unavailable events explain each blocker without treating unknown admission as paid", () => {
+  const reason = museEligibility({ ...event, price_status: "unknown",
+    registration_urls: ["https://www.sf.gov/event"], sources: [] }, now);
+  assert.match(reason, /Free admission isn’t confirmed/);
+  assert.match(reason, /Luma and Meetup/);
+  assert.doesNotMatch(reason, /paid/i);
+  assert.match(museEligibility({ ...event, start_at: "2026-10-07T11:00:00Z" }, now), /already started/);
+});
+
+test("selection requires a fresh supported-source observation at the API's exact time boundaries", () => {
+  const observed = (last_seen_at, registration_url = "https://lu.ma/event") => ({ registration_url, last_seen_at });
+  const eligible = sources => museEligibility({ ...event, sources }, now);
+  const iso = offset => new Date(now + offset).toISOString();
+  const hours = 60 * 60 * 1000;
+  assert.equal(eligible([observed(iso(-48 * hours))]), null);
+  assert.match(eligible([observed(iso(-48 * hours - 1))]), /refresh/);
+  assert.equal(eligible([observed(iso(5 * 60 * 1000))]), null);
+  assert.match(eligible([observed(iso(5 * 60 * 1000 + 1))]), /refresh/);
+  for (const timestamp of [undefined, "invalid"]) assert.match(eligible([observed(timestamp)]), /refresh/);
+  assert.match(eligible([]), /refresh/);
+  assert.match(eligible([observed(iso(-49 * hours)), observed(iso(0), "https://www.sf.gov/event")]), /refresh/);
+  assert.equal(eligible([observed(iso(-49 * hours)), observed(iso(0), "https://www.meetup.com/group/events/123/")]), null);
 });
 
 test("provider URLs reject credential links and unapproved origins", () => {

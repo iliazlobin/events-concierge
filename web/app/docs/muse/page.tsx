@@ -44,7 +44,7 @@ export default function MuseGuide() {
       <li>Review the queued events in <Link href="/?registrations=1">Registrations</Link>. Clicking an already queued event opens its progress.</li>
       <li>Copy the instruction below, <a href={MUSE_URL} target="_blank" rel="noopener noreferrer">open Muse</a>, and paste it to start.</li>
     </ol>
-    <p>Opening Muse does not start registrations. Muse may ask you to sign in to the event provider or answer required questions.</p>
+    <p>Unavailable actions show the reason on hover, keyboard focus or tap. Opening Muse does not start registrations. Muse may ask you to sign in to the event provider or answer required questions.</p>
     <MuseInstructions />
     <h2 id="progress" tabIndex={-1}>Registration progress</h2>
     <p>The header shows queued, in-progress, registered and needs-attention totals. Open <Link href="/?registrations=1">Registrations</Link> to filter tasks by status or provider. Only the displayed unread versions are marked as read.</p>

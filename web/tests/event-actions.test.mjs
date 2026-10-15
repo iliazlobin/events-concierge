@@ -56,8 +56,8 @@ const event = {
   price_min_cents: null, price_max_cents: null, price_currency: null, topics: [],
   calendar_labels: ["Design calendar"], source_keys: ["other-calendar", "design-calendar"],
   sources: [
-    { label: "Other calendar", source_key: "other-calendar", registration_url: "https://lu.ma/design-evening" },
-    { label: "Design calendar", source_key: "design-calendar", registration_url: "https://lu.ma/design-evening" },
+    { label: "Other calendar", source_key: "other-calendar", registration_url: "https://lu.ma/design-evening", last_seen_at: new Date().toISOString() },
+    { label: "Design calendar", source_key: "design-calendar", registration_url: "https://lu.ma/design-evening", last_seen_at: new Date().toISOString() },
   ],
 };
 const museActions = (changes = {}) => ({ statuses: new Map(), pendingIds: new Set(), onSignup: () => {}, ...changes });
@@ -125,17 +125,19 @@ test("pending and existing tasks retain the same action without duplicate signup
   assert.match(pending, /data-registration-state="saving"/);
   assert.doesNotMatch(pending, /event-muse-action__badge/);
   const paid = withActions(createElement(action.EventMuseAction, { event: { ...event, price_status: "paid" } }), { muse: museActions() });
-  assert.match(paid, /disabled/);
-  assert.match(paid, /Muse currently supports free events/);
+  assert.match(paid, /aria-disabled="true"/);
+  assert.doesNotMatch(paid, / disabled=""/);
+  assert.match(paid, /Muse supports free events only/);
 });
 
 test("the shared action delegates one account-owned callback and isolates the surrounding card", () => {
   const selected = [];
   const isolated = component("event-muse-action.tsx", { ...actionDependencies,
-    "react": { ...require("react"), useRef: () => ({ current: null }), useEffect: () => {}, useId: () => "muse-state" },
+    "react": { ...require("react"), useRef: () => ({ current: null }), useEffect: () => {}, useLayoutEffect: () => {},
+      useState: value => [value, () => {}], useId: () => "muse-state" },
     "@/components/event-actions-context": { useEventActions: () => ({ muse: museActions({ onSignup: value => selected.push(value) }) }) },
   });
-  const control = isolated.EventMuseAction({ event });
+  const control = isolated.EventMuseAction({ event }).props.children[0];
   const calls = [];
   control.props.onClick({ preventDefault: () => calls.push("prevent"), stopPropagation: () => calls.push("stop") });
   assert.deepEqual(calls, ["prevent", "stop"]);

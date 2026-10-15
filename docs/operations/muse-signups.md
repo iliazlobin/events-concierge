@@ -2,6 +2,8 @@
 
 Signed-in users queue upcoming **free Luma or Meetup** dates. The title action is shared by Events, Map, Calendar, source pages and graph details. Events Concierge stores each registration task; Muse completes registration in its own browser.
 
+Unavailable actions show specific reasons on hover, focus or tap. The client matches the API's supported-provider and 48-hour observation checks; the API rechecks eligibility when queueing and claiming.
+
 ## User guide
 
 The public [Muse guide](https://events.iliazlobin.com/docs/muse) owns connector setup, registration accounts, queue instructions, statuses and recovery. The [static page source](../../web/app/docs/muse/page.tsx) shares the app's instruction generator. Settings keep the registration email, connection URL, key controls and guide links.

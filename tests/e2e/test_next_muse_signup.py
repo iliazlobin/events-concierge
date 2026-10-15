@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 import re
+from datetime import UTC, datetime, timedelta
 from urllib.parse import parse_qs, urlsplit
 
 import pytest
@@ -44,12 +45,14 @@ class MuseApi(ReleaseApi):
         self.writes = []
         self.providers = []
         self.catalog_reads = []
+        observed_at = datetime.now(UTC).isoformat()
         self.events = [
             catalog_event()
             | {
                 "registration_urls": ["https://lu.ma/friday-jazz"],
                 "sources": [
-                    {"registration_url": "https://lu.ma/friday-jazz", "source": "public_jsonld"}
+                    {"registration_url": "https://lu.ma/friday-jazz", "source": "public_jsonld",
+                     "last_seen_at": observed_at}
                 ],
             },
             second_catalog_event()
@@ -59,6 +62,7 @@ class MuseApi(ReleaseApi):
                     {
                         "registration_url": "https://www.meetup.com/jazz/events/123/",
                         "source": "meetup",
+                        "last_seen_at": observed_at,
                     }
                 ],
             },
@@ -244,8 +248,8 @@ class MuseApi(ReleaseApi):
         }
 
 
-def install(page_factory, width=1440):
-    harness = page_factory(width=width)
+def install(page_factory, width=1440, *, has_touch=False):
+    harness = page_factory(width=width, has_touch=has_touch)
     api = MuseApi(harness)
     api.install(harness.page)
     harness.page.route("**/auth/**", api.handle)
@@ -335,6 +339,136 @@ def test_one_icon_queues_each_event_and_progress_panel_retains_filters(page_fact
     expect(page.get_by_role("button", name="View registration for Friday Night Jazz")).to_be_focused()
     assert "registrations=1" not in page.url
     assert len(api.queued) == 2
+    assert api.unexpected == []
+
+
+def activate_unavailable_help(page, action, *, touch):
+    """Use actual input; Playwright's locator actionability treats aria-disabled as native disabled."""
+    action.scroll_into_view_if_needed()
+    box = action.bounding_box()
+    assert box is not None
+    point = {"x": box["x"] + box["width"] / 2, "y": box["y"] + box["height"] / 2}
+    assert action.evaluate("(element, point) => element.contains(document.elementFromPoint(point.x, point.y))", point)
+    if touch:
+        page.touchscreen.tap(**point)
+    else:
+        page.mouse.click(**point)
+
+
+@pytest.mark.parametrize("width", [1440, 320])
+def test_unavailable_muse_explains_blockers_without_queue_or_card_actions(page_factory, width, tmp_path):
+    harness, api = install(page_factory, width, has_touch=width == 320)
+    event = api.events[0]
+    event["price_status"] = "unknown"
+    event["registration_urls"] = ["https://events.example.test/friday-jazz"]
+    event["sources"][0]["registration_url"] = event["registration_urls"][0]
+    page = harness.page
+    page.goto(BASE + "/?view=events&when=all&city=")
+    card = page.locator("article").filter(has=page.get_by_role("heading", name=event["title"], exact=True))
+    action = card.locator(".event-muse-action")
+    expect(action).to_have_attribute("aria-disabled", "true")
+    assert action.evaluate("element => !element.disabled && element.tabIndex >= 0")
+    expanded = card.locator(".event-card__summary-trigger").get_attribute("aria-expanded")
+    initial_tint = action.evaluate("element => getComputedStyle(element).color")
+    expect(page.get_by_role("tooltip")).to_have_count(0)
+
+    action.hover()
+    tooltip = page.get_by_role("tooltip")
+    expect(tooltip).to_contain_text(re.compile("free", re.I))
+    expect(tooltip).to_contain_text("Luma and Meetup")
+    expect(action).to_have_attribute("aria-describedby", tooltip.get_attribute("id"))
+    expect(action).not_to_have_css("color", initial_tint)
+    assert tooltip.evaluate("element => { const box = element.getBoundingClientRect(); return box.left >= 0 && box.right <= innerWidth; }")
+    page.screenshot(path=str(tmp_path / f"muse-unavailable-hover-{width}.png"))
+    tooltip.hover()
+    page.wait_for_timeout(200)  # A reader can move onto the help text without losing it.
+    expect(tooltip).to_be_visible()
+    page.keyboard.press("Escape")
+    expect(tooltip).to_have_count(0)
+    page.mouse.move(0, 0)
+
+    action.focus()
+    expect(tooltip).to_be_visible()
+    action.press("Enter")
+    expect(tooltip).to_be_visible()
+    action.press("Escape")
+    expect(tooltip).to_have_count(0)
+    action.press("Space")
+    expect(tooltip).to_be_visible()
+    page.get_by_role("heading", name="Events", exact=True).click()
+    expect(tooltip).to_have_count(0)
+    activate_unavailable_help(page, action, touch=width == 320)
+    expect(tooltip).to_be_visible()
+    page.screenshot(path=str(tmp_path / f"muse-unavailable-tap-{width}.png"))
+    expect(card.locator(".event-card__summary-trigger")).to_have_attribute("aria-expanded", expanded)
+    expect(page.get_by_role("dialog", name="Registrations", exact=True)).to_have_count(0)
+    assert api.queued == [] and api.writes == []
+    assert page.evaluate("document.documentElement.scrollWidth <= innerWidth")
+    assert api.unexpected == []
+
+
+@pytest.mark.parametrize("width", [1440, 320])
+def test_stale_supported_event_explains_freshness_but_existing_task_stays_accessible(page_factory, width):
+    harness, api = install(page_factory, width)
+    event = api.events[0]
+    event["sources"][0]["last_seen_at"] = (datetime.now(UTC) - timedelta(days=7)).isoformat()
+    page = harness.page
+    path = BASE + "/?view=events&when=all&city="
+    page.goto(path)
+    action = page.get_by_role("button", name="Muse unavailable for Friday Night Jazz", exact=True)
+    expect(action).to_have_attribute("data-registration-state", "unavailable")
+    expect(action).to_have_attribute("aria-disabled", "true")
+    action.focus()
+    tooltip = page.get_by_role("tooltip")
+    expect(tooltip).to_contain_text("Event details need a refresh.")
+    expect(tooltip).not_to_contain_text("Luma and Meetup")
+    expect(tooltip).not_to_contain_text(re.compile("free", re.I))
+    action.press("Enter")
+    assert api.queued == [] and api.writes == []
+    # Eligibility gates new work; it must never hide a task already being handled.
+    api.registrations = [api.registration(event, "needs_input", version=2)]
+    api.registrations[0]["outcome"] = {"status": "needs_input", "note": "Provider needs your reply"}
+    page.goto(path)
+    existing = page.get_by_role("button", name="View registration for Friday Night Jazz", exact=True)
+    expect(existing).to_have_attribute("data-registration-state", "needs_input")
+    expect(existing).not_to_have_attribute("aria-disabled", "true")
+    existing.click()
+    expect(page.get_by_role("dialog", name="Registrations", exact=True)).to_contain_text("Provider needs your reply")
+    assert api.queued == []
+    assert api.unexpected == []
+
+
+def test_pending_queue_is_natively_disabled_and_cannot_submit_twice(page_factory):
+    harness, api = install(page_factory)
+    page = harness.page
+    held = []
+
+    def hold_queue(route):
+        if route.request.method == "POST":
+            held.append(route)
+        else:
+            api.handle(route)
+
+    page.route("**/v1/me/muse/registrations", hold_queue)
+    page.goto(BASE + "/?view=events&when=all&city=")
+    action = page.get_by_role("button", name="Sign up with Muse for Friday Night Jazz", exact=True)
+    action.click()
+    expect(action).to_be_disabled()
+    expect(action).to_have_attribute("disabled", "")
+    expect(action).to_have_attribute("aria-busy", "true")
+    expect(action).to_have_attribute("data-registration-state", "saving")
+    assert len(held) == 1
+    action.evaluate("element => element.click()")  # Native disabled semantics suppress activation.
+    assert len(held) == 1
+    api.handle(held.pop())
+    queued = page.get_by_role("button", name="View registration for Friday Night Jazz", exact=True)
+    expect(queued).to_have_attribute("data-registration-state", "queued")
+    expect(queued).to_be_enabled()
+    assert len(api.queued) == 1
+    page.get_by_role("button", name="Close registrations", exact=True).click()
+    queued.click()
+    expect(page.get_by_role("dialog", name="Registrations", exact=True)).to_be_visible()
+    assert len(api.queued) == 1
     assert api.unexpected == []
 
 
@@ -605,7 +739,8 @@ def test_source_view_and_map_calendar_card_actions_use_shared_controls(page_fact
     api.events = [event | {"source_keys": [key], "calendar_labels": ["SF Tech Week 2026"],
                            "latitude": 37.7749, "longitude": -122.4194,
                            "sources": [{"source": "public_jsonld", "source_key": key, "label": "SF Tech Week 2026",
-                                        "registration_url": event["registration_urls"][0]}]} for event in api.events]
+                                        "registration_url": event["registration_urls"][0],
+                                        "last_seen_at": event["sources"][0]["last_seen_at"]}]} for event in api.events]
     page = harness.page
     page.goto(BASE + "/?view=events&when=all&city=")
     first_card = page.locator("article").filter(has=page.get_by_role("heading", name="Friday Night Jazz", exact=True))
@@ -642,6 +777,32 @@ def test_source_view_and_map_calendar_card_actions_use_shared_controls(page_fact
     page.goto(BASE + "/?view=events&when=all&city=")
     long_card = page.locator("article").filter(has=page.get_by_role("heading", name=api.events[0]["title"], exact=True))
     assert_title_action_geometry(long_card.locator(".event-title-row"))
+    assert page.evaluate("document.documentElement.scrollWidth <= innerWidth")
+    assert api.queued == [] and api.unexpected == []
+
+
+@pytest.mark.parametrize("width", [1440, 320])
+def test_map_muse_hint_remains_readable_at_rail_edge(page_factory, width, tmp_path):
+    harness, api = install(page_factory, width)
+    page = harness.page
+    api.events[0]["price_status"] = "unknown"
+    api.events[0]["registration_urls"] = ["https://events.example.test/friday-jazz"]
+    api.events[0]["sources"][0]["registration_url"] = api.events[0]["registration_urls"][0]
+    page.goto(BASE + "/?view=map&when=all&city=")
+    blocked_mini = page.locator(".map-preview").filter(has=page.get_by_role("link", name=api.events[0]["title"], exact=True))
+    blocked_action = blocked_mini.get_by_role("button", name=f"Muse unavailable for {api.events[0]['title']}", exact=True)
+    blocked_action.hover()
+    tooltip = page.get_by_role("tooltip")
+    expect(tooltip).to_contain_text(re.compile("Free admission.*confirmed"))
+    expect(tooltip).to_contain_text("Luma and Meetup")
+    assert tooltip.evaluate("""element => {
+        const box = element.getBoundingClientRect();
+        return box.left >= 0 && box.right <= innerWidth && box.top >= 0 && box.bottom <= innerHeight
+            && [box.left + 2, box.right - 2].every(x => element.contains(document.elementFromPoint(x, box.top + box.height / 2)));
+    }""")
+    page.screenshot(path=str(tmp_path / f"muse-unavailable-map-edge-{width}.png"))
+    page.keyboard.press("Escape")
+    expect(tooltip).to_have_count(0)
     assert page.evaluate("document.documentElement.scrollWidth <= innerWidth")
     assert api.queued == [] and api.unexpected == []
 

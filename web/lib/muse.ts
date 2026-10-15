@@ -29,13 +29,27 @@ export function museProviderUrl(value: string): string | null {
 }
 
 export function museEligibility(event: EventItem, now = Date.now()): string | null {
-  if (event.price_status !== "free") return "Muse currently supports free events.";
+  const reasons: string[] = [];
+  if (event.price_status === "paid") reasons.push("Muse supports free events only.");
+  else if (event.price_status !== "free") reasons.push("Free admission isn’t confirmed.");
   const start = Date.parse(event.start_at);
-  if (event.event_status !== "scheduled" || !Number.isFinite(start) || start <= now) return "Choose an upcoming event.";
-  if (event.registration_status === "sold_out") return "This event is sold out.";
+  if (event.event_status === "cancelled") reasons.push("This event is cancelled.");
+  else if (event.event_status !== "scheduled" || !Number.isFinite(start)) reasons.push("The event date isn’t confirmed.");
+  else if (start <= now) reasons.push("This event has already started.");
+  if (event.registration_status === "sold_out") reasons.push("This event is sold out.");
   const urls = [...event.registration_urls, ...event.sources.map(source => source.registration_url)];
-  if (!urls.some(url => museProviderUrl(url))) return "Muse currently supports Luma and Meetup.";
-  return null;
+  if (!urls.some(url => museProviderUrl(url))) reasons.push("Muse supports Luma and Meetup signups only.");
+  else {
+    // Match the API: freshness belongs to the supported registration source,
+    // not another source or the catalog’s broader seven-day freshness badge.
+    const recentSource = event.sources.some(source => {
+      const seen = Date.parse(source.last_seen_at ?? "");
+      return museProviderUrl(source.registration_url) !== null && Number.isFinite(seen)
+        && seen >= now - 48 * 60 * 60 * 1000 && seen <= now + 5 * 60 * 1000;
+    });
+    if (!recentSource) reasons.push("Event details need a refresh.");
+  }
+  return reasons.length ? reasons.join(" ") : null;
 }
 
 export interface MuseRegistration extends RegistrationTask {}

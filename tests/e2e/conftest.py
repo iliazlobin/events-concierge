@@ -154,12 +154,14 @@ def page_factory(browser: Browser) -> Iterator[PageFactory]:
         authenticated: bool = False,
         reduced_motion: Literal["no-preference", "reduce"] = "no-preference",
         probe_scroll: bool = False,
+        has_touch: bool = False,
     ) -> BrowserPage:
         context = browser.new_context(
             viewport={"width": width, "height": height},
             locale="en-US",
             timezone_id="America/Los_Angeles",
             reduced_motion=reduced_motion,
+            has_touch=has_touch,
         )
         if authenticated:
             context.add_init_script(

@@ -7892,7 +7892,10 @@ textarea:focus-visible {
 .event-muse-action:not([data-registration-state="available"]):not([data-registration-state="unavailable"]):not([data-registration-state="saving"]) { background: color-mix(in srgb, var(--registration-color) 12%, transparent); border-color: color-mix(in srgb, var(--registration-color) 35%, transparent); }
 .event-muse-action:hover:not(:disabled), .event-muse-action:focus-visible { background: color-mix(in srgb, var(--registration-color) 22%, transparent); border-color: color-mix(in srgb, var(--registration-color) 55%, transparent); color: color-mix(in srgb, var(--registration-color) 80%, white); }
 .event-muse-action:focus-visible { outline: 2px solid var(--registration-color); outline-offset: 2px; }
-.event-muse-action[data-registration-state="unavailable"] { color: var(--quiet); cursor: not-allowed; opacity: .45; }
+.event-muse-action[data-registration-state="unavailable"] { color: color-mix(in srgb, var(--quiet) 55%, transparent); cursor: help; }
+.event-muse-action[data-registration-state="unavailable"]:hover, .event-muse-action[data-registration-state="unavailable"]:focus-visible { background: color-mix(in srgb, var(--registration-color) 16%, transparent); border-color: color-mix(in srgb, var(--registration-color) 45%, transparent); color: var(--registration-color); }
+.event-muse-hint { background: var(--panel-raised); border: 1px solid var(--line); border-radius: 8px; box-shadow: 0 8px 24px #0006; color: var(--ink); display: grid; font-size: 12px; font-weight: 400; gap: 4px; line-height: 1.5; max-height: calc(100dvh - 16px); overflow: auto; overflow-wrap: anywhere; padding: 10px 12px; position: fixed; text-align: left; width: min(280px, calc(100vw - 16px)); z-index: 100; }
+.event-muse-hint strong { color: var(--ink); font-size: inherit; font-weight: 650; }
 .event-muse-action[data-registration-state="saving"] { cursor: wait; }
 .site-docs-link { align-items: center; border-radius: 50%; color: var(--muted); display: inline-flex; flex: 0 0 auto; height: 30px; justify-content: center; width: 30px; }
 .site-docs-link svg { height: 17px; width: 17px; }
