@@ -18,6 +18,7 @@ from typing import Any
 
 from sqlalchemy import text
 from sqlalchemy.exc import TimeoutError as SqlAlchemyTimeoutError
+from starlette.middleware.gzip import GZipMiddleware
 from starlette.responses import JSONResponse
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
@@ -28,6 +29,7 @@ _CACHED_PATHS = frozenset(
         "/v1/catalog/events",
         "/v1/catalog/events/summary",
         "/v1/catalog/name-suggestions",
+        "/v1/catalog/name-index",
     }
 )
 _TTL_SECONDS = 10.0
@@ -38,6 +40,18 @@ _MAX_WAITERS = 32
 _WAIT_SECONDS = 5.0
 _MAX_KEY_BYTES = 16_384
 _MAX_REQUEST_BODY_BYTES = 64 * 1024
+
+
+class CatalogNameIndexCompression:
+    """Compress the public preload outside the uncompressed response cache."""
+
+    def __init__(self, app: ASGIApp) -> None:
+        self.app = app
+        self.compressed = GZipMiddleware(app, minimum_size=2048, compresslevel=5)
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        target = self.compressed if scope.get("path") == "/v1/catalog/name-index" else self.app
+        await target(scope, receive, send)
 
 
 async def catalog_public_read_token() -> str:
@@ -184,11 +198,17 @@ class CatalogReadCoordinator:
         send: Send,
     ) -> None:
         token = await self._token()
+        # A visible browser refreshes its ten-second preload before expiry. Let
+        # that read renew the index rather than replaying an almost-expired copy.
+        ttl = 8.0 if key.startswith(b"/v1/catalog/name-index?") else _TTL_SECONDS
         cached = self._cache.get(key)
         if cached is not None:
-            if cached.token == token and self._clock() - cached.at < _TTL_SECONDS:
+            if cached.token == token and self._clock() - cached.at < ttl:
                 self._cache.move_to_end(key)
-                await self._replay(cached.messages, send, "hit")
+                await self._replay(
+                    cached.messages, send, "hit",
+                    fresh_for_ms=self._freshness(key, cached.at),
+                )
                 return
             self._remove(key)
         messages: list[Message] = []
@@ -208,30 +228,46 @@ class CatalogReadCoordinator:
             and b"application/json" in headers.get(b"content-type", b"")
             and b"set-cookie" not in headers
             and await self._token() == token
-            and self._clock() - read_started < _TTL_SECONDS
+            and self._clock() - read_started < ttl
         ):
             self._cache[key] = _CachedResponse(token, read_started, snapshot, size)
             self._bytes += size
             while len(self._cache) > _MAX_ENTRIES or self._bytes > _MAX_BYTES:
                 self._remove(next(iter(self._cache)))
-        await self._replay(snapshot, send, "miss")
+        await self._replay(
+            snapshot, send, "miss", fresh_for_ms=self._freshness(key, read_started),
+        )
+
+    def _freshness(self, key: bytes, at: float) -> int | None:
+        if not key.startswith(b"/v1/catalog/name-index?"):
+            return None
+        return max(0, int((_TTL_SECONDS - (self._clock() - at)) * 1000))
 
     def _remove(self, key: bytes) -> None:
         self._bytes -= self._cache.pop(key).size
 
     @staticmethod
-    async def _replay(messages: tuple[Message, ...], send: Send, cache: str) -> None:
+    async def _replay(
+        messages: tuple[Message, ...], send: Send, cache: str,
+        *, fresh_for_ms: int | None = None,
+    ) -> None:
         for message in messages:
-            outgoing = message
+            # Outer ASGI middleware (including gzip) may replace body/header
+            # fields in place. Never let it mutate the cached representation.
+            outgoing = dict(message)
             if message["type"] == "http.response.start":
                 outgoing = {
                     **message,
                     "headers": [
                         (name, value)
                         for name, value in message.get("headers", [])
-                        if name.lower() not in {b"cache-control", b"x-ec-catalog-cache"}
+                        if name.lower() not in {
+                            b"cache-control", b"x-ec-catalog-cache", b"x-ec-catalog-freshness-ms",
+                        }
                     ]
-                    + [(b"cache-control", b"no-store"), (b"x-ec-catalog-cache", cache.encode())],
+                    + [(b"cache-control", b"no-store"), (b"x-ec-catalog-cache", cache.encode())]
+                    + ([(b"x-ec-catalog-freshness-ms", str(fresh_for_ms).encode())]
+                       if fresh_for_ms is not None else []),
                 }
             await send(outgoing)
 
@@ -260,7 +296,7 @@ class CatalogReadMiddleware:
             or scope.get("method") != "GET"
             or not path.startswith("/v1/catalog/")
             or (
-                path == "/v1/catalog/name-suggestions"
+                path in {"/v1/catalog/name-suggestions", "/v1/catalog/name-index"}
                 and not self.state.settings.catalog_name_suggestions_enabled
             )
         ):

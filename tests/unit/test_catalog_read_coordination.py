@@ -71,6 +71,38 @@ async def test_publication_revocation_and_ttl_invalidate_before_reuse():
     assert load.await_count == 4
 
 
+async def test_preload_refresh_can_renew_before_the_browser_expiry():
+    now = [0.0]
+    coordinator = CatalogReadCoordinator(
+        2, token=AsyncMock(return_value="revision"), clock=lambda: now[0],
+    )
+    load = AsyncMock(side_effect=_response)
+    key = b"/v1/catalog/name-index?city=oakland"
+    await _read(coordinator, key, load)
+    now[0] = 7.9
+    await _read(coordinator, key, load)
+    assert load.await_count == 1
+    now[0] = 8.0
+    await _read(coordinator, key, load)
+    assert load.await_count == 2
+
+
+async def test_index_freshness_header_includes_load_time_and_cache_age():
+    now = [0.0]
+    coordinator = CatalogReadCoordinator(
+        2, token=AsyncMock(return_value="revision"), clock=lambda: now[0],
+    )
+    async def load(send):
+        now[0] = 2.0
+        await _response(send)
+    key = b"/v1/catalog/name-index?city=oakland"
+    first = await _read(coordinator, key, load)
+    assert dict(first[0]["headers"])[b"x-ec-catalog-freshness-ms"] == b"8000"
+    now[0] = 7.0
+    hit = await _read(coordinator, key, load)
+    assert dict(hit[0]["headers"])[b"x-ec-catalog-freshness-ms"] == b"3000"
+
+
 async def test_refresh_during_load_does_not_publish_a_stale_cache_entry():
     token = AsyncMock(side_effect=["a", "b", "b", "b"])
     coordinator = CatalogReadCoordinator(2, token=token)

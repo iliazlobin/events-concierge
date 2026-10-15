@@ -4,7 +4,8 @@ from __future__ import annotations
 
 import os
 import re
-from datetime import datetime
+from datetime import UTC, datetime, timedelta
+from time import perf_counter
 from urllib.parse import parse_qs, urlsplit
 
 import pytest
@@ -18,6 +19,125 @@ pytestmark = [
     pytest.mark.skipif(not BASE, reason="Set EC_CONSUMER_WEB_URL or EC_ADMIN_WEB_URL"),
 ]
 SEARCH_NAME = "Search events, organizers, hosts, speakers, partners, or add a filter"
+
+
+@pytest.mark.parametrize("width", [1440, 390])
+def test_preloaded_names_render_before_event_results_without_prefix_requests(
+    catalog_names_page, tmp_path, width,
+):
+    harness, api, _ = catalog_names_page
+    api.catalog_name_index_enabled = True
+    page = harness.page
+    page.set_viewport_size({"width": width, "height": 900})
+    held, index_queries, prefix_queries = [], [], []
+
+    def preload(route: Route):
+        query = parse_qs(urlsplit(route.request.url).query)
+        index_queries.append(query)
+        api.calls.append(("GET", "/v1/catalog/name-index"))
+        items = [] if query.get("city") == ["oakland"] else [
+            {"name": "SemiAnalysis", "kinds": ["organization", "organizer"], "event_count": 2},
+            {"name": "Nebius", "kinds": ["organization", "host"], "event_count": 1},
+        ]
+        api.respond(route, {"items": items, "complete": True,
+                           "expires_at": (datetime.now(UTC) + timedelta(seconds=10)).isoformat()},
+                    headers={"X-EC-Catalog-Freshness-Ms": "10000"})
+
+    def prefix(route: Route):
+        prefix_queries.append(route.request.url)
+        api.respond(route, [])
+
+    def hold_events(route: Route):
+        held.append(route)
+
+    page.route("**/v1/catalog/name-index?*", preload)
+    page.route("**/v1/catalog/name-suggestions?*", prefix)
+    page.route(re.compile(r"/v1/catalog/events(?:\?.*)?$"), hold_events)
+    with page.expect_response("**/v1/catalog/name-index?*"):
+        page.goto(f"{BASE}/?view=events&city=sanfrancisco&when=custom&start=2030-10-01&end=2030-10-31")
+    # Allow the prefetched response to commit before measuring a new keystroke.
+    page.wait_for_timeout(50)
+    search = page.get_by_role("combobox", name=SEARCH_NAME)
+    started = perf_counter()
+    search.fill("semian")
+    option = page.get_by_role("option").filter(has_text="SemiAnalysis")
+    expect(option).to_be_visible()
+    latency_ms = (perf_counter() - started) * 1000
+    assert latency_ms < 200, latency_ms
+    (tmp_path / f"prefetch-latency-{width}.txt").write_text(f"{latency_ms:.1f} ms\n")
+    assert held and page.locator(".event-card").count() == 0
+    page.screenshot(path=str(tmp_path / f"prefetched-semianalysis-{width}.png"), animations="disabled")
+    page.wait_for_timeout(300)
+    search.fill("nebi")
+    expect(page.get_by_role("option").filter(has_text="Nebius")).to_be_visible()
+    assert prefix_queries == [] and len(index_queries) == 1
+    assert "q" not in index_queries[0] and index_queries[0]["city"] == ["sanfrancisco"]
+    with page.expect_response("**/v1/catalog/name-index?*"):
+        page.goto(f"{BASE}/?view=events&city=oakland&when=custom&start=2030-10-01&end=2030-10-31")
+    page.get_by_role("combobox", name=SEARCH_NAME).fill("semian")
+    expect(page.get_by_text("No matching names for these filters.", exact=True)).to_be_visible()
+    expect(page.get_by_role("option").filter(has_text="SemiAnalysis")).to_have_count(0)
+    for route in held:
+        api.respond(route, {"items": [], "next_cursor": None, "providers": [],
+                            "city_facets": [], "topic_facets": []})
+
+
+def test_truncated_preload_keeps_instant_matches_and_searches_omitted_names(catalog_names_page):
+    harness, api, _ = catalog_names_page
+    api.catalog_name_index_enabled = True
+    page = harness.page
+    reads = []
+
+    def preload(route: Route):
+        api.respond(route, {"items": [
+            {"name": "SemiAnalysis", "kinds": ["organization"], "event_count": 2},
+        ], "complete": False,
+            "expires_at": (datetime.now(UTC) + timedelta(seconds=10)).isoformat()},
+                    headers={"X-EC-Catalog-Freshness-Ms": "10000"})
+
+    def names(route: Route):
+        query = parse_qs(urlsplit(route.request.url).query)
+        reads.append(query["q"][0])
+        api.respond(route, [{"name": "Nebius", "kinds": ["organization"], "event_count": 1}]
+                    if query["q"] == ["nebi"] else [])
+
+    page.route("**/v1/catalog/name-index?*", preload)
+    page.route("**/v1/catalog/name-suggestions?*", names)
+    with page.expect_response("**/v1/catalog/name-index?*"):
+        page.goto(f"{BASE}/?view=events")
+    search = page.get_by_role("combobox", name=SEARCH_NAME)
+    search.fill("semian")
+    expect(page.get_by_role("option").filter(has_text="SemiAnalysis")).to_be_visible()
+    search.fill("nebi")
+    expect(page.get_by_role("option").filter(has_text="Nebius")).to_be_visible()
+    assert "nebi" in reads
+
+
+def test_expired_preload_is_removed_even_when_refresh_is_unavailable(catalog_names_page):
+    harness, api, _ = catalog_names_page
+    api.catalog_name_index_enabled = True
+    page = harness.page
+    loaded = []
+
+    def preload(route: Route):
+        if loaded:
+            api.respond(route, {"detail": "busy"}, 503)
+        else:
+            loaded.append(True)
+            api.respond(route, {"items": [
+                {"name": "SemiAnalysis", "kinds": ["organization"], "event_count": 2},
+            ], "complete": True,
+                "expires_at": (datetime.now(UTC) + timedelta(milliseconds=700)).isoformat()},
+                        headers={"X-EC-Catalog-Freshness-Ms": "700"})
+
+    page.route("**/v1/catalog/name-index?*", preload)
+    page.route("**/v1/catalog/name-suggestions?*", lambda route: api.respond(route, []))
+    with page.expect_response("**/v1/catalog/name-index?*"):
+        page.goto(f"{BASE}/?view=events")
+    page.get_by_role("combobox", name=SEARCH_NAME).fill("semian")
+    expect(page.get_by_role("option").filter(has_text="SemiAnalysis")).to_be_visible()
+    expect(page.get_by_role("option").filter(has_text="SemiAnalysis")).to_have_count(0)
+    expect(page.get_by_text("No matching names for these filters.", exact=True)).to_be_visible()
 
 
 @pytest.fixture

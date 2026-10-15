@@ -181,7 +181,7 @@ class CatalogRepository(Protocol):
     async def suggest_names(
         self,
         *,
-        query: str,
+        query: str | None,
         source_keys: tuple[str, ...] = (),
         date_ranges: tuple[tuple[datetime, datetime], ...] = (),
         cities: tuple[str, ...] = (),
@@ -193,7 +193,7 @@ class CatalogRepository(Protocol):
         availability: str | None = None,
         limit: int = 8,
     ) -> list[CatalogNameSuggestion]:
-        """Match names across all eligible events before ranking and limiting suggestions."""
+        """Match eligible names; a null query requests a bounded preload of the same projection."""
         ...
 
 

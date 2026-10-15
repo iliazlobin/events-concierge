@@ -215,8 +215,10 @@ class ReleaseApi:
         self.respond(route, payload if self.config_status == 200 else {"detail": "Config unavailable"}, self.config_status)
 
     @staticmethod
-    def respond(route: Route, payload, status: int = 200) -> None:
-        route.fulfill(status=status, content_type="application/json", body=json.dumps(payload))
+    def respond(route: Route, payload, status: int = 200, headers=None) -> None:
+        route.fulfill(
+            status=status, content_type="application/json", body=json.dumps(payload), headers=headers,
+        )
 
     def install(self, page: Page) -> None:
         page.route("**/v1/**", self.handle)

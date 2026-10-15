@@ -26,6 +26,7 @@ _DISCOVERY_ROUTES = {
     "/v1/me/saved-filters/{saved_filter_id}/applied",
     "/v1/catalog/events",
     "/v1/catalog/name-suggestions",
+    "/v1/catalog/name-index",
     "/v1/catalog/events/summary",
     "/v1/catalog/events/{canonical_event_id}",
     "/v1/catalog/entities",
@@ -49,7 +50,8 @@ def apply_release_profile(
     if not catalog_name_suggestions_enabled:
         app.router.routes[:] = [
             route for route in app.router.routes
-            if not isinstance(route, APIRoute) or route.path != "/v1/catalog/name-suggestions"
+            if not isinstance(route, APIRoute)
+            or route.path not in {"/v1/catalog/name-suggestions", "/v1/catalog/name-index"}
         ]
     if profile != "discovery":
         return

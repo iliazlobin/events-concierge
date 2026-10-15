@@ -701,8 +701,9 @@ def test_published_catalog_routes_have_no_consumer_identity_dependency(
     public = [
         route for route in app.routes if getattr(route, "path", "").startswith("/v1/catalog/")
     ]
-    assert len(public) == 10
+    assert len(public) == 11
     assert any(route.path == "/v1/catalog/name-suggestions" for route in public)
+    assert any(route.path == "/v1/catalog/name-index" for route in public)
     for route in public:
         assert route.methods == {"GET"}
         assert not route.dependant.dependencies

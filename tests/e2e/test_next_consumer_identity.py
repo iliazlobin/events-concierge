@@ -26,10 +26,12 @@ class ConsumerIdentityApi(ReleaseApi):
         self.legal_mode = "required"
         self.legal_available = True
         self.catalog_name_suggestions_enabled: bool | None = False
+        self.catalog_name_index_enabled = False
 
     def config(self, route: Route) -> None:
         self.respond(route, {
             "product_name": "Events Concierge", "release_profile": "discovery",
+            "catalog_name_index_enabled": self.catalog_name_index_enabled,
             **({"catalog_name_suggestions_enabled": self.catalog_name_suggestions_enabled}
                if self.catalog_name_suggestions_enabled is not None else {}),
             "local_demo": False, "auth_mode": "deployment_session",

@@ -20,6 +20,7 @@ from .events import CanonicalEvent, EventVisibility
 CatalogBrowseSort = Literal["soonest", "latest"]
 MIN_CATALOG_NAME_QUERY_LENGTH = 2
 MAX_CATALOG_NAME_SUGGESTIONS = 20
+MAX_CATALOG_NAME_INDEX = 5000
 CatalogNameKind = Literal[
     "event", "venue", "organizer", "host", "speaker", "partner", "person", "organization"
 ]

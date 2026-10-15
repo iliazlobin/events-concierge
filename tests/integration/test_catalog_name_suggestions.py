@@ -3,6 +3,7 @@
 import os
 from dataclasses import replace
 from datetime import timedelta
+from importlib import import_module
 from importlib.util import module_from_spec, spec_from_file_location
 from pathlib import Path
 from uuid import uuid4
@@ -21,11 +22,121 @@ from events_concierge.adapters.postgres.catalog_refresh_commit import (
     PostgresCatalogRefreshCommitter,
 )
 from events_concierge.adapters.postgres.catalog_sources import PostgresCatalogSourceRepository
+from events_concierge.api.app import _catalog_browse_item_out, _database_is_ready
 from events_concierge.domain.enums import RegistrationStatus
 from events_concierge.domain.events import CandidateEvent, EventEntityProfile
 from events_concierge.infra.db import system_session_scope
 
 pytestmark = pytest.mark.integration
+
+
+async def test_preloaded_names_keep_counts_roles_and_all_event_restrictions(db: None) -> None:
+    source, events, _, catalog = await _source_with_current_events(event_count=3)
+    candidates = [
+        replace(event, organizer_name="SemiAnalysis", host_names=("Nebius",), entity_profiles=(),
+                registration_status=RegistrationStatus.OPEN if index < 2
+                else RegistrationStatus.SOLD_OUT)
+        for index, event in enumerate(events)
+    ]
+    await _publish_names(source, candidates, catalog)
+    index = await catalog.suggest_names(query=None, source_keys=(source,), limit=5001)
+    assert next(row for row in index if row.name == "SemiAnalysis").event_count == 3
+    for query in ("semi analysis", "nebi"):
+        expected = await catalog.suggest_names(query=query, source_keys=(source,), limit=20)
+        key = query.replace(" ", "").lower()
+        actual = [row for row in index if key in row.name.replace(" ", "").lower()]
+        assert set(actual) == set(expected)
+    selected = await catalog.suggest_names(
+        query=None, source_keys=(source,), availability="available", limit=5001,
+    )
+    assert next(row for row in selected if row.name == "Nebius").event_count == 2
+    assert await catalog.suggest_names(
+        query=None, source_keys=(source,), cities=("Oakland",), limit=5001,
+    ) == []
+    assert await catalog.suggest_names(
+        query=None, source_keys=(source,), price="paid", limit=5001,
+    ) == []
+    fixture, _, _, _ = await _source_with_current_events(fixture=True)
+    assert await catalog.suggest_names(query=None, source_keys=(fixture,), limit=5001) == []
+
+
+async def test_preload_rollback_preserves_old_reader_and_grants(db: None) -> None:
+    source, _, _, catalog = await _source_with_current_events()
+    before = await catalog.suggest_names(query=None, source_keys=(source,), limit=5001)
+    migration = import_module("migrations.versions.0221_catalog_name_index")
+    owner = create_async_engine(os.environ["EC_MIGRATION_URL"])
+    signature = ("public.fn_catalog_name_index_v1"
+                 "(text,text[],timestamptz[],timestamptz[],text[],text[],text,integer,integer,text[],text,integer)")
+    try:
+        async with owner.begin() as connection:
+            def roundtrip(sync):
+                with Operations.context(MigrationContext.configure(sync)):
+                    migration.downgrade()
+            await connection.run_sync(roundtrip)
+        assert await _database_is_ready() is False
+        async with owner.begin() as connection:
+            def upgrade(sync):
+                with Operations.context(MigrationContext.configure(sync)):
+                    migration.upgrade()
+            await connection.run_sync(upgrade)
+            assert (await connection.execute(text(
+                "SELECT has_function_privilege('ec_app',:signature,'EXECUTE')"
+            ), {"signature": signature})).scalar_one()
+            assert not (await connection.execute(text("""
+                SELECT EXISTS(SELECT 1 FROM pg_proc AS proc,
+                    aclexplode(coalesce(proc.proacl,acldefault('f',proc.proowner))) AS acl
+                  WHERE proc.oid=CAST(:signature AS regprocedure)
+                    AND acl.grantee=0 AND acl.privilege_type='EXECUTE')
+            """), {"signature": signature})).scalar_one()
+        assert await catalog.suggest_names(query=None, source_keys=(source,), limit=5001) == before
+        assert await _database_is_ready() is True
+        assert await catalog.suggest_names(query="Luma", source_keys=(source,))
+    finally:
+        await owner.dispose()
+
+
+async def test_shared_private_observation_never_suggests_a_retained_public_venue(db: None) -> None:
+    private_source, [event], _, catalog = await _source_with_current_events(event_count=1)
+    public_source, _, _, _ = await _source_with_current_events(event_count=1)
+    venue = "Withheld Venue " + uuid4().hex
+    public = replace(event, venue_name=venue, visibility="public")
+    await _publish_names(private_source, [public], catalog)
+    shared = replace(public, source_event_id="shared-" + uuid4().hex)
+    await _publish_names(public_source, [shared], catalog)
+    [first], _ = await catalog.browse_current(source_keys=(private_source,), after=None, limit=10)
+    [second], _ = await catalog.browse_current(source_keys=(public_source,), after=None, limit=10)
+    assert first.canonical_event.canonical_event_id == second.canonical_event.canonical_event_id
+    await _publish_names(private_source, [replace(
+        public, venue_name=None, geo=None, visibility="private", location_withheld=True,
+    )], catalog)
+    [item], _ = await catalog.browse_current(source_keys=(private_source,), after=None, limit=10)
+    assert item.canonical_event.venue_name == venue  # retained enrichment of a shared identity
+    assert _catalog_browse_item_out(item).venue_name is None
+    for sources in ((private_source,), (private_source, public_source)):
+        index = await catalog.suggest_names(query=None, source_keys=sources, limit=5001)
+        assert venue not in {row.name for row in index}
+        assert await catalog.suggest_names(query=venue, source_keys=sources) == []
+        async with system_session_scope() as session:
+            legacy = await session.execute(text("""
+                SELECT name FROM public.fn_suggest_catalog_names_v1(
+                  :query,CAST(:sources AS text[]),ARRAY[NULL]::timestamptz[],
+                  ARRAY[NULL]::timestamptz[],'{}'::text[],'{}'::text[],
+                  NULL,NULL,NULL,'{}'::text[],NULL,8)
+            """), {"query": venue, "sources": list(sources)})
+            assert legacy.all() == []
+    # The exact public-only selection still has a public venue, just like its cards.
+    assert await catalog.suggest_names(query=venue, source_keys=(public_source,))
+    owner = create_async_engine(os.environ["EC_MIGRATION_URL"])
+    try:
+        async with owner.begin() as connection:
+            await connection.execute(text(
+                "UPDATE catalog_sources SET enabled=false WHERE source_key=:source"
+            ), {"source": public_source})
+        assert await catalog.suggest_names(
+            query=venue, source_keys=(private_source, public_source),
+        ) == []
+    finally:
+        await owner.dispose()
 
 
 async def test_spaced_company_names_preserve_filters_and_original_display_identity(

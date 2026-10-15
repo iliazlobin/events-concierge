@@ -22,7 +22,8 @@ import {
 } from "@/components/filter-chip-editor";
 import { SavedFilterPicker } from "@/components/saved-filter-picker";
 import { signInFailurePath } from "@/lib/sign-in";
-import { getCatalogNameSuggestions } from "@/lib/api";
+import { catalogNameIndexKey, getCatalogNameIndex, getCatalogNameSuggestions } from "@/lib/api";
+import { catalogNameIndexExpiry } from "@/lib/catalog-name-index";
 import { suggestSavedFilterName, uniqueSavedFilterName } from "@/lib/catalog-filter-name";
 import {
   PriceFilterEditor,
@@ -37,6 +38,7 @@ import { interpretCatalogFilterExpression } from "@/lib/chat";
 import {
   dateRangeFilterKey,
   filterDateKeys,
+  localDateKey,
   normalizeDateRangeFilters,
   parseLocalDate,
   semanticDateRangeKeys,
@@ -73,6 +75,7 @@ import type {
 interface FilterBarProps {
   signedIn?: boolean;
   catalogNameSuggestionsEnabled?: boolean;
+  catalogNameIndexEnabled?: boolean;
   filters: CatalogFilters;
   providers: CatalogProvider[];
   topics: CatalogTopic[];
@@ -348,6 +351,7 @@ export function FilterBar({
   loading,
   signedIn = true,
   catalogNameSuggestionsEnabled = false,
+  catalogNameIndexEnabled = false,
   savedFilters,
   savedFiltersBusy = false,
   savedFiltersError = null,
@@ -365,6 +369,68 @@ export function FilterBar({
     key: string; items: CatalogNameSuggestion[];
     status: "loading" | "ready" | "error";
   } | null>(null);
+  const [nameIndex, setNameIndex] = useState<{
+    key: string; items: CatalogNameSuggestion[]; complete: boolean; expiresAt: number;
+  } | null>(null);
+  const [indexReload, setIndexReload] = useState(0);
+  const indexLoading = useRef<string | null>(null);
+  const indexAttempt = useRef(0);
+  const indexFilters = useRef(filters);
+  indexFilters.current = filters;
+  // Text and ordering do not change which names have matching events. Resolving
+  // rolling dates into the key also prevents reuse across a local midnight.
+  const indexScope = catalogFilterKey({ ...filters, query: "" }, { includeSort: false });
+  const indexDay = localDateKey(new Date());
+  const indexKey = JSON.stringify([indexScope, indexDay]);
+  useEffect(() => {
+    if (!catalogNameSuggestionsEnabled || !catalogNameIndexEnabled) return;
+    const controller = new AbortController();
+    let cancelled = false;
+    let refreshTimer: ReturnType<typeof setTimeout> | undefined;
+    const startedAt = performance.now();
+    indexAttempt.current = startedAt;
+    indexLoading.current = indexKey;
+    // Resolve "now" once per preload, never once per keystroke. Refreshes use a
+    // new clock while retaining the same identity for the selected restrictions.
+    const requestKey = catalogNameIndexKey(indexFilters.current);
+    void getCatalogNameIndex(requestKey, controller.signal).then((index) => {
+      if (cancelled) return;
+      const expiresAt = catalogNameIndexExpiry(index, startedAt);
+      if (expiresAt <= performance.now()) return;
+      setNameIndex({ key: indexKey, items: index.items, complete: index.complete, expiresAt });
+      refreshTimer = setTimeout(() => {
+        if (document.visibilityState === "visible") setIndexReload((value) => value + 1);
+      }, Math.max(1000, expiresAt - performance.now() - 1000));
+    }).catch(() => {
+      // An older server or unavailable preload keeps the bounded per-term reader.
+    }).finally(() => {
+      if (!cancelled) indexLoading.current = null;
+    });
+    return () => {
+      cancelled = true;
+      controller.abort();
+      indexLoading.current = null;
+      clearTimeout(refreshTimer);
+    };
+  }, [catalogNameIndexEnabled, catalogNameSuggestionsEnabled, indexKey, indexReload]);
+  useEffect(() => {
+    if (!nameIndex) return;
+    const timer = setTimeout(
+      () => setNameIndex(null), Math.max(0, nameIndex.expiresAt - performance.now()),
+    );
+    return () => clearTimeout(timer);
+  }, [nameIndex]);
+  useEffect(() => {
+    if (!catalogNameSuggestionsEnabled || !catalogNameIndexEnabled) return;
+    const resume = () => {
+      if (document.visibilityState === "visible" && indexLoading.current !== indexKey
+        && performance.now() - indexAttempt.current >= 8000) setIndexReload((value) => value + 1);
+    };
+    document.addEventListener("visibilitychange", resume);
+    return () => document.removeEventListener("visibilitychange", resume);
+  }, [catalogNameIndexEnabled, catalogNameSuggestionsEnabled, indexKey]);
+  const activeIndex = catalogNameIndexEnabled && nameIndex?.key === indexKey
+    && nameIndex.expiresAt > performance.now() ? nameIndex : null;
   const suggestionListRef = useRef<HTMLDivElement>(null);
   /**
    * Follow the arrow keys down the list.
@@ -411,8 +477,9 @@ export function FilterBar({
   const nameSearchKey = catalogFilterKey({ ...filters, query: composerTerm.trim(), sort: "soonest" });
   const searchNames = catalogNameSuggestionsEnabled && searchFocused && !suggestionsSuppressed
     && !effectiveComposerContext && composerTerm.trim().length >= 2;
+  const indexComplete = activeIndex?.complete === true;
   useEffect(() => {
-    if (!searchNames) return;
+    if (!searchNames || indexComplete) return;
     const controller = new AbortController();
     let cancelled = false;
     setCatalogNames({ key: nameSearchKey, items: [], status: "loading" });
@@ -435,7 +502,7 @@ export function FilterBar({
       window.clearTimeout(timer);
       controller.abort();
     };
-  }, [composerTerm, nameSearchKey, searchNames]);
+  }, [composerTerm, nameSearchKey, searchNames, indexComplete]);
   const suggestions = useMemo(() => {
     const candidates = effectiveComposerContext && !composerTerm.trim()
       ? getPopularSmartFilterSuggestions(
@@ -468,8 +535,14 @@ export function FilterBar({
         ...scoped.slice(TECH_WEEK_FILTERS.length),
       ].slice(0, 8);
     }
-    const names = !effectiveComposerContext && searchNames && catalogNames?.key === nameSearchKey
-      ? getCatalogNameFilterSuggestions(composerTerm, catalogNames.items) : [];
+    const knownNames = new Map((activeIndex?.items ?? []).map((entry) => [
+      entry.name.toLowerCase(), entry,
+    ]));
+    if (!indexComplete && catalogNames?.key === nameSearchKey) {
+      for (const entry of catalogNames.items) knownNames.set(entry.name.toLowerCase(), entry);
+    }
+    const names = !effectiveComposerContext && searchNames
+      ? getCatalogNameFilterSuggestions(composerTerm, [...knownNames.values()]) : [];
     return [...savedMatches, ...[...scoped, ...names].sort((a, b) => b.score - a.score)]
       .slice(0, 8);
   }, [
@@ -483,6 +556,8 @@ export function FilterBar({
     catalogNames,
     nameSearchKey,
     searchNames,
+    activeIndex,
+    indexComplete,
   ]);
 
   useEffect(() => {
@@ -512,7 +587,10 @@ export function FilterBar({
     return () => window.clearTimeout(timer);
   }, [availableCities, composerOnly, onChange, providers, query, topics, typedComposer]);
   const nameState = searchNames && catalogNames?.key === nameSearchKey ? catalogNames : null;
-  const nameSearchMessage = !searchNames ? null
+  const indexMatches = activeIndex
+    ? getCatalogNameFilterSuggestions(composerTerm, activeIndex.items) : [];
+  const nameSearchMessage = !searchNames || indexMatches.length ? null
+    : indexComplete ? "No matching names for these filters."
     : !nameState || nameState.status === "loading" ? "Searching names…"
     : nameState.status === "error" ? "Name suggestions unavailable. You can still search."
     : !nameState.items.length ? "No matching names for these filters." : null;
@@ -1053,6 +1131,10 @@ export function FilterBar({
                 setSearchFocused(true);
                 setSuggestionsSuppressed(false);
                 setActiveSuggestion(-1);
+                if (!activeIndex && indexLoading.current !== indexKey
+                  && performance.now() - indexAttempt.current >= 10_000) {
+                  setIndexReload((value) => value + 1);
+                }
               }}
               onBlur={() => {
                 setSearchFocused(false);
