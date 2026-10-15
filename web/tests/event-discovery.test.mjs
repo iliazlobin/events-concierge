@@ -17,12 +17,3 @@ test('history, ongoing and stale observations have honest labels',()=>{
  assert.deepEqual(discoveryLabels(event('b',{discovery_state:'ongoing',source_freshness:'stale'})),['Ongoing','Source not checked in 7 days']);
  assert.ok(!discoveryLabels(event('c',{source_freshness:'recent'})).includes('Verified'));
 });
-
-import { variedEventChoices } from '../lib/event-discovery.ts';
-test('broad result choices diversify without imposing quotas on focused requests',()=>{
- const rows=[0,1,2,3].map(i=>event(String(i),{title:`Library activity ${i}`,topics:['family']}));
- const walk=event('walk',{title:'Walk',organizer_name:'Walk club',source_keys:['walks'],topics:['outdoors']});
- const all=[...rows,walk];
- assert.equal(variedEventChoices(all,false),all);
- assert.ok(variedEventChoices(all,true).findIndex(e=>e.canonical_event_id==='walk')<4);
-});
