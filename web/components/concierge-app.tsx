@@ -1433,7 +1433,6 @@ export function ConciergeApp() {
         ) : null}
         {view === "events" ? (
           <EventsView
-            broadDiscovery={!filters.query.trim() && !filters.topics.length && !filters.sourceKeys.length}
             events={events}
             sort={filters.sort}
             sourceName={currentProvider?.display_name}

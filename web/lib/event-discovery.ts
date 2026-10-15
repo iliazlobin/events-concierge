@@ -30,35 +30,3 @@ export function discoveryLabels(event: EventItem): string[] {
   }
   return labels;
 }
-
-/** Diversify only broad discovery. Operates on loaded results; date-order views bypass it. */
-export function variedEventChoices(events: EventItem[], broad: boolean): EventItem[] {
-  if (!broad) return events;
-  const pending = groupEventSessions(events).map((group) => [...group]);
-  const result: EventItem[] = [];
-  const organizers = new Map<string, number>();
-  const sources = new Map<string, number>();
-  const topics = new Map<string, number>();
-  while (pending.length) {
-    const cost = (index: number) => {
-      const event = pending[index][0];
-      const organizer = normalized(event.organizer_name);
-      const source = event.source_keys?.[0] ?? "";
-      const topicRepeats = event.topics?.length ? Math.min(...event.topics.map(t => topics.get(t) ?? 0)) : 0;
-      return index + 1.5 * (organizer ? organizers.get(organizer) ?? 0 : 0)
-        + 0.5 * (source ? sources.get(source) ?? 0 : 0) + 0.5 * topicRepeats
-        + (event.source_freshness === "stale" ? 1 : 0);
-    };
-    let best = 0;
-    for (let i=1; i<Math.min(5,pending.length);i++) if (cost(i)<cost(best)) best=i;
-    const group = pending.splice(best,1)[0];
-    result.push(...group);
-    const event = group[0];
-    const organizer = normalized(event.organizer_name);
-    if (organizer) organizers.set(organizer,(organizers.get(organizer) ?? 0)+1);
-    const source = event.source_keys?.[0];
-    if (source) sources.set(source,(sources.get(source) ?? 0)+1);
-    for (const t of event.topics ?? []) topics.set(t,(topics.get(t) ?? 0)+1);
-  }
-  return result;
-}
