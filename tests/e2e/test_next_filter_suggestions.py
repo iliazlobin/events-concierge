@@ -121,6 +121,7 @@ def test_expired_preload_is_removed_even_when_refresh_is_unavailable(catalog_nam
 
     def preload(route: Route):
         if loaded:
+            harness.allowed_console_error_fragments.append("the server responded with a status of 503")
             api.respond(route, {"detail": "busy"}, 503)
         else:
             loaded.append(True)
@@ -153,6 +154,7 @@ def test_preload_recovers_after_expired_or_failed_initial_response(
     def preload(route: Route):
         attempts.append(route.request.url)
         if len(attempts) == 1 and first_response == "unavailable":
+            harness.allowed_console_error_fragments.append("the server responded with a status of 503")
             api.respond(route, {"detail": "busy"}, 503)
             return
         api.respond(route, {"items": [
