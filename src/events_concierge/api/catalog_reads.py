@@ -239,7 +239,9 @@ class CatalogReadCoordinator:
     @staticmethod
     async def _replay(messages: tuple[Message, ...], send: Send, cache: str) -> None:
         for message in messages:
-            outgoing = message
+            # Outer ASGI middleware (including gzip) may replace body/header
+            # fields in place. Never let it mutate the cached representation.
+            outgoing = dict(message)
             if message["type"] == "http.response.start":
                 outgoing = {
                     **message,

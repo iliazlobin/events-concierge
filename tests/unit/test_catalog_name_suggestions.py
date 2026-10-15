@@ -163,6 +163,9 @@ async def test_index_compression_is_negotiated_after_the_uncompressed_cache(auto
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
         compressed = await client.get("/v1/catalog/name-index", headers={"Accept-Encoding": "gzip"})
         plain = await client.get("/v1/catalog/name-index", headers={"Accept-Encoding": "identity"})
+        compressed_hit = await client.get(
+            "/v1/catalog/name-index", headers={"Accept-Encoding": "gzip"},
+        )
         ordinary = await client.get("/v1/catalog/name-suggestions", params={"q": "semi"})
     assert compressed.headers["content-encoding"] == "gzip"
     assert compressed.headers["x-ec-catalog-cache"] == "miss"
@@ -171,3 +174,6 @@ async def test_index_compression_is_negotiated_after_the_uncompressed_cache(auto
     assert "content-encoding" not in plain.headers
     assert "content-encoding" not in ordinary.headers
     assert compressed.json()["items"] == plain.json()["items"]
+    assert compressed_hit.headers["x-ec-catalog-cache"] == "hit"
+    assert compressed_hit.headers["content-encoding"] == "gzip"
+    assert compressed_hit.json() == compressed.json()
