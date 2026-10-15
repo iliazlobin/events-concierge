@@ -15,6 +15,30 @@ export interface RegistrationTask {
   version: number;
   unread: boolean;
 }
+
+export interface RegistrationActivity {
+  status: RegistrationStatus;
+  at: string;
+}
+
+/** The API retains the queue time and latest state, not intermediate browser steps. */
+export function registrationActivity(task: RegistrationTask): RegistrationActivity[] {
+  const activity: RegistrationActivity[] = [{ status: "queued", at: task.created_at }];
+  if (task.status !== "queued") activity.push({ status: task.status, at: task.updated_at });
+  return activity;
+}
+
+export const registrationProgress: Record<RegistrationStatus, string> = {
+  queued: "Waiting for Muse to pick up this registration.",
+  in_progress: "Muse picked up this registration. Waiting for a result.",
+  needs_input: "Muse needs your input. Continue in Muse.",
+  awaiting_approval: "Waiting for the organizer to approve your registration.",
+  waitlisted: "Waiting for a place to become available.",
+  registered: "Muse reported a confirmed registration.",
+  failed: "Muse reported that registration failed.",
+  uncertain: "Check provider confirmation before retrying.",
+};
+
 export type RegistrationFilter = "all" | "queued" | "active" | "registered" | "attention" | "waiting";
 export const registrationFilters: Array<{ key: RegistrationFilter; label: string }> = [
   { key: "all", label: "All" }, { key: "queued", label: "Queued" },

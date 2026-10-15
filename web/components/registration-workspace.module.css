@@ -48,6 +48,15 @@
 .status[data-status="failed"] > span { background: #ed8a8a; }
 .status[data-status="needs_input"] > span, .status[data-status="uncertain"] > span { background: #e8ba7b; }
 .note { font-size: 10px; line-height: 1.5; color: var(--muted); margin: 4px 0; }
+.activity { margin-top: 9px; font-size: 10px; line-height: 1.5; color: var(--muted); }
+.activity summary { cursor: pointer; color: var(--ink); border-radius: 4px; }
+.activity summary:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+.activity summary > span { display: block; color: var(--muted); font-size: 9px; margin-top: 2px; }
+.activity ol { list-style: none; padding: 0 0 0 10px; margin: 10px 0; border-left: 1px solid var(--line); }
+.activity li { display: flex; flex-direction: column; gap: 2px; margin: 8px 0; }
+.activity li > span { color: var(--ink); }
+.activity time { font-variant-numeric: tabular-nums; }
+.activity p { margin: 6px 0; }
 .taskLinks { display: flex; gap: 12px; font-size: 10px; margin-top: 8px; }
 .taskLinks a { color: var(--muted); text-decoration: underline; text-underline-offset: 3px; }
 .taskLinks a:hover { color: var(--accent); }
