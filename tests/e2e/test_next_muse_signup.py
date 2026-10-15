@@ -42,6 +42,9 @@ class MuseApi(ReleaseApi):
         self.registrations = []
         self.acknowledged = []
         self.queue_error = False
+        self.queue_error_status = 503
+        self.queue_error_detail = "Registration queue temporarily unavailable"
+        self.queue_network_error = False
         self.writes = []
         self.providers = []
         self.catalog_reads = []
@@ -162,9 +165,13 @@ class MuseApi(ReleaseApi):
         if route.request.method == "POST":
             body = route.request.post_data_json
             self.queued.append(body)
+            if self.queue_network_error:
+                self.harness.allowed_console_error_fragments.append("net::ERR_FAILED")
+                route.abort("failed")
+                return
             if self.queue_error:
-                self.harness.allowed_console_error_fragments.append("503")
-                self.respond(route, {"detail": "Registration queue temporarily unavailable"}, 503)
+                self.harness.allowed_console_error_fragments.append(str(self.queue_error_status))
+                self.respond(route, {"detail": self.queue_error_detail}, self.queue_error_status)
                 return
             item = next((task for task in self.registrations
                          if task["event"]["canonical_event_id"] == body["event_id"]), None)
@@ -532,6 +539,140 @@ def test_queue_failure_is_recoverable_without_duplicate_intent(page_factory):
     expect(page.get_by_role("button", name="View registration for Friday Night Jazz")).to_be_visible()
     assert len(api.queued) == 2 and api.queued[0] == api.queued[1]
     assert len(api.registrations) == 1
+    assert api.unexpected == []
+
+
+@pytest.mark.parametrize("width", [1440, 320])
+def test_rejected_queue_stays_event_specific_through_polling_and_notice_timeout(page_factory, width, tmp_path):
+    harness, api = install(page_factory, width)
+    page = harness.page
+    page.clock.install()
+    page.goto(BASE + "/?view=events&when=all&city=")
+
+    # Leave a real success notice active before another event is rejected. Its
+    # expiry must not erase the later failure or imply that event was saved.
+    page.get_by_role("button", name="Sign up with Muse for Saturday Night Jazz", exact=True).click()
+    dialog = page.get_by_role("dialog", name="Registrations", exact=True)
+    expect(dialog).to_contain_text("Saturday Night Jazz")
+    dialog.get_by_role("button", name="Close registrations", exact=True).click()
+    success = page.get_by_role("complementary", name="Registration update", exact=True)
+    expect(success.get_by_role("button", name="View registrations", exact=True)).to_be_visible()
+
+    # A catalog card can outlive server-side source changes; the API remains
+    # authoritative even when the loaded card still permits a queue attempt.
+    api.queue_error = True
+    api.queue_error_status = 422
+    api.queue_error_detail = "Muse needs a recently collected Luma or Meetup event"
+    action = page.get_by_role("button", name="Sign up with Muse for Friday Night Jazz", exact=True)
+    action.click()
+    failure = page.get_by_role("complementary", name="Registration queue error", exact=True)
+    expect(failure.get_by_role("alert")).to_contain_text("Friday Night Jazz")
+    expect(failure).to_contain_text(api.queue_error_detail)
+    expect(failure.get_by_role("button", name="View registrations", exact=True)).to_have_count(0)
+    expect(dialog).not_to_be_visible()
+    expect(action).to_be_enabled()
+    assert [item["event"]["title"] for item in api.registrations] == ["Saturday Night Jazz"]
+    failed_intent = dict(api.queued[-1])
+
+    with page.expect_response(lambda response: urlsplit(response.url).path == "/v1/me/muse/registrations"
+                              and response.request.method == "GET"):
+        page.evaluate("window.dispatchEvent(new Event('focus'))")
+    expect(failure.get_by_role("alert")).to_contain_text("Friday Night Jazz")
+    page.clock.run_for(8_100)
+    expect(failure.get_by_role("alert")).to_contain_text("Friday Night Jazz")
+    assert page.evaluate("document.documentElement.scrollWidth <= innerWidth")
+    if width == 320:
+        bounds = failure.bounding_box()
+        assert bounds and bounds["width"] >= width * 0.8 and 0 <= bounds["x"] <= width - bounds["width"]
+    page.screenshot(path=str(tmp_path / f"muse-queue-rejected-{width}.png"))
+
+    failure.get_by_role("button", name="Dismiss registration error", exact=True).click()
+    expect(failure).to_have_count(0)
+    assert len(api.queued) == 2  # Dismissal does not resubmit or cancel saved work.
+
+    # The server/catalog has been repaired; retry the same intent, rather than
+    # minting another request or silently substituting an event.
+    api.queue_error = False
+    api.events[0]["sources"][0]["last_seen_at"] = datetime.now(UTC).isoformat()
+    action.click()
+    expect(dialog).to_contain_text("Friday Night Jazz")
+    expect(failure).to_have_count(0)
+    assert api.queued[-1] == failed_intent
+    assert len(api.registrations) == 2
+    assert sum(item["event"]["canonical_event_id"] == failed_intent["event_id"]
+               for item in api.registrations) == 1
+    dialog.get_by_role("button", name="Close registrations", exact=True).click()
+    expect(success).to_contain_text("Friday Night Jazz: Queued for Muse.")
+    success.get_by_role("button", name="View registrations", exact=True).click()
+    expect(dialog).to_contain_text("Friday Night Jazz")
+    assert len(api.queued) == 3
+    assert api.unexpected == []
+
+
+def test_queue_network_failure_keeps_same_retry_intent(page_factory):
+    harness, api = install(page_factory)
+    api.queue_network_error = True
+    page = harness.page
+    page.goto(BASE + "/?view=events&when=all&city=")
+    action = page.get_by_role("button", name="Sign up with Muse for Friday Night Jazz", exact=True)
+    action.click()
+    failure = page.get_by_role("complementary", name="Registration queue error", exact=True)
+    expect(failure.get_by_role("alert")).to_contain_text("Friday Night Jazz")
+    expect(failure.get_by_role("button", name="View registrations", exact=True)).to_have_count(0)
+    expect(action).to_be_enabled()
+    assert api.registrations == []
+    api.queue_network_error = False
+    action.click()
+    expect(page.get_by_role("dialog", name="Registrations", exact=True)).to_contain_text("Friday Night Jazz")
+    expect(failure).to_have_count(0)
+    assert len(api.queued) == 2 and api.queued[0] == api.queued[1]
+    assert len(api.registrations) == 1
+    assert api.unexpected == []
+
+
+@pytest.mark.parametrize("confirmation_before_failure", [False, True])
+def test_saved_queue_with_lost_reply_uses_confirmed_progress_without_resubmitting(page_factory, confirmation_before_failure):
+    harness, api = install(page_factory)
+    page = harness.page
+    held = []
+
+    def commit_without_reply(route):
+        if route.request.method != "POST":
+            api.handle(route)
+            return
+        api.record_request(route, "/v1/me/muse/registrations", "POST")
+        body = route.request.post_data_json
+        api.queued.append(body)
+        event = next(event for event in api.events if event["canonical_event_id"] == body["event_id"])
+        api.registrations.append(api.registration(event))
+        if confirmation_before_failure:
+            held.append(route)
+        else:
+            harness.allowed_console_error_fragments.append("net::ERR_FAILED")
+            route.abort("failed")
+
+    page.route("**/v1/me/muse/registrations", commit_without_reply)
+    # Settle the initial visible-card lookup before introducing the lost reply.
+    with page.expect_response(lambda response: urlsplit(response.url).path == "/v1/me/muse/registrations/by-event"):
+        page.goto(BASE + "/?view=events&when=all&city=")
+    page.get_by_role("button", name="Sign up with Muse for Friday Night Jazz", exact=True).click()
+    failure = page.get_by_role("complementary", name="Registration queue error", exact=True)
+    if not confirmation_before_failure:
+        expect(failure.get_by_role("alert")).to_contain_text("Friday Night Jazz")
+    with page.expect_response(lambda response: urlsplit(response.url).path == "/v1/me/muse/registrations"
+                              and response.request.method == "GET"):
+        page.evaluate("window.dispatchEvent(new Event('focus'))")
+    confirmed = page.get_by_role("button", name="View registration for Friday Night Jazz", exact=True)
+    expect(confirmed).to_be_visible()
+    if confirmation_before_failure:
+        harness.allowed_console_error_fragments.append("net::ERR_FAILED")
+        held.pop().abort("failed")
+    expect(confirmed).to_have_attribute("data-registration-state", "queued")
+    expect(confirmed).to_be_enabled()
+    expect(failure).to_have_count(0)
+    confirmed.click()
+    expect(page.get_by_role("dialog", name="Registrations", exact=True)).to_contain_text("Friday Night Jazz")
+    assert len(api.queued) == 1 and len(api.registrations) == 1
     assert api.unexpected == []
 
 
