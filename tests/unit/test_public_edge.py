@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import gzip
 import ipaddress
+import json
 import os
 import shutil
 import socket
@@ -10,6 +12,8 @@ import subprocess
 import time
 import uuid
 from contextlib import contextmanager
+from http.client import HTTPResponse
+from io import BytesIO
 from pathlib import Path
 
 import pytest
@@ -508,12 +512,12 @@ def proxy_rehearsal(resources, tmp_path_factory):
     config += _echo_upstream(8083)
     name = f"ec-public-edge-test-{uuid.uuid4().hex[:12]}"
 
-    def command(*args, data=None, timeout=60):
+    def command(*args, data=None, timeout=60, text=True):
         return subprocess.run(
             [docker, *args],
             input=data,
             capture_output=True,
-            text=True,
+            text=text,
             check=False,
             timeout=timeout,
         )
@@ -589,7 +593,7 @@ def proxy_rehearsal(resources, tmp_path_factory):
             )
             pytest.fail(startup_error + logs.stderr + logs.stdout + state.stdout)
 
-        def request(path, host=HOST, headers=(), method="GET", port=8080):
+        def request(path, host=HOST, headers=(), method="GET", port=8080, raw=False):
             assert port in (8080, 8082)
             extra_headers = "".join(f"{key}: {value}\r\n" for key, value in headers)
             # Keep stdin open while both proxy hops respond; BusyBox nc otherwise
@@ -601,10 +605,11 @@ def proxy_rehearsal(resources, tmp_path_factory):
                 "sh",
                 "-c",
                 f"(cat; sleep 1) | nc -w 5 127.0.0.1 {port}",
-                data=f"{method} {path} HTTP/1.1\r\nHost: {host}\r\n{extra_headers}Connection: close\r\n\r\n",
+                data=f"{method} {path} HTTP/1.1\r\nHost: {host}\r\n{extra_headers}Connection: close\r\n\r\n".encode(),
+                text=False,
             )
             assert result.returncode == 0, result.stderr
-            return result.stdout
+            return result.stdout if raw else result.stdout.decode()
 
         yield request
     finally:
@@ -615,8 +620,17 @@ def proxy_rehearsal(resources, tmp_path_factory):
 def _echo_upstream(port):
     # Presence/format test only. Real signature/audience verification belongs to the API.
     echo = "host={http.request.host} proto={http.request.header.X-Forwarded-Proto} forwarded={http.request.header.Forwarded} identity={http.request.header.X-Goog-Authenticated-User-Email} access={http.request.header.Cf-Access-Authenticated-User-Email} middleware={http.request.header.X-Middleware-Subrequest} jwt={http.request.header.X-Goog-IAP-JWT-Assertion} uri={http.request.uri}"
+    payload = json.dumps({"items": ["PUBLIC_NAME_FIXTURE"] * 300})
     return f"""\nhttp://:{port} {{
   bind 127.0.0.1
+  @largeFixture path /v1/catalog/name-index /v1/catalog/events /v1/me
+  @nameIndexFixture path /v1/catalog/name-index
+  @accountFixture path /v1/me
+  header @largeFixture Content-Type application/json
+  header @nameIndexFixture X-EC-Catalog-Freshness-Ms 9000
+  header @nameIndexFixture Cache-Control no-store
+  header @accountFixture Set-Cookie __Host-ec_session=PRIVATE_FIXTURE
+  respond @largeFixture `{payload}` 200
   @private path /admin /admin/*
   respond @private "PRIVATE_FIXTURE {echo}" 200
   respond "PUBLIC_FIXTURE {echo}" 200
@@ -660,7 +674,7 @@ def _native_rehearsal(resources, directory, binary):
             else:
                 raise AssertionError("Loopback Caddy startup timed out")
 
-            def request(path, host=HOST, headers=(), method="GET", port=8080):
+            def request(path, host=HOST, headers=(), method="GET", port=8080, raw=False):
                 assert port in (8080, 8082)
                 extra = "".join(f"{key}: {value}\r\n" for key, value in headers)
                 data = (
@@ -673,12 +687,48 @@ def _native_rehearsal(resources, directory, binary):
                     chunks = []
                     while chunk := sock.recv(65536):
                         chunks.append(chunk)
-                    return b"".join(chunks).decode()
+                    data = b"".join(chunks)
+                    return data if raw else data.decode()
 
             yield request
         finally:
             process.terminate()
             process.wait(timeout=5)
+
+
+def test_only_public_name_index_get_is_compressed_and_preserves_freshness(proxy_rehearsal):
+    def response(path, encoding, method="GET"):
+        data = proxy_rehearsal(
+            path, headers=[("Accept-Encoding", encoding)], method=method, raw=True,
+        )
+
+        class ResponseSocket:
+            def makefile(self, *_args, **_kwargs):
+                return BytesIO(data)
+
+        parsed = HTTPResponse(ResponseSocket())
+        parsed.begin()
+        return parsed, parsed.read()
+
+    encoded, compressed = response("/v1/catalog/name-index?source_key=fixture", "gzip")
+    identity, body = response("/v1/catalog/name-index?source_key=fixture", "identity")
+    assert encoded.status == identity.status == 200
+    assert encoded.getheader("Content-Encoding") == "gzip"
+    assert "accept-encoding" in encoded.getheader("Vary", "").lower()
+    assert identity.getheader("Content-Encoding") is None
+    assert gzip.decompress(compressed) == body
+    assert len(compressed) < len(body) // 4
+    assert json.loads(body)["items"] == ["PUBLIC_NAME_FIXTURE"] * 300
+    assert encoded.getheader("X-EC-Catalog-Freshness-Ms") == "9000"
+    assert encoded.getheader("Cache-Control") == "no-store"
+    assert encoded.getheader("Set-Cookie") is None
+    for path, method in [("/v1/me", "GET"), ("/v1/catalog/events", "GET"),
+                         ("/v1/catalog/name-index", "POST")]:
+        untouched, uncompressed = response(path, "gzip", method)
+        assert untouched.getheader("Content-Encoding") is None
+        assert uncompressed == body
+        if path == "/v1/me":
+            assert untouched.getheader("Set-Cookie") == "__Host-ec_session=PRIVATE_FIXTURE"
 
 
 @pytest.mark.parametrize(

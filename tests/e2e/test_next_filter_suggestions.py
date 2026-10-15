@@ -121,6 +121,7 @@ def test_expired_preload_is_removed_even_when_refresh_is_unavailable(catalog_nam
 
     def preload(route: Route):
         if loaded:
+            harness.allowed_console_error_fragments.append("the server responded with a status of 503")
             api.respond(route, {"detail": "busy"}, 503)
         else:
             loaded.append(True)
@@ -138,6 +139,51 @@ def test_expired_preload_is_removed_even_when_refresh_is_unavailable(catalog_nam
     expect(page.get_by_role("option").filter(has_text="SemiAnalysis")).to_be_visible()
     expect(page.get_by_role("option").filter(has_text="SemiAnalysis")).to_have_count(0)
     expect(page.get_by_text("No matching names for these filters.", exact=True)).to_be_visible()
+
+
+@pytest.mark.parametrize("first_response", ["expired", "unavailable"])
+def test_preload_recovers_after_expired_or_failed_initial_response(
+    catalog_names_page, first_response,
+):
+    harness, api, _ = catalog_names_page
+    api.catalog_name_index_enabled = True
+    page = harness.page
+    page.clock.install()
+    attempts, prefix_reads = [], []
+
+    def preload(route: Route):
+        attempts.append(route.request.url)
+        if len(attempts) == 1 and first_response == "unavailable":
+            harness.allowed_console_error_fragments.append("the server responded with a status of 503")
+            api.respond(route, {"detail": "busy"}, 503)
+            return
+        api.respond(route, {"items": [
+            {"name": "SemiAnalysis", "kinds": ["organization"], "event_count": 2},
+        ], "complete": True, "expires_at": datetime.now(UTC).isoformat()},
+                    headers={"X-EC-Catalog-Freshness-Ms": "0" if len(attempts) == 1 else "10000"})
+
+    def prefix(route: Route):
+        prefix_reads.append(route.request.url)
+        api.respond(route, [])
+
+    page.route("**/v1/catalog/name-index?*", preload)
+    page.route("**/v1/catalog/name-suggestions?*", prefix)
+    with page.expect_response("**/v1/catalog/name-index?*"):
+        page.goto(f"{BASE}/?view=events")
+    search = page.get_by_role("combobox", name=SEARCH_NAME)
+    search.fill("semian")
+    expect(page.get_by_role("option").filter(has_text="SemiAnalysis")).to_have_count(0)
+    page.wait_for_timeout(50)
+    page.clock.fast_forward(7000)
+    assert len(attempts) == 1
+    with page.expect_response("**/v1/catalog/name-index?*"):
+        page.clock.fast_forward(1100)
+    expect(page.get_by_role("option").filter(has_text="SemiAnalysis")).to_be_visible()
+    before = len(prefix_reads)
+    search.fill("semia")
+    expect(page.get_by_role("option").filter(has_text="SemiAnalysis")).to_be_visible()
+    page.clock.fast_forward(300)
+    assert len(prefix_reads) == before
 
 
 @pytest.fixture

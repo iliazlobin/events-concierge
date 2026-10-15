@@ -106,6 +106,7 @@ const MAX_DATE_RANGES = 8;
 const MAX_CITY_FILTERS = 20;
 const MAX_SOURCE_FILTERS = 40;
 const MAX_TOPIC_FILTERS = 12;
+const CATALOG_NAME_INDEX_RETRY_MS = 8000;
 
 const AVAILABILITY_OPTIONS: FilterChipEditorOption[] = REGISTRATION_FILTER_OPTIONS.map(
   ({ value, label }) => ({ id: value, label }),
@@ -387,6 +388,11 @@ export function FilterBar({
     const controller = new AbortController();
     let cancelled = false;
     let refreshTimer: ReturnType<typeof setTimeout> | undefined;
+    const refreshAfter = (delay: number) => {
+      refreshTimer = setTimeout(() => {
+        if (document.visibilityState === "visible") setIndexReload((value) => value + 1);
+      }, delay);
+    };
     const startedAt = performance.now();
     indexAttempt.current = startedAt;
     indexLoading.current = indexKey;
@@ -398,13 +404,16 @@ export function FilterBar({
       const expiresAt = catalogNameIndexExpiry(index, startedAt);
       if (expiresAt <= performance.now()) return;
       setNameIndex({ key: indexKey, items: index.items, complete: index.complete, expiresAt });
-      refreshTimer = setTimeout(() => {
-        if (document.visibilityState === "visible") setIndexReload((value) => value + 1);
-      }, Math.max(1000, expiresAt - performance.now() - 1000));
+      refreshAfter(Math.max(1000, expiresAt - performance.now() - 1000));
     }).catch(() => {
       // An older server or unavailable preload keeps the bounded per-term reader.
     }).finally(() => {
-      if (!cancelled) indexLoading.current = null;
+      if (!cancelled) {
+        indexLoading.current = null;
+        // A slow response can arrive after its freshness budget. Retry in the
+        // background rather than leaving this visible page on per-term reads.
+        if (refreshTimer === undefined) refreshAfter(CATALOG_NAME_INDEX_RETRY_MS);
+      }
     });
     return () => {
       cancelled = true;
@@ -424,7 +433,9 @@ export function FilterBar({
     if (!catalogNameSuggestionsEnabled || !catalogNameIndexEnabled) return;
     const resume = () => {
       if (document.visibilityState === "visible" && indexLoading.current !== indexKey
-        && performance.now() - indexAttempt.current >= 8000) setIndexReload((value) => value + 1);
+        && performance.now() - indexAttempt.current >= CATALOG_NAME_INDEX_RETRY_MS) {
+        setIndexReload((value) => value + 1);
+      }
     };
     document.addEventListener("visibilitychange", resume);
     return () => document.removeEventListener("visibilitychange", resume);
