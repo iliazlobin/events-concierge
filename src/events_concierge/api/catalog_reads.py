@@ -205,7 +205,10 @@ class CatalogReadCoordinator:
         if cached is not None:
             if cached.token == token and self._clock() - cached.at < ttl:
                 self._cache.move_to_end(key)
-                await self._replay(cached.messages, send, "hit")
+                await self._replay(
+                    cached.messages, send, "hit",
+                    fresh_for_ms=self._freshness(key, cached.at),
+                )
                 return
             self._remove(key)
         messages: list[Message] = []
@@ -231,13 +234,23 @@ class CatalogReadCoordinator:
             self._bytes += size
             while len(self._cache) > _MAX_ENTRIES or self._bytes > _MAX_BYTES:
                 self._remove(next(iter(self._cache)))
-        await self._replay(snapshot, send, "miss")
+        await self._replay(
+            snapshot, send, "miss", fresh_for_ms=self._freshness(key, read_started),
+        )
+
+    def _freshness(self, key: bytes, at: float) -> int | None:
+        if not key.startswith(b"/v1/catalog/name-index?"):
+            return None
+        return max(0, int((_TTL_SECONDS - (self._clock() - at)) * 1000))
 
     def _remove(self, key: bytes) -> None:
         self._bytes -= self._cache.pop(key).size
 
     @staticmethod
-    async def _replay(messages: tuple[Message, ...], send: Send, cache: str) -> None:
+    async def _replay(
+        messages: tuple[Message, ...], send: Send, cache: str,
+        *, fresh_for_ms: int | None = None,
+    ) -> None:
         for message in messages:
             # Outer ASGI middleware (including gzip) may replace body/header
             # fields in place. Never let it mutate the cached representation.
@@ -248,9 +261,13 @@ class CatalogReadCoordinator:
                     "headers": [
                         (name, value)
                         for name, value in message.get("headers", [])
-                        if name.lower() not in {b"cache-control", b"x-ec-catalog-cache"}
+                        if name.lower() not in {
+                            b"cache-control", b"x-ec-catalog-cache", b"x-ec-catalog-freshness-ms",
+                        }
                     ]
-                    + [(b"cache-control", b"no-store"), (b"x-ec-catalog-cache", cache.encode())],
+                    + [(b"cache-control", b"no-store"), (b"x-ec-catalog-cache", cache.encode())]
+                    + ([(b"x-ec-catalog-freshness-ms", str(fresh_for_ms).encode())]
+                       if fresh_for_ms is not None else []),
                 }
             await send(outgoing)
 

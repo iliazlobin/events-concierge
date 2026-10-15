@@ -116,6 +116,7 @@ async def test_name_index_preloads_the_restricted_catalog_without_text(autocompl
     assert response.status_code == 200
     payload = response.json()
     assert payload["complete"] is True and payload["items"][0]["name"] == "Nebius"
+    assert 0 < int(response.headers["x-ec-catalog-freshness-ms"]) <= 10000
     assert 0 < (datetime.fromisoformat(payload["expires_at"]) - before).total_seconds() <= 11
     assert config.json()["catalog_name_index_enabled"] is True
     call = suggest.call_args.kwargs

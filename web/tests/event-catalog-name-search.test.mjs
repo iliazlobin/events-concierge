@@ -113,17 +113,34 @@ test("preload ignores text and sort, but retains the exact event restrictions", 
   const payload = { items: [entry], complete: true, expires_at: "2030-10-09T10:00:10Z" };
   t.mock.method(globalThis, "fetch", async (path) => {
     assert.equal(path, `/v1/catalog/name-index?${key}`);
-    return response(payload);
+    return new Response(JSON.stringify(payload), {
+      headers: { "X-EC-Catalog-Freshness-Ms": "10000" },
+    });
   });
-  assert.deepEqual(await getCatalogNameIndex(key), payload);
+  assert.deepEqual(await getCatalogNameIndex(key), { ...payload, fresh_for_ms: 10000 });
   assert.notEqual(key, catalogNameIndexKey({ ...filters, availability: "sold_out" }));
   assert.notEqual(key, catalogNameIndexKey({ ...filters, cities: ["Oakland"], city: "Oakland" }));
 });
 
-test("preload expiry includes server-cache age and loading time, with a hard client cap", () => {
-  const started = Date.parse("2030-10-09T10:00:00Z");
-  assert.equal(catalogNameIndexExpiry({ expires_at: "2030-10-09T10:00:03Z" }, started), started + 3000);
-  assert.equal(catalogNameIndexExpiry({ expires_at: "2030-10-09T11:00:00Z" }, started), started + 10000);
-  assert.equal(catalogNameIndexExpiry({ expires_at: "invalid" }, started), 0);
-  assert.ok(catalogNameIndexExpiry({ expires_at: "2030-10-09T09:59:00Z" }, started) < started);
+test("preload expiry uses remaining server freshness with monotonic client time despite clock skew", () => {
+  const started = 100_000;
+  for (const expires_at of ["2030-10-09T10:00:03Z", "2000-01-01T00:00Z", "2099-01-01T00:00Z"]) {
+    assert.equal(catalogNameIndexExpiry({ expires_at, fresh_for_ms: 3000 }, started), started + 3000);
+  }
+  assert.equal(catalogNameIndexExpiry({ fresh_for_ms: 100000 }, started), started + 10000);
+  assert.equal(catalogNameIndexExpiry({ fresh_for_ms: NaN }, started), 0);
+  assert.equal(catalogNameIndexExpiry({ fresh_for_ms: -1 }, started), 0);
+  assert.equal(catalogNameIndexExpiry({ expires_at: "2099-01-01T00:00Z" }, started), 0);
+});
+
+test("missing or invalid freshness metadata cannot extend a preloaded index", async (t) => {
+  for (const value of ["", "NaN", "1000000", "-1"]) {
+    t.mock.method(globalThis, "fetch", async () => new Response(JSON.stringify({
+      items: [entry], complete: true, expires_at: "2099-01-01T00:00Z",
+    }), { headers: { "X-EC-Catalog-Freshness-Ms": value } }));
+    const index = await getCatalogNameIndex("city=sanfrancisco");
+    assert.equal(index.fresh_for_ms, 0);
+    assert.equal(catalogNameIndexExpiry(index, 1000), 1000);
+    t.mock.restoreAll();
+  }
 });

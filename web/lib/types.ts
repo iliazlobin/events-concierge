@@ -180,6 +180,8 @@ export interface CatalogNameIndex {
   items: CatalogNameSuggestion[];
   complete: boolean;
   expires_at: string;
+  /** Relative lifetime from the response header, filled by the API client. */
+  fresh_for_ms?: number;
 }
 
 export type CatalogEntityKind = "person" | "organization" | "unknown";

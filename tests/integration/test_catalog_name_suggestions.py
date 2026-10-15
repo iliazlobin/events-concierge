@@ -22,7 +22,7 @@ from events_concierge.adapters.postgres.catalog_refresh_commit import (
     PostgresCatalogRefreshCommitter,
 )
 from events_concierge.adapters.postgres.catalog_sources import PostgresCatalogSourceRepository
-from events_concierge.api.app import _database_is_ready
+from events_concierge.api.app import _catalog_browse_item_out, _database_is_ready
 from events_concierge.domain.enums import RegistrationStatus
 from events_concierge.domain.events import CandidateEvent, EventEntityProfile
 from events_concierge.infra.db import system_session_scope
@@ -91,6 +91,50 @@ async def test_preload_rollback_preserves_old_reader_and_grants(db: None) -> Non
         assert await catalog.suggest_names(query=None, source_keys=(source,), limit=5001) == before
         assert await _database_is_ready() is True
         assert await catalog.suggest_names(query="Luma", source_keys=(source,))
+    finally:
+        await owner.dispose()
+
+
+async def test_shared_private_observation_never_suggests_a_retained_public_venue(db: None) -> None:
+    private_source, [event], _, catalog = await _source_with_current_events(event_count=1)
+    public_source, _, _, _ = await _source_with_current_events(event_count=1)
+    venue = "Withheld Venue " + uuid4().hex
+    public = replace(event, venue_name=venue, visibility="public")
+    await _publish_names(private_source, [public], catalog)
+    shared = replace(public, source_event_id="shared-" + uuid4().hex)
+    await _publish_names(public_source, [shared], catalog)
+    [first], _ = await catalog.browse_current(source_keys=(private_source,), after=None, limit=10)
+    [second], _ = await catalog.browse_current(source_keys=(public_source,), after=None, limit=10)
+    assert first.canonical_event.canonical_event_id == second.canonical_event.canonical_event_id
+    await _publish_names(private_source, [replace(
+        public, venue_name=None, geo=None, visibility="private", location_withheld=True,
+    )], catalog)
+    [item], _ = await catalog.browse_current(source_keys=(private_source,), after=None, limit=10)
+    assert item.canonical_event.venue_name == venue  # retained enrichment of a shared identity
+    assert _catalog_browse_item_out(item).venue_name is None
+    for sources in ((private_source,), (private_source, public_source)):
+        index = await catalog.suggest_names(query=None, source_keys=sources, limit=5001)
+        assert venue not in {row.name for row in index}
+        assert await catalog.suggest_names(query=venue, source_keys=sources) == []
+        async with system_session_scope() as session:
+            legacy = await session.execute(text("""
+                SELECT name FROM public.fn_suggest_catalog_names_v1(
+                  :query,CAST(:sources AS text[]),ARRAY[NULL]::timestamptz[],
+                  ARRAY[NULL]::timestamptz[],'{}'::text[],'{}'::text[],
+                  NULL,NULL,NULL,'{}'::text[],NULL,8)
+            """), {"query": venue, "sources": list(sources)})
+            assert legacy.all() == []
+    # The exact public-only selection still has a public venue, just like its cards.
+    assert await catalog.suggest_names(query=venue, source_keys=(public_source,))
+    owner = create_async_engine(os.environ["EC_MIGRATION_URL"])
+    try:
+        async with owner.begin() as connection:
+            await connection.execute(text(
+                "UPDATE catalog_sources SET enabled=false WHERE source_key=:source"
+            ), {"source": public_source})
+        assert await catalog.suggest_names(
+            query=venue, source_keys=(private_source, public_source),
+        ) == []
     finally:
         await owner.dispose()
 

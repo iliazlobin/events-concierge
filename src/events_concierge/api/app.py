@@ -21,6 +21,7 @@ from contextlib import asynccontextmanager, suppress
 from datetime import UTC, date, datetime, time, timedelta
 from html import escape
 from pathlib import Path
+from time import monotonic
 from typing import Annotated, Any, Literal, NamedTuple, cast
 from unicodedata import category
 from urllib.parse import urlencode
@@ -3699,6 +3700,7 @@ def create_app() -> FastAPI:
     @app.get("/v1/catalog/name-suggestions", response_model=list[CatalogNameSuggestionOut])
     async def suggest_catalog_names(
         request: Request,
+        response: Response,
         source_key: Annotated[
             list[
                 Annotated[
@@ -3732,6 +3734,7 @@ def create_app() -> FastAPI:
         # This absolute expiry survives server cache hits. A slow read never earns
         # a new client lifetime after it finishes.
         expires_at = datetime.now(UTC) + timedelta(seconds=10)
+        read_started = monotonic()
         source_keys = tuple(dict.fromkeys(source_key or []))
         if len(source_keys) > _MAX_CATALOG_SOURCE_SELECTIONS:
             raise HTTPException(status_code=422, detail="too many catalog sources")
@@ -3793,6 +3796,9 @@ def create_app() -> FastAPI:
             if size > 512 * 1024:
                 break
             bounded.append(item)
+        response.headers["X-EC-Catalog-Freshness-Ms"] = str(
+            max(0, int((10 - (monotonic() - read_started)) * 1000))
+        )
         return CatalogNameIndexOut(
             items=bounded, complete=len(bounded) == len(items), expires_at=expires_at,
         )

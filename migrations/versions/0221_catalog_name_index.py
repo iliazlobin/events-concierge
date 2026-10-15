@@ -17,6 +17,31 @@ depends_on: str | Sequence[str] | None = None
 _ARGS = "(text,text[],timestamptz[],timestamptz[],text[],text[],text,integer,integer,text[],text,integer)"
 _SOURCE = "public.fn_suggest_catalog_names_v2"
 _INDEX = "public.fn_catalog_name_index_v1"
+_PRIVACY_MARKER = "/* observation-scoped location privacy */"
+
+
+def _redact_venues(definition: str) -> str:
+    if _PRIVACY_MARKER in definition:
+        return definition
+    definition = _once(
+        definition, "candidate.venue_name, candidate.organizer_name,",
+        """/* observation-scoped location privacy */
+                       CASE WHEN bool_or(
+                           coalesce(privacy.location_withheld, true)
+                           OR coalesce(privacy.visibility IN ('private','unlisted'), false)
+                       ) OVER (PARTITION BY candidate.canonical_event_id)
+                       THEN NULL ELSE candidate.venue_name END AS venue_name,
+                       candidate.organizer_name,""",
+    )
+    return _once(definition, """) AS candidate
+                WHERE p_availability""", """) AS candidate
+                LEFT JOIN public.catalog_event_observations AS privacy
+                  ON privacy.source_key = candidate.source_key
+                 AND privacy.source::text = candidate.observation_source
+                 AND privacy.source_event_id = candidate.source_event_id
+                 AND privacy.canonical_event_id = candidate.canonical_event_id
+                 AND privacy.last_run_key = candidate.refresh_run_key
+                WHERE p_availability""")
 
 
 def _once(definition: str, before: str, after: str) -> str:
@@ -28,10 +53,13 @@ def _once(definition: str, before: str, after: str) -> str:
 def upgrade() -> None:
     # Reuse the installed, tested admission, privacy and mention projection. Only
     # the name predicate and bounded result size change; filters still select events.
-    definition = str(op.get_bind().execute(
-        text("SELECT pg_get_functiondef(CAST(:signature AS regprocedure))"),
-        {"signature": _SOURCE + _ARGS},
-    ).scalar_one())
+    readers = {}
+    for name in ("public.fn_suggest_catalog_names_v1", _SOURCE):
+        readers[name] = _redact_venues(str(op.get_bind().execute(
+            text("SELECT pg_get_functiondef(CAST(:signature AS regprocedure))"),
+            {"signature": name + _ARGS},
+        ).scalar_one()))
+    definition = readers[_SOURCE]
     definition = _once(definition, _SOURCE + "(", _INDEX + "(")
     definition = _once(
         definition,
@@ -51,10 +79,14 @@ def upgrade() -> None:
         "ORDER BY CASE WHEN",
         "ORDER BY CASE WHEN names.kinds = ARRAY['event']::text[] THEN 1 ELSE 0 END, CASE WHEN",
     )
+    for reader in readers.values():
+        op.execute(reader)
     op.execute(definition)
     op.execute(f"REVOKE ALL ON FUNCTION {_INDEX}{_ARGS} FROM PUBLIC")
     op.execute(f"GRANT EXECUTE ON FUNCTION {_INDEX}{_ARGS} TO ec_app")
 
 
 def downgrade() -> None:
+    # Keep the observation-level privacy fix in compatible per-term readers.
+    # Reintroducing an earlier withheld venue is not a valid code rollback.
     op.execute(f"DROP FUNCTION {_INDEX}{_ARGS}")

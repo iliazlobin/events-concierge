@@ -387,7 +387,7 @@ export function FilterBar({
     const controller = new AbortController();
     let cancelled = false;
     let refreshTimer: ReturnType<typeof setTimeout> | undefined;
-    const startedAt = Date.now();
+    const startedAt = performance.now();
     indexAttempt.current = startedAt;
     indexLoading.current = indexKey;
     // Resolve "now" once per preload, never once per keystroke. Refreshes use a
@@ -396,11 +396,11 @@ export function FilterBar({
     void getCatalogNameIndex(requestKey, controller.signal).then((index) => {
       if (cancelled) return;
       const expiresAt = catalogNameIndexExpiry(index, startedAt);
-      if (expiresAt <= Date.now()) return;
+      if (expiresAt <= performance.now()) return;
       setNameIndex({ key: indexKey, items: index.items, complete: index.complete, expiresAt });
       refreshTimer = setTimeout(() => {
         if (document.visibilityState === "visible") setIndexReload((value) => value + 1);
-      }, Math.max(1000, expiresAt - Date.now() - 1000));
+      }, Math.max(1000, expiresAt - performance.now() - 1000));
     }).catch(() => {
       // An older server or unavailable preload keeps the bounded per-term reader.
     }).finally(() => {
@@ -415,20 +415,22 @@ export function FilterBar({
   }, [catalogNameIndexEnabled, catalogNameSuggestionsEnabled, indexKey, indexReload]);
   useEffect(() => {
     if (!nameIndex) return;
-    const timer = setTimeout(() => setNameIndex(null), Math.max(0, nameIndex.expiresAt - Date.now()));
+    const timer = setTimeout(
+      () => setNameIndex(null), Math.max(0, nameIndex.expiresAt - performance.now()),
+    );
     return () => clearTimeout(timer);
   }, [nameIndex]);
   useEffect(() => {
     if (!catalogNameSuggestionsEnabled || !catalogNameIndexEnabled) return;
     const resume = () => {
       if (document.visibilityState === "visible" && indexLoading.current !== indexKey
-        && Date.now() - indexAttempt.current >= 8000) setIndexReload((value) => value + 1);
+        && performance.now() - indexAttempt.current >= 8000) setIndexReload((value) => value + 1);
     };
     document.addEventListener("visibilitychange", resume);
     return () => document.removeEventListener("visibilitychange", resume);
   }, [catalogNameIndexEnabled, catalogNameSuggestionsEnabled, indexKey]);
   const activeIndex = catalogNameIndexEnabled && nameIndex?.key === indexKey
-    && nameIndex.expiresAt > Date.now() ? nameIndex : null;
+    && nameIndex.expiresAt > performance.now() ? nameIndex : null;
   const suggestionListRef = useRef<HTMLDivElement>(null);
   /**
    * Follow the arrow keys down the list.
@@ -1130,7 +1132,7 @@ export function FilterBar({
                 setSuggestionsSuppressed(false);
                 setActiveSuggestion(-1);
                 if (!activeIndex && indexLoading.current !== indexKey
-                  && Date.now() - indexAttempt.current >= 10_000) {
+                  && performance.now() - indexAttempt.current >= 10_000) {
                   setIndexReload((value) => value + 1);
                 }
               }}

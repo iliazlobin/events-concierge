@@ -40,7 +40,8 @@ def test_preloaded_names_render_before_event_results_without_prefix_requests(
             {"name": "Nebius", "kinds": ["organization", "host"], "event_count": 1},
         ]
         api.respond(route, {"items": items, "complete": True,
-                           "expires_at": (datetime.now(UTC) + timedelta(seconds=10)).isoformat()})
+                           "expires_at": (datetime.now(UTC) + timedelta(seconds=10)).isoformat()},
+                    headers={"X-EC-Catalog-Freshness-Ms": "10000"})
 
     def prefix(route: Route):
         prefix_queries.append(route.request.url)
@@ -91,7 +92,8 @@ def test_truncated_preload_keeps_instant_matches_and_searches_omitted_names(cata
         api.respond(route, {"items": [
             {"name": "SemiAnalysis", "kinds": ["organization"], "event_count": 2},
         ], "complete": False,
-            "expires_at": (datetime.now(UTC) + timedelta(seconds=10)).isoformat()})
+            "expires_at": (datetime.now(UTC) + timedelta(seconds=10)).isoformat()},
+                    headers={"X-EC-Catalog-Freshness-Ms": "10000"})
 
     def names(route: Route):
         query = parse_qs(urlsplit(route.request.url).query)
@@ -125,7 +127,8 @@ def test_expired_preload_is_removed_even_when_refresh_is_unavailable(catalog_nam
             api.respond(route, {"items": [
                 {"name": "SemiAnalysis", "kinds": ["organization"], "event_count": 2},
             ], "complete": True,
-                "expires_at": (datetime.now(UTC) + timedelta(milliseconds=700)).isoformat()})
+                "expires_at": (datetime.now(UTC) + timedelta(milliseconds=700)).isoformat()},
+                        headers={"X-EC-Catalog-Freshness-Ms": "700"})
 
     page.route("**/v1/catalog/name-index?*", preload)
     page.route("**/v1/catalog/name-suggestions?*", lambda route: api.respond(route, []))

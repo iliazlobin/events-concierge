@@ -32,6 +32,7 @@ export const SESSION_KEY = "events-concierge.local-session.v1";
 interface RequestOptions extends RequestInit {
   tenantId?: string | null;
   bodyJson?: unknown;
+  onResponse?: (response: Response) => void;
 }
 
 export class ApiError extends Error {
@@ -82,7 +83,7 @@ export function readableError(error: unknown, fallback: string): string {
 
 export async function api<T>(
   path: string,
-  { tenantId, bodyJson, headers, ...options }: RequestOptions = {},
+  { tenantId, bodyJson, headers, onResponse, ...options }: RequestOptions = {},
 ): Promise<T> {
   const requestHeaders = new Headers(headers);
   requestHeaders.set("Accept", "application/json");
@@ -110,6 +111,7 @@ export async function api<T>(
     throw new ApiError(message, response.status);
   }
   if (response.status === 204) return undefined as T;
+  onResponse?.(response);
   return (await response.json()) as T;
 }
 
@@ -226,9 +228,16 @@ export async function getCatalogNameIndex(
   signal?: AbortSignal,
 ): Promise<CatalogNameIndex> {
   signal?.throwIfAborted();
-  const index = await api<CatalogNameIndex>(`/v1/catalog/name-index?${key}`, { signal });
+  let freshForMs = 0;
+  const index = await api<CatalogNameIndex>(`/v1/catalog/name-index?${key}`, {
+    signal,
+    onResponse: (response) => {
+      const value = response.headers.get("X-EC-Catalog-Freshness-Ms") ?? "";
+      if (/^\d{1,5}$/.test(value)) freshForMs = Math.min(Number(value), 10_000);
+    },
+  });
   signal?.throwIfAborted();
-  return index;
+  return { ...index, fresh_for_ms: freshForMs };
 }
 
 export function getCatalogPage(
