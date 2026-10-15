@@ -110,9 +110,6 @@ an offset does not itself change grouping. This is not a database snapshot: chan
 or personalization between requests can still move results. First-20 distinct-choice and named
 organizer counts are exposed in feed signals; they are diagnostic counts, not relevance judgments.
 
-Chronological catalog sort remains authoritative by default. Broad catalog list views additionally
-provide an opt-in “Vary organizers and activities in loaded results” control. This diversifies only
-the loaded, already-filtered pool, explicitly reports that scope, and bypasses focused query/topic/
-source and historical views. Choosing a date sort returns to date order. It is a local presentation
-preference rather than a new server sort or stored filter; existing URLs and keyset cursors retain
-their contracts. No source/category quota or blanket library penalty is applied.
+Catalog lists follow the selected chronological sort, with matching sessions grouped for display.
+Existing URLs and keyset cursors retain their contracts. No source/category quota or blanket library
+penalty is applied.
