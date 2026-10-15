@@ -2,11 +2,19 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { RegistrationStatusCounts } from "@/lib/registrations";
+import type { EventItem } from "@/lib/types";
 import { readableError } from "@/lib/api";
 import {
   getMuseRegistrations, getMuseRegistrationsForEvents, markMuseRegistrationsSeen, mergeMuseRegistrations, museRegistrationUpdates,
-  museStatusLabel, museUnreadCount, queueMuseRegistration, type MuseRegistration,
+  museEligibility, museStatusLabel, museUnreadCount, queueMuseRegistration, type MuseRegistration,
 } from "@/lib/muse";
+
+interface QueueFailure { eventId: string; title: string; message: string }
+
+// A response lost after submission is resolved only by a saved task for that event.
+function clearConfirmedFailure(failure: QueueFailure | null, items: MuseRegistration[]): QueueFailure | null {
+  return failure && items.some(item => item.event.canonical_event_id === failure.eventId) ? null : failure;
+}
 
 interface QueueState {
   account: string | null;
@@ -17,11 +25,12 @@ interface QueueState {
   cursor: string | null;
   loading: boolean;
   error: string | null;
+  queueFailure: QueueFailure | null;
   pending: ReadonlySet<string>;
   notice: string | null;
 }
 const empty = (account: string | null): QueueState => ({
-  account, items: [], unread: 0, total: 0, counts: null, cursor: null, loading: false, error: null,
+  account, items: [], unread: 0, total: 0, counts: null, cursor: null, loading: false, error: null, queueFailure: null,
   pending: new Set(), notice: null,
 });
 
@@ -70,7 +79,9 @@ export function useMuseRegistrations(enabled: boolean, account: string | null, t
     try {
       const incoming = await lookupEvents([...watchedEvents.current.keys()], request);
       if (!isCurrent(request)) return;
-      setState(old => old.account === key ? { ...old, items: mergeMuseRegistrations(old.items, normalize(incoming)) } : old);
+      setState(old => old.account === key ? { ...old, items: mergeMuseRegistrations(old.items, normalize(incoming)),
+        queueFailure: clearConfirmedFailure(old.queueFailure, incoming),
+      } : old);
     } catch (problem) {
       if (isCurrent(request)) setState(old => old.account === key ? { ...old,
         error: readableError(problem, "Could not check registration progress for these events."),
@@ -117,6 +128,7 @@ export function useMuseRegistrations(enabled: boolean, account: string | null, t
       const normalized = normalize(incoming);
       setState(old => old.account === key ? { ...old,
         items: mergeMuseRegistrations(old.items, normalized),
+        queueFailure: clearConfirmedFailure(old.queueFailure, incoming),
         unread: startedAt === changes.current ? museUnreadCount(first.unread_count, incoming, seenVersions.current)
           : Math.max(old.unread, normalized.filter(item => item.unread).length),
         total: startedAt === changes.current ? first.total : old.total,
@@ -162,25 +174,36 @@ export function useMuseRegistrations(enabled: boolean, account: string | null, t
     };
   }, [key, refresh]);
 
-  const queue = useCallback(async (eventId: string): Promise<MuseRegistration | null> => {
+  const queue = useCallback(async (event: EventItem): Promise<MuseRegistration | null> => {
+    const eventId = event.canonical_event_id;
     if (!key || pending.current.has(eventId)) return null;
+    const unavailable = museEligibility(event);
+    if (unavailable) {
+      setState(old => old.account === key ? { ...old, notice: null,
+        queueFailure: { eventId, title: event.title, message: unavailable },
+      } : old);
+      return null;
+    }
     pending.current.add(eventId);
     const request = controller();
     const requestId = requestIds.current.get(eventId) ?? crypto.randomUUID();
     requestIds.current.set(eventId, requestId);
-    setState(old => old.account === key ? { ...old, pending: new Set(pending.current), error: null } : old);
+    setState(old => old.account === key ? { ...old, pending: new Set(pending.current) } : old);
     try {
       const item = await queueMuseRegistration(tenantId, requestId, eventId, request.signal);
       if (!isCurrent(request)) return null;
       changes.current += 1;
       setState(old => old.account === key ? { ...old, items: mergeMuseRegistrations(old.items, normalize([item])),
         notice: `${item.event.title}: ${item.status === "queued" ? "Queued for Muse" : museStatusLabel[item.status]}.`,
+        queueFailure: old.queueFailure?.eventId === eventId ? null : old.queueFailure,
       } : old);
       void refresh();
       return item;
     } catch (problem) {
       if (isCurrent(request)) setState(old => old.account === key ? { ...old,
-        error: readableError(problem, "Could not queue this event. Try again."),
+        notice: null, queueFailure: old.items.some(item => item.event.canonical_event_id === eventId)
+          ? clearConfirmedFailure(old.queueFailure, old.items)
+          : { eventId, title: event.title, message: readableError(problem, "Could not queue this event. Try again.") },
       } : old);
       return null;
     } finally {
@@ -205,6 +228,7 @@ export function useMuseRegistrations(enabled: boolean, account: string | null, t
       loadedCount.current += page.items.length;
       const normalized = normalize(page.items);
       setState(old => old.account === key ? { ...old, items: mergeMuseRegistrations(old.items, normalized),
+        queueFailure: clearConfirmedFailure(old.queueFailure, page.items),
         total: startedAt === changes.current ? page.total : old.total,
         counts: startedAt === changes.current ? page.status_counts ?? null : old.counts,
         unread: startedAt === changes.current ? museUnreadCount(page.unread_count, page.items, seenVersions.current)
@@ -254,7 +278,9 @@ export function useMuseRegistrations(enabled: boolean, account: string | null, t
     }
   }, [controller, isCurrent, key, normalize, tenantId]);
 
-  const clearNotice = useCallback(() => setState(old => ({ ...old, notice: null, error: null })), []);
+  const clearNotice = useCallback(() => setState(old => old.account === key ? { ...old, notice: null } : old), [key]);
+  const dismissFeedback = useCallback(() => setState(old => old.account === key
+    ? { ...old, notice: null, error: null, queueFailure: null } : old), [key]);
   const current = state.account === key ? state : empty(key);
-  return { ...current, queue, refresh, loadMore, markSeen, clearNotice, watchEvent };
+  return { ...current, queue, refresh, loadMore, markSeen, clearNotice, dismissFeedback, watchEvent };
 }

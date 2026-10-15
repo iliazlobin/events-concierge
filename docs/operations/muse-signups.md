@@ -60,6 +60,8 @@ The [connector schema](../../src/events_concierge/api/muse.py) includes only fou
 - Release through the existing [migration and immutable-image procedure](release.md). Source checks do not prove that Muse is connected or that a provider signup succeeded.
 - Before acceptance, verify the deployed schema, owner CSRF, key replacement/revocation, separate-account isolation, and one explicitly authorized free signup. Confirm both the provider RSVP and the reported result. Real signups require the user's authorization.
 
+The “recently collected Luma or Meetup event” rejection occurs before a task is created or Muse is called. For widespread failures, compare the serving frontend's eligibility check with `sources[].last_seen_at` and inspect whether catalog cadence is active. Follow [source investigation](../ingestion-admin.md#investigate-work) to refresh existing reviewed feeds and verify successful publication; reload catalog cards afterward, since registration polling does not reload event details. Preserve the 48-hour check and existing source limits.
+
 ## Local mock
 
 Use the existing isolated frontend on `14301` and API on `14302`. The [harness](../../tests/support/muse_mock.py) requires `local_demo` and `muse_enabled`, plus both exact reviewed synthetic queue fixtures: upcoming, scheduled, free Luma/Meetup events observed within 48 hours. Invalid or missing fixtures stop startup; do not bypass checks or reseed the catalog.

@@ -61,7 +61,6 @@ import { EventActionsProvider } from "@/components/event-actions-context";
 import { SourceView } from "@/components/source-view";
 import { useMuseRegistrations } from "@/components/use-muse-registrations";
 import museStyles from "@/components/muse.module.css";
-import { museEligibility } from "@/lib/muse";
 import { catalogFilterKey, initialCatalogFilters } from "@/lib/catalog-filters";
 import { addDays, localDateKey, normalizeDateRangeFilters, parseLocalDate } from "@/lib/date";
 import {
@@ -284,7 +283,6 @@ export function ConciergeApp() {
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const [museOpen, setMuseOpen] = useState(false);
   const [museSelectedId, setMuseSelectedId] = useState<string | null>(null);
-  const [museIntentError, setMuseIntentError] = useState<string | null>(null);
   const museQueue = useMuseRegistrations(museEnabled,
     me && !signingOut ? `${tenantId ?? "session"}:${me.notify_email}` : null, tenantId, museOpen);
   const museStatuses = useMemo(() => new Map(museQueue.items.map(item => [item.event.canonical_event_id, item.status])), [museQueue.items]);
@@ -302,12 +300,10 @@ export function ConciergeApp() {
   }, []);
   function queueMuse(event: EventItem) {
     if (!museEnabled || !me || signingOut) return;
-    setMuseIntentError(null);
     if (museStatuses.has(event.canonical_event_id)) {
       showMuseRegistrations(event.canonical_event_id); return;
     }
-    if (museEligibility(event)) { setMuseIntentError(museEligibility(event)); return; }
-    void museQueue.queue(event.canonical_event_id).then(item => {
+    void museQueue.queue(event).then(item => {
       if (item) showMuseRegistrations(item.event.canonical_event_id);
     });
   }
@@ -1542,14 +1538,17 @@ export function ConciergeApp() {
         ) : null}
       </main>
 
-      {museEnabled && (museQueue.notice || ((!museOpen) && (museQueue.error || museIntentError))) ?
-        <aside className={museStyles.toast} aria-label="Registration update">
-          <p role={museQueue.error || museIntentError ? "alert" : "status"} aria-live={museQueue.error || museIntentError ? "assertive" : "polite"}>
-            {(!museOpen && (museQueue.error || museIntentError)) || museQueue.notice}
+      {museEnabled && (museQueue.queueFailure || museQueue.notice || (!museOpen && museQueue.error)) ?
+        <aside className={museStyles.toast} aria-label={museQueue.queueFailure ? "Registration queue error" : "Registration update"}>
+          <p role={museQueue.queueFailure || (!museOpen && museQueue.error) ? "alert" : "status"}
+            aria-live={museQueue.queueFailure || (!museOpen && museQueue.error) ? "assertive" : "polite"}>
+            {museQueue.queueFailure ? <><strong>{museQueue.queueFailure.title}</strong>: {museQueue.queueFailure.message}</>
+              : (!museOpen && museQueue.error) || museQueue.notice}
           </p>
-          {me ? <button type="button" onClick={() => showMuseRegistrations()}>View registrations</button> : null}
-          <button type="button" className={museStyles.iconButton} aria-label="Dismiss registration update"
-            onClick={() => { museQueue.clearNotice(); setMuseIntentError(null); }}><X aria-hidden="true" /></button>
+          {me && !museQueue.queueFailure ? <button type="button" onClick={() => showMuseRegistrations()}>View registrations</button> : null}
+          <button type="button" className={museStyles.iconButton}
+            aria-label={museQueue.queueFailure ? "Dismiss registration error" : "Dismiss registration update"}
+            onClick={museQueue.dismissFeedback}><X aria-hidden="true" /></button>
         </aside> : null}
       {museEnabled && museOpen && me && !signingOut ? <RegistrationWorkspace
         selectedId={museSelectedId} onClose={closeMuseRegistrations} providers={[{
