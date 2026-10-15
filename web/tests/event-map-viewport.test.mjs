@@ -82,6 +82,25 @@ test("zero mapped events recenter on the selected city", () => {
   );
 });
 
+test("an empty source-only map uses its reviewed city without inventing event pins", () => {
+  const virtual = { latitude: null, longitude: null, city: "losangeles", venue_name: "Virtual (LA)",
+    source_keys: ["tech-week-la-2026"] };
+  assert.deepEqual(mapViewportFor([virtual], [], [], ["tech-week-la-2026"]), cityMapViewport("losangeles"));
+  assert.equal(eventMapCoordinate(virtual), null);
+  assert.deepEqual(mapViewportFor([], [], [], ["tech-week-la-2026"]), cityMapViewport("losangeles"));
+  assert.deepEqual(mapViewportFor([], [], [], ["unknown-source"]), DEFAULT_MAP_VIEWPORT);
+  assert.deepEqual(mapViewportFor([], [], [], ["tech-week-la-2026", "tech-week-la-2026"]), cityMapViewport("losangeles"));
+  assert.deepEqual(mapViewportFor([], ["oakland"], [], ["tech-week-la-2026"]), cityMapViewport("oakland"));
+  assert.deepEqual(mapViewportFor([], [], ["manhattan"], ["tech-week-la-2026"]),
+    mapViewportFor([], [], ["manhattan"]));
+  assert.deepEqual(mapViewportFor([], [], [], ["tech-week-sf-2026", "tech-week-la-2026"]), {
+    kind: "bounds", coordinates: [cityMapViewport("sanfrancisco").center, cityMapViewport("losangeles").center],
+  });
+  assert.deepEqual(mapViewportFor([{ latitude: 34, longitude: -118.4 }], [], [], ["tech-week-sf-2026"]), {
+    kind: "center", center: [-118.4, 34], zoom: 12,
+  });
+});
+
 test("zero-result additive locations fit their combined fallback bounds", () => {
   assert.deepEqual(
     mapViewportFor([], ["sanfrancisco", "santamonica"]),

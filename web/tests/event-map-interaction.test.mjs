@@ -31,7 +31,7 @@ test("the preview rail tracks map bounds and focuses without rebuilding markers"
   assert.match(mapView, /map\.easeTo\(\{ \.\.\.view, duration: 420 \}\)/);
   assert.match(
     mapView,
-    /\}, \[cities, locationScopes, mapReady, mapped, prefersReducedMotion, selectArea, selectEvent\]\);/,
+    /\}, \[cities, locationScopes, sourceKeys, mapReady, mapped, prefersReducedMotion, selectArea, selectEvent\]\);/,
   );
   assert.match(mapView, /marker\.getElement\(\)\.classList\.toggle/);
 });

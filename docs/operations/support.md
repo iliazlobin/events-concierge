@@ -69,10 +69,12 @@ Compare the same filters in Events and Map, then inspect `latitude`/`longitude` 
 `GET /v1/catalog/events` response. Loaded events with null coordinates are a location-data gap;
 a missing base map points to tile delivery or browser rendering instead.
 
-SF Tech Week 2026 publishes area names rather than venue coordinates. The frontend groups
-reviewed SF areas into outlined count markers labeled **approximate**; click one to browse
+SF and LA Tech Week 2026 publish area names rather than venue coordinates. The frontend groups
+reviewed areas into outlined count markers labeled **approximate**; click one to browse
 its events. Provider coordinates take precedence. Virtual events, `Other`, unrecognized areas
-and sources without a reviewed area mapping stay in the unlocated list. These display centers
+and sources without a reviewed area mapping stay in the unlocated list. LA's broad region names
+and unreviewed campus/district labels also remain unlocated. With no mapped results or place
+filter, the selected Tech Week calendar supplies the camera's city. These display centers
 never change stored coordinates, distance filters or directions. Verify desktop/mobile selection
 and pagination before release; no database backfill or fresh crawl is needed for this fallback.
 

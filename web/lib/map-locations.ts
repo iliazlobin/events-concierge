@@ -65,6 +65,52 @@ const SF_AREAS: Readonly<Record<string, Area>> = Object.freeze({
   "salesforce park": { label: "Salesforce Park", coordinate: [-122.3967, 37.7891] },
 });
 
+/** Display-only LA neighborhood centroids and surrounding Census place internal points.
+ * City neighborhood layer: https://services8.arcgis.com/TNoJFjk1LsD45Juj/ArcGIS/rest/services/Urban_Greening_Project_Inventory_WFL1/FeatureServer/24
+ * Census places: https://www.census.gov/geographies/reference-files/time-series/geo/gazetteer-files.2025.html
+ * Broad/ambiguous labels (Westside, South LA, The Valley, Sunset) are deliberately absent.
+ */
+const LA_AREAS: Readonly<Record<string, Area>> = Object.freeze({
+  "bel air": { label: "Bel Air", coordinate: [-118.4611, 34.0993] },
+  "beverly hills": { label: "Beverly Hills", coordinate: [-118.4024, 34.0792] },
+  brentwood: { label: "Brentwood", coordinate: [-118.4951, 34.0886] },
+  burbank: { label: "Burbank", coordinate: [-118.3264, 34.1901] },
+  carson: { label: "Carson", coordinate: [-118.2496, 33.8404] },
+  "century city": { label: "Century City", coordinate: [-118.4156, 34.0550] },
+  "culver city": { label: "Culver City", coordinate: [-118.3968, 34.0058] },
+  "downtown (la)": { label: "Downtown LA", coordinate: [-118.2458, 34.0390] },
+  "east la": { label: "East Los Angeles", coordinate: [-118.1686, 34.0315] },
+  "el segundo": { label: "El Segundo", coordinate: [-118.4251, 33.9104] },
+  hawthorne: { label: "Hawthorne", coordinate: [-118.3481, 33.9148] },
+  hollywood: { label: "Hollywood", coordinate: [-118.3306, 34.0950] },
+  "hollywood hills": { label: "Hollywood Hills", coordinate: [-118.3295, 34.1269] },
+  inglewood: { label: "Inglewood", coordinate: [-118.3443, 33.9561] },
+  koreatown: { label: "Koreatown", coordinate: [-118.3023, 34.0640] },
+  "long beach": { label: "Long Beach", coordinate: [-118.1682, 33.7808] },
+  "los feliz": { label: "Los Feliz", coordinate: [-118.2877, 34.1085] },
+  malibu: { label: "Malibu", coordinate: [-118.7596, 34.0259] },
+  "marina del rey": { label: "Marina del Rey", coordinate: [-118.4509, 33.9764] },
+  "mid city": { label: "Mid City", coordinate: [-118.3606, 34.0413] },
+  "pacific palisades": { label: "Pacific Palisades", coordinate: [-118.5462, 34.0785] },
+  pasadena: { label: "Pasadena", coordinate: [-118.1380, 34.1606] },
+  "playa vista": { label: "Playa Vista", coordinate: [-118.4151, 33.9785] },
+  "santa monica": { label: "Santa Monica", coordinate: [-118.4982, 34.0109] },
+  venice: { label: "Venice", coordinate: [-118.4621, 33.9914] },
+  "west adams": { label: "West Adams", coordinate: [-118.3528, 34.0294] },
+  "west hollywood": { label: "West Hollywood", coordinate: [-118.3718, 34.0883] },
+  westwood: { label: "Westwood", coordinate: [-118.4377, 34.0662] },
+});
+
+const AREA_SOURCES = [
+  { sourceKey: "tech-week-sf-2026", city: "sanfrancisco", key: "sf", areas: SF_AREAS },
+  { sourceKey: "tech-week-la-2026", city: "losangeles", key: "la", areas: LA_AREAS },
+] as const;
+
+/** Camera context only; never synthesizes locations for individual events. */
+export function sourceMapCities(sourceKeys: readonly string[]): string[] {
+  return AREA_SOURCES.filter((source) => sourceKeys.includes(source.sourceKey)).map((source) => source.city);
+}
+
 export function eventMapLocation(event: MappableEvent): MapLocation | null {
   const { latitude, longitude } = event;
   if (typeof latitude === "number" && typeof longitude === "number"
@@ -75,16 +121,17 @@ export function eventMapLocation(event: MappableEvent): MapLocation | null {
   // A malformed or half-supplied coordinate must not be hidden by the area fallback.
   if (latitude !== null || longitude !== null) return null;
   const city = event.city?.normalize("NFKD").replace(/[^a-z0-9]/gi, "").toLowerCase();
-  const sourceKey = "tech-week-sf-2026";
-  if (city !== "sanfrancisco" || !(event.source_keys?.includes(sourceKey)
-    || event.sources?.some((source) => source.source_key === sourceKey))) return null;
+  const profile = AREA_SOURCES.find((source) => city === source.city
+    && (event.source_keys?.includes(source.sourceKey)
+      || event.sources?.some((item) => item.source_key === source.sourceKey)));
+  if (!profile) return null;
   // Exact vocabulary only: no city-center guesses, address parsing or substring matching.
   const name = event.venue_name?.trim().toLowerCase() ?? "";
-  const area = Object.hasOwn(SF_AREAS, name) ? SF_AREAS[name] : undefined;
+  const area = Object.hasOwn(profile.areas, name) ? profile.areas[name] : undefined;
   return area ? {
     coordinate: [...area.coordinate],
     precision: "area",
-    areaKey: `sf:${area.label}`,
+    areaKey: `${profile.key}:${area.label}`,
     label: area.label,
   } : null;
 }

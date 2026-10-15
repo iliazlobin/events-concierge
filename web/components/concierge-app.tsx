@@ -1482,6 +1482,7 @@ export function ConciergeApp() {
           <MapView
             events={events}
             cities={filters.cities}
+            sourceKeys={filters.sourceKeys}
             locationScopes={filters.locationScopes}
             loading={catalogLoading}
             error={catalogError}

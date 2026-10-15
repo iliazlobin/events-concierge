@@ -29,6 +29,7 @@ import type { LocationScope } from "@/lib/types";
 interface MapViewProps {
   events: EventItem[];
   cities: string[];
+  sourceKeys: string[];
   locationScopes: LocationScope[];
   loading: boolean;
   error: string | null;
@@ -66,6 +67,7 @@ interface EventMarker {
 export function MapView({
   events,
   cities,
+  sourceKeys,
   locationScopes,
   loading,
   error,
@@ -359,7 +361,7 @@ export function MapView({
         && fitted.every((id, index) => mappedIds[index] === id);
       fittedIdsRef.current = mappedIds;
       if (appended) return;
-      const viewport = mapViewportFor(mapped, cities, locationScopes);
+      const viewport = mapViewportFor(mapped, cities, locationScopes, sourceKeys);
       const duration = prefersReducedMotion ? 0 : 700;
       if (viewport.kind === "bounds") {
         const bounds = new maplibre.LngLatBounds();
@@ -390,7 +392,7 @@ export function MapView({
     return () => {
       cancelled = true;
     };
-  }, [cities, locationScopes, mapReady, mapped, prefersReducedMotion, selectArea, selectEvent]);
+  }, [cities, locationScopes, sourceKeys, mapReady, mapped, prefersReducedMotion, selectArea, selectEvent]);
 
   useEffect(() => {
     const map = mapRef.current;
