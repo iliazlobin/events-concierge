@@ -363,6 +363,54 @@ def activate_unavailable_help(page, action, *, touch):
 
 
 @pytest.mark.parametrize("width", [1440, 320])
+def test_registration_activity_shows_saved_updates_and_blockers_without_catalog_link(page_factory, width, tmp_path):
+    harness, api = install(page_factory, width)
+    task = api.registration(api.events[0])
+    task["created_at"] = task["updated_at"] = "2030-06-01T08:00:00Z"
+    api.registrations = [task]
+    page = harness.page
+    page.goto(BASE + "/?view=events&when=all&city=&registrations=1")
+    dialog = page.get_by_role("dialog", name="Registrations", exact=True)
+    expect(dialog.get_by_role("link", name="Find in catalog", exact=True)).to_have_count(0)
+    expect(dialog).to_contain_text("Waiting for Muse to pick up this registration.")
+    activity = dialog.locator("details").filter(has=page.locator("summary", has_text="Activity"))
+    activity.locator("summary").click()
+    log = activity.get_by_role("list", name="Activity for Friday Night Jazz", exact=True)
+    expect(log.get_by_role("listitem")).to_have_count(1)
+    expect(log).to_contain_text("Added to queue")
+    expect(log.locator("time")).to_have_attribute("datetime", task["created_at"])
+    expect(activity).to_contain_text("Open Muse and ask it to process your queue.")
+
+    task.update(status="in_progress", attempt_id="a" * 32, version=2, updated_at="2030-06-01T08:10:00Z")
+    dialog.get_by_role("button", name="Refresh registrations").click()
+    expect(dialog).to_contain_text("Muse picked up this registration. Waiting for a result.")
+    expect(log.get_by_role("listitem")).to_have_count(2)
+    expect(log).to_contain_text("Picked up by Muse")
+    expect(log.locator("time").last).to_have_attribute("datetime", task["updated_at"])
+
+    task.update(status="needs_input", version=3, updated_at="2030-06-01T08:20:00Z", outcome={
+        "status": "needs_input", "note": "Please sign in to Luma to continue.",
+        "confirmation_reference": None, "evidence_url": None,
+    })
+    dialog.get_by_role("button", name="Refresh registrations").click()
+    expect(dialog).to_contain_text("Muse needs your input. Continue in Muse.")
+    expect(dialog).to_contain_text("Please sign in to Luma to continue.")
+    expect(log.get_by_role("listitem")).to_have_count(2)
+    expect(log).not_to_contain_text("Picked up by Muse")
+    expect(log.locator("time").last).to_have_attribute("datetime", task["updated_at"])
+    expect(activity).to_contain_text("Latest saved update.")
+    assert page.evaluate("document.documentElement.scrollWidth <= innerWidth")
+    assert dialog.evaluate("element => element.scrollWidth <= element.clientWidth")
+    page.screenshot(path=str(tmp_path / f"muse-activity-{width}.png"))
+    page.reload()
+    expect(dialog).to_contain_text("Please sign in to Luma to continue.")
+    dialog.locator("summary", has_text="Activity").click()
+    expect(dialog.get_by_role("list", name="Activity for Friday Night Jazz").locator("time").last).to_have_attribute("datetime", task["updated_at"])
+    assert api.queued == []
+    assert api.unexpected == []
+
+
+@pytest.mark.parametrize("width", [1440, 320])
 def test_unavailable_muse_explains_blockers_without_queue_or_card_actions(page_factory, width, tmp_path):
     harness, api = install(page_factory, width, has_touch=width == 320)
     event = api.events[0]

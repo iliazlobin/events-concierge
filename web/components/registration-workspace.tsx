@@ -6,7 +6,7 @@ import { ChevronDown, ExternalLink, RefreshCw, Settings, X } from "lucide-react"
 import { formatEventDate, formatEventTime } from "@/lib/date";
 import { googleCalendarUrl } from "@/lib/event-links";
 import { formatCity } from "@/lib/presentation";
-import { registrationFilterCount, registrationFilters, registrationMatchesFilter,
+import { registrationActivity, registrationFilterCount, registrationFilters, registrationMatchesFilter, registrationProgress,
   type RegistrationFilter, type RegistrationStatusCounts, type RegistrationTask } from "@/lib/registrations";
 import type { RegistrationProvider } from "./registration-providers";
 import styles from "./registration-workspace.module.css";
@@ -128,15 +128,35 @@ export function RegistrationWorkspace({ providers, selectedId, onClose }: {
               <p className={styles.taskDate}>{date.weekday} · {formatEventTime(item.event.start_at, item.event.end_at)}{item.event.city ? ` · ${formatCity(item.event.city)}` : ""}</p></div>
             {item.unread ? <span className={styles.unreadDot} aria-label="Unread update" /> : null}</div>
           <p className={styles.status} data-status={item.status} title={item.registration_account ? `Registration account: ${item.registration_account.expected_email ?? "current browser account"}` : undefined}><span aria-hidden="true" />{provider.statusLabels[item.status]}</p>
-          {item.status === "uncertain" ? <p className={styles.note}>Check provider confirmation before retrying.</p> : null}
+          <p className={styles.note}>{registrationProgress[item.status]}</p>
           {item.outcome?.note ? <p className={styles.note}>{item.outcome.note}</p> : null}
           {item.outcome?.confirmation_reference ? <p className={styles.note}>Confirmation: {item.outcome.confirmation_reference}</p> : null}
-          <div className={styles.taskLinks}><Link href={`/?view=events&when=all&city=&q=${encodeURIComponent(item.event.title)}&event=${encodeURIComponent(item.event.canonical_event_id)}`}>Find in catalog</Link>
-            {evidence ? <a href={evidence} target="_blank" rel="noopener noreferrer">Provider evidence</a> : null}</div>
+          <details className={styles.activity}>
+            <summary>Activity<span>Updated <RegistrationTime value={item.updated_at} /></span></summary>
+            <ol aria-label={`Activity for ${item.event.title}`}>
+              {registrationActivity(item).map(entry => <li key={entry.status}>
+                <span>{entry.status === "queued" ? "Added to queue" : entry.status === "in_progress"
+                  ? "Picked up by Muse" : provider.statusLabels[entry.status]}</span>
+                <RegistrationTime value={entry.at} />
+              </li>)}
+            </ol>
+            {item.status === "queued" ? <p>Open Muse and ask it to process your queue.</p>
+              : <p>Latest saved update. Detailed browser activity isn’t sent to this app.</p>}
+          </details>
+          {evidence ? <div className={styles.taskLinks}><a href={evidence} target="_blank" rel="noopener noreferrer">Provider evidence</a></div> : null}
         </li>;
       })}</ol>
       {workspace.hasMore ? <button type="button" className="button" disabled={workspace.loading} onClick={workspace.onLoadMore}>
         {workspace.loading ? "Loading…" : "Load more registrations"}</button> : null}
     </div>
   </dialog>;
+}
+
+function RegistrationTime({ value }: { value: string }) {
+  const date = new Date(value);
+  if (!Number.isFinite(date.getTime())) return <span>Time unavailable</span>;
+  const text = date.toLocaleString(undefined, {
+    month: "short", day: "numeric", hour: "numeric", minute: "2-digit", timeZoneName: "short",
+  });
+  return <time dateTime={value} title={date.toLocaleString(undefined, { timeZoneName: "short" })}>{text}</time>;
 }

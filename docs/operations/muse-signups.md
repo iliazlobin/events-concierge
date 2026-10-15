@@ -10,6 +10,8 @@ The public [Muse guide](https://events.iliazlobin.com/docs/muse) owns connector 
 
 The header widget counts queued, in-progress, registered and needs-attention tasks across the full account queue. Registrations opens a right panel with provider and status filters. The badge counts unread updates; only visible task versions are acknowledged. In-app announcements report progress and results; refresh is manual or every 15 seconds while the page is visible, and on return.
 
+Each registration explains what it is waiting for. **Activity** shows its queue time and latest saved Muse status with local timestamps; result notes and provider evidence remain alongside the task. It is a snapshot, not a complete history or browser transcript. A queued item has not been claimed by Muse. Open Muse and ask it to process the queue; opening the panel does not start browser work.
+
 A supported Muse task-creation API/deeplink has not been verified. The button opens Muse; it does not automatically dispatch a task. A local preview cannot be reached by Muse's cloud browser.
 
 ## Authority and results
