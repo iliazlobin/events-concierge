@@ -27,9 +27,10 @@ export default function MuseGuide() {
     <ol>
       <li>Open <Link href="/settings/registrations">Registration settings</Link> and select Muse.</li>
       <li>Set the default registration email. Use <strong>Per site</strong> to override it for Luma or Meetup.</li>
-      <li>Save. Muse checks the selected email against the provider account before submitting.</li>
+      <li>Save. Muse checks the selected email against the provider account and uses it in signup and contact email fields.</li>
     </ol>
     <p>Leave the default empty to use the current browser account. An empty site override inherits the default. This preference stores no credentials, changes no login and grants no Google or provider access.</p>
+    <p>The selected email also applies to company/work email fields when accepted. If a form rejects it or requires a business-domain address, Muse asks you instead of substituting another address. With no selected email, Muse asks for unanswered email fields. Your app sign-in is never a fallback.</p>
     <CodeBlock label="Different app and provider accounts">{"Events Concierge: owner@example.test\nMuse default:      registrations@example.test\nLuma override:    events@example.test"}</CodeBlock>
     <p>Changes apply to queued tasks. Claimed attempts keep their account selection, including when resumed. If the browser account differs from the selected email, Muse stops for your instruction; it does not switch accounts automatically.</p>
     <h2 id="start" tabIndex={-1}>Queue and start</h2>

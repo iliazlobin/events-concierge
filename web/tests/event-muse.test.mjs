@@ -87,10 +87,19 @@ test("handoff covers every page, protects attempts, and distinguishes reported r
   assert.match(instruction, /registration_account from the claim response/);
   assert.match(instruction, /resuming an existing attempt, keep its saved account/);
   assert.match(instruction, /expected_email.*visible provider account/);
-  assert.match(instruction, /otherwise use the current browser account/);
-  assert.match(instruction, /Never infer a provider account from my Events Concierge sign-in or switch accounts without my instruction/);
+  assert.match(instruction, /When expected_email is unset, use the current browser account/);
+  assert.match(instruction, /Never infer an email from my Events Concierge sign-in or switch accounts without my instruction/);
   assert.equal(museStatusLabel.registered, "Registered · reported by Muse");
   assert.notEqual(museStatusLabel.awaiting_approval, museStatusLabel.registered);
+});
+
+test("selected signup email also answers contact and company fields without inventing a business identity", () => {
+  const instruction = museInstruction();
+  assert.match(instruction, /Use that same email for signup and contact fields, including company\/work email when accepted/);
+  assert.match(instruction, /If it is rejected or a business-domain address is required, stop and ask me/);
+  assert.match(instruction, /never invent or substitute another email/);
+  assert.match(instruction, /expected_email is unset, use the current browser account and ask me for unanswered email fields/);
+  assert.match(instruction, /resuming an existing attempt, keep its saved account/);
 });
 
 test("queue, page and seen requests use the owner API, exact IDs and cancellation signal", async () => {

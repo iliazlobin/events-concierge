@@ -123,7 +123,15 @@ class RegistrationAccountSettings(MuseModel):
 class RegistrationAccount(MuseModel):
     executor: RegistrationExecutor = "muse"
     provider: RegistrationProvider
-    expected_email: str | None = None
+    expected_email: str | None = Field(
+        default=None,
+        description=(
+            "Selected provider login and signup/contact email, including company/work email when "
+            "accepted. If rejected or a business-domain address is required, ask the user; never "
+            "invent or substitute an email. Null uses the current provider browser account and "
+            "requires asking for unanswered email fields, never inferring the app login email."
+        ),
+    )
 
     _email = field_validator("expected_email")(_optional_email)
 
