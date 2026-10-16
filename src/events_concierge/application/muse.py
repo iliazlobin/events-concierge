@@ -96,7 +96,7 @@ class MuseSignupService:
             if now - _MAX_OBSERVATION_AGE <= source.last_seen_at <= now + timedelta(minutes=5):
                 eligible.append((url, source.last_seen_at))
         if not eligible:
-            raise ValueError("Muse needs a recently collected Luma or Meetup event")
+            raise ValueError("Muse needs a recently collected Luma, Meetup or Partiful event")
         url, observed_at = max(eligible, key=lambda candidate: candidate[1])
         return SignupEvent(
             canonical_event_id=event_id,

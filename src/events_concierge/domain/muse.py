@@ -16,10 +16,15 @@ _MAX_URL_LENGTH = 2048
 _SPACE = 32
 _DELETE = 127
 MUSE_HOSTS = frozenset(
-    {"lu.ma", "www.lu.ma", "luma.com", "www.luma.com", "meetup.com", "www.meetup.com"}
+    {
+        "lu.ma", "www.lu.ma", "luma.com", "www.luma.com", "meetup.com", "www.meetup.com",
+        "partiful.com", "www.partiful.com",
+    }
 )
+_PARTIFUL_HOSTS = frozenset({"partiful.com", "www.partiful.com"})
+_PARTIFUL_EVENT_PATH = re.compile(r"/e/[A-Za-z0-9_-]+/?")
 type RegistrationExecutor = Literal["muse"]
-type RegistrationProvider = Literal["luma", "meetup"]
+type RegistrationProvider = Literal["luma", "meetup", "partiful"]
 _EMAIL_LOCAL = re.compile(r"[A-Za-z0-9!#$%&'*+/=?^_`{|}~-]+(?:\.[A-Za-z0-9!#$%&'*+/=?^_`{|}~-]+)*")
 _EMAIL_LABEL = re.compile(r"[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?")
 _EMAIL_TLD = re.compile(r"[A-Za-z]{2,63}")
@@ -52,8 +57,9 @@ def provider_url(value: str) -> str:
         or parsed.port not in (None, 443)
         or not parsed.path.strip("/")
         or parsed.fragment
+        or (parsed.hostname in _PARTIFUL_HOSTS and _PARTIFUL_EVENT_PATH.fullmatch(parsed.path) is None)
     ):
-        raise ValueError("a Luma or Meetup HTTPS event URL is required")
+        raise ValueError("a Luma, Meetup or Partiful HTTPS event URL is required")
     return value
 
 
@@ -109,10 +115,14 @@ class RegistrationAccountSettings(MuseModel):
     _overrides = field_validator("provider_overrides")(_email_overrides)
 
     def for_event(self, event: SignupEvent) -> RegistrationAccount:
-        provider: RegistrationProvider = (
-            "meetup" if urlsplit(event.registration_url).hostname in {"meetup.com", "www.meetup.com"}
-            else "luma"
-        )
+        host = urlsplit(event.registration_url).hostname
+        provider: RegistrationProvider
+        if host in _PARTIFUL_HOSTS:
+            provider = "partiful"
+        elif host in {"meetup.com", "www.meetup.com"}:
+            provider = "meetup"
+        else:
+            provider = "luma"
         return RegistrationAccount(
             executor=self.executor,
             provider=provider,
@@ -126,10 +136,11 @@ class RegistrationAccount(MuseModel):
     expected_email: str | None = Field(
         default=None,
         description=(
-            "Selected provider login and signup/contact email, including company/work email when "
+            "Selected signup/contact email and email-based provider login, including company/work email when "
             "accepted. If rejected or a business-domain address is required, ask the user; never "
             "invent or substitute an email. Null uses the current provider browser account and "
             "requires asking for unanswered email fields, never inferring the app login email."
+            " Partiful uses phone login: this email does not select or verify a phone account."
         ),
     )
 

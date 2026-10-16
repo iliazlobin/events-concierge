@@ -214,6 +214,8 @@ async def test_connector_schema_carries_signup_email_and_resumed_account_instruc
     assert "signup/contact email" in account_email["description"]
     assert "company/work email when accepted" in account_email["description"]
     assert "never inferring the app login email" in account_email["description"]
+    assert "does not select or verify a phone account" in account_email["description"]
+    assert "partiful" in schema["components"]["schemas"]["RegistrationProvider"]["enum"]
     for path, verb in (
         ("/v1/muse/connector/batches/{batch_id}", "get"),
         ("/v1/muse/connector/batches/{batch_id}/items/{event_id}/claim", "post"),
@@ -224,6 +226,11 @@ async def test_connector_schema_carries_signup_email_and_resumed_account_instruc
         assert "never invent or substitute an email" in instructions
         assert "ask for unanswered email fields" in instructions
         assert "saved registration_account" in instructions
+        assert "Partiful phone/SMS login must be completed by the user" in instructions
+        assert "visible account email when available" in instructions
+        assert "ask the user to confirm the active phone account" in instructions
+        assert "Never infer phone/email identity" in instructions
+        assert "automatically switch accounts, request SMS or enter verification codes" in instructions
 
 
 async def test_batch_body_cannot_set_tenant_or_provider_url(monkeypatch):
