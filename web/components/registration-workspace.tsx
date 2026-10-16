@@ -76,13 +76,8 @@ export function RegistrationWorkspace({ providers, selectedId, onClose }: {
     } }}>
     <div className={styles.content} ref={content}>
       <header className={styles.heading}>
-        <h2 id={titleId} className="sr-only">Registrations</h2>
         <div className={styles.selectors}>
-          <label className={`${styles.dropdown} ${styles.sectionDropdown}`}>
-            <select aria-label="Workspace section" defaultValue="registrations">
-              <option value="registrations">Registrations</option>
-            </select><ChevronDown aria-hidden="true" />
-          </label>
+          <h2 id={titleId} className={styles.headingTitle}>Registrations</h2>
           <label className={`${styles.dropdown} ${styles.providerDropdown}`}>
             <select aria-label="Registration provider" value={provider.key}
               onChange={event => {
@@ -109,6 +104,7 @@ export function RegistrationWorkspace({ providers, selectedId, onClose }: {
       <div className={styles.listHeading}><span>{workspace.total} {workspace.total === 1 ? "registration" : "registrations"}</span>
         <button type="button" className={styles.iconButton} onClick={workspace.onRefresh} disabled={workspace.loading} aria-label="Refresh registrations">
           <RefreshCw className={workspace.loading ? "spin" : undefined} aria-hidden="true" /></button></div>
+      <p className={styles.progressHint}>Saved {provider.label} updates · refreshes every 15s. Browser steps aren’t shared.</p>
       {workspace.error ? <p role="alert" className="workspace-error">{workspace.error}</p> : null}
       {workspace.loading && !items.length ? <p role="status">Loading registrations…</p> : null}
       {!workspace.loading && !visible.length && !workspace.error ? <p className={styles.empty}>
@@ -127,12 +123,14 @@ export function RegistrationWorkspace({ providers, selectedId, onClose }: {
             <div><a className={styles.eventTitle} href={eventUrl ?? undefined} target="_blank" rel="noopener noreferrer">{item.event.title}<ExternalLink aria-hidden="true" /></a>
               <p className={styles.taskDate}>{date.weekday} · {formatEventTime(item.event.start_at, item.event.end_at)}{item.event.city ? ` · ${formatCity(item.event.city)}` : ""}</p></div>
             {item.unread ? <span className={styles.unreadDot} aria-label="Unread update" /> : null}</div>
-          <p className={styles.status} data-status={item.status} title={item.registration_account ? `Registration account: ${item.registration_account.expected_email ?? "current browser account"}` : undefined}><span aria-hidden="true" />{provider.statusLabels[item.status]}</p>
-          <p className={styles.note}>{registrationProgress[item.status]}</p>
-          {item.outcome?.note ? <p className={styles.note}>{item.outcome.note}</p> : null}
+          <div className={styles.statusLine}>
+            <p className={styles.status} data-status={item.status} title={item.registration_account ? `Registration account: ${item.registration_account.expected_email ?? "current browser account"}` : undefined}><span aria-hidden="true" />{provider.statusLabels[item.status]}</p>
+            <span className={styles.updated}>Updated <RegistrationTime value={item.updated_at} /></span>
+          </div>
+          <p className={styles.note}>{item.outcome?.note.trim() || registrationProgress[item.status]}</p>
           {item.outcome?.confirmation_reference ? <p className={styles.note}>Confirmation: {item.outcome.confirmation_reference}</p> : null}
           <details className={styles.activity}>
-            <summary>Activity<span>Updated <RegistrationTime value={item.updated_at} /></span></summary>
+            <summary>Activity</summary>
             <ol aria-label={`Activity for ${item.event.title}`}>
               {registrationActivity(item).map(entry => <li key={entry.status}>
                 <span>{entry.status === "queued" ? "Added to queue" : entry.status === "in_progress"
@@ -140,8 +138,6 @@ export function RegistrationWorkspace({ providers, selectedId, onClose }: {
                 <RegistrationTime value={entry.at} />
               </li>)}
             </ol>
-            {item.status === "queued" ? <p>Open Muse and ask it to process your queue.</p>
-              : <p>Latest saved update. Detailed browser activity isn’t sent to this app.</p>}
           </details>
           {evidence ? <div className={styles.taskLinks}><a href={evidence} target="_blank" rel="noopener noreferrer">Provider evidence</a></div> : null}
         </li>;
