@@ -374,13 +374,19 @@ def test_partiful_event_queues_once_and_preserves_phone_question_and_provider_ev
     dialog.get_by_role("button", name="Close registrations").click()
     existing = page.get_by_role("button", name=f"View registration for {event['title']}", exact=True)
     expect(existing).to_have_attribute("data-registration-state", "needs_input")
-    existing.click()
+    # Finish the reopen snapshot before changing the fixture's next saved outcome.
+    with page.expect_response(lambda response: urlsplit(response.url).path == "/v1/me/muse/registrations") as reopened:
+        existing.click()
+    assert reopened.value.json()["items"][0]["version"] == 2
+    expect(dialog.get_by_role("button", name="Refresh registrations")).to_be_enabled()
     assert len(api.queued) == 1
     task.update(status="registered", version=3, outcome={
         "status": "registered", "note": "Partiful shows Going for the confirmed account.",
         "confirmation_reference": None, "evidence_url": url,
     })
-    dialog.get_by_role("button", name="Refresh registrations").click()
+    with page.expect_response(lambda response: urlsplit(response.url).path == "/v1/me/muse/registrations") as completed:
+        dialog.get_by_role("button", name="Refresh registrations").click()
+    assert completed.value.json()["items"][0]["version"] == 3
     expect(dialog.locator('[data-status="registered"]')).to_have_text("Registered · reported by Muse")
     expect(dialog.get_by_role("link", name="Provider evidence", exact=True)).to_have_attribute("href", url)
     expect(dialog).to_contain_text("Partiful shows Going for the confirmed account.")
@@ -388,6 +394,39 @@ def test_partiful_event_queues_once_and_preserves_phone_question_and_provider_ev
     assert dialog.evaluate("element => element.scrollWidth <= element.clientWidth")
     page.screenshot(path=str(tmp_path / f"muse-partiful-progress-{width}.png"))
     assert len(api.queued) == 1 and api.unexpected == []
+
+
+@pytest.mark.parametrize("width", [1440, 320])
+def test_ongoing_event_with_future_end_queues_once_and_ended_event_explains_why(page_factory, width, tmp_path):
+    harness, api = install(page_factory, width)
+    current = datetime.now(UTC)
+    ongoing, ended = api.events
+    ongoing.update(title="Ongoing Partiful gathering", start_at=(current - timedelta(hours=1)).isoformat(),
+                   end_at=(current + timedelta(hours=1)).isoformat(),
+                   registration_urls=["https://partiful.com/e/ongoingFixture123"])
+    ongoing["sources"][0]["registration_url"] = ongoing["registration_urls"][0]
+    ended.update(title="Ended gathering", start_at=(current - timedelta(hours=2)).isoformat(),
+                 end_at=(current - timedelta(hours=1)).isoformat())
+    page = harness.page
+    page.goto(BASE + "/?view=events&when=all&city=")
+    action = page.get_by_role("button", name=f"Sign up with Muse for {ongoing['title']}", exact=True)
+    expect(action).to_have_attribute("data-registration-state", "available")
+    action.click()
+    dialog = page.get_by_role("dialog", name="Registrations", exact=True)
+    expect(dialog).to_contain_text(ongoing["title"])
+    expect(dialog.locator('[data-status="queued"]')).to_have_text("Queued")
+    dialog.get_by_role("button", name="Close registrations").click()
+    page.get_by_role("button", name=f"View registration for {ongoing['title']}", exact=True).click()
+    expect(dialog).to_contain_text(ongoing["title"])
+    dialog.get_by_role("button", name="Close registrations").click()
+    ended_action = page.get_by_role("button", name=f"Muse unavailable for {ended['title']}", exact=True)
+    ended_action.focus()
+    expect(page.get_by_role("tooltip")).to_contain_text("This event has ended.")
+    expect(page.get_by_role("tooltip")).not_to_contain_text("already started")
+    assert [item["event_id"] for item in api.queued] == [ongoing["canonical_event_id"]]
+    assert page.evaluate("document.documentElement.scrollWidth <= innerWidth")
+    page.screenshot(path=str(tmp_path / f"muse-ongoing-{width}.png"))
+    assert api.unexpected == []
 
 
 def activate_unavailable_help(page, action, *, touch):

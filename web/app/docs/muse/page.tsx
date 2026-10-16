@@ -8,7 +8,7 @@ export const metadata: Metadata = { title: "Registrations" };
 export default function MuseGuide() {
   return <GuidePage
     title="Registrations"
-    intro={<p>Queue upcoming free Luma, Meetup or Partiful events. Muse completes registration in its own browser.</p>}
+    intro={<p>Queue free Luma, Meetup or Partiful events before they end. Muse completes registration in its own browser.</p>}
     contents={[{ href: "#connect", label: "Connect" }, { href: "#account", label: "Registration account" }, { href: "#start", label: "Queue and start" }, { href: "#progress", label: "Progress" }, { href: "#recovery", label: "Limits and recovery" }]}
   >
     <h2 id="connect" tabIndex={-1}>Connect Muse</h2>
@@ -64,7 +64,8 @@ export default function MuseGuide() {
     <p>Events Concierge records Muse’s report; it does not independently check your provider RSVP. Confirm your registration on the event website.</p>
     <h2 id="recovery" tabIndex={-1}>Limits and recovery</h2>
     <ul>
-      <li>Only upcoming, scheduled, free Luma, Meetup or Partiful events that are not sold out are supported. The app requires provider details observed within the last 48 hours. Ongoing events and unconfirmed admission remain unavailable.</li>
+      <li>Scheduled, free Luma, Meetup or Partiful events that are not sold out are supported. Upcoming events may have no end time; ongoing events need a confirmed end time still in the future. Ended events, invalid dates and unconfirmed admission remain unavailable.</li>
+      <li>The app requires provider details observed within the last 48 hours. Muse rechecks the event’s dates, price and availability before submitting.</li>
       <li>If event details are too old, wait for a source refresh or register on the provider’s website.</li>
       <li>Tasks are not automatically retried. Repeated clicks open existing progress.</li>
       <li>In <Link href="/settings/registrations">Registration settings</Link>, <strong>Replace key</strong> revokes the old key. <strong>Revoke key</strong> removes connector access.</li>

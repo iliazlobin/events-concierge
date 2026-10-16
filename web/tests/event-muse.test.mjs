@@ -17,7 +17,7 @@ const item = {
   version: 1, unread: true, status: "queued", outcome: null,
 };
 
-test("only upcoming free Luma, Meetup or Partiful events can be queued", () => {
+test("free upcoming events and ongoing events with a confirmed future end can be queued", () => {
   assert.equal(museEligibility(event, now), null);
   for (const changes of [
     { price_status: "paid" }, { price_status: "unknown" }, { event_status: "cancelled" },
@@ -32,7 +32,27 @@ test("unavailable events explain each blocker without treating unknown admission
   assert.match(reason, /Free admission isn’t confirmed/);
   assert.match(reason, /Luma, Meetup and Partiful/);
   assert.doesNotMatch(reason, /paid/i);
-  assert.match(museEligibility({ ...event, start_at: "2026-10-07T11:00:00Z" }, now), /already started/);
+  assert.match(museEligibility({ ...event, start_at: "2026-10-07T11:00:00Z" }, now), /end time isn’t confirmed/);
+});
+
+test("ongoing eligibility requires a valid interval and excludes the exact end boundary", () => {
+  const iso = offset => new Date(now + offset).toISOString();
+  for (const url of ["https://lu.ma/event", "https://www.meetup.com/group/events/123/", "https://partiful.com/e/Abc123"]) {
+    const candidate = { ...event, registration_urls: [url], sources: [{ registration_url: url, last_seen_at: iso(0) }] };
+    const eligible = dates => museEligibility({ ...candidate, ...dates }, now);
+    assert.equal(eligible({ start_at: iso(1), end_at: null }), null);
+    assert.equal(eligible({ start_at: iso(1), end_at: iso(2) }), null);
+    assert.equal(eligible({ start_at: iso(0), end_at: iso(1) }), null);
+    assert.equal(eligible({ start_at: iso(-1), end_at: iso(1) }), null);
+    for (const end_at of [iso(0), iso(-1)]) assert.match(eligible({ start_at: iso(-2), end_at }), /has ended/);
+    for (const start_at of [iso(0), iso(-1)]) assert.match(eligible({ start_at, end_at: null }), /end time isn’t confirmed/);
+    for (const dates of [
+      { start_at: iso(-1), end_at: "invalid" }, { start_at: iso(1), end_at: "invalid" },
+      { start_at: iso(2), end_at: iso(1) }, { start_at: iso(1), end_at: iso(1) },
+    ]) assert.match(eligible(dates), /dates aren’t confirmed/);
+    assert.match(eligible({ start_at: iso(-1), end_at: iso(1), price_status: "unknown" }), /Free admission isn’t confirmed/);
+    assert.match(eligible({ start_at: iso(-1), end_at: iso(1), sources: [{ registration_url: url, last_seen_at: iso(-49 * 60 * 60 * 1000) }] }), /refresh/);
+  }
 });
 
 test("selection requires a fresh supported-source observation at the API's exact time boundaries", () => {
@@ -63,7 +83,7 @@ test("Partiful accepts canonical event paths and keeps all eligibility gates", (
     const partiful = { ...event, registration_urls: [url], sources: [{ registration_url: url, last_seen_at: "2026-10-07T11:00:00Z" }] };
     assert.equal(museEligibility(partiful, now), null);
     assert.match(museEligibility({ ...partiful, price_status: "unknown" }, now), /Free admission isn’t confirmed/);
-    assert.match(museEligibility({ ...partiful, start_at: "2026-10-07T11:00:00Z" }, now), /already started/);
+    assert.match(museEligibility({ ...partiful, start_at: "2026-10-07T11:00:00Z" }, now), /end time isn’t confirmed/);
     assert.match(museEligibility({ ...partiful, sources: [{ registration_url: url, last_seen_at: "2026-10-05T11:59:59Z" }] }, now), /refresh/);
   }
   for (const url of ["http://partiful.com/e/Abc123", "https://partiful.com/", "https://partiful.com/e/",
@@ -109,6 +129,9 @@ test("handoff covers every page, protects attempts, and distinguishes reported r
   assert.match(instruction, /expected_email.*visible provider account/);
   assert.match(instruction, /When expected_email is unset, use the current browser account/);
   assert.match(instruction, /Never infer an email from my Events Concierge sign-in or switch accounts without my instruction/);
+  assert.match(instruction, /verify title, start\/end times, price and availability/);
+  assert.match(instruction, /Register an ongoing event only while its confirmed end time is still in the future/);
+  assert.match(instruction, /Do not proceed with ended events, invalid dates or an ongoing event without a confirmed end time/);
   assert.equal(museStatusLabel.registered, "Registered · reported by Muse");
   assert.notEqual(museStatusLabel.awaiting_approval, museStatusLabel.registered);
 });
