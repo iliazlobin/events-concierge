@@ -72,10 +72,29 @@ def test_account_selector_preserves_aliases_and_has_no_app_identity_fallback():
         RegistrationAccountUpdate(expected_email=None, provider_overrides={"luma": None}, revision=1)
 
 
-async def test_owner_mapping_requires_session_csrf_and_exact_revision(monkeypatch):
+def test_partiful_email_overrides_roundtrip_as_metadata_without_a_phone_identity():
+    selected = RegistrationAccountSettings(
+        expected_email="default@example.test", provider_overrides={"partiful": "events@EXAMPLE.TEST"},
+        revision=1,
+    )
+    restored = RegistrationAccountSettings.model_validate_json(selected.model_dump_json())
+    event = event_for("https://www.partiful.com/e/account-test?c=invite")
+    snapshot = restored.for_event(event)
+    assert snapshot.provider == "partiful" and snapshot.expected_email == "events@example.test"
+    item = SignupItem(event=event, registration_account=snapshot, updated_at=datetime.now(UTC))
+    assert SignupItem.model_validate_json(item.model_dump_json()).registration_account == snapshot
+    assert set(snapshot.model_dump()) == {"executor", "provider", "expected_email"}
+    assert RegistrationAccountSettings(expected_email="default@example.test").for_event(event).expected_email == "default@example.test"
+    legacy = SignupItem(event=event, updated_at=datetime.now(UTC))
+    assert legacy.registration_account.provider == "partiful"
+    assert legacy.registration_account.expected_email is None
+
+
+@pytest.mark.parametrize("overrides", [{}, {"partiful": "contact@example.test"}])
+async def test_owner_mapping_requires_session_csrf_and_exact_revision(monkeypatch, overrides):
     app, repository, tenant = muse_app(monkeypatch)
     repository.registration_account.return_value = RegistrationAccountSettings()
-    body = {"expected_email": "provider@example.test", "provider_overrides": {}, "revision": 1}
+    body = {"expected_email": "provider@example.test", "provider_overrides": overrides, "revision": 1}
     saved = RegistrationAccountSettings(**body, updated_at=datetime.now(UTC))
     repository.replace_registration_account.return_value = saved
     token, _ = await app.state.container.muse.connect(tenant)
@@ -107,6 +126,7 @@ async def test_owner_mapping_requires_session_csrf_and_exact_revision(monkeypatc
     {"revision": True}, {"revision": "1"}, {"executor": "other"},
     {"tenant_id": str(uuid4())}, {"updated_at": "2026-01-01"},
     {"provider_overrides": {"unknown": "a@example.test"}},
+    {"phone_number": "+15555550100"}, {"verification_code": "123456"},
 ])
 async def test_invalid_owner_mapping_is_redacted_before_repository_io(monkeypatch, change):
     app, repository, _ = muse_app(monkeypatch)
@@ -121,9 +141,13 @@ async def test_invalid_owner_mapping_is_redacted_before_repository_io(monkeypatc
     repository.registration_account.assert_not_awaited()
 
 
-async def test_connector_list_read_claim_and_report_carry_only_selected_provider_identity(monkeypatch):
+@pytest.mark.parametrize("url,provider", [
+    ("https://luma.com/account-test", "luma"),
+    ("https://partiful.com/e/account-test", "partiful"),
+])
+async def test_connector_list_read_claim_and_report_carry_only_selected_provider_identity(monkeypatch, url, provider):
     app, repository, tenant = muse_app(monkeypatch)
-    event, attempt = event_for(), uuid4()
+    event, attempt = event_for(url), uuid4()
     account = RegistrationAccountSettings(expected_email="provider@example.test").for_event(event)
     item = SignupItem(event=event, registration_account=account, updated_at=datetime.now(UTC))
     batch = SignupBatch(batch_id=uuid4(), request_id=uuid4(), created_at=datetime.now(UTC), items=[item])
@@ -148,15 +172,16 @@ async def test_connector_list_read_claim_and_report_carry_only_selected_provider
                                    json={"attempt_id": str(attempt), "outcome": {"status": "needs_input"}})).json()
     for data in (listed, read, claimed, result):
         assert data["registration_account"] == {
-            "executor": "muse", "provider": "luma", "expected_email": "provider@example.test",
+            "executor": "muse", "provider": provider, "expected_email": "provider@example.test",
         }
         assert "tenant_id" not in data and "owner_email" not in data
 
 
-async def test_replayed_claim_keeps_its_saved_account_after_settings_change():
-    browse = published_event()
+@pytest.mark.parametrize("url", ["https://luma.com/account-test", "https://partiful.com/e/account-test"])
+async def test_replayed_claim_keeps_its_saved_account_after_settings_change(url):
+    browse = published_event(url)
     service, repository, catalog = service_for(browse)
-    event = event_for()
+    event = event_for(url)
     account = RegistrationAccountSettings(expected_email="previous@example.test").for_event(event)
     attempt = uuid4()
     item = SignupItem(event=event, registration_account=account, updated_at=datetime.now(UTC),

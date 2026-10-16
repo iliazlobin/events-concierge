@@ -120,6 +120,23 @@ async def test_malformed_credentials_do_not_open_a_tenant_context(authorization)
         "https://lu.ma/event\x7f",
         "https://lu.ma/\\evil",
         "https://lu.ma/évent",
+        "http://partiful.com/e/event",
+        "https://partiful.com.evil.test/e/event",
+        "https://%70artiful.com/e/review_test",
+        "https://partiful%2ecom/e/review_test",
+        "https://www.%70artiful.com/e/review_test",
+        "https://user:secret@partiful.com/e/event",
+        "https://partiful.com:444/e/event",
+        "https://partiful.com/",
+        "https://partiful.com/login?redirect=/e/event",
+        "https://partiful.com/e/",
+        "https://partiful.com/e/event/guests",
+        "https://partiful.com/e/../login",
+        "https://partiful.com/e/event%2Fother",
+        "https://partiful.com/e/event#secret",
+        "https://partiful.com/e/event\n",
+        "https://partiful.com/e/\\evil",
+        "https://partiful.com/e/évent",
     ],
 )
 def test_provider_links_are_bounded_credential_free_and_not_redirect_targets(url):
@@ -129,7 +146,11 @@ def test_provider_links_are_bounded_credential_free_and_not_redirect_targets(url
 
 @pytest.mark.parametrize(
     "url",
-    ["https://lu.ma/event", "https://luma.com/event", "https://www.meetup.com/group/events/123/"],
+    [
+        "https://lu.ma/event", "https://luma.com/event", "https://www.meetup.com/group/events/123/",
+        "https://partiful.com/e/Party_123-ab", "https://www.partiful.com/e/event/?c=invite",
+        "https://partiful.com:443/e/event",
+    ],
 )
 async def test_batch_uses_published_occurrence_and_only_bounded_public_facts(url):
     browse = published_event(url)
@@ -142,6 +163,7 @@ async def test_batch_uses_published_occurrence_and_only_bounded_public_facts(url
     assert "tenant_id" not in batch.model_dump()
 
 
+@pytest.mark.parametrize("url", ["https://lu.ma/muse-test", "https://partiful.com/e/muse-test"])
 @pytest.mark.parametrize(
     "changes",
     [
@@ -149,11 +171,11 @@ async def test_batch_uses_published_occurrence_and_only_bounded_public_facts(url
         {"price_status": PriceStatus.UNKNOWN},
         {"event_status": EventStatus.CANCELLED},
         {"registration_status": RegistrationStatus.SOLD_OUT},
-        {"start_at": datetime(2020, 1, 1, tzinfo=UTC)},
+        {"start_at": datetime(2020, 1, 1, tzinfo=UTC), "end_at": datetime(2020, 1, 2, tzinfo=UTC)},
     ],
 )
-async def test_ineligible_event_is_rejected_before_saving(changes):
-    browse = published_event()
+async def test_ineligible_event_is_rejected_before_saving(changes, url):
+    browse = published_event(url)
     browse = replace(browse, canonical_event=replace(browse.canonical_event, **changes))
     service, repository, _ = service_for(browse)
     with pytest.raises(ValueError):
@@ -167,6 +189,9 @@ async def test_ineligible_event_is_rejected_before_saving(changes):
         (timedelta(hours=49), "https://lu.ma/event"),
         (timedelta(minutes=-10), "https://lu.ma/event"),
         (timedelta(hours=1), "https://unreviewed.test/event"),
+        (timedelta(hours=49), "https://partiful.com/e/event"),
+        (timedelta(minutes=-10), "https://partiful.com/e/event"),
+        (timedelta(hours=1), "https://partiful.com/login"),
     ],
 )
 async def test_stale_or_unsupported_source_cannot_be_sent_to_muse(age, url):
@@ -177,8 +202,9 @@ async def test_stale_or_unsupported_source_cannot_be_sent_to_muse(age, url):
     repository.create.assert_not_awaited()
 
 
-async def test_selection_is_bounded_and_idempotent_even_if_catalog_later_changes():
-    browse = published_event()
+@pytest.mark.parametrize("url", ["https://lu.ma/muse-test", "https://partiful.com/e/muse-test"])
+async def test_selection_is_bounded_and_idempotent_even_if_catalog_later_changes(url):
+    browse = published_event(url)
     event_id = browse.canonical_event.canonical_event_id
     service, repository, catalog = service_for(browse)
     tenant, request = uuid4(), uuid4()
@@ -195,11 +221,12 @@ async def test_selection_is_bounded_and_idempotent_even_if_catalog_later_changes
         await service.prepare(tenant, request, [uuid4()])
 
 
+@pytest.mark.parametrize("url", ["https://lu.ma/muse-test", "https://partiful.com/e/muse-test"])
 @pytest.mark.parametrize(
-    "change", ["price", "title", "start", "end", "venue", "city", "stale", "unpublished"]
+    "change", ["price", "title", "start", "end", "venue", "city", "stale", "future", "url", "unpublished"]
 )
-async def test_claim_rechecks_facts_before_a_browser_attempt(change):
-    browse = published_event()
+async def test_claim_rechecks_facts_before_a_browser_attempt(change, url):
+    browse = published_event(url)
     service, repository, catalog = service_for(browse)
     tenant, request, attempt = uuid4(), uuid4(), uuid4()
     event_id = browse.canonical_event.canonical_event_id
@@ -224,6 +251,14 @@ async def test_claim_rechecks_facts_before_a_browser_attempt(change):
                 replace(browse.sources[0], last_seen_at=datetime.now(UTC) - timedelta(days=3)),
             ),
         )
+    elif change in {"future", "url"}:
+        updates = (
+            {"last_seen_at": datetime.now(UTC) + timedelta(minutes=10)}
+            if change == "future" else {"registration_url": url + "-different"}
+        )
+        catalog.get_browse_event.return_value = replace(
+            browse, sources=(replace(browse.sources[0], **updates),),
+        )
     else:
         catalog.get_browse_event.return_value = None
     with pytest.raises(MuseConflictError):
@@ -231,8 +266,26 @@ async def test_claim_rechecks_facts_before_a_browser_attempt(change):
     repository.claim.assert_not_awaited()
 
 
-async def test_claim_replay_returns_existing_progress_and_foreign_attempt_is_held():
-    browse = published_event()
+@pytest.mark.parametrize("url", [
+    "https://lu.ma/muse-test", "https://www.meetup.com/group/events/123/",
+    "https://partiful.com/e/muse-test",
+])
+async def test_unchanged_eligible_event_can_be_claimed_with_its_provider_snapshot(url):
+    browse = published_event(url)
+    service, repository, _ = service_for(browse)
+    tenant, attempt, event_id = uuid4(), uuid4(), browse.canonical_event.canonical_event_id
+    batch = await service.prepare(tenant, uuid4(), [event_id])
+    repository.batch.return_value = batch
+    claimed = batch.items[0].model_copy(update={"status": "in_progress", "attempt_id": attempt})
+    repository.claim.return_value = claimed
+    assert await service.claim(tenant, batch.batch_id, event_id, attempt) == claimed
+    assert claimed.event.registration_url == url
+    repository.claim.assert_awaited_once_with(tenant, batch.batch_id, event_id, attempt)
+
+
+@pytest.mark.parametrize("url", ["https://lu.ma/muse-test", "https://partiful.com/e/muse-test"])
+async def test_claim_replay_returns_existing_progress_and_foreign_attempt_is_held(url):
+    browse = published_event(url)
     service, repository, catalog = service_for(browse)
     tenant, attempt = uuid4(), uuid4()
     event_id = browse.canonical_event.canonical_event_id
@@ -263,6 +316,15 @@ def test_registration_confirmation_and_waitlist_are_not_interchangeable():
     )
 
 
+def test_partiful_confirmation_evidence_requires_the_reviewed_event_path():
+    evidence = "https://partiful.com/e/confirmed_event?c=invite"
+    assert SignupOutcome(status="registered", evidence_url=evidence).evidence_url == evidence
+    with pytest.raises(ValidationError):
+        SignupOutcome(status="registered", evidence_url="https://partiful.com/login")
+    with pytest.raises(ValidationError):
+        SignupOutcome(status="registered", evidence_url="https://partiful.com.evil.test/e/event")
+
+
 async def test_queue_replay_returns_saved_registration_without_catalog_revalidation():
     service, repository, catalog = service_for()
     batch = await service.prepare(uuid4(), uuid4(), [uuid4()])
@@ -282,8 +344,9 @@ async def test_queue_replay_returns_saved_registration_without_catalog_revalidat
     catalog.get_browse_event.assert_not_awaited()
 
 
-async def test_queue_validates_new_event_and_saves_only_published_facts():
-    browse = published_event()
+@pytest.mark.parametrize("url", ["https://lu.ma/muse-test", "https://partiful.com/e/muse-test"])
+async def test_queue_validates_new_event_and_saves_only_published_facts(url):
+    browse = published_event(url)
     service, repository, _ = service_for(browse)
     repository.queue_registration.side_effect = [MuseNotFoundError(), "queued-result"]
     tenant, request, event_id = uuid4(), uuid4(), browse.canonical_event.canonical_event_id

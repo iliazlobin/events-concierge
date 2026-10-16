@@ -8,11 +8,22 @@ import {
 
 test("unset and cleared provider identities use the current browser without an owner-email fallback", () => {
   assert.deepEqual(registrationAccountDraft({ expected_email: null, provider_overrides: {} }), EMPTY_REGISTRATION_ACCOUNT);
-  assert.deepEqual(registrationAccountValues({ defaultEmail: "  ", luma: " ", meetup: "" }), { expected_email: null, provider_overrides: {} });
-  assert.deepEqual(registrationAccountValues({ defaultEmail: " Provider+events@EXAMPLE.TEST ", luma: "Luma@EXAMPLE.TEST", meetup: "" }), {
+  assert.deepEqual(registrationAccountValues({ defaultEmail: "  ", luma: " ", meetup: "", partiful: "" }), { expected_email: null, provider_overrides: {} });
+  assert.deepEqual(registrationAccountValues({ defaultEmail: " Provider+events@EXAMPLE.TEST ", luma: "Luma@EXAMPLE.TEST", meetup: "", partiful: "" }), {
     expected_email: "Provider+events@example.test", provider_overrides: { luma: "Luma@example.test" },
   });
   assert.equal(normalizeRegistrationEmail("Provider+events@EXAMPLE.TEST"), "Provider+events@example.test");
+});
+
+test("Partiful overrides round-trip independently and clear to the default without phone metadata", () => {
+  const values = { expected_email: "default@example.test", provider_overrides: { partiful: "Partiful+events@example.test" } };
+  const draft = registrationAccountDraft(values);
+  assert.equal(draft.partiful, "Partiful+events@example.test");
+  assert.deepEqual(registrationAccountValues(draft), values);
+  assert.deepEqual(registrationAccountValues({ ...draft, partiful: "  " }), {
+    expected_email: "default@example.test", provider_overrides: {},
+  });
+  assert.deepEqual(Object.keys(draft).sort(), ["defaultEmail", "luma", "meetup", "partiful"]);
 });
 
 test("registration email accepts practical aliases and rejects ambiguous or unsupported identities", () => {

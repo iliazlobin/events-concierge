@@ -5,6 +5,7 @@ import type { RegistrationStatus, RegistrationStatusCounts, RegistrationTask } f
 
 export const MUSE_URL = "https://muse.ai/";
 const hosts = new Set(["lu.ma", "www.lu.ma", "luma.com", "www.luma.com", "meetup.com", "www.meetup.com"]);
+const partifulHosts = new Set(["partiful.com", "www.partiful.com"]);
 
 export type MuseStatus = RegistrationStatus;
 export interface MuseConnection { connected: boolean; expires_at: string | null }
@@ -22,23 +23,44 @@ export interface MuseIssuedConnection { token: string; expires_at: string }
 export function museProviderUrl(value: string): string | null {
   try {
     const url = new URL(value);
+    // URL decodes hosts and normalizes dot segments; preserve the API's raw URL checks.
+    const raw = value.match(/^https:\/\/([^/?#]+)([^?#]*)/i);
+    const authority = raw?.[1] ?? "";
+    const path = raw?.[2] ?? "";
     return value.length <= 2048 && /^[\x21-\x7e]+$/.test(value) && !value.includes("\\") && url.protocol === "https:"
-      && hosts.has(url.hostname) && !url.username && !url.password && !url.port
+      && !authority.includes("%")
+      && (hosts.has(url.hostname) || (partifulHosts.has(url.hostname) && /^\/e\/[A-Za-z0-9_-]+\/?$/.test(path)))
+      && !url.username && !url.password && !url.port
       && Boolean(url.pathname.replaceAll("/", "")) && !url.hash ? value : null;
   } catch { return null; }
+}
+
+/** Catalog timestamps must be aware ISO datetimes; Date.parse alone accepts naive and rolled-over dates. */
+function eventTimestamp(value: string): number {
+  const match = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})$/.exec(value);
+  if (!match) return NaN;
+  const [year, month, day, hour, minute, second] = match.slice(1).map(Number);
+  const leap = year % 4 === 0 && (year % 100 !== 0 || year % 400 === 0);
+  const days = [31, leap ? 29 : 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
+  if (year === 0 || month < 1 || month > 12 || day < 1 || day > days[month - 1]
+    || hour > 23 || minute > 59 || second > 59) return NaN;
+  return Date.parse(value);
 }
 
 export function museEligibility(event: EventItem, now = Date.now()): string | null {
   const reasons: string[] = [];
   if (event.price_status === "paid") reasons.push("Muse supports free events only.");
   else if (event.price_status !== "free") reasons.push("Free admission isn’t confirmed.");
-  const start = Date.parse(event.start_at);
+  const start = eventTimestamp(event.start_at);
+  const end = event.end_at == null ? null : eventTimestamp(event.end_at);
   if (event.event_status === "cancelled") reasons.push("This event is cancelled.");
   else if (event.event_status !== "scheduled" || !Number.isFinite(start)) reasons.push("The event date isn’t confirmed.");
-  else if (start <= now) reasons.push("This event has already started.");
+  else if (end !== null && (!Number.isFinite(end) || end <= start)) reasons.push("The event dates aren’t confirmed.");
+  else if (end !== null && end <= now) reasons.push("This event has ended.");
+  else if (start <= now && end === null) reasons.push("The event end time isn’t confirmed.");
   if (event.registration_status === "sold_out") reasons.push("This event is sold out.");
   const urls = [...event.registration_urls, ...event.sources.map(source => source.registration_url)];
-  if (!urls.some(url => museProviderUrl(url))) reasons.push("Muse supports Luma and Meetup signups only.");
+  if (!urls.some(url => museProviderUrl(url))) reasons.push("Muse supports Luma, Meetup and Partiful signups only.");
   else {
     // Match the API: freshness belongs to the supported registration source,
     // not another source or the catalog’s broader seven-day freshness badge.
@@ -62,7 +84,7 @@ export interface MuseRegistrationPage {
 }
 
 export function museInstruction(): string {
-  return "Use my Events Concierge connector to read every page of my signup batches (limit 100; cursor is the last batch ID). Register only the free events I queued. Skip registered and failed tasks. Check waitlisted or awaiting-approval results without submitting again. Claim each queued event before acting. Use registration_account from the claim response; when resuming an existing attempt, keep its saved account. When expected_email is set, verify the visible provider account matches it before provider action. Use that same email for signup and contact fields, including company/work email when accepted. If it is rejected or a business-domain address is required, stop and ask me; never invent or substitute another email. When expected_email is unset, use the current browser account and ask me for unanswered email fields. Never infer an email from my Events Concierge sign-in or switch accounts without my instruction. Check for an existing RSVP and verify title, date, price and availability. Resume an existing attempt without claiming a new attempt; if a submission is uncertain, check its status before retrying. Preserve your approval checks. Ask me for login or unanswered form questions; do not invent answers, pay or substitute events. Report each outcome with provider confirmation evidence.";
+  return "Use my Events Concierge connector to read every page of my signup batches (limit 100; cursor is the last batch ID). Register only the free events I queued. Skip registered and failed tasks. Check waitlisted or awaiting-approval results without submitting again. Claim each queued event before acting. Use registration_account from the claim response; when resuming an existing attempt, keep its saved account. For Luma and Meetup, when expected_email is set, verify the visible provider account matches it before provider action. Partiful uses phone login: ask me to complete any phone/SMS login. Never enter, guess or store phone numbers, request SMS codes, enter verification codes or switch accounts. When expected_email is set and the Partiful account email is visible, verify it matches; otherwise ask me to confirm the active phone account before provider action. The selected email applies to Partiful email form fields, not phone login. Use that same email for signup and contact fields, including company/work email when accepted. If it is rejected or a business-domain address is required, stop and ask me; never invent or substitute another email. When expected_email is unset, use the current browser account and ask me for unanswered email fields. Never infer an email from my Events Concierge sign-in or switch accounts without my instruction. Check for an existing RSVP and verify title, start/end times, price and availability. Register an ongoing event only while its confirmed end time is still in the future. Do not start a signup for ended events, invalid dates or an ongoing event without a confirmed end time. Check and report an existing attempt after the event ends without submitting another signup. Resume an existing attempt without claiming a new attempt; if a submission is uncertain, check its status before retrying. Preserve your approval checks. Ask me for login or unanswered form questions; do not invent answers, pay or substitute events. Report each outcome with provider confirmation evidence.";
 }
 
 /** Newer responses cannot roll back a task that a queue or outcome response already advanced. */

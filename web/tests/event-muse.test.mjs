@@ -17,7 +17,7 @@ const item = {
   version: 1, unread: true, status: "queued", outcome: null,
 };
 
-test("only upcoming free Luma or Meetup events can be queued", () => {
+test("free upcoming events and ongoing events with a confirmed future end can be queued", () => {
   assert.equal(museEligibility(event, now), null);
   for (const changes of [
     { price_status: "paid" }, { price_status: "unknown" }, { event_status: "cancelled" },
@@ -30,9 +30,40 @@ test("unavailable events explain each blocker without treating unknown admission
   const reason = museEligibility({ ...event, price_status: "unknown",
     registration_urls: ["https://www.sf.gov/event"], sources: [] }, now);
   assert.match(reason, /Free admission isn’t confirmed/);
-  assert.match(reason, /Luma and Meetup/);
+  assert.match(reason, /Luma, Meetup and Partiful/);
   assert.doesNotMatch(reason, /paid/i);
-  assert.match(museEligibility({ ...event, start_at: "2026-10-07T11:00:00Z" }, now), /already started/);
+  assert.match(museEligibility({ ...event, start_at: "2026-10-07T11:00:00Z" }, now), /end time isn’t confirmed/);
+});
+
+test("ongoing eligibility requires a valid interval and excludes the exact end boundary", () => {
+  const iso = offset => new Date(now + offset).toISOString();
+  for (const url of ["https://lu.ma/event", "https://www.meetup.com/group/events/123/", "https://partiful.com/e/Abc123"]) {
+    const candidate = { ...event, registration_urls: [url], sources: [{ registration_url: url, last_seen_at: iso(0) }] };
+    const eligible = dates => museEligibility({ ...candidate, ...dates }, now);
+    assert.equal(eligible({ start_at: iso(1), end_at: null }), null);
+    assert.equal(eligible({ start_at: iso(1), end_at: iso(2) }), null);
+    assert.equal(eligible({ start_at: iso(0), end_at: iso(1) }), null);
+    assert.equal(eligible({ start_at: iso(-1), end_at: iso(1) }), null);
+    for (const end_at of [iso(0), iso(-1)]) assert.match(eligible({ start_at: iso(-2), end_at }), /has ended/);
+    for (const start_at of [iso(0), iso(-1)]) assert.match(eligible({ start_at, end_at: null }), /end time isn’t confirmed/);
+    for (const dates of [
+      { start_at: iso(-1), end_at: "invalid" }, { start_at: iso(1), end_at: "invalid" },
+      { start_at: iso(2), end_at: iso(1) }, { start_at: iso(1), end_at: iso(1) },
+    ]) assert.match(eligible(dates), /dates aren’t confirmed/);
+    assert.match(eligible({ start_at: iso(-1), end_at: iso(1), price_status: "unknown" }), /Free admission isn’t confirmed/);
+    assert.match(eligible({ start_at: iso(-1), end_at: iso(1), sources: [{ registration_url: url, last_seen_at: iso(-49 * 60 * 60 * 1000) }] }), /refresh/);
+  }
+});
+
+test("event dates fail closed for naive timestamps and invalid calendar values", () => {
+  for (const start_at of ["2030-06-14T19:30:00", "2030-06-14", "2030-02-30T19:30:00Z", "2030-06-14T24:00:00Z"]) {
+    assert.match(museEligibility({ ...event, start_at, end_at: null }, now), /date isn’t confirmed/);
+  }
+  for (const end_at of ["2030-06-15T19:30:00", "2030-06-15", "2030-02-30T19:30:00Z", "2030-06-15T24:00:00Z"]) {
+    assert.match(museEligibility({ ...event, end_at }, now), /dates aren’t confirmed/);
+  }
+  assert.equal(museEligibility({ ...event, start_at: "2028-02-29T19:30:00.123456+02:00", end_at: null }, now), null);
+  assert.match(museEligibility({ ...event, start_at: "2030-02-29T19:30:00Z", end_at: null }, now), /date isn’t confirmed/);
 });
 
 test("selection requires a fresh supported-source observation at the API's exact time boundaries", () => {
@@ -55,6 +86,26 @@ test("provider URLs reject credential links and unapproved origins", () => {
   for (const url of ["javascript:alert(1)", "https://lu.ma.evil.test/event", "https://lu.ma/",
     "https://user:secret@lu.ma/event", "https://lu.ma:444/event", "https://lu.ma/event#token",
     "https://lu.ma/event\n", "https://lu.ma/\\evil"]) assert.equal(museProviderUrl(url), null);
+});
+
+test("Partiful accepts canonical event paths and keeps all eligibility gates", () => {
+  for (const url of ["https://partiful.com/e/Abc123", "https://www.partiful.com/e/abc_-123/?source=invite"]) {
+    assert.equal(museProviderUrl(url), url);
+    const partiful = { ...event, registration_urls: [url], sources: [{ registration_url: url, last_seen_at: "2026-10-07T11:00:00Z" }] };
+    assert.equal(museEligibility(partiful, now), null);
+    assert.match(museEligibility({ ...partiful, price_status: "unknown" }, now), /Free admission isn’t confirmed/);
+    assert.match(museEligibility({ ...partiful, start_at: "2026-10-07T11:00:00Z" }, now), /end time isn’t confirmed/);
+    assert.match(museEligibility({ ...partiful, sources: [{ registration_url: url, last_seen_at: "2026-10-05T11:59:59Z" }] }, now), /refresh/);
+  }
+  for (const url of ["http://partiful.com/e/Abc123", "https://partiful.com/", "https://partiful.com/e/",
+    "https://partiful.com/u/host", "https://partiful.com/e/one/two", "https://partiful.com.evil.test/e/Abc123",
+    "https://user:secret@partiful.com/e/Abc123", "https://partiful.com:444/e/Abc123", "https://partiful.com/e/Abc123#token",
+    "https://partiful.com/e/%41bc123", "https://partiful.com/e/abc%2F123", "https://partiful.com/e/one/../two",
+    "https://partiful.com/e/%2e/Abc123", "https://partiful.com/e/Abc123\n",
+    "https://%70artiful.com/e/review_test", "https://partiful%2ecom/e/review_test",
+    "https://www.%70artiful.com/e/review_test"]) {
+    assert.equal(museProviderUrl(url), null, url);
+  }
 });
 
 test("a delayed list response cannot roll back progress or duplicate an existing task", () => {
@@ -89,6 +140,10 @@ test("handoff covers every page, protects attempts, and distinguishes reported r
   assert.match(instruction, /expected_email.*visible provider account/);
   assert.match(instruction, /When expected_email is unset, use the current browser account/);
   assert.match(instruction, /Never infer an email from my Events Concierge sign-in or switch accounts without my instruction/);
+  assert.match(instruction, /verify title, start\/end times, price and availability/);
+  assert.match(instruction, /Register an ongoing event only while its confirmed end time is still in the future/);
+  assert.match(instruction, /Do not start a signup for ended events, invalid dates or an ongoing event without a confirmed end time/);
+  assert.match(instruction, /Check and report an existing attempt after the event ends without submitting another signup/);
   assert.equal(museStatusLabel.registered, "Registered · reported by Muse");
   assert.notEqual(museStatusLabel.awaiting_approval, museStatusLabel.registered);
 });
@@ -100,6 +155,15 @@ test("selected signup email also answers contact and company fields without inve
   assert.match(instruction, /never invent or substitute another email/);
   assert.match(instruction, /expected_email is unset, use the current browser account and ask me for unanswered email fields/);
   assert.match(instruction, /resuming an existing attempt, keep its saved account/);
+});
+
+test("Partiful phone authentication is completed by the user and stays separate from form email", () => {
+  const instruction = museInstruction();
+  assert.match(instruction, /For Luma and Meetup, when expected_email is set, verify the visible provider account matches it/);
+  assert.match(instruction, /Partiful uses phone login: ask me to complete any phone\/SMS login/);
+  assert.match(instruction, /Never enter, guess or store phone numbers, request SMS codes, enter verification codes or switch accounts/);
+  assert.match(instruction, /When expected_email is set and the Partiful account email is visible, verify it matches; otherwise ask me to confirm the active phone account before provider action/);
+  assert.match(instruction, /selected email applies to Partiful email form fields, not phone login/);
 });
 
 test("queue, page and seen requests use the owner API, exact IDs and cancellation signal", async () => {

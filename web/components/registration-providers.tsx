@@ -4,7 +4,7 @@ import { MUSE_URL, museProviderUrl, museStatusLabel } from "@/lib/muse";
 import { MUSE_PROVIDER, type RegistrationProviderId } from "@/lib/registration-providers";
 import type { RegistrationStatus } from "@/lib/registrations";
 
-/** Registration executors are separate from event publishers such as Luma and Meetup. */
+/** Registration executors are separate from event publishers such as Luma, Meetup and Partiful. */
 export interface RegistrationProvider {
   key: RegistrationProviderId;
   label: string;

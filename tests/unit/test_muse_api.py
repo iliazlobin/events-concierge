@@ -193,6 +193,7 @@ async def test_connector_contract_exposes_only_selected_batch_operations(monkeyp
     assert result.status_code == 200
     schema = result.json()
     assert schema["servers"] == [{"url": ORIGIN}]
+    assert "free Luma/Meetup/Partiful events" in schema["info"]["description"]
     assert sum(len(verbs) for verbs in schema["paths"].values()) == 4
     assert all(path.startswith("/v1/muse/connector/") for path in schema["paths"])
     assert "/v1/me/registration-accounts/{executor}" not in schema["paths"]
@@ -214,6 +215,8 @@ async def test_connector_schema_carries_signup_email_and_resumed_account_instruc
     assert "signup/contact email" in account_email["description"]
     assert "company/work email when accepted" in account_email["description"]
     assert "never inferring the app login email" in account_email["description"]
+    assert "does not select or verify a phone account" in account_email["description"]
+    assert "partiful" in schema["components"]["schemas"]["RegistrationProvider"]["enum"]
     for path, verb in (
         ("/v1/muse/connector/batches/{batch_id}", "get"),
         ("/v1/muse/connector/batches/{batch_id}/items/{event_id}/claim", "post"),
@@ -224,6 +227,16 @@ async def test_connector_schema_carries_signup_email_and_resumed_account_instruc
         assert "never invent or substitute an email" in instructions
         assert "ask for unanswered email fields" in instructions
         assert "saved registration_account" in instructions
+        assert "Events may be upcoming or ongoing" in instructions
+        assert "Ongoing events need a confirmed valid end time still in the future" in instructions
+        assert "do not start a signup for ended events or started events without a confirmed end" in instructions
+        assert "Partiful phone/SMS login must be completed by the user" in instructions
+        assert "When expected_email is set and the Partiful account email is visible, verify it matches" in instructions
+        assert "otherwise ask the user to confirm the active phone account before provider action" in instructions
+        assert "On mismatch, stop and ask the user before provider action" in instructions
+        assert "Never infer phone/email identity" in instructions
+        assert "Never enter, guess or store phone numbers" in instructions
+        assert "request SMS codes, enter verification codes or switch accounts" in instructions
 
 
 async def test_batch_body_cannot_set_tenant_or_provider_url(monkeypatch):

@@ -349,6 +349,86 @@ def test_one_icon_queues_each_event_and_progress_panel_retains_filters(page_fact
     assert api.unexpected == []
 
 
+@pytest.mark.parametrize("width", [1440, 320])
+def test_partiful_event_queues_once_and_preserves_phone_question_and_provider_evidence(page_factory, width, tmp_path):
+    harness, api = install(page_factory, width)
+    event = api.events[0]
+    event["title"] = "Partiful community evening"
+    url = "https://partiful.com/e/fixtureCommunity123"
+    event["registration_urls"] = [url]
+    event["sources"][0]["registration_url"] = url
+    page = harness.page
+    page.goto(BASE + "/?view=events&when=all&city=")
+    page.get_by_role("button", name=f"Sign up with Muse for {event['title']}", exact=True).click()
+    dialog = page.get_by_role("dialog", name="Registrations", exact=True)
+    expect(dialog.get_by_role("link", name=event["title"], exact=True)).to_have_attribute("href", url)
+    expect(dialog.locator('[data-status="queued"]')).to_have_text("Queued")
+    assert len(api.queued) == 1
+    task = api.registrations[0]
+    task.update(status="needs_input", attempt_id="b" * 32, version=2, outcome={
+        "status": "needs_input", "note": "Please complete Partiful phone verification and confirm the active account.",
+        "confirmation_reference": None, "evidence_url": None,
+    })
+    dialog.get_by_role("button", name="Refresh registrations").click()
+    expect(dialog).to_contain_text("Please complete Partiful phone verification and confirm the active account.")
+    dialog.get_by_role("button", name="Close registrations").click()
+    existing = page.get_by_role("button", name=f"View registration for {event['title']}", exact=True)
+    expect(existing).to_have_attribute("data-registration-state", "needs_input")
+    # Finish the reopen snapshot before changing the fixture's next saved outcome.
+    with page.expect_response(lambda response: urlsplit(response.url).path == "/v1/me/muse/registrations") as reopened:
+        existing.click()
+    assert reopened.value.json()["items"][0]["version"] == 2
+    expect(dialog.get_by_role("button", name="Refresh registrations")).to_be_enabled()
+    assert len(api.queued) == 1
+    task.update(status="registered", version=3, outcome={
+        "status": "registered", "note": "Partiful shows Going for the confirmed account.",
+        "confirmation_reference": None, "evidence_url": url,
+    })
+    with page.expect_response(lambda response: urlsplit(response.url).path == "/v1/me/muse/registrations") as completed:
+        dialog.get_by_role("button", name="Refresh registrations").click()
+    assert completed.value.json()["items"][0]["version"] == 3
+    expect(dialog.locator('[data-status="registered"]')).to_have_text("Registered · reported by Muse")
+    expect(dialog.get_by_role("link", name="Provider evidence", exact=True)).to_have_attribute("href", url)
+    expect(dialog).to_contain_text("Partiful shows Going for the confirmed account.")
+    assert page.evaluate("document.documentElement.scrollWidth <= innerWidth")
+    assert dialog.evaluate("element => element.scrollWidth <= element.clientWidth")
+    page.screenshot(path=str(tmp_path / f"muse-partiful-progress-{width}.png"))
+    assert len(api.queued) == 1 and api.unexpected == []
+
+
+@pytest.mark.parametrize("width", [1440, 320])
+def test_ongoing_event_with_future_end_queues_once_and_ended_event_explains_why(page_factory, width, tmp_path):
+    harness, api = install(page_factory, width)
+    current = datetime.now(UTC)
+    ongoing, ended = api.events
+    ongoing.update(title="Ongoing Partiful gathering", start_at=(current - timedelta(hours=1)).isoformat(),
+                   end_at=(current + timedelta(hours=1)).isoformat(),
+                   registration_urls=["https://partiful.com/e/ongoingFixture123"])
+    ongoing["sources"][0]["registration_url"] = ongoing["registration_urls"][0]
+    ended.update(title="Ended gathering", start_at=(current - timedelta(hours=2)).isoformat(),
+                 end_at=(current - timedelta(hours=1)).isoformat())
+    page = harness.page
+    page.goto(BASE + "/?view=events&when=all&city=")
+    action = page.get_by_role("button", name=f"Sign up with Muse for {ongoing['title']}", exact=True)
+    expect(action).to_have_attribute("data-registration-state", "available")
+    action.click()
+    dialog = page.get_by_role("dialog", name="Registrations", exact=True)
+    expect(dialog).to_contain_text(ongoing["title"])
+    expect(dialog.locator('[data-status="queued"]')).to_have_text("Queued")
+    dialog.get_by_role("button", name="Close registrations").click()
+    page.get_by_role("button", name=f"View registration for {ongoing['title']}", exact=True).click()
+    expect(dialog).to_contain_text(ongoing["title"])
+    dialog.get_by_role("button", name="Close registrations").click()
+    ended_action = page.get_by_role("button", name=f"Muse unavailable for {ended['title']}", exact=True)
+    ended_action.focus()
+    expect(page.get_by_role("tooltip")).to_contain_text("This event has ended.")
+    expect(page.get_by_role("tooltip")).not_to_contain_text("already started")
+    assert [item["event_id"] for item in api.queued] == [ongoing["canonical_event_id"]]
+    assert page.evaluate("document.documentElement.scrollWidth <= innerWidth")
+    page.screenshot(path=str(tmp_path / f"muse-ongoing-{width}.png"))
+    assert api.unexpected == []
+
+
 def activate_unavailable_help(page, action, *, touch):
     """Use actual input; Playwright's locator actionability treats aria-disabled as native disabled."""
     action.scroll_into_view_if_needed()
@@ -436,7 +516,7 @@ def test_unavailable_muse_explains_blockers_without_queue_or_card_actions(page_f
     action.hover()
     tooltip = page.get_by_role("tooltip")
     expect(tooltip).to_contain_text(re.compile("free", re.I))
-    expect(tooltip).to_contain_text("Luma and Meetup")
+    expect(tooltip).to_contain_text("Luma, Meetup and Partiful")
     expect(action).to_have_attribute("aria-describedby", tooltip.get_attribute("id"))
     expect(action).not_to_have_css("color", initial_tint)
     assert tooltip.evaluate("element => { const box = element.getBoundingClientRect(); return box.left >= 0 && box.right <= innerWidth; }")
@@ -482,7 +562,7 @@ def test_stale_supported_event_explains_freshness_but_existing_task_stays_access
     action.focus()
     tooltip = page.get_by_role("tooltip")
     expect(tooltip).to_contain_text("Event details need a refresh.")
-    expect(tooltip).not_to_contain_text("Luma and Meetup")
+    expect(tooltip).not_to_contain_text("Luma, Meetup and Partiful")
     expect(tooltip).not_to_contain_text(re.compile("free", re.I))
     action.press("Enter")
     assert api.queued == [] and api.writes == []
@@ -616,7 +696,7 @@ def test_rejected_queue_stays_event_specific_through_polling_and_notice_timeout(
     # authoritative even when the loaded card still permits a queue attempt.
     api.queue_error = True
     api.queue_error_status = 422
-    api.queue_error_detail = "Muse needs a recently collected Luma or Meetup event"
+    api.queue_error_detail = "Muse needs a recently collected Luma, Meetup or Partiful event"
     action = page.get_by_role("button", name="Sign up with Muse for Friday Night Jazz", exact=True)
     action.click()
     failure = page.get_by_role("complementary", name="Registration queue error", exact=True)
@@ -842,7 +922,7 @@ def test_settings_secret_is_one_time_with_instructions_in_docs(page_factory, wid
     expect(page.get_by_role("status")).to_contain_text("Instruction copied.")
     instruction = page.evaluate("window.__fixtureCopied")
     assert instruction == instructions.input_value()
-    assert "queued" in instruction.lower() and FIXTURE_KEY not in instruction
+    assert_partiful_handoff(page, instruction)
     page.evaluate("() => { navigator.clipboard.writeText = async () => { throw new Error('clipboard disabled'); }; }")
     page.get_by_role("button", name="Copy Muse instruction").click()
     expect(page.get_by_role("main").get_by_role("alert")).to_contain_text("Select and copy the instruction below.")
@@ -851,6 +931,16 @@ def test_settings_secret_is_one_time_with_instructions_in_docs(page_factory, wid
                                                 ("DELETE", "/v1/me/muse/connection")]
     assert page.evaluate("document.documentElement.scrollWidth <= innerWidth")
     assert api.unexpected == []
+
+
+def assert_partiful_handoff(page, instruction):
+    assert "queued" in instruction.lower() and FIXTURE_KEY not in instruction
+    assert "For Luma and Meetup, when expected_email is set" in instruction
+    assert "Partiful uses phone login: ask me to complete any phone/SMS login" in instruction
+    assert "Never enter, guess or store phone numbers, request SMS codes, enter verification codes or switch accounts" in instruction
+    assert "ask me to confirm the active phone account before provider action" in instruction
+    expect(page.get_by_role("link", name="Partiful verifies RSVPs by phone", exact=True)).to_have_attribute(
+        "href", "https://help.partiful.com/en-us/articles/15525505-how-do-i-rsvp-to-an-event-on-partiful")
 
 
 @pytest.mark.parametrize("width", [1440, 320])
@@ -989,7 +1079,7 @@ def test_map_muse_hint_remains_readable_at_rail_edge(page_factory, width, tmp_pa
     blocked_action.hover()
     tooltip = page.get_by_role("tooltip")
     expect(tooltip).to_contain_text(re.compile("Free admission.*confirmed"))
-    expect(tooltip).to_contain_text("Luma and Meetup")
+    expect(tooltip).to_contain_text("Luma, Meetup and Partiful")
     assert tooltip.evaluate("""element => {
         const box = element.getBoundingClientRect();
         return box.left >= 0 && box.right <= innerWidth && box.top >= 0 && box.bottom <= innerHeight
@@ -1109,6 +1199,7 @@ def test_registration_account_is_independent_saved_and_clearable(page_factory, w
     expect(page.get_by_role("tooltip")).to_contain_text("Can differ from your Events Concierge sign-in")
     expect(page.get_by_role("tooltip")).to_contain_text("provider sign-in and signup email, including company email when accepted")
     expect(page.get_by_role("tooltip")).to_contain_text("active attempts keep their saved email")
+    expect(page.get_by_role("tooltip")).to_contain_text("Partiful uses phone login; you complete phone verification")
     assert page.evaluate("document.documentElement.scrollWidth <= innerWidth")
     page.screenshot(path=str(tmp_path / f"registration-account-help-{width}.png"))
     page.keyboard.press("Escape")
@@ -1135,6 +1226,43 @@ def test_registration_account_is_independent_saved_and_clearable(page_factory, w
     page.reload()
     expect(email).to_have_value("")
     assert page.evaluate("document.documentElement.scrollWidth <= innerWidth")
+    assert api.unexpected == []
+
+
+@pytest.mark.parametrize("width", [1440, 320])
+def test_partiful_email_override_uses_the_shared_save_and_clear_flow(page_factory, width, tmp_path):
+    harness, api = install(page_factory, width)
+    api.registration_account["expected_email"] = "default@example.test"
+    page = harness.page
+    page.goto(BASE + "/settings/registrations")
+    form = page.get_by_role("form", name="Registration account", exact=True)
+    save = page.locator(".settings-actions").get_by_role("button", name="Save", exact=True)
+    expect(save).to_be_disabled()
+    form.get_by_role("button", name="Per site", exact=True).click()
+    partiful = form.get_by_role("textbox", name="Partiful email", exact=True)
+    expect(partiful).to_have_value("")
+    partiful.fill("person@example")
+    save.click()
+    expect(form.get_by_role("alert")).to_contain_text("Enter a valid email address.")
+    assert api.account_saves == []
+    partiful.fill("partiful+events@EXAMPLE.TEST")
+    expect(save).to_be_enabled()
+    save.click()
+    expect(page.locator(".settings-actions").get_by_text("Saved.", exact=True)).to_be_visible()
+    assert api.account_saves == [{"expected_email": "default@example.test",
+                                  "provider_overrides": {"partiful": "partiful+events@example.test"}, "revision": 1}]
+    page.reload()
+    expect(partiful).to_have_value("partiful+events@example.test")
+    expect(save).to_be_disabled()
+    assert page.evaluate("document.documentElement.scrollWidth <= innerWidth")
+    page.screenshot(path=str(tmp_path / f"registration-partiful-account-{width}.png"))
+    partiful.fill("")
+    save.click()
+    expect(page.locator(".settings-actions").get_by_text("Saved.", exact=True)).to_be_visible()
+    assert api.account_saves[-1] == {"expected_email": "default@example.test", "provider_overrides": {}, "revision": 2}
+    page.reload()
+    form.get_by_role("button", name="Per site", exact=True).click()
+    expect(partiful).to_have_value("")
     assert api.unexpected == []
 
 

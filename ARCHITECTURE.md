@@ -70,7 +70,7 @@ discovery reads persisted facts without contacting social providers.
 
 - **Tenant isolation:** explicit tenant/system scopes in `infra/db.py`; PostgreSQL RLS and distinct operator/executor roles.
 - **Guest/account boundary:** catalog reads are public; profiles, preferences and saved filters require a verified account and legal acceptance when configured as required. Consumer identity never grants production admin access.
-- **Muse authority:** the owner chooses published free Luma/Meetup dates; the connector can only read that account's batches and claim/report their attempts. Keys expire and can be revoked. App state cannot guarantee exactly-once browser submission or cancellation of a running Muse task.
+- **Muse authority:** the owner chooses published free Luma/Meetup/Partiful dates; the connector can only read that account's batches and claim/report their attempts. Keys expire and can be revoked. App state cannot guarantee exactly-once browser submission or cancellation of a running Muse task.
 - **Provider access:** reviewed, enabled sources; policy admission, shared pacing and bounded calls before egress.
 - **Publication:** lease-fenced normalization/publication; failed runs preserve the last successful projection.
 - **Durable effects:** persisted pending work, idempotency and ownership. Retries do not guarantee exactly-once remote mutations.

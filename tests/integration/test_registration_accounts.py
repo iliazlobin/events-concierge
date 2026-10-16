@@ -59,25 +59,32 @@ async def test_mapping_persists_normalizes_and_isolated_from_other_tenants_and_k
     assert cleared.expected_email is None and cleared.provider_overrides == {} and cleared.revision == 2
 
 
-async def test_mapping_changes_only_queued_tasks_and_preserves_claim_and_outcome_identity(db):
+@pytest.mark.parametrize("provider,url", [
+    ("meetup", "https://meetup.com/example/events/123/"),
+    ("partiful", "https://partiful.com/e/example_event"),
+])
+async def test_mapping_changes_only_queued_tasks_and_preserves_claim_and_outcome_identity(db, provider, url):
     tenant, repo = await account(), PostgresMuseRepository()
     first, second, third = selected_event(), selected_event(), selected_event()
-    third = third.model_copy(update={"registration_url": "https://meetup.com/example/events/123/"})
+    third = third.model_copy(update={"registration_url": url})
     active = await repo.queue_registration(tenant, uuid4(), first.canonical_event_id, first)
     queued = await repo.queue_registration(tenant, uuid4(), second.canonical_event_id, second)
     claimed = await repo.claim(tenant, active.batch_id, first.canonical_event_id, uuid4())
     assert claimed.registration_account.expected_email is None
-    await repo.replace_registration_account(tenant, "muse", preference(overrides={"meetup": "meetup@example.test"}))
+    overrides = {provider: "site@example.test"}
+    await repo.replace_registration_account(tenant, "muse", preference(overrides=overrides))
+    assert (await repo.registration_account(tenant, "muse")).provider_overrides == overrides
     updated = (await repo.registrations_for_events(tenant, [second.canonical_event_id]))[0]
     assert updated.registration_account.expected_email == "provider@example.test"
     assert updated.version == queued.version + 1 and updated.unread
     unchanged = (await repo.batch(tenant, active.batch_id)).items[0]
     assert unchanged == claimed
-    meetup = await repo.queue_registration(tenant, uuid4(), third.canonical_event_id, third)
-    assert meetup.registration_account.provider == "meetup"
-    assert meetup.registration_account.expected_email == "meetup@example.test"
+    site = await repo.queue_registration(tenant, uuid4(), third.canonical_event_id, third)
+    assert site.registration_account.provider == provider
+    assert site.registration_account.expected_email == "site@example.test"
+    assert (await repo.batch(tenant, site.batch_id)).items[0].registration_account == site.registration_account
     # Saving an identical mapping advances settings revision but creates no task notification.
-    await repo.replace_registration_account(tenant, "muse", preference(revision=2, overrides={"meetup": "meetup@example.test"}))
+    await repo.replace_registration_account(tenant, "muse", preference(revision=2, overrides=overrides))
     assert (await repo.registrations_for_events(tenant, [second.canonical_event_id]))[0] == updated
     expected = await repo.claim(tenant, queued.batch_id, second.canonical_event_id, uuid4())
     await repo.replace_registration_account(tenant, "muse", preference("new@example.test", 3))

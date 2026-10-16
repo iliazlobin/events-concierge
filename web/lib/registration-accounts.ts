@@ -2,7 +2,7 @@ import { api } from "./api.ts";
 import type { RegistrationProviderId } from "./registration-providers.ts";
 
 export const REGISTRATION_SITES = [
-  { id: "luma", label: "Luma" }, { id: "meetup", label: "Meetup" },
+  { id: "luma", label: "Luma" }, { id: "meetup", label: "Meetup" }, { id: "partiful", label: "Partiful" },
 ] as const;
 export type RegistrationSite = typeof REGISTRATION_SITES[number]["id"];
 export interface RegistrationAccountValues {
@@ -19,12 +19,12 @@ export interface RegistrationAccountSnapshot {
   provider: RegistrationSite;
   expected_email: string | null;
 }
-export interface RegistrationAccountDraft { defaultEmail: string; luma: string; meetup: string }
-export const EMPTY_REGISTRATION_ACCOUNT: RegistrationAccountDraft = { defaultEmail: "", luma: "", meetup: "" };
+export type RegistrationAccountDraft = { defaultEmail: string } & Record<RegistrationSite, string>;
+export const EMPTY_REGISTRATION_ACCOUNT: RegistrationAccountDraft = { defaultEmail: "", luma: "", meetup: "", partiful: "" };
 
 /** Saved registration identities are independent of the account that owns the queue. */
 export function registrationAccountDraft(value: RegistrationAccountValues): RegistrationAccountDraft {
-  return { defaultEmail: value.expected_email ?? "", luma: value.provider_overrides.luma ?? "", meetup: value.provider_overrides.meetup ?? "" };
+  return { defaultEmail: value.expected_email ?? "", luma: value.provider_overrides.luma ?? "", meetup: value.provider_overrides.meetup ?? "", partiful: value.provider_overrides.partiful ?? "" };
 }
 export function registrationAccountValues(draft: RegistrationAccountDraft): RegistrationAccountValues {
   const provider_overrides: RegistrationAccountValues["provider_overrides"] = {};
