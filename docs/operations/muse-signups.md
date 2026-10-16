@@ -1,6 +1,6 @@
 # Muse signups
 
-Signed-in users queue upcoming **free Luma, Meetup or Partiful** dates. The title action is shared by Events, Map, Calendar, source pages and graph details. Events Concierge stores each registration task; Muse completes registration in its own browser.
+Signed-in users queue upcoming or ongoing **free Luma, Meetup or Partiful** dates. The title action is shared by Events, Map, Calendar, source pages and graph details. Events Concierge stores each registration task; Muse completes registration in its own browser.
 
 Unavailable actions show specific reasons on hover, focus or tap. The client matches the API's supported-provider and 48-hour observation checks; the API rechecks eligibility when queueing and claiming.
 
@@ -21,7 +21,7 @@ A supported Muse task-creation API/deeplink has not been verified. The button op
 | Account | Google/Apple app session creates selections and keys; owner writes require CSRF. Muse cannot edit the account or choose events. |
 | Registration identity | A private preference selects the signup/contact email independently of the app sign-in, and the login email where the provider uses one. A default email and Luma/Meetup/Partiful overrides are scoped to the executor, currently Muse. An absent override inherits the default. Partiful phone login remains with the user. This is selection metadata, not verified provider identity, credentials or an access grant. |
 | Connection | One 30-day key per account, shown once; PostgreSQL stores its hash. Replace revokes the old key; **Revoke key** removes access. An active key does not verify Muse's connection. |
-| Queue | One durable task per account/event. Repeated clicks return the existing task. Request UUIDs are idempotent and cannot be reused for another date. Published, scheduled, future, free dates require a supported-provider registration URL observed within 48 hours. |
+| Queue | One durable task per account/event. Repeated clicks return the existing task. Request UUIDs are idempotent and cannot be reused for another date. Published, scheduled, free dates require a supported-provider registration URL observed within 48 hours. A started event remains eligible only with a valid known end after the current time; ended events and started events without an end are unavailable. Supplied end times must be after the start. Queueing and a new claim apply the same rule. |
 | Attempt | Claim with a stable UUID before browser action. A claim rechecks title, date, location, availability and freshness. Competing attempts conflict. Replays return progress, never authorize another submission. |
 | Result | Needs input, organizer approval, waitlist, registered, failed and uncertain remain distinct. Registered requires a provider reference or evidence URL and is labeled **reported by Muse**. |
 | Notification | Each changed attempt/result advances the task version. Acknowledging an older version leaves a newer update unread. Read state persists per account in PostgreSQL; no email, push permission or browser notification is required. |
