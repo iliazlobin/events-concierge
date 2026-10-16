@@ -16,6 +16,7 @@ from ..domain.muse import (
     SignupItem,
     SignupRegistration,
     provider_url,
+    registration_window_open,
 )
 from ..ports.auth import AuthenticationFailedError
 from ..ports.muse import MuseCatalogPort, MuseRepository
@@ -73,19 +74,19 @@ class MuseSignupService:
             return await self.repository.queue_registration(tenant_id, request_id, event_id, event)
 
     async def _selected_event(self, event_id: UUID) -> SignupEvent:
-        now = datetime.now(UTC)
         browse = await self.catalog.get_browse_event(event_id)
         if browse is None:
             raise ValueError("an event is no longer available in the published catalog")
         event = browse.canonical_event
+        now = datetime.now(UTC)
         if (
-            event.start_at <= now
+            not registration_window_open(event.start_at, event.end_at, now)
             or event.price_status is not PriceStatus.FREE
             or event.event_status is not EventStatus.SCHEDULED
             or event.registration_status is RegistrationStatus.SOLD_OUT
         ):
             raise ValueError(
-                "Muse currently supports upcoming free events with available registration"
+                "Muse supports free upcoming or ongoing events with available registration"
             )
         eligible: list[tuple[str, datetime]] = []
         for source in browse.sources:
@@ -142,7 +143,7 @@ class MuseSignupService:
             or event.end_at != item.event.end_at
             or event.venue_name != item.event.venue_name
             or event.city_norm != item.event.city
-            or event.start_at <= now
+            or not registration_window_open(event.start_at, event.end_at, now)
             or not any(
                 source.registration_url == item.event.registration_url
                 and now - _MAX_OBSERVATION_AGE <= source.last_seen_at <= now + timedelta(minutes=5)

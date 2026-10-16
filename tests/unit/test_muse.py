@@ -171,7 +171,7 @@ async def test_batch_uses_published_occurrence_and_only_bounded_public_facts(url
         {"price_status": PriceStatus.UNKNOWN},
         {"event_status": EventStatus.CANCELLED},
         {"registration_status": RegistrationStatus.SOLD_OUT},
-        {"start_at": datetime(2020, 1, 1, tzinfo=UTC)},
+        {"start_at": datetime(2020, 1, 1, tzinfo=UTC), "end_at": datetime(2020, 1, 2, tzinfo=UTC)},
     ],
 )
 async def test_ineligible_event_is_rejected_before_saving(changes, url):

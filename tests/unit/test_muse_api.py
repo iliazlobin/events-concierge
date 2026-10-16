@@ -227,6 +227,9 @@ async def test_connector_schema_carries_signup_email_and_resumed_account_instruc
         assert "never invent or substitute an email" in instructions
         assert "ask for unanswered email fields" in instructions
         assert "saved registration_account" in instructions
+        assert "Events may be upcoming or ongoing" in instructions
+        assert "Ongoing events need a confirmed valid end time still in the future" in instructions
+        assert "do not start a signup for ended events or started events without a confirmed end" in instructions
         assert "Partiful phone/SMS login must be completed by the user" in instructions
         assert "When expected_email is set and the Partiful account email is visible, verify it matches" in instructions
         assert "otherwise ask the user to confirm the active phone account before provider action" in instructions

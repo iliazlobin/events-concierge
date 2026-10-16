@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import re
 from collections.abc import Mapping
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import Any, Literal
 from urllib.parse import urlsplit
 from uuid import UUID
@@ -41,6 +41,19 @@ type SignupStatus = Literal[
     "failed",
     "uncertain",
 ]
+
+
+def registration_window_open(start_at: datetime, end_at: datetime | None, now: datetime) -> bool:
+    """Future dates or ongoing dates with a confirmed, valid end remain open."""
+    values = (start_at, now) if end_at is None else (start_at, end_at, now)
+    if any(value.tzinfo is None or value.utcoffset() is None for value in values):
+        return False
+    start_at = start_at.astimezone(UTC)
+    end_at = end_at.astimezone(UTC) if end_at is not None else None
+    now = now.astimezone(UTC)
+    if end_at is not None and end_at <= start_at:
+        return False
+    return start_at > now or (end_at is not None and end_at > now)
 
 
 def provider_url(value: str) -> str:
