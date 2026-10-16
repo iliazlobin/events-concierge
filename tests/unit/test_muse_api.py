@@ -193,6 +193,7 @@ async def test_connector_contract_exposes_only_selected_batch_operations(monkeyp
     assert result.status_code == 200
     schema = result.json()
     assert schema["servers"] == [{"url": ORIGIN}]
+    assert "free Luma/Meetup/Partiful events" in schema["info"]["description"]
     assert sum(len(verbs) for verbs in schema["paths"].values()) == 4
     assert all(path.startswith("/v1/muse/connector/") for path in schema["paths"])
     assert "/v1/me/registration-accounts/{executor}" not in schema["paths"]
@@ -227,10 +228,12 @@ async def test_connector_schema_carries_signup_email_and_resumed_account_instruc
         assert "ask for unanswered email fields" in instructions
         assert "saved registration_account" in instructions
         assert "Partiful phone/SMS login must be completed by the user" in instructions
-        assert "visible account email when available" in instructions
-        assert "ask the user to confirm the active phone account" in instructions
+        assert "When expected_email is set and the Partiful account email is visible, verify it matches" in instructions
+        assert "otherwise ask the user to confirm the active phone account before provider action" in instructions
+        assert "On mismatch, stop and ask the user before provider action" in instructions
         assert "Never infer phone/email identity" in instructions
-        assert "automatically switch accounts, request SMS or enter verification codes" in instructions
+        assert "Never enter, guess or store phone numbers" in instructions
+        assert "request SMS codes, enter verification codes or switch accounts" in instructions
 
 
 async def test_batch_body_cannot_set_tenant_or_provider_url(monkeypatch):

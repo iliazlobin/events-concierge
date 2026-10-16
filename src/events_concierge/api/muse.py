@@ -249,11 +249,12 @@ def muse_router(
         address is required, ask the user; never invent or substitute an email. Null expected_email
         uses the current provider browser account; ask for unanswered email fields, never infer the
         app email. Claimed attempts keep their saved registration_account when resumed.
-        Partiful phone/SMS login must be completed by the user. Verify the selected email against
-        the visible account email when available; otherwise ask the user to confirm the active phone
-        account. Never infer phone/email identity, automatically switch accounts, request SMS or enter
-        verification codes. For Partiful, expected_email remains a signup/contact email selection,
-        not a phone account selector.
+        Partiful phone/SMS login must be completed by the user. When expected_email is set and the
+        Partiful account email is visible, verify it matches; otherwise ask the user to confirm the
+        active phone account before provider action. On mismatch, stop and ask the user before
+        provider action. Never infer phone/email identity. Never enter, guess or store phone numbers,
+        request SMS codes, enter verification codes or switch accounts. For Partiful, expected_email
+        remains a signup/contact email selection, not a phone account selector.
         """
         result = await _run(_service(request).repository.batch(tenant_id, batch_id))
         if result is None:
@@ -285,11 +286,12 @@ def muse_router(
         invent or substitute an email. Null expected_email uses the current provider browser account;
         ask for unanswered email fields, never infer the app login email. Resumed attempts retain
         their saved registration_account even after settings change.
-        Partiful phone/SMS login must be completed by the user. Verify the selected email against
-        the visible account email when available; otherwise ask the user to confirm the active phone
-        account. Never infer phone/email identity, automatically switch accounts, request SMS or enter
-        verification codes. For Partiful, expected_email remains a signup/contact email selection,
-        not a phone account selector.
+        Partiful phone/SMS login must be completed by the user. When expected_email is set and the
+        Partiful account email is visible, verify it matches; otherwise ask the user to confirm the
+        active phone account before provider action. On mismatch, stop and ask the user before
+        provider action. Never infer phone/email identity. Never enter, guess or store phone numbers,
+        request SMS codes, enter verification codes or switch accounts. For Partiful, expected_email
+        remains a signup/contact email selection, not a phone account selector.
         """
         return await _run(_service(request).claim(tenant_id, batch_id, event_id, body.attempt_id))
 
@@ -328,7 +330,7 @@ def muse_router(
         return get_openapi(
             title="Events Concierge Muse connector",
             version="1",
-            description="Read selected free Luma/Meetup events and report browser signup outcomes. "
+            description="Read selected free Luma/Meetup/Partiful events and report browser signup outcomes. "
             "Bearer credentials are issued by the account owner and expire in 30 days. "
             "Store credentials only in Muse's secure credential setup, never in chat. "
             "Read tools do not mutate; claim/report tools write signup progress.",
