@@ -48,8 +48,7 @@ export function RegistrationAccountPanel({ executor, children }: { executor: Reg
 
   const values = registrationAccountValues(draft);
   const dirty = account !== null && (values.expected_email !== account.expected_email
-    || values.provider_overrides.luma !== account.provider_overrides.luma
-    || values.provider_overrides.meetup !== account.provider_overrides.meetup);
+    || REGISTRATION_SITES.some(site => values.provider_overrides[site.id] !== account.provider_overrides[site.id]));
 
   function edit(field: keyof RegistrationAccountDraft, value: string) {
     setDraft(current => ({ ...current, [field]: value })); setSaved(false);
@@ -73,12 +72,12 @@ export function RegistrationAccountPanel({ executor, children }: { executor: Reg
     event.preventDefault();
     if (!account || saving || loading || conflict) return;
     const problems: FieldErrors = {};
-    for (const field of ["defaultEmail", "luma", "meetup"] as const) {
+    for (const field of ["defaultEmail", ...REGISTRATION_SITES.map(site => site.id)] as const) {
       const problem = validateRegistrationEmail(draft[field]);
       if (problem) problems[field] = problem;
     }
     setErrors(problems);
-    if (Object.keys(problems).length) { if (problems.luma || problems.meetup) setExpanded(true); return; }
+    if (Object.keys(problems).length) { if (REGISTRATION_SITES.some(site => problems[site.id])) setExpanded(true); return; }
     const current = generation.current;
     setSaving(true); setSaved(false); setError(null);
     try {
@@ -97,7 +96,7 @@ export function RegistrationAccountPanel({ executor, children }: { executor: Reg
     <form id={formId} className="settings-card" aria-labelledby="registration-account-heading" noValidate onSubmit={submit}>
       <div className={styles.fieldLabel}>
         <h2 id="registration-account-heading" className="settings-card__title">Registration account</h2>
-        <SettingsHelp label="Registration account">Can differ from your Events Concierge sign-in. Used for provider sign-in and signup email, including company email when accepted. An empty default uses the current browser account; an empty site override uses the default. Changes apply to queued registrations; active attempts keep their saved email.</SettingsHelp>
+        <SettingsHelp label="Registration account">Can differ from your Events Concierge sign-in. Used for provider sign-in and signup email, including company email when accepted. Partiful uses phone login; you complete phone verification. Its email setting applies to form fields. An empty default uses the current browser account; an empty site override uses the default. Changes apply to queued registrations; active attempts keep their saved email.</SettingsHelp>
       </div>
       <div className="settings-field">
         <label htmlFor="registration-default-email">Default email</label>

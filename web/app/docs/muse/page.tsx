@@ -8,7 +8,7 @@ export const metadata: Metadata = { title: "Registrations" };
 export default function MuseGuide() {
   return <GuidePage
     title="Registrations"
-    intro={<p>Queue upcoming free Luma or Meetup events. Muse completes registration in its own browser.</p>}
+    intro={<p>Queue upcoming free Luma, Meetup or Partiful events. Muse completes registration in its own browser.</p>}
     contents={[{ href: "#connect", label: "Connect" }, { href: "#account", label: "Registration account" }, { href: "#start", label: "Queue and start" }, { href: "#progress", label: "Progress" }, { href: "#recovery", label: "Limits and recovery" }]}
   >
     <h2 id="connect" tabIndex={-1}>Connect Muse</h2>
@@ -23,14 +23,15 @@ export default function MuseGuide() {
     <CodeBlock label="Connector request format — placeholder key">{"GET /v1/muse/connector/batches?limit=100\nAuthorization: Bearer YOUR_CONNECTION_KEY"}</CodeBlock>
     <p>The <a href="/v1/muse/openapi.json">connector schema</a> describes the operations Muse can use when signups are enabled. Your event-provider logins stay in Muse.</p>
     <h2 id="account" tabIndex={-1}>Registration account</h2>
-    <p>Your Events Concierge sign-in owns the queue. The account Muse uses on Luma or Meetup can be different.</p>
+    <p>Your Events Concierge sign-in owns the queue. The account Muse uses on the event website can be different.</p>
     <ol>
       <li>Open <Link href="/settings/registrations">Registration settings</Link> and select Muse.</li>
-      <li>Set the default registration email. Use <strong>Per site</strong> to override it for Luma or Meetup.</li>
-      <li>Save. Muse checks the selected email against the provider account and uses it in signup and contact email fields.</li>
+      <li>Set the default registration email. Use <strong>Per site</strong> to override it for Luma, Meetup or Partiful.</li>
+      <li>Save. Muse uses the selected email in signup and contact email fields. On Luma and Meetup, it also checks the signed-in account.</li>
     </ol>
     <p>Leave the default empty to use the current browser account. An empty site override inherits the default. This preference stores no credentials, changes no login and grants no Google or provider access.</p>
     <p>The selected email also applies to company/work email fields when accepted. If a form rejects it or requires a business-domain address, Muse asks you instead of substituting another address. With no selected email, Muse asks for unanswered email fields. Your app sign-in is never a fallback.</p>
+    <p><a href="https://help.partiful.com/en-us/articles/15525505-how-do-i-rsvp-to-an-event-on-partiful" target="_blank" rel="noopener noreferrer">Partiful verifies RSVPs by phone</a>. You complete phone/SMS login in Muse’s browser; Muse does not enter phone numbers, request codes or enter verification codes. The email preference applies to email form fields. Muse checks the account email when visible or asks you to confirm the active phone account before continuing.</p>
     <CodeBlock label="Different app and provider accounts">{"Events Concierge: owner@example.test\nMuse default:      registrations@example.test\nLuma override:    events@example.test"}</CodeBlock>
     <p>Changes apply to queued tasks. Claimed attempts keep their account selection, including when resumed. If the browser account differs from the selected email, Muse stops for your instruction; it does not switch accounts automatically.</p>
     <h2 id="start" tabIndex={-1}>Queue and start</h2>
@@ -63,7 +64,7 @@ export default function MuseGuide() {
     <p>Events Concierge records Muse’s report; it does not independently check your provider RSVP. Confirm your registration on the event website.</p>
     <h2 id="recovery" tabIndex={-1}>Limits and recovery</h2>
     <ul>
-      <li>Only upcoming, scheduled, free Luma/Meetup events that are not sold out are supported. The app requires provider details observed within the last 48 hours.</li>
+      <li>Only upcoming, scheduled, free Luma, Meetup or Partiful events that are not sold out are supported. The app requires provider details observed within the last 48 hours. Ongoing events and unconfirmed admission remain unavailable.</li>
       <li>If event details are too old, wait for a source refresh or register on the provider’s website.</li>
       <li>Tasks are not automatically retried. Repeated clicks open existing progress.</li>
       <li>In <Link href="/settings/registrations">Registration settings</Link>, <strong>Replace key</strong> revokes the old key. <strong>Revoke key</strong> removes connector access.</li>

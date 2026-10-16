@@ -17,7 +17,7 @@ const item = {
   version: 1, unread: true, status: "queued", outcome: null,
 };
 
-test("only upcoming free Luma or Meetup events can be queued", () => {
+test("only upcoming free Luma, Meetup or Partiful events can be queued", () => {
   assert.equal(museEligibility(event, now), null);
   for (const changes of [
     { price_status: "paid" }, { price_status: "unknown" }, { event_status: "cancelled" },
@@ -30,7 +30,7 @@ test("unavailable events explain each blocker without treating unknown admission
   const reason = museEligibility({ ...event, price_status: "unknown",
     registration_urls: ["https://www.sf.gov/event"], sources: [] }, now);
   assert.match(reason, /Free admission isn’t confirmed/);
-  assert.match(reason, /Luma and Meetup/);
+  assert.match(reason, /Luma, Meetup and Partiful/);
   assert.doesNotMatch(reason, /paid/i);
   assert.match(museEligibility({ ...event, start_at: "2026-10-07T11:00:00Z" }, now), /already started/);
 });
@@ -55,6 +55,24 @@ test("provider URLs reject credential links and unapproved origins", () => {
   for (const url of ["javascript:alert(1)", "https://lu.ma.evil.test/event", "https://lu.ma/",
     "https://user:secret@lu.ma/event", "https://lu.ma:444/event", "https://lu.ma/event#token",
     "https://lu.ma/event\n", "https://lu.ma/\\evil"]) assert.equal(museProviderUrl(url), null);
+});
+
+test("Partiful accepts canonical event paths and keeps all eligibility gates", () => {
+  for (const url of ["https://partiful.com/e/Abc123", "https://www.partiful.com/e/abc_-123/?source=invite"]) {
+    assert.equal(museProviderUrl(url), url);
+    const partiful = { ...event, registration_urls: [url], sources: [{ registration_url: url, last_seen_at: "2026-10-07T11:00:00Z" }] };
+    assert.equal(museEligibility(partiful, now), null);
+    assert.match(museEligibility({ ...partiful, price_status: "unknown" }, now), /Free admission isn’t confirmed/);
+    assert.match(museEligibility({ ...partiful, start_at: "2026-10-07T11:00:00Z" }, now), /already started/);
+    assert.match(museEligibility({ ...partiful, sources: [{ registration_url: url, last_seen_at: "2026-10-05T11:59:59Z" }] }, now), /refresh/);
+  }
+  for (const url of ["http://partiful.com/e/Abc123", "https://partiful.com/", "https://partiful.com/e/",
+    "https://partiful.com/u/host", "https://partiful.com/e/one/two", "https://partiful.com.evil.test/e/Abc123",
+    "https://user:secret@partiful.com/e/Abc123", "https://partiful.com:444/e/Abc123", "https://partiful.com/e/Abc123#token",
+    "https://partiful.com/e/%41bc123", "https://partiful.com/e/abc%2F123", "https://partiful.com/e/one/../two",
+    "https://partiful.com/e/%2e/Abc123", "https://partiful.com/e/Abc123\n"]) {
+    assert.equal(museProviderUrl(url), null, url);
+  }
 });
 
 test("a delayed list response cannot roll back progress or duplicate an existing task", () => {
@@ -100,6 +118,15 @@ test("selected signup email also answers contact and company fields without inve
   assert.match(instruction, /never invent or substitute another email/);
   assert.match(instruction, /expected_email is unset, use the current browser account and ask me for unanswered email fields/);
   assert.match(instruction, /resuming an existing attempt, keep its saved account/);
+});
+
+test("Partiful phone authentication is completed by the user and stays separate from form email", () => {
+  const instruction = museInstruction();
+  assert.match(instruction, /For Luma and Meetup, when expected_email is set, verify the visible provider account matches it/);
+  assert.match(instruction, /Partiful uses phone login: ask me to complete any phone\/SMS login/);
+  assert.match(instruction, /Never enter, guess or store phone numbers, request SMS codes, enter verification codes or switch accounts/);
+  assert.match(instruction, /When expected_email is set and the Partiful account email is visible, verify it matches; otherwise ask me to confirm the active phone account before provider action/);
+  assert.match(instruction, /selected email applies to Partiful email form fields, not phone login/);
 });
 
 test("queue, page and seen requests use the owner API, exact IDs and cancellation signal", async () => {
