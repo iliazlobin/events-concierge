@@ -23,9 +23,12 @@ export interface MuseIssuedConnection { token: string; expires_at: string }
 export function museProviderUrl(value: string): string | null {
   try {
     const url = new URL(value);
-    // URL normalizes dot segments; validate Partiful's original event path like the API.
-    const path = value.match(/^https:\/\/[^/?#]+([^?#]*)/i)?.[1] ?? "";
+    // URL decodes hosts and normalizes dot segments; preserve the API's raw URL checks.
+    const raw = value.match(/^https:\/\/([^/?#]+)([^?#]*)/i);
+    const authority = raw?.[1] ?? "";
+    const path = raw?.[2] ?? "";
     return value.length <= 2048 && /^[\x21-\x7e]+$/.test(value) && !value.includes("\\") && url.protocol === "https:"
+      && !authority.includes("%")
       && (hosts.has(url.hostname) || (partifulHosts.has(url.hostname) && /^\/e\/[A-Za-z0-9_-]+\/?$/.test(path)))
       && !url.username && !url.password && !url.port
       && Boolean(url.pathname.replaceAll("/", "")) && !url.hash ? value : null;

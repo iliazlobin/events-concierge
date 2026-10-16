@@ -70,7 +70,9 @@ test("Partiful accepts canonical event paths and keeps all eligibility gates", (
     "https://partiful.com/u/host", "https://partiful.com/e/one/two", "https://partiful.com.evil.test/e/Abc123",
     "https://user:secret@partiful.com/e/Abc123", "https://partiful.com:444/e/Abc123", "https://partiful.com/e/Abc123#token",
     "https://partiful.com/e/%41bc123", "https://partiful.com/e/abc%2F123", "https://partiful.com/e/one/../two",
-    "https://partiful.com/e/%2e/Abc123", "https://partiful.com/e/Abc123\n"]) {
+    "https://partiful.com/e/%2e/Abc123", "https://partiful.com/e/Abc123\n",
+    "https://%70artiful.com/e/review_test", "https://partiful%2ecom/e/review_test",
+    "https://www.%70artiful.com/e/review_test"]) {
     assert.equal(museProviderUrl(url), null, url);
   }
 });
