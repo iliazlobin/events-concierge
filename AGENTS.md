@@ -9,7 +9,7 @@ verify provider configuration and real browser acceptance for each release. Chat
 RSVP, managed handoffs, outbound notifications, calendar synchronization, purchases and programmatic
 API keys are deferred unless the assigned task explicitly changes their scope.
 The narrow [Muse signup queue](docs/operations/muse-signups.md) is implemented for explicitly
-queued free Luma/Meetup dates, with account-owned progress and in-app unread updates. Muse owns browser execution; verify connection and provider
+queued free Luma/Meetup/Partiful dates, with account-owned progress and in-app unread updates. Muse owns browser execution; verify connection and provider
 acceptance separately from the app release.
 
 - [Architecture](ARCHITECTURE.md): code map, runtime boundaries and invariants.

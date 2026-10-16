@@ -27,6 +27,7 @@ MOCK_ORIGIN = "http://127.0.0.1:14303"
 PREVIEW_PATH = (
     "/?view=events&when=all&city=sanfrancisco"
     "&source=muse-queue-preview-luma&source=muse-queue-preview-meetup"
+    "&source=muse-queue-preview-partiful"
 )
 # Match both public facts, then freeze their canonical UUIDs before creating an account.
 FIXTURES = {
@@ -35,6 +36,14 @@ FIXTURES = {
         "https://www.meetup.com/ec-muse-local-test/events/000000001/"
     ),
 }
+# The original preview remains usable without reseeding it. When present, this exact
+# additional fixture is checked and frozen by UUID before the new mock account exists.
+OPTIONAL_FIXTURES = {
+    "LOCAL TEST - Queue with Muse Partiful signup": (
+        "https://partiful.com/e/ec-muse-queue-test-not-a-real-event"
+    ),
+}
+ALLOWED_FIXTURES = FIXTURES | OPTIONAL_FIXTURES
 RESULTS = {"registered", "needs_input", "uncertain", "failed", "waitlisted", "awaiting_approval"}
 
 
@@ -44,10 +53,10 @@ class MockError(ValueError):
 
 def validate_fixture(event: dict, *, catalog: bool = False) -> str:
     event_id = str(UUID(event["canonical_event_id"]))
-    url = FIXTURES.get(event.get("title"))
+    url = ALLOWED_FIXTURES.get(event.get("title"))
     actual = event.get("registration_urls") if catalog else [event.get("registration_url")]
     if url is None or actual != [url] or event.get("price_status") != "free":
-        raise MockError("Only the two reviewed synthetic fixtures are supported")
+        raise MockError("Only the reviewed synthetic fixtures are supported")
     return event_id
 
 
@@ -89,7 +98,7 @@ class MuseMock:
             raise MockError("Requires an isolated local_demo preview with Muse enabled")
         page = await self.api("GET", "/v1/catalog/events?when=all&limit=100")
         for event in page["items"]:
-            if event.get("title") in FIXTURES:
+            if event.get("title") in ALLOWED_FIXTURES:
                 event_id = validate_fixture(event, catalog=True)
                 if any(e["title"] == event["title"] for e in self.events.values()):
                     raise MockError("Synthetic fixture titles must be unique")
@@ -97,7 +106,7 @@ class MuseMock:
                 observed = [
                     datetime.fromisoformat(s["last_seen_at"])
                     for s in event["sources"]
-                    if s["registration_url"] == FIXTURES[event["title"]]
+                    if s["registration_url"] == ALLOWED_FIXTURES[event["title"]]
                 ]
                 if (
                     datetime.fromisoformat(event["start_at"]) <= now
@@ -111,7 +120,7 @@ class MuseMock:
                         "Synthetic fixtures are stale; prepare a fresh isolated preview"
                     )
                 self.events[event_id] = event
-        if len(self.events) != len(FIXTURES):
+        if not set(FIXTURES).issubset(event["title"] for event in self.events.values()):
             raise MockError("The isolated catalog must contain both synthetic queue fixtures")
         account = await self.api("POST", "/v1/onboard", json={"notify_email": self.email})
         self.owner = {"X-EC-Tenant-ID": str(UUID(account["tenant_id"]))}

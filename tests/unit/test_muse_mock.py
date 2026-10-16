@@ -11,6 +11,7 @@ from tests.support.muse_mock import (
     API_ORIGIN,
     FIXTURES,
     MOCK_ORIGIN,
+    OPTIONAL_FIXTURES,
     WEB_ORIGIN,
     MockError,
     MuseMock,
@@ -211,6 +212,43 @@ async def test_valid_start_creates_only_a_fresh_demo_owner_and_key():
     assert mock._bearer == {"Authorization": "Bearer " + FIXTURE_TOKEN}
     assert all("cookie" not in request.headers for request in backend.requests)
     assert all("authorization" not in request.headers for request in backend.requests)
+
+
+@pytest.mark.parametrize("invalid", [None, "url", "paid", "stale"])
+async def test_optional_partiful_fixture_is_checked_before_start_and_uses_one_attempt(invalid):
+    backend = FakeBackend()
+    event = deepcopy(backend.events[0])
+    title, url = next(iter(OPTIONAL_FIXTURES.items()))
+    event.update(canonical_event_id=str(uuid4()), title=title, registration_urls=[url])
+    event["sources"][0]["registration_url"] = url
+    if invalid == "url":
+        event["registration_urls"] = ["https://partiful.com/e/a-real-event"]
+    elif invalid == "paid":
+        event["price_status"] = "paid"
+    elif invalid == "stale":
+        event["sources"][0]["last_seen_at"] = (datetime.now(UTC) - timedelta(hours=49)).isoformat()
+    backend.events.append(event)
+    async with httpx.AsyncClient(transport=httpx.MockTransport(backend)) as upstream:
+        mock = MuseMock(upstream)
+        if invalid:
+            with pytest.raises(MockError):
+                await mock.start()
+            assert backend.writes == []
+            assert mock.owner == {} and mock._bearer == {}
+            return
+        await mock.start()
+        assert len(mock.events) == 3
+        assert event["canonical_event_id"] in mock.events
+        backend.batches = [{"batch_id": str(uuid4()), "items": [signup_item(event)]}]
+        event_id = UUID(event["canonical_event_id"])
+        await mock.advance(event_id, "needs_input")
+        await mock.advance(event_id, "registered")
+    claims = [r for r in backend.writes if r.url.path.endswith("/claim")]
+    outcomes = [json.loads(r.content) for r in backend.writes if r.url.path.endswith("/outcome")]
+    assert len(claims) == 1
+    assert [o["outcome"]["status"] for o in outcomes] == ["needs_input", "registered"]
+    assert len({o["attempt_id"] for o in outcomes}) == 1
+    assert all("No provider contacted" in o["outcome"]["note"] for o in outcomes)
 
 
 @pytest.mark.parametrize(
