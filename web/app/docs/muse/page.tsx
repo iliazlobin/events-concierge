@@ -67,7 +67,7 @@ export default function MuseGuide() {
       <li>Scheduled, free Luma, Meetup or Partiful events that are not sold out are supported. Upcoming events may have no end time; ongoing events need a confirmed end time still in the future. Ended events, invalid dates and unconfirmed admission remain unavailable.</li>
       <li>The app requires provider details observed within the last 48 hours. Muse rechecks the event’s dates, price and availability before submitting.</li>
       <li>If event details are too old, wait for a source refresh or register on the provider’s website.</li>
-      <li>Tasks are not automatically retried. Repeated clicks open existing progress.</li>
+      <li>Tasks are not automatically retried. Repeated clicks open existing progress. Existing attempts can still receive status updates after the event ends.</li>
       <li>In <Link href="/settings/registrations">Registration settings</Link>, <strong>Replace key</strong> revokes the old key. <strong>Revoke key</strong> removes connector access.</li>
       <li>Key revocation cannot stop an already running Muse browser task or withdraw a registration. Stop the task in Muse separately.</li>
     </ul>

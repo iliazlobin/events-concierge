@@ -55,6 +55,17 @@ test("ongoing eligibility requires a valid interval and excludes the exact end b
   }
 });
 
+test("event dates fail closed for naive timestamps and invalid calendar values", () => {
+  for (const start_at of ["2030-06-14T19:30:00", "2030-06-14", "2030-02-30T19:30:00Z", "2030-06-14T24:00:00Z"]) {
+    assert.match(museEligibility({ ...event, start_at, end_at: null }, now), /date isn’t confirmed/);
+  }
+  for (const end_at of ["2030-06-15T19:30:00", "2030-06-15", "2030-02-30T19:30:00Z", "2030-06-15T24:00:00Z"]) {
+    assert.match(museEligibility({ ...event, end_at }, now), /dates aren’t confirmed/);
+  }
+  assert.equal(museEligibility({ ...event, start_at: "2028-02-29T19:30:00.123456+02:00", end_at: null }, now), null);
+  assert.match(museEligibility({ ...event, start_at: "2030-02-29T19:30:00Z", end_at: null }, now), /date isn’t confirmed/);
+});
+
 test("selection requires a fresh supported-source observation at the API's exact time boundaries", () => {
   const observed = (last_seen_at, registration_url = "https://lu.ma/event") => ({ registration_url, last_seen_at });
   const eligible = sources => museEligibility({ ...event, sources }, now);
@@ -131,7 +142,8 @@ test("handoff covers every page, protects attempts, and distinguishes reported r
   assert.match(instruction, /Never infer an email from my Events Concierge sign-in or switch accounts without my instruction/);
   assert.match(instruction, /verify title, start\/end times, price and availability/);
   assert.match(instruction, /Register an ongoing event only while its confirmed end time is still in the future/);
-  assert.match(instruction, /Do not proceed with ended events, invalid dates or an ongoing event without a confirmed end time/);
+  assert.match(instruction, /Do not start a signup for ended events, invalid dates or an ongoing event without a confirmed end time/);
+  assert.match(instruction, /Check and report an existing attempt after the event ends without submitting another signup/);
   assert.equal(museStatusLabel.registered, "Registered · reported by Muse");
   assert.notEqual(museStatusLabel.awaiting_approval, museStatusLabel.registered);
 });
