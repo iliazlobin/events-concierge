@@ -49,7 +49,7 @@ export default function MuseGuide() {
     <MuseInstructions />
     <h2 id="progress" tabIndex={-1}>Registration progress</h2>
     <p>The header shows queued, in-progress, registered and needs-attention totals. Open <Link href="/?registrations=1">Registrations</Link> to filter tasks by status or provider. Only the displayed unread versions are marked as read.</p>
-    <p>Each task explains what it is waiting for. Expand <strong>Activity</strong> to see when it was queued and the latest saved Muse update. Times use your local time zone. This is a status snapshot; intermediate browser steps are not recorded in the app.</p>
+    <p>Each task shows its status, update time and result note or next step. Expand <strong>Activity</strong> for its queue time and latest saved status. Times use your local time zone. Visible panels refresh every 15 seconds; intermediate Muse browser steps are not shared.</p>
     <table aria-label="Registration statuses"><thead><tr><th scope="col">Status</th><th scope="col">Meaning</th></tr></thead><tbody>
       <tr><td>Queued</td><td>Saved; waiting for Muse to claim the task. A lavender clock marks queued cards.</td></tr>
       <tr><td>In progress</td><td>Muse claimed the task.</td></tr>

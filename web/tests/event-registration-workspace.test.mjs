@@ -22,8 +22,8 @@ test("activity shows only saved timestamps and does not invent a browser history
   assert.deepEqual(registrationActivity({ status: "registered", created_at, updated_at, version: 6 }), [
     { status: "queued", at: created_at }, { status: "registered", at: updated_at },
   ]);
-  assert.match(registrationProgress.queued, /Waiting for Muse/);
-  assert.match(registrationProgress.in_progress, /Waiting for a result/);
+  assert.match(registrationProgress.queued, /Not started.*Open Muse/);
+  assert.match(registrationProgress.in_progress, /no result reported yet/);
   assert.match(registrationProgress.uncertain, /Check provider confirmation before retrying/);
 });
 test("every registration status belongs to a visible category without conflating organizer approval with registration", () => {

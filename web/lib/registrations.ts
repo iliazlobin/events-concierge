@@ -29,9 +29,9 @@ export function registrationActivity(task: RegistrationTask): RegistrationActivi
 }
 
 export const registrationProgress: Record<RegistrationStatus, string> = {
-  queued: "Waiting for Muse to pick up this registration.",
-  in_progress: "Muse picked up this registration. Waiting for a result.",
-  needs_input: "Muse needs your input. Continue in Muse.",
+  queued: "Not started. Open Muse to process the queue.",
+  in_progress: "Picked up by Muse; no result reported yet.",
+  needs_input: "Your input is needed in Muse.",
   awaiting_approval: "Waiting for the organizer to approve your registration.",
   waitlisted: "Waiting for a place to become available.",
   registered: "Muse reported a confirmed registration.",
