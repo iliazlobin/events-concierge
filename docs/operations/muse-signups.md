@@ -89,3 +89,15 @@ An optional third fixture, **LOCAL TEST - Queue with Muse Partiful signup**, use
 4. Stop with `Ctrl+C`. Shutdown attempts to revoke only this run's key; the fresh account and task records remain. Restart for a new account after a completed result.
 
 The mock contacts no event provider. It does not verify Google sign-in, production CSRF, Muse connector import or a real signup.
+
+## Registration list management
+
+The owner can remove one item, up to 100 selected loaded items, or all registrations across pages and statuses. The browser shows a confirmation explaining the scope. Removed items stay in the Removed view and can be restored individually or by selection. This is recoverable list management, not provider cancellation.
+
+`POST /v1/me/muse/registrations/manage` requires the owner's browser session and CSRF evidence, never a connector key. Selected commands send `{items: [{event_id, version}], removed: true}`; restore uses `removed: false`. Remove all uses `{all: true, items: [], removed: true}`. Selected versions are checked atomically; changed selections return 409, missing/foreign items return 404 without partial changes. All acts on the account's current items at execution, including unloaded pages.
+
+Migration 0222 adds `removed_at` on the existing RLS-protected items. Removal increments the item version, clears its unread marker, and preserves its request aliases, attempt identity, outcome, account snapshot and activity times. Removed items are excluded from active status and unread counts; `status_counts.removed` counts them, and `total` includes retained removed items. Cursor pagination and event lookups retain them for restoration and duplicate prevention. Queueing a removed event returns its retained task; the user must explicitly restore it before unclaimed work can resume.
+
+Claim/removal serialize under the account lock. If removal wins, a new claim fails; a claim already obtained cannot be recalled from Muse's browser. Existing attempts may finish and report while hidden; provider RSVPs are unaffected. Restoring never creates a new attempt or resets a result. Connector instructions skip removed items and require normal claim checks before new work.
+
+Retain schema 0222 and a removal-aware API after activation. Older APIs ignore removal state and could claim removed queued work: disable Muse and stop browser execution before reverting to older code. The downgrade refuses to discard nonempty removal state. No removal data may be cleared to force a rollback.

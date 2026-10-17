@@ -191,3 +191,11 @@ test("queue, page and seen requests use the owner API, exact IDs and cancellatio
     }
   } finally { globalThis.fetch = original; }
 });
+
+test("removed attempts can retain later outcomes without resurfacing update notices", () => {
+  const removed = { ...item, removed_at: "2026-10-07T13:00:00Z", version: 2 };
+  const finished = { ...removed, status: "registered", version: 3, outcome: { note: "Confirmed" } };
+  assert.deepEqual(museRegistrationUpdates([removed], [finished]), []);
+  assert.equal(mergeMuseRegistrations([removed], [finished])[0].outcome.note, "Confirmed");
+  assert.equal(mergeMuseRegistrations([finished], [item])[0].removed_at, removed.removed_at);
+});

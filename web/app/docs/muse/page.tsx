@@ -62,6 +62,7 @@ export default function MuseGuide() {
       <tr><td>Needs verification</td><td>The outcome is uncertain. Check the provider before another submission.</td></tr>
     </tbody></table>
     <p>Events Concierge records Muse’s report; it does not independently check your provider RSVP. Confirm your registration on the event website.</p>
+    <p>Remove one task with its trash icon, select up to 100 loaded tasks, or choose <strong>Remove all</strong> across every page and status. Restore items from <strong>Removed</strong>. Removal stops unclaimed work; already started work may finish. It does not cancel an RSVP on the provider’s website.</p>
     <h2 id="recovery" tabIndex={-1}>Limits and recovery</h2>
     <ul>
       <li>Scheduled, free Luma, Meetup or Partiful events that are not sold out are supported. Upcoming events may have no end time; ongoing events need a confirmed end time still in the future. Ended events, invalid dates and unconfirmed admission remain unavailable.</li>

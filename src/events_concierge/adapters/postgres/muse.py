@@ -10,6 +10,7 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ...domain.muse import (
+    ManageRegistrations,
     MuseConflictError,
     MuseConnection,
     MuseNotFoundError,
@@ -30,8 +31,8 @@ from ...ports.auth import AuthenticationFailedError
 
 _MAX_PAGE_SIZE = 100
 _REGISTRATION_FIELDS = """
-    i.event, i.registration_account, i.status, i.attempt_id, i.outcome, i.updated_at, i.batch_id,
-    b.created_at, i.version, i.version > i.seen_version AS unread
+    i.removed_at, i.event, i.registration_account, i.status, i.attempt_id, i.outcome, i.updated_at, i.batch_id,
+    b.created_at, i.version, (i.removed_at IS NULL AND i.version > i.seen_version) AS unread
 """
 
 
@@ -201,7 +202,7 @@ async def _batch(session: AsyncSession, tenant_id: UUID, batch_id: UUID) -> Sign
         (
             await session.execute(
                 text("""
-        SELECT event, registration_account, status, attempt_id, outcome, updated_at FROM public.muse_signup_items
+        SELECT removed_at, event, registration_account, status, attempt_id, outcome, updated_at FROM public.muse_signup_items
         WHERE tenant_id = :tenant_id AND batch_id = :batch_id
         ORDER BY event->>'start_at', canonical_event_id
     """),
@@ -224,7 +225,7 @@ async def _item(
         (
             await session.execute(
                 text("""
-        SELECT event, registration_account, status, attempt_id, outcome, updated_at FROM public.muse_signup_items
+        SELECT removed_at, event, registration_account, status, attempt_id, outcome, updated_at FROM public.muse_signup_items
         WHERE tenant_id = :tenant_id AND batch_id = :batch_id AND canonical_event_id = :event_id
         FOR UPDATE
     """),
@@ -288,7 +289,7 @@ class PostgresMuseRepository:
                 (
                     await session.execute(
                         text("""
-                            SELECT event, registration_account, status, attempt_id, outcome, updated_at
+                            SELECT removed_at, event, registration_account, status, attempt_id, outcome, updated_at
                             FROM public.muse_signup_items
                             WHERE tenant_id = :tenant_id AND status = 'queued'
                             FOR UPDATE
@@ -512,15 +513,16 @@ class PostgresMuseRepository:
                     await session.execute(
                         text("""
                         SELECT count(*) AS total,
-                            count(*) FILTER (WHERE version > seen_version) AS unread_count,
-                            count(*) FILTER (WHERE status = 'queued') AS queued,
-                            count(*) FILTER (WHERE status = 'in_progress') AS in_progress,
-                            count(*) FILTER (WHERE status = 'needs_input') AS needs_input,
-                            count(*) FILTER (WHERE status = 'awaiting_approval') AS awaiting_approval,
-                            count(*) FILTER (WHERE status = 'waitlisted') AS waitlisted,
-                            count(*) FILTER (WHERE status = 'registered') AS registered,
-                            count(*) FILTER (WHERE status = 'failed') AS failed,
-                            count(*) FILTER (WHERE status = 'uncertain') AS uncertain
+                            count(*) FILTER (WHERE removed_at IS NOT NULL) AS removed,
+                            count(*) FILTER (WHERE removed_at IS NULL AND version > seen_version) AS unread_count,
+                            count(*) FILTER (WHERE removed_at IS NULL AND status = 'queued') AS queued,
+                            count(*) FILTER (WHERE removed_at IS NULL AND status = 'in_progress') AS in_progress,
+                            count(*) FILTER (WHERE removed_at IS NULL AND status = 'needs_input') AS needs_input,
+                            count(*) FILTER (WHERE removed_at IS NULL AND status = 'awaiting_approval') AS awaiting_approval,
+                            count(*) FILTER (WHERE removed_at IS NULL AND status = 'waitlisted') AS waitlisted,
+                            count(*) FILTER (WHERE removed_at IS NULL AND status = 'registered') AS registered,
+                            count(*) FILTER (WHERE removed_at IS NULL AND status = 'failed') AS failed,
+                            count(*) FILTER (WHERE removed_at IS NULL AND status = 'uncertain') AS uncertain
                         FROM public.muse_signup_items WHERE tenant_id = :tenant_id
                     """),
                         {"tenant_id": tenant_id},
@@ -622,6 +624,33 @@ class PostgresMuseRepository:
                     {"tenant_id": tenant_id, "event_id": item.event_id, "version": item.version},
                 )
 
+    async def manage_registrations(self, tenant_id: UUID, command: ManageRegistrations) -> int:
+        async with tenant_session_scope(tenant_id) as session:
+            # Serializes removal with claims, reports, queueing and account erasure.
+            await _account_lock(session, tenant_id)
+            if not command.all:
+                rows = (await session.execute(text("""
+                    SELECT canonical_event_id, version FROM public.muse_signup_items
+                    WHERE tenant_id = :tenant_id
+                    AND canonical_event_id = ANY(CAST(:ids AS uuid[])) FOR UPDATE
+                """), {"tenant_id": tenant_id, "ids": [item.event_id for item in command.items]})).mappings().all()
+                versions = {row["canonical_event_id"]: row["version"] for row in rows}
+                if len(versions) != len(command.items):
+                    raise MuseNotFoundError("signup registration not found")
+                if any(versions[item.event_id] != item.version for item in command.items):
+                    raise MuseConflictError("registrations changed; refresh and select them again")
+            rows = (await session.execute(text("""
+                UPDATE public.muse_signup_items
+                SET removed_at = CASE WHEN :removed THEN clock_timestamp() ELSE NULL END,
+                    version = version + 1, seen_version = version + 1
+                WHERE tenant_id = :tenant_id
+                AND (:all_items OR canonical_event_id = ANY(CAST(:ids AS uuid[])))
+                AND ((:removed AND removed_at IS NULL) OR (NOT :removed AND removed_at IS NOT NULL))
+                RETURNING canonical_event_id
+            """), {"tenant_id": tenant_id, "all_items": command.all, "removed": command.removed,
+                   "ids": [item.event_id for item in command.items]})).scalars().all()
+            return len(rows)
+
     async def batch(self, tenant_id: UUID, batch_id: UUID) -> SignupBatch | None:
         async with tenant_session_scope(tenant_id) as session:
             await _account_lock(session, tenant_id)
@@ -639,6 +668,8 @@ class PostgresMuseRepository:
             item = await _item(session, tenant_id, batch_id, event_id)
             if item.attempt_id == attempt_id:
                 return item
+            if item.removed_at is not None:
+                raise MuseConflictError("registration removed; do not start a signup")
             if item.status != "queued":
                 raise MuseConflictError(
                     "another attempt owns this signup; check its provider status"

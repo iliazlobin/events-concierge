@@ -27,6 +27,7 @@ from events_concierge.application.muse import MuseSignupService
 from events_concierge.domain.account_erasure import AccountErasureStage
 from events_concierge.domain.credentials import Tenant
 from events_concierge.domain.muse import (
+    ManageRegistrations,
     MuseConflictError,
     MuseNotFoundError,
     RegistrationAccountUpdate,
@@ -588,3 +589,91 @@ async def test_registration_account_empty_superuser_downgrade_and_upgrade(muse_m
     tenant = await account()
     settings = await PostgresMuseRepository().registration_account(tenant, "muse")
     assert settings.revision == 0 and settings.expected_email is None
+
+
+async def test_recoverable_removal_stops_unclaimed_work_preserves_evidence_and_is_tenant_scoped(db):
+    tenant, other = await account(), await account()
+    repo = PostgresMuseRepository()
+    event = selected_event()
+    queued = await repo.queue_registration(tenant, uuid4(), event.canonical_event_id, event)
+    foreign = await repo.queue_registration(other, uuid4(), event.canonical_event_id, event)
+    command = ManageRegistrations(items=[SeenRegistration(event_id=event.canonical_event_id, version=queued.version)])
+    assert await repo.manage_registrations(tenant, command) == 1
+    page = await repo.registrations(tenant)
+    removed = page.items[0]
+    assert page.status_counts.removed == 1 and page.status_counts.queued == 0
+    assert removed.removed_at and not removed.unread
+    with pytest.raises(MuseConflictError, match="removed"):
+        await repo.claim(tenant, queued.batch_id, event.canonical_event_id, uuid4())
+    # Existing requests and event lookup retain the original item; never create a second attempt.
+    duplicate = await repo.queue_registration(tenant, uuid4(), event.canonical_event_id)
+    assert duplicate.batch_id == queued.batch_id and duplicate.removed_at
+    assert (await repo.registrations_for_events(tenant, [event.canonical_event_id]))[0].removed_at
+    assert not (await repo.registrations(other)).items[0].removed_at
+    with pytest.raises(MuseConflictError, match="changed"):
+        await repo.manage_registrations(tenant, command)
+    restore = ManageRegistrations(items=[SeenRegistration(event_id=event.canonical_event_id, version=removed.version)], removed=False)
+    assert await repo.manage_registrations(tenant, restore) == 1
+    claimed = await repo.claim(tenant, queued.batch_id, event.canonical_event_id, uuid4())
+    assert claimed.attempt_id
+    assert await repo.manage_registrations(tenant, ManageRegistrations(all=True)) == 1
+    # A previously started attempt can report after removal, without becoming visible or unread.
+    outcome = SignupOutcome(status="registered", confirmation_reference="retained-evidence")
+    reported = await repo.report(tenant, queued.batch_id, event.canonical_event_id, claimed.attempt_id, outcome)
+    assert reported.removed_at and reported.outcome == outcome
+    page = await repo.registrations(tenant)
+    assert page.unread_count == 0 and page.status_counts.removed == 1
+    assert (await repo.registrations(other)).items[0].version == foreign.version
+    assert await repo.manage_registrations(tenant, ManageRegistrations(all=True)) == 0
+
+
+async def test_remove_all_covers_unloaded_pages_and_selected_versions_are_atomic(db):
+    tenant = await account()
+    repo = PostgresMuseRepository()
+    queued = []
+    for _ in range(55):
+        event = selected_event()
+        queued.append(await repo.queue_registration(tenant, uuid4(), event.canonical_event_id, event))
+    assert len((await repo.registrations(tenant)).items) == 50
+    assert await repo.manage_registrations(tenant, ManageRegistrations(all=True)) == 55
+    page = await repo.registrations(tenant)
+    assert page.status_counts.removed == 55 and page.status_counts.queued == 0
+    with pytest.raises(MuseNotFoundError):
+        await repo.manage_registrations(tenant, ManageRegistrations(items=[
+            SeenRegistration(event_id=queued[0].event.canonical_event_id, version=2),
+            SeenRegistration(event_id=uuid4(), version=1),
+        ], removed=False))
+    assert (await repo.registrations(tenant)).status_counts.removed == 55
+
+
+@pytest.mark.parametrize("filtered_owner", [False, True])
+async def test_removal_downgrade_preserves_state_and_refuses_filtered_visibility(
+    muse_migration_db, monkeypatch, filtered_owner,
+):
+    tenant, repo = await account(), PostgresMuseRepository()
+    event = selected_event()
+    await repo.queue_registration(tenant, uuid4(), event.canonical_event_id, event)
+    await repo.manage_registrations(tenant, ManageRegistrations(all=True))
+    migration = importlib.import_module("migrations.versions.0222_registration_removal")
+    engine = create_async_engine(muse_migration_db["EC_MIGRATION_URL"])
+    role = "ec_removal_owner_" + uuid4().hex
+
+    def downgrade(connection):
+        with monkeypatch.context() as patch:
+            patch.setattr(migration, "op", SimpleNamespace(execute=connection.exec_driver_sql))
+            migration.downgrade()
+
+    try:
+        message = "query would be affected by row-level security policy" if filtered_owner else "removed registrations exist"
+        with pytest.raises(DBAPIError, match=message):
+            async with engine.begin() as connection:
+                if filtered_owner:
+                    await connection.exec_driver_sql(f'CREATE ROLE "{role}" NOLOGIN NOSUPERUSER NOBYPASSRLS')
+                    await connection.exec_driver_sql(f'GRANT USAGE, CREATE ON SCHEMA public TO "{role}"')
+                    await connection.exec_driver_sql(f'ALTER TABLE public.muse_signup_items OWNER TO "{role}"')
+                    await connection.exec_driver_sql(f'SET LOCAL ROLE "{role}"')
+                    assert (await connection.execute(text("SELECT count(*) FROM public.muse_signup_items"))).scalar_one() == 0
+                await connection.run_sync(downgrade)
+    finally:
+        await engine.dispose()
+    assert (await repo.registrations(tenant)).items[0].removed_at

@@ -67,3 +67,12 @@
 .empty { padding: 24px 4px; color: var(--muted); font-size: 12px; line-height: 1.6; }
 @media (max-width: 760px) { .triggerTitle { display: none; } .trigger { padding: 7px 8px; } .triggerStats { gap: 7px; } .drawer { border-radius: 0; } .content { padding: 16px 12px; } }
 @media (max-width: 400px) { .heading { gap: 8px; align-items: flex-start; } .headingTitle { font-size: 20px; } }
+
+.management { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin: 6px 0; font-size: 11px; color: var(--muted); }
+.management label { display: inline-flex; align-items: center; gap: 6px; margin-right: auto; }
+.management .button, .confirmation .button { font-size: 11px; padding: 6px 10px; min-height: 32px; }
+.management input, .taskTitle > input { accent-color: var(--accent); width: 16px; height: 16px; flex: 0 0 auto; margin: 5px 0; }
+.confirmation { border: 1px solid var(--line); border-radius: 8px; padding: 10px; margin: 8px 0; font-size: 11px; }
+.confirmation p { margin: 0 0 8px; }
+.confirmation > div { display: flex; justify-content: flex-end; gap: 8px; }
+.iconButton:disabled { opacity: .45; cursor: default; }

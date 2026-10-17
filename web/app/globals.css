@@ -7883,6 +7883,7 @@ textarea:focus-visible {
 .muse-icon { color: #78a7ff; }
 .event-muse-action { --registration-color: #78a7ff; align-items: center; background: transparent; border: 1px solid transparent; border-radius: 999px; color: var(--registration-color); display: inline-flex; flex: 0 0 auto; font: inherit; height: 1.25em; justify-content: center; margin-top: calc((1lh - max(24px, 1.25em)) / 2); min-height: 24px; min-width: 24px; padding: 0; position: relative; width: 1.25em; z-index: 2; transition: background 180ms ease, border-color 180ms ease, color 180ms ease; }
 .event-title-row .event-muse-action > svg { color: inherit; height: 1em; width: 1em; }
+.event-muse-action[data-registration-state="removed"] { --registration-color: #92958d; }
 .event-muse-action[data-registration-state="queued"] { --registration-color: #b8a2ff; }
 .event-muse-action[data-registration-state="in_progress"] { --registration-color: #6bd8e5; }
 .event-muse-action[data-registration-state="needs_input"], .event-muse-action[data-registration-state="uncertain"] { --registration-color: #e6b45c; }

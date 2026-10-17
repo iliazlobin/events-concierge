@@ -127,6 +127,8 @@ class MuseSignupService:
             raise MuseNotFoundError("signup item not found")
         if item.attempt_id == attempt_id:
             return item
+        if item.removed_at is not None:
+            raise MuseConflictError("registration removed; do not start a signup")
         if item.status != "queued":
             raise MuseConflictError("another attempt owns this signup; check its provider status")
         browse = await self.catalog.get_browse_event(event_id)

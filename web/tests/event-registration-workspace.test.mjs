@@ -36,3 +36,11 @@ test("every registration status belongs to a visible category without conflating
   assert.equal(registrationMatchesFilter({status: "awaiting_approval"}, "registered"), false);
   assert.equal(registrationMatchesFilter({status: "waitlisted"}, "registered"), false);
 });
+test("removed tasks have their own category and do not inflate active counts", () => {
+  const archived = {status: "queued", removed_at: "2030-06-01T00:00:00Z"};
+  assert.equal(registrationMatchesFilter(archived, "all"), false);
+  assert.equal(registrationMatchesFilter(archived, "queued"), false);
+  assert.equal(registrationMatchesFilter(archived, "removed"), true);
+  assert.equal(registrationFilterCount({...counts, removed: 12}, "all"), 90);
+  assert.equal(registrationFilterCount({...counts, removed: 12}, "removed"), 12);
+});

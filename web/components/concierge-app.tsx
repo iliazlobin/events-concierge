@@ -285,7 +285,7 @@ export function ConciergeApp() {
   const [museSelectedId, setMuseSelectedId] = useState<string | null>(null);
   const museQueue = useMuseRegistrations(museEnabled,
     me && !signingOut ? `${tenantId ?? "session"}:${me.notify_email}` : null, tenantId, museOpen);
-  const museStatuses = useMemo(() => new Map(museQueue.items.map(item => [item.event.canonical_event_id, item.status])), [museQueue.items]);
+  const museStatuses = useMemo(() => new Map(museQueue.items.map(item => [item.event.canonical_event_id, item.removed_at ? "removed" as const : item.status])), [museQueue.items]);
   const showMuseRegistrations = useCallback((eventId: string | null = null) => {
     setMuseSelectedId(eventId); setMuseOpen(true);
     const url = new URL(window.location.href);
@@ -1555,6 +1555,7 @@ export function ConciergeApp() {
           provider: museRegistrationProvider, items: museQueue.items, total: museQueue.total, unread: museQueue.unread,
           counts: museQueue.counts, loading: museQueue.loading, error: museQueue.error, hasMore: Boolean(museQueue.cursor),
           onRefresh: museQueue.refresh, onLoadMore: museQueue.loadMore, onSeen: museQueue.markSeen,
+          onManage: museQueue.manage, managing: museQueue.managing || museQueue.pending.size > 0,
         }]} /> : null}
 
       <nav className="mobile-nav" aria-label="Main navigation">

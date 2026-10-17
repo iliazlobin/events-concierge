@@ -6,6 +6,7 @@ from uuid import UUID
 
 from ..domain.catalog_browse import CatalogBrowseEvent
 from ..domain.muse import (
+    ManageRegistrations,
     MuseConnection,
     RegistrationAccountSettings,
     RegistrationAccountUpdate,
@@ -62,6 +63,7 @@ class MuseRepository(Protocol):
         self, tenant_id: UUID, event_ids: list[UUID]
     ) -> list[SignupRegistration]: ...
     async def see_registrations(self, tenant_id: UUID, items: list[SeenRegistration]) -> None: ...
+    async def manage_registrations(self, tenant_id: UUID, command: ManageRegistrations) -> int: ...
     async def claim(
         self,
         tenant_id: UUID,
