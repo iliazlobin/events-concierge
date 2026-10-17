@@ -644,3 +644,36 @@ async def test_remove_all_covers_unloaded_pages_and_selected_versions_are_atomic
             SeenRegistration(event_id=uuid4(), version=1),
         ], removed=False))
     assert (await repo.registrations(tenant)).status_counts.removed == 55
+
+
+@pytest.mark.parametrize("filtered_owner", [False, True])
+async def test_removal_downgrade_preserves_state_and_refuses_filtered_visibility(
+    muse_migration_db, monkeypatch, filtered_owner,
+):
+    tenant, repo = await account(), PostgresMuseRepository()
+    event = selected_event()
+    await repo.queue_registration(tenant, uuid4(), event.canonical_event_id, event)
+    await repo.manage_registrations(tenant, ManageRegistrations(all=True))
+    migration = importlib.import_module("migrations.versions.0222_registration_removal")
+    engine = create_async_engine(muse_migration_db["EC_MIGRATION_URL"])
+    role = "ec_removal_owner_" + uuid4().hex
+
+    def downgrade(connection):
+        with monkeypatch.context() as patch:
+            patch.setattr(migration, "op", SimpleNamespace(execute=connection.exec_driver_sql))
+            migration.downgrade()
+
+    try:
+        message = "query would be affected by row-level security policy" if filtered_owner else "removed registrations exist"
+        with pytest.raises(DBAPIError, match=message):
+            async with engine.begin() as connection:
+                if filtered_owner:
+                    await connection.exec_driver_sql(f'CREATE ROLE "{role}" NOLOGIN NOSUPERUSER NOBYPASSRLS')
+                    await connection.exec_driver_sql(f'GRANT USAGE, CREATE ON SCHEMA public TO "{role}"')
+                    await connection.exec_driver_sql(f'ALTER TABLE public.muse_signup_items OWNER TO "{role}"')
+                    await connection.exec_driver_sql(f'SET LOCAL ROLE "{role}"')
+                    assert (await connection.execute(text("SELECT count(*) FROM public.muse_signup_items"))).scalar_one() == 0
+                await connection.run_sync(downgrade)
+    finally:
+        await engine.dispose()
+    assert (await repo.registrations(tenant)).items[0].removed_at

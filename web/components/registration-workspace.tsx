@@ -90,6 +90,7 @@ export function RegistrationWorkspace({ providers, selectedId, onClose }: {
   const chosen = visible.filter(item => selection.has(item.event.canonical_event_id));
   const selectable = visible.slice(0, 100);
   const allSelected = selectable.length > 0 && selectable.every(item => selection.has(item.event.canonical_event_id));
+  const listCount = filter === "removed" ? workspace.counts?.removed ?? 0 : workspace.total - (workspace.counts?.removed ?? 0);
   const matchedTotal = workspace.counts ? registrationFilterCount(workspace.counts, filter) : null;
   return <dialog ref={dialog} className={styles.drawer} aria-labelledby={titleId}
     onCancel={event => { event.preventDefault(); onClose(); }}
@@ -124,7 +125,7 @@ export function RegistrationWorkspace({ providers, selectedId, onClose }: {
         key={key} aria-pressed={filter === key} onClick={() => setFilter(key)}>
         {label}<span>{workspace.counts ? registrationFilterCount(workspace.counts, key) : "–"}</span>
       </button>)}</div>
-      <div className={styles.listHeading}><span>{filter === "removed" ? `${workspace.counts?.removed ?? 0} removed` : `${workspace.total - (workspace.counts?.removed ?? 0)} registrations`}</span>
+      <div className={styles.listHeading}><span>{listCount} {filter === "removed" ? "removed" : listCount === 1 ? "registration" : "registrations"}</span>
         <button type="button" className={styles.iconButton} onClick={workspace.onRefresh} disabled={workspace.loading} aria-label="Refresh registrations">
           <RefreshCw className={workspace.loading ? "spin" : undefined} aria-hidden="true" /></button></div>
       <div className={styles.management}>

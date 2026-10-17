@@ -398,7 +398,9 @@ def test_partiful_event_queues_once_and_preserves_phone_question_and_provider_ev
         "status": "registered", "note": "Partiful shows Going for the confirmed account.",
         "confirmation_reference": None, "evidence_url": url,
     })
-    with page.expect_response(lambda response: urlsplit(response.url).path == "/v1/me/muse/registrations") as completed:
+    # An older close/reopen read may still complete; wait for the newly saved version.
+    with page.expect_response(lambda response: urlsplit(response.url).path == "/v1/me/muse/registrations"
+                              and response.json()["items"][0]["version"] == 3) as completed:
         dialog.get_by_role("button", name="Refresh registrations").click()
     assert completed.value.json()["items"][0]["version"] == 3
     expect(dialog.locator('[data-status="registered"]')).to_have_text("Registered · reported by Muse")
@@ -1090,6 +1092,8 @@ def test_map_muse_hint_remains_readable_at_rail_edge(page_factory, width, tmp_pa
     page.goto(BASE + "/?view=map&when=all&city=")
     blocked_mini = page.locator(".map-preview").filter(has=page.get_by_role("link", name=api.events[0]["title"], exact=True))
     blocked_action = blocked_mini.get_by_role("button", name=f"Muse unavailable for {api.events[0]['title']}", exact=True)
+    # Keep keyboard focus while map/font layout settles under the hover pointer.
+    blocked_action.focus()
     blocked_action.hover()
     tooltip = page.get_by_role("tooltip")
     expect(tooltip).to_contain_text(re.compile("Free admission.*confirmed"))

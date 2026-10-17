@@ -13,6 +13,8 @@ def upgrade() -> None:
 
 def downgrade() -> None:
     op.execute("""
+        SET LOCAL row_security = off;
+        LOCK TABLE public.muse_signup_items IN ACCESS EXCLUSIVE MODE;
         DO $$ BEGIN
             IF EXISTS (SELECT 1 FROM public.muse_signup_items WHERE removed_at IS NOT NULL) THEN
                 RAISE EXCEPTION 'removed registrations exist; preserve their removal state';
