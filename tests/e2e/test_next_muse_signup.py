@@ -512,6 +512,52 @@ def test_registration_activity_shows_saved_updates_and_blockers_without_catalog_
     assert api.unexpected == []
 
 
+@pytest.mark.parametrize("width", [1440, 390])
+def test_registration_results_link_private_muse_reasons_separately_from_provider_evidence(page_factory, width, tmp_path):
+    harness, api = install(page_factory, width)
+    conversation = "https://muse.ai/thread/11111111-1111-4111-8111-111111111111"
+    tasks = [api.registration(event) for event in api.events]
+    tasks[0].update(status="registered", version=3, outcome={
+        "status": "registered", "note": "The provider confirmed your RSVP.",
+        "confirmation_reference": "fixture-rsvp", "evidence_url": "https://lu.ma/friday-jazz",
+        "conversation_url": conversation,
+    })
+    tasks[1].update(status="failed", version=3, outcome={
+        "status": "failed", "note": "The organizer declined the application.",
+        "confirmation_reference": None, "evidence_url": None, "conversation_url": conversation,
+    })
+    api.registrations = tasks
+    page = harness.page
+    page.goto(BASE + "/?view=events&when=all&city=&registrations=1")
+    dialog = page.get_by_role("dialog", name="Registrations", exact=True)
+    for task in tasks:
+        card = dialog.locator(f'[data-registration="{task["event"]["canonical_event_id"]}"]')
+        link = card.get_by_role("link", name="Muse conversation", exact=True)
+        expect(link).to_be_visible()
+        expect(link).to_have_attribute("href", conversation)
+        expect(link).to_have_attribute("target", "_blank")
+        expect(link).to_have_attribute("rel", "noopener noreferrer")
+        expect(link).to_have_attribute("referrerpolicy", "no-referrer")
+        expect(card).to_contain_text(task["outcome"]["note"])
+    expect(dialog.get_by_role("link", name="Provider evidence", exact=True)).to_have_attribute("href", "https://lu.ma/friday-jazz")
+    assert page.evaluate("document.documentElement.scrollWidth <= innerWidth")
+    assert dialog.evaluate("element => element.scrollWidth <= element.clientWidth")
+    page.screenshot(path=str(tmp_path / f"muse-result-links-{width}.png"))
+
+    # Legacy and malformed responses never fall back to an unrelated Muse page.
+    tasks[0]["outcome"].pop("conversation_url")
+    tasks[0]["version"] += 1
+    tasks[1]["outcome"]["conversation_url"] = conversation.replace("muse.ai", "muse.ai.evil.test")
+    tasks[1]["version"] += 1
+    dialog.get_by_role("button", name="Refresh registrations").click()
+    expect(dialog.get_by_role("link", name="Muse conversation", exact=True)).to_have_count(0)
+    for activity in dialog.locator("details").all():
+        activity.locator("summary").click()
+        expect(activity).to_contain_text("Muse conversation link wasn\u2019t recorded.")
+    expect(dialog.get_by_role("link", name="Provider evidence", exact=True)).to_have_count(1)
+    assert api.queued == [] and api.unexpected == []
+
+
 @pytest.mark.parametrize("width", [1440, 320])
 def test_unavailable_muse_explains_blockers_without_queue_or_card_actions(page_factory, width, tmp_path):
     harness, api = install(page_factory, width, has_touch=width == 320)

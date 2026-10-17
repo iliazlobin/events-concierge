@@ -328,6 +328,9 @@ def muse_router(
         """Write. Records Muse-reported results, not independently verified attendance.
         Registered needs provider evidence; organizer approval and waitlists are separate.
         Report uncertain submission honestly and check the provider before retrying.
+        Include a short reason in note and the actual private Muse conversation_url when available
+        for every result, including rejection or a request for input. Omit the link if unavailable;
+        never invent a link or create a public share. Conversation links are not provider evidence.
         Send no cookies, tokens, payment details or personal form answers.
         """
         return await _run(

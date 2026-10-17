@@ -1,7 +1,7 @@
 import { api } from "./api.ts";
 import type { EventItem } from "./types.ts";
 import type { RegistrationAccountSnapshot } from "./registration-accounts.ts";
-import type { RegistrationStatus, RegistrationStatusCounts, RegistrationTask } from "./registrations.ts";
+import type { RegistrationOutcome, RegistrationStatus, RegistrationStatusCounts, RegistrationTask } from "./registrations.ts";
 
 export const MUSE_URL = "https://muse.ai/";
 const hosts = new Set(["lu.ma", "www.lu.ma", "luma.com", "www.luma.com", "meetup.com", "www.meetup.com"]);
@@ -17,10 +17,15 @@ export interface MuseSignupItem {
     venue_name: string | null; city: string | null; registration_url: string; price_status: "free"; observed_at: string };
   status: MuseStatus;
   attempt_id: string | null;
-  outcome: { status: MuseStatus; note: string; confirmation_reference: string | null; evidence_url: string | null } | null;
+  outcome: RegistrationOutcome | null;
   updated_at: string;
 }
 export interface MuseIssuedConnection { token: string; expires_at: string }
+
+/** Private conversation provenance is separate from event-provider confirmation. */
+export function museConversationUrl(value: string): string | null {
+  return value.match(/^https:\/\/muse\.ai\/thread\/[0-9a-fA-F]{8}-(?:[0-9a-fA-F]{4}-){3}[0-9a-fA-F]{12}\/?$/)?.[0] === value ? value : null;
+}
 
 export function museProviderUrl(value: string): string | null {
   try {
@@ -86,7 +91,7 @@ export interface MuseRegistrationPage {
 }
 
 export function museInstruction(): string {
-  return "Use my Events Concierge connector to read every page of my signup batches (limit 100; cursor is the last batch ID). Register only the free events I queued. Skip removed_at items, registered and failed tasks. Removal stops unclaimed work; already claimed attempts may be checked and reported without a new submission. Check waitlisted or awaiting-approval results without submitting again. Claim each queued event before acting. Use registration_account from the claim response; when resuming an existing attempt, keep its saved account. For Luma and Meetup, when expected_email is set, verify the visible provider account matches it before provider action. Partiful uses phone login: ask me to complete any phone/SMS login. Never enter, guess or store phone numbers, request SMS codes, enter verification codes or switch accounts. When expected_email is set and the Partiful account email is visible, verify it matches; otherwise ask me to confirm the active phone account before provider action. The selected email applies to Partiful email form fields, not phone login. Use that same email for signup and contact fields, including company/work email when accepted. If it is rejected or a business-domain address is required, stop and ask me; never invent or substitute another email. When expected_email is unset, use the current browser account and ask me for unanswered email fields. Never infer an email from my Events Concierge sign-in or switch accounts without my instruction. Check for an existing RSVP and verify title, start/end times, price and availability. Register an ongoing event only while its confirmed end time is still in the future. Do not start a signup for ended events, invalid dates or an ongoing event without a confirmed end time. Check and report an existing attempt after the event ends without submitting another signup. Resume an existing attempt without claiming a new attempt; if a submission is uncertain, check its status before retrying. Preserve your approval checks. Ask me for login or unanswered form questions; do not invent answers, pay or substitute events. Report each outcome with provider confirmation evidence.";
+  return "Use my Events Concierge connector to read every page of my signup batches (limit 100; cursor is the last batch ID). Register only the free events I queued. Skip removed_at items, registered and failed tasks. Removal stops unclaimed work; already claimed attempts may be checked and reported without a new submission. Check waitlisted or awaiting-approval results without submitting again. Claim each queued event before acting. Use registration_account from the claim response; when resuming an existing attempt, keep its saved account. For Luma and Meetup, when expected_email is set, verify the visible provider account matches it before provider action. Partiful uses phone login: ask me to complete any phone/SMS login. Never enter, guess or store phone numbers, request SMS codes, enter verification codes or switch accounts. When expected_email is set and the Partiful account email is visible, verify it matches; otherwise ask me to confirm the active phone account before provider action. The selected email applies to Partiful email form fields, not phone login. Use that same email for signup and contact fields, including company/work email when accepted. If it is rejected or a business-domain address is required, stop and ask me; never invent or substitute another email. When expected_email is unset, use the current browser account and ask me for unanswered email fields. Never infer an email from my Events Concierge sign-in or switch accounts without my instruction. Check for an existing RSVP and verify title, start/end times, price and availability. Register an ongoing event only while its confirmed end time is still in the future. Do not start a signup for ended events, invalid dates or an ongoing event without a confirmed end time. Check and report an existing attempt after the event ends without submitting another signup. Resume an existing attempt without claiming a new attempt; if a submission is uncertain, check its status before retrying. Preserve your approval checks. Ask me for login or unanswered form questions; do not invent answers, pay or substitute events. Report each outcome with provider confirmation evidence and a short reason in note, including rejections and requests for input. Include conversation_url with the actual private https://muse.ai/thread/<UUID> link for the conversation explaining that result when available; otherwise omit it. Never invent links or create public shares. The conversation link is not provider confirmation evidence.";
 }
 
 /** Newer responses cannot roll back a task that a queue or outcome response already advanced. */
