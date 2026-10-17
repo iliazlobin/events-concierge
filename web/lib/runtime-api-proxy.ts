@@ -460,9 +460,15 @@ export async function proxyRuntimeApiRequest(
   };
 
   try {
+    const requestHeaders = upstreamRequestHeaders(request, body?.byteLength ?? null, helper);
+    if (target.pathname === "/v1/muse/mcp") {
+      // MCP checks its configured public Host even behind the same-origin Web proxy.
+      // Derive it from this request URL; never trust forwarded-host headers.
+      requestHeaders.set("Host", new URL(request.url).host);
+    }
     const upstream = await fetch(target, {
       method,
-      headers: upstreamRequestHeaders(request, body?.byteLength ?? null, helper),
+      headers: requestHeaders,
       body,
       redirect: "manual",
       signal: controller.signal,

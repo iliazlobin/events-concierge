@@ -59,6 +59,8 @@ async def test_disabled_muse_omits_routes_before_authentication_or_io(
             ("POST", "/v1/me/muse/registrations/seen"),
             ("POST", "/v1/me/muse/registrations/manage"),
             ("GET", "/v1/muse/openapi.json"),
+            ("GET", "/v1/muse/connector/events"),
+            ("POST", "/v1/muse/mcp"),
             ("GET", "/v1/muse/connector/batches"),
             ("GET", f"/v1/muse/connector/batches/{batch_id}"),
             ("POST", f"/v1/muse/connector/batches/{batch_id}/items/{event_id}/claim"),
@@ -189,15 +191,15 @@ async def test_connector_requires_bearer_and_revocation_takes_effect(monkeypatch
         ).status_code == 401
 
 
-async def test_connector_contract_exposes_only_selected_batch_operations(monkeypatch):
+async def test_connector_contract_exposes_discovery_and_explicit_signup_operations(monkeypatch):
     app, _, _ = muse_app(monkeypatch)
     async with AsyncClient(transport=ASGITransport(app=app), base_url=ORIGIN) as client:
         result = await client.get("/v1/muse/openapi.json")
     assert result.status_code == 200
     schema = result.json()
     assert schema["servers"] == [{"url": ORIGIN}]
-    assert "free Luma/Meetup/Partiful events" in schema["info"]["description"]
-    assert sum(len(verbs) for verbs in schema["paths"].values()) == 4
+    assert "Discovery cannot queue events" in schema["info"]["description"]
+    assert sum(len(verbs) for verbs in schema["paths"].values()) == 6
     assert all(path.startswith("/v1/muse/connector/") for path in schema["paths"])
     assert "/v1/me/registration-accounts/{executor}" not in schema["paths"]
     assert schema["components"]["securitySchemes"]["MuseConnection"]["scheme"] == "bearer"

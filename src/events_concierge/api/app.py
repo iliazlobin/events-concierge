@@ -17,7 +17,7 @@ import json
 import re
 import secrets
 from collections.abc import Sequence
-from contextlib import asynccontextmanager, suppress
+from contextlib import AsyncExitStack, asynccontextmanager, suppress
 from datetime import UTC, date, datetime, time, timedelta
 from html import escape
 from pathlib import Path
@@ -38,10 +38,12 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 from sqlalchemy import text
 from sqlalchemy.exc import DBAPIError
 from sqlalchemy.exc import TimeoutError as SqlAlchemyTimeoutError
+from starlette.routing import Route
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
 from ..adapters.identity_platform import IdentityPlatformBrowserSessionAdapter
 from ..adapters.oidc.session import _safe_return_path
+from ..adapters.postgres.catalog import PostgresCatalogRepository
 from ..api.catalog_reads import (
     CatalogNameIndexCompression,
     CatalogReadCoordinator,
@@ -49,6 +51,8 @@ from ..api.catalog_reads import (
 )
 from ..api.firebase_auth_helper import install_firebase_auth_helper
 from ..api.muse import is_muse_path, muse_router
+from ..api.muse_discovery import DiscoveryQuery, MuseDiscovery
+from ..api.muse_mcp import MCP_PATH, discovery_mcp
 from ..api.release_profile import apply_release_profile
 from ..application.discovery_results import lifecycle
 from ..application.feed import MAX_FEED_OFFSET
@@ -2481,12 +2485,16 @@ def create_app() -> FastAPI:
             settings.database_pool_size + settings.database_max_overflow
         )
         operator_database = None
+        connector_lifespan = AsyncExitStack()
         try:
             if settings.admin_ingestion_enabled:
                 operator_database = build_operator_services(app, settings)
             await _configure_temporal(app, settings, app.state.container)
+            if settings.muse_enabled:
+                await connector_lifespan.enter_async_context(app.state.muse_mcp.session_manager.run())
             yield
         finally:
+            await connector_lifespan.aclose()
             if operator_database is not None:
                 await operator_database.aclose()
             browser_session = app.state.container.browser_session
@@ -4188,7 +4196,64 @@ def create_app() -> FastAPI:
     )(_mark_handoff_done)
 
     if settings.muse_enabled:
-        app.include_router(muse_router(_authenticated_tenant, _csrf_protected_tenant))
+
+        async def search_discovery(
+            query: DiscoveryQuery,
+        ) -> tuple[list[CatalogBrowseEvent], str | None]:
+            if (query.starts_after is None) != (query.starts_before is None):
+                raise HTTPException(422, "both catalog date bounds are required")
+            if query.starts_after is not None and query.starts_before is not None:
+                if query.starts_after.utcoffset() is None or query.starts_before.utcoffset() is None:
+                    raise HTTPException(422, "catalog dates require a timezone")
+                if not timedelta(0) < query.starts_before - query.starts_after <= timedelta(days=93):
+                    raise HTTPException(422, "catalog date range is invalid")
+            selection = _normalized_catalog_filters(
+                q=query.q,
+                city=[query.city] if query.city else [],
+                location_scope=[],
+                topic=query.topics,
+                price=query.price,
+                price_max_cents=None,
+                price_min_cents=None,
+            )
+            sources = tuple(sorted(set(query.source_keys)))
+            filters: dict[str, Any] = {
+                "source_keys": sources,
+                "starts_after": query.starts_after,
+                "starts_before": query.starts_before,
+                "query": selection.query,
+                "cities": selection.cities,
+                "location_scopes": (),
+                "price": query.price,
+                "price_max_cents": None,
+                "price_min_cents": None,
+                "topics": selection.topics,
+            }
+            scope = _catalog_filter_scope(**filters)
+            rows, _ = await app.state.container.catalog.browse_current(
+                **filters,
+                after=_catalog_cursor_in(query.cursor, scope),
+                limit=query.limit + 1,
+                include_providers=False,
+            )
+            page = rows[: query.limit]
+            cursor = _catalog_cursor_out(page[-1], scope) if len(rows) > query.limit and page else None
+            return page, cursor
+
+        async def read_discovery(event_id: UUID) -> CatalogBrowseEvent | None:
+            catalog: PostgresCatalogRepository = app.state.container.catalog
+            return await catalog.get_browse_event(event_id)
+
+        discovery = MuseDiscovery(
+            search_discovery,
+            read_discovery,
+            lambda row: _catalog_browse_item_out(row).model_dump(mode="json"),
+        )
+        app.include_router(muse_router(_authenticated_tenant, _csrf_protected_tenant, discovery))
+        app.state.muse_mcp, mcp_app = discovery_mcp(discovery, settings.public_base_url)
+        app.router.routes.append(
+            Route(MCP_PATH, mcp_app, methods=["GET", "POST", "DELETE"], include_in_schema=False)
+        )
     install_ingestion_admin_routes(app)
     install_command_investigation_routes(app)
     install_operator_operations_routes(app)

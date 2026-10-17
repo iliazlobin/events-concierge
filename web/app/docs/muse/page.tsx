@@ -9,7 +9,7 @@ export default function MuseGuide() {
   return <GuidePage
     title="Registrations"
     intro={<p>Queue free Luma, Meetup or Partiful events before they end. Muse completes registration in its own browser.</p>}
-    contents={[{ href: "#connect", label: "Connect" }, { href: "#account", label: "Registration account" }, { href: "#start", label: "Queue and start" }, { href: "#progress", label: "Progress" }, { href: "#recovery", label: "Limits and recovery" }]}
+    contents={[{ href: "#connect", label: "Connect" }, { href: "#discover", label: "Find events" }, { href: "#account", label: "Registration account" }, { href: "#start", label: "Queue and start" }, { href: "#progress", label: "Progress" }, { href: "#recovery", label: "Limits and recovery" }]}
   >
     <h2 id="connect" tabIndex={-1}>Connect Muse</h2>
     <ol>
@@ -22,6 +22,11 @@ export default function MuseGuide() {
     <p>Bearer authentication sends the connection key in the request’s authorization header:</p>
     <CodeBlock label="Connector request format — placeholder key">{"GET /v1/muse/connector/batches?limit=100\nAuthorization: Bearer YOUR_CONNECTION_KEY"}</CodeBlock>
     <p>The <a href="/v1/muse/openapi.json">connector schema</a> describes the operations Muse can use when signups are enabled. Your event-provider logins stay in Muse.</p>
+    <h2 id="discover" tabIndex={-1}>Find events with Muse</h2>
+    <p>The connector can search the published catalog and read event details. Ask for a place, dates and interests; Muse returns source links and the last observed details.</p>
+    <CodeBlock label="Discovery request">{"Find free AI events in San Francisco next week using Events Concierge. Show the source links and any signup limits. Do not register me yet."}</CodeBlock>
+    <p>Existing OpenAPI connections use the <a href="/v1/muse/openapi.json">updated connector schema</a>. If your client supports MCP, configure <code>/v1/muse/mcp</code> on this site's public HTTPS origin with the same Bearer key. MCP exposes read-only <code>search_events</code> and <code>get_event</code> tools; registration continues through the signup connector.</p>
+    <p>Discovery does not start signups. Open a result in Events Concierge and queue it explicitly. Source timestamps and price or availability limits describe catalog observations; Muse rechecks the provider before registration. See <Link href="/docs/browsing">Find events</Link> for catalog coverage.</p>
     <h2 id="account" tabIndex={-1}>Registration account</h2>
     <p>Your Events Concierge sign-in owns the queue. The account Muse uses on the event website can be different.</p>
     <ol>

@@ -396,3 +396,31 @@ test("Next config and Docker build do not capture EC_API_ORIGIN", async () => {
   assert.doesNotMatch(nextConfig, /EC_API_ORIGIN|rewrites\s*\(/);
   assert.doesNotMatch(dockerfile, /ARG EC_API_ORIGIN|ENV EC_API_ORIGIN/);
 });
+
+test("MCP discovery preserves protocol and credential headers with stateless JSON responses", async (t) => {
+  const originalFetch = global.fetch;
+  const originalOrigin = process.env.EC_API_ORIGIN;
+  process.env.EC_API_ORIGIN = "http://api.internal:8000";
+  t.after(() => { global.fetch = originalFetch; process.env.EC_API_ORIGIN = originalOrigin; });
+  const message = { jsonrpc: "2.0", id: 1, method: "tools/list", params: {} };
+  global.fetch = async (url, options) => {
+    assert.equal(String(url), "http://api.internal:8000/v1/muse/mcp");
+    assert.equal(options.method, "POST");
+    assert.equal(options.headers.get("authorization"), "Bearer fixture-mcp-key");
+    assert.equal(options.headers.get("accept"), "application/json, text/event-stream");
+    assert.equal(options.headers.get("mcp-protocol-version"), "2025-11-25");
+    assert.equal(options.headers.get("host"), "events.example");
+    assert.equal(options.headers.get("x-forwarded-host"), null);
+    assert.equal(options.headers.get("origin"), "https://events.example");
+    assert.deepEqual(JSON.parse(new TextDecoder().decode(options.body)), message);
+    return Response.json({ jsonrpc: "2.0", id: 1, result: { tools: [] } }, { headers: { "Cache-Control": "no-store, max-age=0" } });
+  };
+  const response = await proxyRuntimeApiRequest(new Request("https://events.example/v1/muse/mcp", {
+    method: "POST", headers: { "Authorization": "Bearer fixture-mcp-key", "Accept": "application/json, text/event-stream",
+      "Content-Type": "application/json", "MCP-Protocol-Version": "2025-11-25", "Origin": "https://events.example", "X-Forwarded-Host": "evil.test" },
+    body: JSON.stringify(message),
+  }), "/v1", ["muse", "mcp"]);
+  assert.equal(response.status, 200);
+  assert.equal(response.headers.get("cache-control"), "no-store, max-age=0");
+  assert.deepEqual((await response.json()).result, { tools: [] });
+});

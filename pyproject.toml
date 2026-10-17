@@ -26,6 +26,7 @@ dependencies = [
     # EXIF and neutralizes polyglots, so this is request-path security code.
     "pillow>=11.0,<13",
     "firebase-admin>=7,<8",
+    "mcp>=2,<3",
 ]
 
 [project.optional-dependencies]
