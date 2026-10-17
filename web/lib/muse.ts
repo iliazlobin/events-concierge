@@ -110,6 +110,7 @@ export function museUnreadCount(serverCount: number, items: MuseRegistration[], 
 export function museRegistrationUpdates(previous: MuseRegistration[], incoming: MuseRegistration[]): string[] {
   const known = new Map(previous.map(item => [item.event.canonical_event_id, item]));
   return incoming.flatMap(item => {
+    if (item.removed_at) return [];
     const old = known.get(item.event.canonical_event_id);
     const changed = old && (item.status !== old.status || JSON.stringify(item.outcome) !== JSON.stringify(old.outcome));
     return changed && item.version > old.version
