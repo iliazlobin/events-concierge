@@ -159,6 +159,7 @@ export function RegistrationWorkspace({ providers, selectedId, onClose }: {
         const calendarUrl = googleCalendarUrl({ ...item.event, latitude: null, longitude: null, description: "",
           registration_urls: eventUrl ? [eventUrl] : [], sources: [] });
         const evidence = item.outcome?.evidence_url ? provider.evidenceUrl(item.outcome.evidence_url) : null;
+        const conversation = item.outcome?.conversation_url ? provider.conversationUrl(item.outcome.conversation_url) : null;
         return <li key={item.event.canonical_event_id} data-registration={item.event.canonical_event_id}
           className={selectedId === item.event.canonical_event_id ? styles.selectedTask : undefined}>
           <div className={styles.taskTitle}>
@@ -191,8 +192,12 @@ export function RegistrationWorkspace({ providers, selectedId, onClose }: {
                 <RegistrationTime value={entry.at} />
               </li>)}
             </ol>
+            {item.outcome && !conversation ? <p>{provider.label} conversation link wasn’t recorded.</p> : null}
           </details>
-          {evidence ? <div className={styles.taskLinks}><a href={evidence} target="_blank" rel="noopener noreferrer">Provider evidence</a></div> : null}
+          {conversation || evidence ? <div className={styles.taskLinks}>
+            {conversation ? <a href={conversation} target="_blank" rel="noopener noreferrer" referrerPolicy="no-referrer">{provider.label} conversation</a> : null}
+            {evidence ? <a href={evidence} target="_blank" rel="noopener noreferrer">Provider evidence</a> : null}
+          </div> : null}
         </li>;
       })}</ol>
       {workspace.hasMore ? <button type="button" className="button" disabled={workspace.loading} onClick={workspace.onLoadMore}>

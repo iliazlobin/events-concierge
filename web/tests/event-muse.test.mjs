@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   getMuseRegistrations, getMuseRegistrationsForEvents, markMuseRegistrationsSeen, mergeMuseRegistrations, museEligibility, museInstruction,
-  museProviderUrl, museRegistrationUpdates, museStatusLabel, museUnreadCount, queueMuseRegistration,
+  museConversationUrl, museProviderUrl, museRegistrationUpdates, museStatusLabel, museUnreadCount, queueMuseRegistration,
 } from "../lib/muse.ts";
 
 const id = "22222222-2222-4222-8222-222222222222";
@@ -81,6 +81,21 @@ test("selection requires a fresh supported-source observation at the API's exact
   assert.equal(eligible([observed(iso(-49 * hours)), observed(iso(0), "https://www.meetup.com/group/events/123/")]), null);
 });
 
+test("private conversation links remain separate from provider evidence and reject URL tricks", () => {
+  const link = "https://muse.ai/thread/11111111-1111-4111-8111-111111111111";
+  assert.equal(museConversationUrl(link), link);
+  assert.equal(museConversationUrl(link + "/"), link + "/");
+  assert.equal(museProviderUrl(link), null);
+  for (const value of ["https://muse.ai/", "https://muse.ai/thread/not-a-thread-id", "https://lu.ma/event",
+    link.replace("/thread/", "/share/"), link.replace("https:", "http:"),
+    link.replace("muse.ai", "muse.ai.evil.test"), link.replace("muse.ai", "user:secret@muse.ai"),
+    link.replace("muse.ai", "muse.ai:443"), link.replace("muse.ai", "%6duse.ai"),
+    link.replace("/thread/", "/thread/../thread/"), link + "?token=secret", link + "#message-1",
+    link + "\n", link + "\r", link + "\u2028", link + "\u2029", link + "\\", "javascript:alert(1)", ""]) {
+    assert.equal(museConversationUrl(value), null, value);
+  }
+});
+
 test("provider URLs reject credential links and unapproved origins", () => {
   assert.equal(museProviderUrl("https://www.meetup.com/group/events/123/"), "https://www.meetup.com/group/events/123/");
   for (const url of ["javascript:alert(1)", "https://lu.ma.evil.test/event", "https://lu.ma/",
@@ -144,6 +159,10 @@ test("handoff covers every page, protects attempts, and distinguishes reported r
   assert.match(instruction, /Register an ongoing event only while its confirmed end time is still in the future/);
   assert.match(instruction, /Do not start a signup for ended events, invalid dates or an ongoing event without a confirmed end time/);
   assert.match(instruction, /Check and report an existing attempt after the event ends without submitting another signup/);
+  assert.match(instruction, /short reason in note, including rejections and requests for input/);
+  assert.match(instruction, /conversation_url with the actual private https:\/\/muse.ai\/thread\/<UUID> link/);
+  assert.match(instruction, /otherwise omit it.*Never invent links or create public shares/);
+  assert.match(instruction, /conversation link is not provider confirmation evidence/);
   assert.equal(museStatusLabel.registered, "Registered · reported by Muse");
   assert.notEqual(museStatusLabel.awaiting_approval, museStatusLabel.registered);
 });

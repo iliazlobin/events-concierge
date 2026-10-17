@@ -1,6 +1,6 @@
 import type { ComponentType } from "react";
 import { MuseIcon } from "./muse-icon";
-import { MUSE_URL, museProviderUrl, museStatusLabel } from "@/lib/muse";
+import { MUSE_URL, museConversationUrl, museProviderUrl, museStatusLabel } from "@/lib/muse";
 import { MUSE_PROVIDER, type RegistrationProviderId } from "@/lib/registration-providers";
 import type { RegistrationStatus } from "@/lib/registrations";
 
@@ -13,9 +13,10 @@ export interface RegistrationProvider {
   settingsUrl: string;
   statusLabels: Record<RegistrationStatus, string>;
   evidenceUrl: (value: string) => string | null;
+  conversationUrl: (value: string) => string | null;
 }
 export const museRegistrationProvider: RegistrationProvider = {
   key: MUSE_PROVIDER.id, label: MUSE_PROVIDER.label, Icon: MuseIcon, openUrl: MUSE_URL,
   settingsUrl: MUSE_PROVIDER.settingsHref,
-  statusLabels: museStatusLabel, evidenceUrl: museProviderUrl,
+  statusLabels: museStatusLabel, evidenceUrl: museProviderUrl, conversationUrl: museConversationUrl,
 };

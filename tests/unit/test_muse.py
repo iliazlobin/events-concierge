@@ -325,6 +325,42 @@ def test_partiful_confirmation_evidence_requires_the_reviewed_event_path():
         SignupOutcome(status="registered", evidence_url="https://partiful.com.evil.test/e/event")
 
 
+@pytest.mark.parametrize("status", ["needs_input", "awaiting_approval", "waitlisted", "registered", "failed", "uncertain"])
+def test_private_conversation_provenance_is_optional_and_not_provider_confirmation(status):
+    conversation = "https://muse.ai/thread/11111111-1111-4111-8111-111111111111"
+    kwargs = {"confirmation_reference": "provider-rsvp"} if status == "registered" else {}
+    result = SignupOutcome(status=status, conversation_url=conversation, **kwargs)
+    assert result.conversation_url == conversation
+    assert result.evidence_url is None
+    assert SignupOutcome(status=status, **kwargs).conversation_url is None
+    if status == "registered":
+        with pytest.raises(ValidationError, match="provider confirmation"):
+            SignupOutcome(status=status, conversation_url=conversation)
+    with pytest.raises(ValidationError):
+        SignupOutcome(status="registered", evidence_url=conversation)
+
+
+@pytest.mark.parametrize("value", [
+    "https://muse.ai/", "https://muse.ai/thread/not-a-thread-id",
+    "https://muse.ai/share/11111111-1111-4111-8111-111111111111",
+    "http://muse.ai/thread/11111111-1111-4111-8111-111111111111",
+    "https://muse.ai.evil.test/thread/11111111-1111-4111-8111-111111111111",
+    "https://user:secret@muse.ai/thread/11111111-1111-4111-8111-111111111111",
+    "https://muse.ai:443/thread/11111111-1111-4111-8111-111111111111",
+    "https://%6duse.ai/thread/11111111-1111-4111-8111-111111111111",
+    "https://muse.ai/thread/../thread/11111111-1111-4111-8111-111111111111",
+    "https://muse.ai/thread/11111111-1111-4111-8111-111111111111?token=secret",
+    "https://muse.ai/thread/11111111-1111-4111-8111-111111111111#message-1",
+    "https://muse.ai/thread/11111111-1111-4111-8111-111111111111\n",
+    "https://muse.ai/thread/11111111-1111-4111-8111-111111111111\u2028",
+    "https://muse.ai/thread/11111111-1111-4111-8111-111111111111\\",
+    "javascript:alert(1)", "",
+])
+def test_conversation_links_accept_only_the_private_muse_thread_shape(value):
+    with pytest.raises(ValidationError, match="private Muse"):
+        SignupOutcome(status="failed", conversation_url=value)
+
+
 async def test_queue_replay_returns_saved_registration_without_catalog_revalidation():
     service, repository, catalog = service_for()
     batch = await service.prepare(uuid4(), uuid4(), [uuid4()])

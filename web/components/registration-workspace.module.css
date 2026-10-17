@@ -59,7 +59,7 @@
 .activity li { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 2px 10px; margin: 4px 0; }
 .activity li > span { color: var(--ink); }
 .activity time { font-variant-numeric: tabular-nums; }
-.taskLinks { display: flex; gap: 12px; font-size: 10px; margin-top: 8px; }
+.taskLinks { display: flex; flex-wrap: wrap; gap: 4px 12px; font-size: 10px; margin-top: 8px; }
 .taskLinks a { color: var(--muted); text-decoration: underline; text-underline-offset: 3px; }
 .taskLinks a:hover { color: var(--accent); }
 .unreadDot { width: 6px; height: 6px; background: var(--accent); border-radius: 50%; flex-shrink: 0; margin-top: 6px; }

@@ -2,6 +2,13 @@ import type { RegistrationAccountSnapshot } from "./registration-accounts.ts";
 
 export type RegistrationStatus = "queued" | "in_progress" | "needs_input" | "awaiting_approval" | "waitlisted" | "registered" | "failed" | "uncertain";
 export type RegistrationStatusCounts = Record<RegistrationStatus, number> & { removed?: number };
+export interface RegistrationOutcome {
+  status: RegistrationStatus;
+  note: string;
+  confirmation_reference: string | null;
+  evidence_url: string | null;
+  conversation_url?: string | null;
+}
 export interface RegistrationTask {
   removed_at?: string | null;
   registration_account?: RegistrationAccountSnapshot;
@@ -9,7 +16,7 @@ export interface RegistrationTask {
     venue_name: string | null; city: string | null; registration_url: string; price_status: "free"; observed_at: string };
   status: RegistrationStatus;
   attempt_id: string | null;
-  outcome: { status: RegistrationStatus; note: string; confirmation_reference: string | null; evidence_url: string | null } | null;
+  outcome: RegistrationOutcome | null;
   batch_id: string;
   created_at: string;
   updated_at: string;

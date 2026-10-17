@@ -163,6 +163,10 @@ async def test_racing_claims_have_one_owner_and_uncertainty_never_restarts(db):
         tenant, batch.batch_id, event.canonical_event_id, attempt, uncertain
     )
     assert result.status == "uncertain"
+    async with tenant_session_scope(tenant) as session:
+        stored = (await session.execute(text("SELECT outcome FROM muse_signup_items"))).scalar_one()
+        assert "conversation_url" not in stored
+        assert SignupOutcome.model_validate(stored) == uncertain
     assert (
         await repository.claim(tenant, batch.batch_id, event.canonical_event_id, attempt) == result
     )
@@ -188,6 +192,38 @@ async def test_racing_claims_have_one_owner_and_uncertainty_never_restarts(db):
         await repository.report(
             tenant, batch.batch_id, event.canonical_event_id, attempt, uncertain
         )
+
+
+async def test_conversation_links_roundtrip_privately_and_legacy_completed_replays_stay_immutable(db):
+    tenant, other = await account(), await account()
+    repository, event = PostgresMuseRepository(), selected_event()
+    batch = await repository.create(tenant, uuid4(), [event])
+    attempt = uuid4()
+    await repository.claim(tenant, batch.batch_id, event.canonical_event_id, attempt)
+    outcome = SignupOutcome(
+        status="registered", confirmation_reference="provider-rsvp",
+        conversation_url="https://muse.ai/thread/11111111-1111-4111-8111-111111111111",
+    )
+    reported = await repository.report(tenant, batch.batch_id, event.canonical_event_id, attempt, outcome)
+    assert reported.outcome == outcome
+    saved = await repository.registrations_for_events(tenant, [event.canonical_event_id])
+    assert saved[0].outcome == outcome
+    assert await repository.registrations_for_events(other, [event.canonical_event_id]) == []
+    assert await repository.batch(other, batch.batch_id) is None
+    with pytest.raises(MuseConflictError):
+        await repository.report(tenant, batch.batch_id, event.canonical_event_id, uuid4(), outcome)
+
+    # Model the retained JSON written by an older API, before conversation_url existed.
+    async with tenant_session_scope(tenant) as session:
+        await session.execute(text("UPDATE muse_signup_items SET outcome = outcome - 'conversation_url'"))
+    legacy = outcome.model_dump(exclude={"conversation_url"})
+    legacy_outcome = SignupOutcome.model_validate(legacy)
+    replay = await repository.report(tenant, batch.batch_id, event.canonical_event_id, attempt, legacy_outcome)
+    assert replay.outcome is not None
+    assert replay.outcome.conversation_url is None
+    assert (await repository.registrations_for_events(tenant, [event.canonical_event_id]))[0].version == saved[0].version
+    with pytest.raises(MuseConflictError, match="completed signup result"):
+        await repository.report(tenant, batch.batch_id, event.canonical_event_id, attempt, outcome)
 
 
 async def test_account_erasure_fences_auth_and_cascades_muse_state(db):
