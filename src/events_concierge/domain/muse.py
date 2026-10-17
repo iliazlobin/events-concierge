@@ -210,6 +210,7 @@ class SignupOutcome(MuseModel):
 
 
 class SignupItem(MuseModel):
+    removed_at: datetime | None = None
     event: SignupEvent
     registration_account: RegistrationAccount
     status: SignupStatus = "queued"
@@ -242,6 +243,7 @@ class SignupRegistration(SignupItem):
 
 
 class SignupStatusCounts(MuseModel):
+    removed: int = Field(default=0, ge=0, strict=True)
     queued: int = Field(default=0, ge=0, strict=True)
     in_progress: int = Field(default=0, ge=0, strict=True)
     needs_input: int = Field(default=0, ge=0, strict=True)
@@ -271,6 +273,21 @@ class SignupRegistrations(MuseModel):
 class SeenRegistration(MuseModel):
     event_id: UUID
     version: int = Field(ge=1)
+
+
+class ManageRegistrations(MuseModel):
+    items: list[SeenRegistration] = Field(default_factory=list, max_length=100)
+    all: bool = False
+    removed: bool = True
+
+    @model_validator(mode="after")
+    def selection(self) -> ManageRegistrations:
+        if self.all:
+            if self.items or not self.removed:
+                raise ValueError("remove all cannot include a selection or restore items")
+        elif not self.items or len({item.event_id for item in self.items}) != len(self.items):
+            raise ValueError("select one to 100 distinct registrations")
+        return self
 
 
 class MuseConnection(MuseModel):

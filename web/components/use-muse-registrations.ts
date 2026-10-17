@@ -6,7 +6,7 @@ import type { EventItem } from "@/lib/types";
 import { readableError } from "@/lib/api";
 import {
   getMuseRegistrations, getMuseRegistrationsForEvents, markMuseRegistrationsSeen, mergeMuseRegistrations, museRegistrationUpdates,
-  museEligibility, museStatusLabel, museUnreadCount, queueMuseRegistration, type MuseRegistration,
+  manageMuseRegistrations, museEligibility, museStatusLabel, museUnreadCount, queueMuseRegistration, type MuseRegistration,
 } from "@/lib/muse";
 
 interface QueueFailure { eventId: string; title: string; message: string }
@@ -24,13 +24,14 @@ interface QueueState {
   counts: RegistrationStatusCounts | null;
   cursor: string | null;
   loading: boolean;
+  managing: boolean;
   error: string | null;
   queueFailure: QueueFailure | null;
   pending: ReadonlySet<string>;
   notice: string | null;
 }
 const empty = (account: string | null): QueueState => ({
-  account, items: [], unread: 0, total: 0, counts: null, cursor: null, loading: false, error: null, queueFailure: null,
+  account, items: [], unread: 0, total: 0, counts: null, cursor: null, loading: false, managing: false, error: null, queueFailure: null,
   pending: new Set(), notice: null,
 });
 
@@ -44,6 +45,7 @@ export function useMuseRegistrations(enabled: boolean, account: string | null, t
   stateRef.current = state;
   const requests = useRef(new Set<AbortController>());
   const refreshing = useRef(false);
+  const mutating = useRef(false);
   const loadedCount = useRef(50);
   const initialized = useRef(false);
   const changes = useRef(0);
@@ -74,7 +76,7 @@ export function useMuseRegistrations(enabled: boolean, account: string | null, t
     return incoming;
   }, [isCurrent, tenantId]);
   const lookupWatched = useCallback(async () => {
-    if (!key || currentAccount.current !== key || !watchedEvents.current.size) return;
+    if (!key || mutating.current || currentAccount.current !== key || !watchedEvents.current.size) return;
     const request = controller();
     try {
       const incoming = await lookupEvents([...watchedEvents.current.keys()], request);
@@ -100,7 +102,7 @@ export function useMuseRegistrations(enabled: boolean, account: string | null, t
   }, [key, lookupWatched]);
 
   const refresh = useCallback(async function readQueue() {
-    if (!key || refreshing.current) return;
+    if (!key || refreshing.current || mutating.current) return;
     refreshing.current = true;
     const request = controller();
     const startedAt = changes.current;
@@ -150,6 +152,7 @@ export function useMuseRegistrations(enabled: boolean, account: string | null, t
 
   useEffect(() => {
     setState(empty(key));
+    mutating.current = false;
     loadedCount.current = 50; initialized.current = false; refreshing.current = false;
     requestIds.current.clear(); pending.current.clear(); seenVersions.current.clear(); marking.current.clear();
     return () => {
@@ -176,7 +179,7 @@ export function useMuseRegistrations(enabled: boolean, account: string | null, t
 
   const queue = useCallback(async (event: EventItem): Promise<MuseRegistration | null> => {
     const eventId = event.canonical_event_id;
-    if (!key || pending.current.has(eventId)) return null;
+    if (!key || stateRef.current.managing || pending.current.has(eventId)) return null;
     const unavailable = museEligibility(event);
     if (unavailable) {
       setState(old => old.account === key ? { ...old, notice: null,
@@ -217,7 +220,7 @@ export function useMuseRegistrations(enabled: boolean, account: string | null, t
 
   const loadMore = useCallback(async () => {
     const cursor = stateRef.current.account === key ? stateRef.current.cursor : null;
-    if (!key || !cursor || refreshing.current) return;
+    if (!key || !cursor || refreshing.current || mutating.current) return;
     refreshing.current = true;
     const request = controller();
     const startedAt = changes.current;
@@ -278,9 +281,39 @@ export function useMuseRegistrations(enabled: boolean, account: string | null, t
     }
   }, [controller, isCurrent, key, normalize, tenantId]);
 
+  const manage = useCallback(async (items: MuseRegistration[], removed: boolean, all = false) => {
+    if (!key || mutating.current || pending.current.size) return false;
+    mutating.current = true;
+    // Cancel old reads so their pre-removal snapshots cannot revive list entries.
+    for (const active of requests.current) active.abort();
+    requests.current.clear(); refreshing.current = false; marking.current.clear();
+    const request = controller();
+    let failure: string | null = null;
+    changes.current += 1;
+    setState(old => old.account === key ? { ...old, managing: true, loading: false, error: null } : old);
+    try {
+      await manageMuseRegistrations(tenantId, items.map(item => ({ event_id: item.event.canonical_event_id,
+        version: item.version })), removed, all, request.signal);
+      if (!isCurrent(request)) return false;
+      setState(old => old.account === key ? { ...old, items: [], counts: null, notice: null } : old);
+      return true;
+    } catch (problem) {
+      failure = readableError(problem, "Could not update registrations. Refresh and try again.");
+      return false;
+    } finally {
+      requests.current.delete(request);
+      if (isCurrent(request)) {
+        setState(old => old.account === key ? { ...old, managing: false } : old);
+        mutating.current = false;
+        await refresh();
+        if (failure && isCurrent(request)) setState(old => old.account === key ? { ...old, error: failure } : old);
+      }
+    }
+  }, [controller, isCurrent, key, refresh, tenantId]);
+
   const clearNotice = useCallback(() => setState(old => old.account === key ? { ...old, notice: null } : old), [key]);
   const dismissFeedback = useCallback(() => setState(old => old.account === key
     ? { ...old, notice: null, error: null, queueFailure: null } : old), [key]);
   const current = state.account === key ? state : empty(key);
-  return { ...current, queue, refresh, loadMore, markSeen, clearNotice, dismissFeedback, watchEvent };
+  return { ...current, manage, queue, refresh, loadMore, markSeen, clearNotice, dismissFeedback, watchEvent };
 }

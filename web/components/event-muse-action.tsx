@@ -2,14 +2,14 @@
 
 import { useEffect, useId, useLayoutEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import { Check, Clock3, Hourglass, LoaderCircle, TriangleAlert, X } from "lucide-react";
-import { museEligibility, museStatusLabel, type MuseStatus } from "@/lib/muse";
+import { Check, Clock3, Hourglass, LoaderCircle, TriangleAlert, Undo2, X } from "lucide-react";
+import { museEligibility, museStatusLabel, type MuseActionStatus } from "@/lib/muse";
 import type { EventItem } from "@/lib/types";
 import { useEventActions } from "@/components/event-actions-context";
 import { MuseIcon } from "@/components/muse-icon";
 
-const statusBadges: Record<MuseStatus, typeof Clock3> = {
-  queued: Clock3, in_progress: LoaderCircle, registered: Check,
+const statusBadges: Record<MuseActionStatus, typeof Clock3> = {
+  removed: Undo2, queued: Clock3, in_progress: LoaderCircle, registered: Check,
   needs_input: TriangleAlert, uncertain: TriangleAlert, failed: X,
   waitlisted: Hourglass, awaiting_approval: Hourglass,
 };
@@ -107,7 +107,8 @@ export function EventMuseAction({ event }: { event: EventItem }) {
   }, [event.canonical_event_id, watchEvent]);
   if (!muse) return null;
   const Badge = status ? statusBadges[status] : null;
-  const description = pending ? "Saving registration" : status ? museStatusLabel[status] : unavailable;
+  const statusLabel = status === "removed" ? "Removed" : status ? museStatusLabel[status] : null;
+  const description = pending ? "Saving registration" : status ? statusLabel : unavailable;
   return <><button ref={button}
     type="button"
     className="event-muse-action"
@@ -117,7 +118,7 @@ export function EventMuseAction({ event }: { event: EventItem }) {
     aria-busy={pending || undefined}
     aria-label={status ? `View registration for ${event.title}` : unavailable ? `Muse unavailable for ${event.title}` : `Sign up with Muse for ${event.title}`}
     aria-describedby={description ? descriptionId : undefined}
-    title={pending ? "Queueing with Muse" : status ? `${museStatusLabel[status]} · View registration` : unavailable ? undefined : "Sign up with Muse"}
+    title={pending ? "Queueing with Muse" : status ? `${statusLabel} · View registration` : unavailable ? undefined : "Sign up with Muse"}
     onMouseEnter={openHint}
     onMouseLeave={leaveHint}
     onFocus={openHint}

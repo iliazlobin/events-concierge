@@ -8,8 +8,10 @@ const hosts = new Set(["lu.ma", "www.lu.ma", "luma.com", "www.luma.com", "meetup
 const partifulHosts = new Set(["partiful.com", "www.partiful.com"]);
 
 export type MuseStatus = RegistrationStatus;
+export type MuseActionStatus = MuseStatus | "removed";
 export interface MuseConnection { connected: boolean; expires_at: string | null }
 export interface MuseSignupItem {
+  removed_at?: string | null;
   registration_account: RegistrationAccountSnapshot;
   event: { canonical_event_id: string; title: string; start_at: string; end_at: string | null;
     venue_name: string | null; city: string | null; registration_url: string; price_status: "free"; observed_at: string };
@@ -84,7 +86,7 @@ export interface MuseRegistrationPage {
 }
 
 export function museInstruction(): string {
-  return "Use my Events Concierge connector to read every page of my signup batches (limit 100; cursor is the last batch ID). Register only the free events I queued. Skip registered and failed tasks. Check waitlisted or awaiting-approval results without submitting again. Claim each queued event before acting. Use registration_account from the claim response; when resuming an existing attempt, keep its saved account. For Luma and Meetup, when expected_email is set, verify the visible provider account matches it before provider action. Partiful uses phone login: ask me to complete any phone/SMS login. Never enter, guess or store phone numbers, request SMS codes, enter verification codes or switch accounts. When expected_email is set and the Partiful account email is visible, verify it matches; otherwise ask me to confirm the active phone account before provider action. The selected email applies to Partiful email form fields, not phone login. Use that same email for signup and contact fields, including company/work email when accepted. If it is rejected or a business-domain address is required, stop and ask me; never invent or substitute another email. When expected_email is unset, use the current browser account and ask me for unanswered email fields. Never infer an email from my Events Concierge sign-in or switch accounts without my instruction. Check for an existing RSVP and verify title, start/end times, price and availability. Register an ongoing event only while its confirmed end time is still in the future. Do not start a signup for ended events, invalid dates or an ongoing event without a confirmed end time. Check and report an existing attempt after the event ends without submitting another signup. Resume an existing attempt without claiming a new attempt; if a submission is uncertain, check its status before retrying. Preserve your approval checks. Ask me for login or unanswered form questions; do not invent answers, pay or substitute events. Report each outcome with provider confirmation evidence.";
+  return "Use my Events Concierge connector to read every page of my signup batches (limit 100; cursor is the last batch ID). Register only the free events I queued. Skip removed_at items, registered and failed tasks. Removal stops unclaimed work; already claimed attempts may be checked and reported without a new submission. Check waitlisted or awaiting-approval results without submitting again. Claim each queued event before acting. Use registration_account from the claim response; when resuming an existing attempt, keep its saved account. For Luma and Meetup, when expected_email is set, verify the visible provider account matches it before provider action. Partiful uses phone login: ask me to complete any phone/SMS login. Never enter, guess or store phone numbers, request SMS codes, enter verification codes or switch accounts. When expected_email is set and the Partiful account email is visible, verify it matches; otherwise ask me to confirm the active phone account before provider action. The selected email applies to Partiful email form fields, not phone login. Use that same email for signup and contact fields, including company/work email when accepted. If it is rejected or a business-domain address is required, stop and ask me; never invent or substitute another email. When expected_email is unset, use the current browser account and ask me for unanswered email fields. Never infer an email from my Events Concierge sign-in or switch accounts without my instruction. Check for an existing RSVP and verify title, start/end times, price and availability. Register an ongoing event only while its confirmed end time is still in the future. Do not start a signup for ended events, invalid dates or an ongoing event without a confirmed end time. Check and report an existing attempt after the event ends without submitting another signup. Resume an existing attempt without claiming a new attempt; if a submission is uncertain, check its status before retrying. Preserve your approval checks. Ask me for login or unanswered form questions; do not invent answers, pay or substitute events. Report each outcome with provider confirmation evidence.";
 }
 
 /** Newer responses cannot roll back a task that a queue or outcome response already advanced. */
@@ -140,6 +142,10 @@ export function queueMuseRegistration(tenantId: string | null, requestId: string
   return api<MuseRegistration>("/v1/me/muse/registrations", {
     method: "POST", tenantId, signal, bodyJson: { request_id: requestId, event_id: eventId },
   });
+}
+export function manageMuseRegistrations(tenantId: string | null, items: Array<{ event_id: string; version: number }>, removed: boolean, all = false, signal?: AbortSignal) {
+  return api<number>("/v1/me/muse/registrations/manage", { method: "POST", tenantId, signal,
+    bodyJson: { items, removed, all } });
 }
 export function getMuseRegistrations(tenantId: string | null, cursor: string | null = null, signal?: AbortSignal) {
   const query = new URLSearchParams({ limit: "50" });

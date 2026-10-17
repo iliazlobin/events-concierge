@@ -51,11 +51,13 @@ async def test_disabled_muse_omits_routes_before_authentication_or_io(
             ("GET", "/v1/me/muse/registrations"),
             ("GET", "/v1/me/muse/registrations/by-event"),
             ("POST", "/v1/me/muse/registrations/seen"),
+            ("POST", "/v1/me/muse/registrations/manage"),
             ("POST", "/v1/me/muse/batches"),
             ("GET", "/v1/me/muse/registrations"),
             ("GET", "/v1/me/muse/registrations/by-event?event_id=" + str(uuid4())),
             ("POST", "/v1/me/muse/registrations"),
             ("POST", "/v1/me/muse/registrations/seen"),
+            ("POST", "/v1/me/muse/registrations/manage"),
             ("GET", "/v1/muse/openapi.json"),
             ("GET", "/v1/muse/connector/batches"),
             ("GET", f"/v1/muse/connector/batches/{batch_id}"),
@@ -150,6 +152,7 @@ async def test_owner_key_creation_requires_browser_identity_and_csrf(monkeypatch
             ("GET", "/v1/me/muse/registrations"),
             ("GET", "/v1/me/muse/registrations/by-event?event_id=" + str(uuid4())),
             ("POST", "/v1/me/muse/registrations/seen"),
+            ("POST", "/v1/me/muse/registrations/manage"),
         ]:
             assert (
                 await client.request(method, path, headers={"Authorization": "Bearer " + token})
@@ -502,3 +505,20 @@ async def test_connector_obeys_current_legal_acceptance(monkeypatch, accepted, e
         repository.batches.assert_awaited_once_with(tenant, 50, None)
     else:
         repository.batches.assert_not_awaited()
+
+
+async def test_registration_management_is_owner_only_csrf_protected_and_scoped(monkeypatch):
+    app, repository, tenant = muse_app(monkeypatch)
+    repository.manage_registrations = AsyncMock(return_value=2)
+    body = {"items": [], "all": True, "removed": True}
+    async with AsyncClient(transport=ASGITransport(app=app), base_url=ORIGIN) as client:
+        path = "/v1/me/muse/registrations/manage"
+        assert (await client.post(path, json=body)).status_code == 401
+        assert (await client.post(path, json=body, headers={"Cookie": "fixture-session=owner"})).status_code == 403
+        repository.manage_registrations.assert_not_awaited()
+        result = await client.post(path, json=body, headers={"Cookie": "fixture-session=owner", "Origin": ORIGIN, "X-Fixture-CSRF": "verified"})
+        assert result.status_code == 200 and result.json() == 2
+        assert "no-store" in result.headers["cache-control"]
+        assert repository.manage_registrations.await_args.args[0] == tenant
+        for invalid in ({}, {"all": True, "removed": False}, {"all": True, "items": [{"event_id": str(uuid4()), "version": 1}]}):
+            assert (await client.post(path, json=invalid, headers={"Cookie": "fixture-session=owner", "Origin": ORIGIN, "X-Fixture-CSRF": "verified"})).status_code == 422

@@ -205,12 +205,13 @@ async def proxy_preview(mock: MuseMock, path: str, request: Request) -> Response
             "/v1/me/muse/registrations",
             "/v1/me/muse/registrations/by-event",
             "/v1/me/muse/registrations/seen",
+            "/v1/me/muse/registrations/manage",
             "/v1/me/muse/batches",
         } or re.fullmatch(
             r"/v1/catalog/(events|entities|sources|name-suggestions|name-index|entity-resolution)(/[a-zA-Z0-9_-]+(/graph)?)?",
             path,
         )
-        writable = path in {"/v1/me/muse/registrations", "/v1/me/muse/registrations/seen"}
+        writable = path in {"/v1/me/muse/registrations", "/v1/me/muse/registrations/seen", "/v1/me/muse/registrations/manage"}
         if not readable or (
             request.method not in {"GET", "HEAD"} and (request.method != "POST" or not writable)
         ):
@@ -225,7 +226,7 @@ async def proxy_preview(mock: MuseMock, path: str, request: Request) -> Response
                 raise HTTPException(422, "A JSON selection is required")
             if path == "/v1/me/muse/registrations" and selection.get("event_id") not in mock.events:
                 raise HTTPException(422, "Only the reviewed synthetic events can be queued")
-            if path.endswith("/seen") and (
+            if path.endswith(("/seen", "/manage")) and (
                 not isinstance(selection.get("items"), list)
                 or any(
                     not isinstance(item, dict) or item.get("event_id") not in mock.events

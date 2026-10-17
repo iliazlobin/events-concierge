@@ -370,6 +370,7 @@ def test_registration_counts_include_zero_categories_and_cover_the_entire_queue(
     counts = SignupStatusCounts(queued=50, registered=3, needs_input=2)
     result = SignupRegistrations(items=[], total=55, unread_count=5, status_counts=counts)
     assert result.status_counts.model_dump() == {
+        "removed": 0,
         "queued": 50,
         "in_progress": 0,
         "needs_input": 2,
@@ -399,3 +400,15 @@ def test_registration_totals_cannot_disagree_with_status_or_unread_counts(total,
         SignupRegistrations(
             items=[], total=total, unread_count=unread, status_counts=SignupStatusCounts(queued=50)
         )
+
+
+async def test_removed_queued_item_cannot_start_through_service():
+    service, repository, catalog = service_for(published_event())
+    tenant, request = uuid4(), uuid4()
+    event_id = catalog.get_browse_event.return_value.canonical_event.canonical_event_id
+    batch = await service.prepare(tenant, request, [event_id])
+    removed = batch.items[0].model_copy(update={"removed_at": datetime.now(UTC)})
+    repository.batch.return_value = batch.model_copy(update={"items": [removed]})
+    with pytest.raises(MuseConflictError, match="removed"):
+        await service.claim(tenant, batch.batch_id, event_id, uuid4())
+    repository.claim.assert_not_awaited()

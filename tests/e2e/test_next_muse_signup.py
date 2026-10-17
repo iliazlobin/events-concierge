@@ -136,6 +136,8 @@ class MuseApi(ReleaseApi):
             self.respond(route, [item for item in self.registrations if item["event"]["canonical_event_id"] in ids])
         elif path == "/v1/me/muse/registrations":
             self.queue(route)
+        elif path == "/v1/me/muse/registrations/manage":
+            self.manage(route)
         elif path == "/v1/me/muse/registrations/seen":
             self.seen(route)
         elif path == "/v1/me/muse/batches":
@@ -144,6 +146,18 @@ class MuseApi(ReleaseApi):
             self.respond(route, {"state": "s" * 43})
         else:
             super().handle(route)
+
+    def manage(self, route):
+        body = route.request.post_data_json
+        selected = {item["event_id"]: item["version"] for item in body["items"]}
+        changed = 0
+        for item in self.registrations:
+            if (body["all"] or item["event"]["canonical_event_id"] in selected) and bool(item.get("removed_at")) != body["removed"]:
+                item["removed_at"] = datetime.now(UTC).isoformat() if body["removed"] else None
+                item["version"] += 1
+                item["unread"] = False
+                changed += 1
+        self.respond(route, changed)
 
     def account_preferences(self, route):
         if route.request.method != "PUT":
@@ -189,8 +203,8 @@ class MuseApi(ReleaseApi):
             limit = int(query.get("limit", ["50"])[0])
             items = self.registrations[start:start + limit]
             self.respond(route, {"items": items, "total": len(self.registrations),
-                                 "unread_count": sum(item["unread"] for item in self.registrations),
-                                 "status_counts": {status: sum(item["status"] == status for item in self.registrations)
+                                 "unread_count": sum(item["unread"] and not item.get("removed_at") for item in self.registrations),
+                                 "status_counts": {"removed": sum(bool(item.get("removed_at")) for item in self.registrations)} | {status: sum(item["status"] == status and not item.get("removed_at") for item in self.registrations)
                                                    for status in ("queued", "in_progress", "needs_input", "awaiting_approval",
                                                                   "waitlisted", "registered", "failed", "uncertain")},
                                  "next_cursor": items[-1]["event"]["canonical_event_id"]
@@ -1329,3 +1343,48 @@ def test_registration_drawer_uses_the_attempt_account_snapshot(page_factory):
     status = page.get_by_role("dialog").locator('[data-status="in_progress"]')
     expect(status).to_have_attribute("title", "Registration account: claimed@example.test")
     assert api.account_saves == []
+
+
+@pytest.mark.parametrize("width", [1440, 320])
+def test_registration_remove_individual_selected_all_and_restore(page_factory, width, tmp_path):
+    harness, api = install(page_factory, width)
+    api.registrations = [api.registration(event) for event in api.events]
+    page = harness.page
+    page.goto(BASE + "/?view=events&when=all&city=&registrations=1")
+    drawer = page.get_by_role("dialog", name="Registrations", exact=True)
+    expect(drawer).to_be_visible()
+    first, second = [event["title"] for event in api.events]
+    drawer.get_by_role("button", name=f"Remove {first}", exact=True).click()
+    confirmation = drawer.get_by_role("group", name="Confirm removal")
+    expect(confirmation).to_contain_text("Provider RSVPs stay unchanged")
+    confirmation.get_by_role("button", name="Cancel", exact=True).click()
+    assert not any(item.get("removed_at") for item in api.registrations)
+    drawer.get_by_role("checkbox", name=f"Select {first}", exact=True).check()
+    drawer.get_by_role("button", name="Remove selected (1)", exact=True).click()
+    drawer.get_by_role("group", name="Confirm removal").get_by_role("button", name="Remove", exact=True).click()
+    expect(drawer.get_by_role("link", name=first, exact=True)).to_have_count(0)
+    drawer.get_by_role("button", name=re.compile(r"^Removed")).click()
+    expect(drawer.get_by_role("link", name=first, exact=True)).to_be_visible()
+    drawer.get_by_role("button", name=f"Restore {first}", exact=True).click()
+    expect(drawer.get_by_role("link", name=first, exact=True)).to_have_count(0)
+    drawer.get_by_role("button", name=re.compile(r"^All")).click()
+    expect(drawer.get_by_role("link", name=first, exact=True)).to_be_visible()
+    drawer.get_by_role("button", name=f"Remove {first}", exact=True).click()
+    drawer.get_by_role("group", name="Confirm removal").get_by_role("button", name="Remove", exact=True).click()
+    expect(drawer.get_by_role("link", name=first, exact=True)).to_have_count(0)
+    drawer.get_by_role("button", name="Remove all", exact=True).click()
+    drawer.get_by_role("group", name="Confirm removal").get_by_role("button", name="Remove", exact=True).click()
+    expect(drawer.get_by_text("No registrations yet.", exact=True)).to_be_visible()
+    assert all(item.get("removed_at") for item in api.registrations)
+    page.reload()
+    drawer.get_by_role("button", name=re.compile(r"^Removed")).click()
+    expect(drawer.get_by_role("link", name=second, exact=True)).to_be_visible()
+    assert page.evaluate("document.documentElement.scrollWidth <= window.innerWidth")
+    page.screenshot(path=str(tmp_path / f"registration-removal-{width}.png"))
+    drawer.get_by_role("button", name="Close registrations", exact=True).click()
+    page.get_by_role("button", name=f"View registration for {first}", exact=True).click()
+    expect(drawer.get_by_role("button", name=re.compile(r"^Removed"))).to_have_attribute("aria-pressed", "true")
+    expect(drawer.get_by_text("Removed from queue. Restore to resume.", exact=True).first).to_be_visible()
+    assert not api.queued
+    assert all(method == "POST" and path.endswith(("/seen", "/manage")) for method, path, _ in api.writes)
+    assert not api.unexpected

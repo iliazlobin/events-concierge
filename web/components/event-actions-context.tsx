@@ -1,13 +1,13 @@
 "use client";
 
 import { createContext, useContext, type ReactNode } from "react";
-import type { MuseStatus } from "@/lib/muse";
+import type { MuseActionStatus } from "@/lib/muse";
 import type { EventItem } from "@/lib/types";
 
 export interface EventActions {
   onSourceSelect?: (sourceKey: string) => void;
   muse?: {
-    statuses: ReadonlyMap<string, MuseStatus>;
+    statuses: ReadonlyMap<string, MuseActionStatus>;
     pendingIds: ReadonlySet<string>;
     onSignup: (event: EventItem) => void;
     watchEvent?: (eventId: string) => () => void;
