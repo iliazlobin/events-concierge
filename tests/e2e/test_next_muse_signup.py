@@ -1138,9 +1138,16 @@ def test_map_muse_hint_remains_readable_at_rail_edge(page_factory, width, tmp_pa
     page.goto(BASE + "/?view=map&when=all&city=")
     blocked_mini = page.locator(".map-preview").filter(has=page.get_by_role("link", name=api.events[0]["title"], exact=True))
     blocked_action = blocked_mini.get_by_role("button", name=f"Muse unavailable for {api.events[0]['title']}", exact=True)
-    # Focus uses smooth native scrolling; settle the real control clear of sticky
-    # day headers and fixed navigation before exercising normal pointer hit testing.
+    # Wait for the workspace entrance before scrolling: native focus/hover can
+    # otherwise chase its moving control beneath sticky headers or fixed navigation.
     page.evaluate("document.fonts.ready")
+    blocked_action.evaluate("""async element => {
+        for (let parent = element; parent; parent = parent.parentElement) {
+            await Promise.all(parent.getAnimations()
+                .filter(animation => Number.isFinite(animation.effect.getComputedTiming().endTime))
+                .map(animation => animation.finished));
+        }
+    }""")
     blocked_action.evaluate("element => element.scrollIntoView({block: 'center', inline: 'nearest', behavior: 'instant'})")
     blocked_action.focus()
     blocked_action.hover()
