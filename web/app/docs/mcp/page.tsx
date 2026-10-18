@@ -1,10 +1,10 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 import { CodeBlock, GuidePage, RelatedGuides } from "@/components/docs/docs-kit";
-export const metadata: Metadata = { title: "MCP discovery" };
+export const metadata: Metadata = { title: "MCP (events discovery)" };
 
 export default function McpGuide() {
-  return <GuidePage title="MCP discovery" intro={<p>Connect an assistant to search the Events Concierge catalog and compare events.</p>}
+  return <GuidePage title="MCP (events discovery)" intro={<p>Connect an assistant to search the Events Concierge catalog and compare events.</p>}
     contents={[{ href: "#connect", label: "Connect" }, { href: "#discover", label: "Find events" }]}>
     <h2 id="connect" tabIndex={-1}>Connect MCP</h2>
     <p>Use MCP for read-only catalog discovery in a client supporting <strong>Streamable HTTP</strong> and Bearer authentication. For Muse’s existing OpenAPI connector, follow <Link href="/docs/muse#connect">Connect Muse</Link>. That connector also supports discovery.</p>

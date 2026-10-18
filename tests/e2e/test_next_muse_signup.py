@@ -990,7 +990,7 @@ def test_settings_help_supports_hover_keyboard_touch_and_copy_without_writes(pag
     assert page.evaluate("window.__fixtureCopied") == connector.input_value()
     expect(page.get_by_role("textbox", name="MCP URL", exact=True)).to_have_count(0)
     page.goto(BASE + "/settings/mcp")
-    expect(page.get_by_role("heading", name="MCP discovery", exact=True)).to_be_visible()
+    expect(page.get_by_role("heading", name="MCP (events discovery)", exact=True)).to_be_visible()
     expect(page.get_by_role("textbox", name="Connector URL", exact=True)).to_have_count(0)
     expect(page.get_by_role("textbox", name="Default email", exact=True)).to_have_count(0)
     mcp = page.get_by_role("textbox", name="MCP URL", exact=True)
