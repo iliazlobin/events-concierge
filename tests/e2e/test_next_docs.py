@@ -77,14 +77,16 @@ def test_docs_are_public_and_all_guides_work_without_backend(page_factory, width
     guides = [
         ("Find events", "browsing"),
         ("Registrations", "muse"),
+        ("MCP discovery", "mcp"),
         ("Account", "account"),
         ("How it works", "how-it-works"),
     ]
     for title, slug in guides:
         nav.get_by_role("link", name=title, exact=True).click()
         expect(page).to_have_url(re.compile(rf"/docs/{slug}$"))
-        expect(page.get_by_role("heading", name=title, exact=True)).to_be_visible()
-        expect(breadcrumb.locator('[aria-current="page"]')).to_have_text(title)
+        page_title = {"muse": "Agentic registrations (Muse)", "mcp": "MCP (events discovery)"}.get(slug, title)
+        expect(page.get_by_role("heading", name=page_title, exact=True)).to_be_visible()
+        expect(breadcrumb.locator('[aria-current="page"]')).to_have_text(page_title)
         expect(breadcrumb.get_by_role("link", name="Docs", exact=True)).to_have_attribute(
             "href", "/docs"
         )
@@ -177,3 +179,20 @@ def test_muse_instruction_can_be_copied_without_account_or_api_access(page_facto
     expect(page.get_by_role("status")).to_have_text("Instruction copied.")
     assert page.evaluate("navigator.clipboard.readText()") == instruction
     assert api_calls == []
+
+
+@pytest.mark.parametrize("width", [1440, 320])
+def test_mcp_settings_without_api_explains_preview_limit(page_factory, width):
+    harness = page_factory(width=width)
+    harness.allowed_console_error_fragments.append("503 (Service Unavailable)")
+    page = harness.page
+    page.route("**/v1/ui-config", lambda route: route.fulfill(
+        status=503, content_type="application/json",
+        body='{"detail":"API upstream is not configured"}',
+    ))
+    page.goto(BASE + "/settings/mcp")
+    expect(page.get_by_role("heading", name="Settings preview only", exact=True)).to_be_visible()
+    expect(page.get_by_text("This preview has no API connected.", exact=False)).to_be_visible()
+    expect(page.get_by_role("link", name="Read the setup guide")).to_have_attribute("href", "/docs/mcp")
+    expect(page.get_by_role("button", name="Create key", exact=True)).to_have_count(0)
+    assert page.evaluate("document.documentElement.scrollWidth <= innerWidth")

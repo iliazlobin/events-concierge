@@ -994,6 +994,7 @@ def _safe_return_path(value: str) -> str:
             "/settings/api-keys",
             "/settings/saved-filters",
             "/settings/registrations",
+            "/settings/mcp",
             "/settings/muse",
             "/settings/security",
             "/settings/taste",

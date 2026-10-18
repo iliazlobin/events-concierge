@@ -1,3 +1,6 @@
+import { request as httpRequest } from "node:http";
+import { request as httpsRequest } from "node:https";
+
 const defaultApiOrigin = "http://127.0.0.1:8000";
 const maxOriginBytes = 2_048;
 const maxPathBytes = 4_096;
@@ -410,6 +413,34 @@ function streamedBody(
   });
 }
 
+// fetch drops Host in supported Node runtimes. MCP must preserve the public Host
+// through this proxy so the SDK's DNS-rebinding validation can remain enabled.
+async function mcpUpstream(target: URL, method: string, headers: Headers, body: ArrayBuffer | null, signal: AbortSignal): Promise<Response> {
+  const send = target.protocol === "https:" ? httpsRequest : httpRequest;
+  return new Promise((resolve, reject) => {
+    const request = send(target, { method, headers: Object.fromEntries(headers), signal }, (response) => {
+      void (async () => {
+        const chunks: Buffer[] = [];
+        let size = 0;
+        for await (const chunk of response) {
+          const bytes = Buffer.from(chunk);
+          size += bytes.byteLength;
+          if (size > 1024 * 1024) { response.destroy(); throw new Error("MCP response is too large"); }
+          chunks.push(bytes);
+        }
+        const responseHeaders = new Headers();
+        for (let i = 0; i < response.rawHeaders.length; i += 2) responseHeaders.append(response.rawHeaders[i], response.rawHeaders[i + 1]);
+        const status = response.statusCode ?? 502;
+        resolve(new Response(method === "HEAD" || new Set([204, 205, 304]).has(status) ? null : Buffer.concat(chunks), {
+          status, headers: responseHeaders,
+        }));
+      })().catch(reject);
+    });
+    request.on("error", reject);
+    request.end(body ? Buffer.from(body) : undefined);
+  });
+}
+
 export async function proxyRuntimeApiRequest(
   request: Request,
   basePath: RuntimeApiBasePath,
@@ -460,13 +491,22 @@ export async function proxyRuntimeApiRequest(
   };
 
   try {
-    const upstream = await fetch(target, {
-      method,
-      headers: upstreamRequestHeaders(request, body?.byteLength ?? null, helper),
-      body,
-      redirect: "manual",
-      signal: controller.signal,
-    });
+    const requestHeaders = upstreamRequestHeaders(request, body?.byteLength ?? null, helper);
+    if (target.pathname === "/v1/muse/mcp") {
+      // MCP checks its configured public Host even behind the same-origin Web proxy.
+      // Next may reconstruct request.url with localhost. Preserve the actual Host
+      // for the SDK to validate; never trust forwarded-host headers.
+      requestHeaders.set("Host", request.headers.get("host") || new URL(request.url).host);
+    }
+    const upstream = target.pathname === "/v1/muse/mcp"
+      ? await mcpUpstream(target, method, requestHeaders, body, controller.signal)
+      : await fetch(target, {
+        method,
+        headers: requestHeaders,
+        body,
+        redirect: "manual",
+        signal: controller.signal,
+      });
     if (helper) {
       const reader = upstream.body?.getReader();
       const chunks: Uint8Array[] = [];

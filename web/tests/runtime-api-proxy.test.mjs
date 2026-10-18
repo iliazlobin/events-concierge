@@ -396,3 +396,57 @@ test("Next config and Docker build do not capture EC_API_ORIGIN", async () => {
   assert.doesNotMatch(nextConfig, /EC_API_ORIGIN|rewrites\s*\(/);
   assert.doesNotMatch(dockerfile, /ARG EC_API_ORIGIN|ENV EC_API_ORIGIN/);
 });
+
+test("MCP discovery preserves the public Host on a real HTTP request", async (t) => {
+  const originalOrigin = process.env.EC_API_ORIGIN;
+  t.after(() => { process.env.EC_API_ORIGIN = originalOrigin; });
+  const message = { jsonrpc: "2.0", id: 1, method: "tools/list", params: {} };
+  const seen = [];
+  const backend = await listen((request, response) => {
+    const chunks = [];
+    request.on("data", chunk => chunks.push(chunk));
+    request.on("end", () => {
+      seen.push({ headers: request.headers, method: request.method, path: request.url, body: JSON.parse(Buffer.concat(chunks).toString()) });
+      response.setHeader("Content-Type", "application/json");
+      response.setHeader("Cache-Control", "no-store, max-age=0");
+      response.end(JSON.stringify({ jsonrpc: "2.0", id: 1, result: { tools: [] } }));
+    });
+  });
+  t.after(() => backend.close());
+  process.env.EC_API_ORIGIN = backend.origin;
+  const response = await proxyRuntimeApiRequest(new Request("http://localhost:3000/v1/muse/mcp", {
+    method: "POST", headers: { "Authorization": "Bearer fixture-mcp-key", "Accept": "application/json, text/event-stream",
+      "Host": "events.example", "Content-Type": "application/json", "MCP-Protocol-Version": "2025-11-25", "Origin": "https://events.example", "X-Forwarded-Host": "evil.test" },
+    body: JSON.stringify(message),
+  }), "/v1", ["muse", "mcp"]);
+  assert.equal(response.status, 200);
+  assert.equal(response.headers.get("cache-control"), "no-store, max-age=0");
+  assert.deepEqual((await response.json()).result, { tools: [] });
+  assert.equal(seen.length, 1);
+  const call = seen[0];
+  assert.equal(call.path, "/v1/muse/mcp");
+  assert.equal(call.method, "POST");
+  assert.equal(call.headers.host, "events.example");
+  assert.equal(call.headers.authorization, "Bearer fixture-mcp-key");
+  assert.equal(call.headers.accept, "application/json, text/event-stream");
+  assert.equal(call.headers["mcp-protocol-version"], "2025-11-25");
+  assert.equal(call.headers.origin, "https://events.example");
+  assert.equal(call.headers["x-forwarded-host"], undefined);
+  assert.deepEqual(call.body, message);
+});
+
+test("MCP responses remain bounded and preserve empty acknowledgements", async (t) => {
+  const originalOrigin = process.env.EC_API_ORIGIN;
+  t.after(() => { process.env.EC_API_ORIGIN = originalOrigin; });
+  let oversized = false;
+  const backend = await listen((_request, response) => {
+    if (oversized) response.end("x".repeat(1024 * 1024 + 1));
+    else { response.statusCode = 202; response.end(); }
+  });
+  t.after(() => backend.close());
+  process.env.EC_API_ORIGIN = backend.origin;
+  const invoke = () => proxyRuntimeApiRequest(new Request("https://events.example/v1/muse/mcp", { method: "POST", body: "{}" }), "/v1", ["muse", "mcp"]);
+  assert.equal((await invoke()).status, 202);
+  oversized = true;
+  assert.equal((await invoke()).status, 502);
+});

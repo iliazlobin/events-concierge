@@ -945,7 +945,7 @@ def test_settings_secret_is_one_time_with_instructions_in_docs(page_factory, wid
     harness, api = install(page_factory, width)
     page = harness.page
     page.goto(BASE + "/settings/registrations")
-    expect(page.get_by_role("heading", name="Registrations", exact=True)).to_be_visible()
+    expect(page.get_by_role("heading", name="Agentic registrations (Muse)", exact=True)).to_be_visible()
     expect(page.locator('.settings-panel > [role="status"]')).to_have_class("sr-only")
     selector = page.get_by_role("combobox", name="Provider", exact=True)
     expect(selector).to_have_value("muse")
@@ -1010,7 +1010,7 @@ def test_settings_help_supports_hover_keyboard_touch_and_copy_without_writes(pag
     harness, api = install(page_factory, width)
     page = harness.page
     page.goto(BASE + "/settings/registrations")
-    expect(page.get_by_role("heading", name="Registrations", exact=True)).to_be_visible()
+    expect(page.get_by_role("heading", name="Agentic registrations (Muse)", exact=True)).to_be_visible()
     connector = page.get_by_role("textbox", name="Connector URL", exact=True)
     expect(connector).to_have_value(BASE + "/v1/muse/openapi.json")
     expect(page.get_by_role("tooltip")).to_have_count(0)
@@ -1029,11 +1029,16 @@ def test_settings_help_supports_hover_keyboard_touch_and_copy_without_writes(pag
     help_button.click()
     expect(tooltip).to_be_visible()
     assert tooltip.evaluate("element => { const box = element.getBoundingClientRect(); return box.left >= 0 && box.right <= innerWidth; }")
-    page.get_by_role("button", name="Copy URL", exact=True).click()
-    expect(tooltip).to_have_count(0)
-    expect(page.locator('.settings-panel > [role="status"]')).to_contain_text("URL copied.")
-    expect(page.locator('.settings-panel > [role="status"]')).to_have_class("sr-only")
-    assert page.evaluate("window.__fixtureCopied") == connector.input_value()
+    expect(page.get_by_role("button", name="Copy URL", exact=True)).to_be_disabled()
+    expect(page.get_by_text("Local preview only.", exact=False)).to_be_visible()
+    expect(page.get_by_role("textbox", name="MCP URL", exact=True)).to_have_count(0)
+    page.goto(BASE + "/settings/mcp")
+    expect(page.get_by_role("heading", name="MCP (events discovery)", exact=True)).to_be_visible()
+    expect(page.get_by_role("textbox", name="Connector URL", exact=True)).to_have_count(0)
+    expect(page.get_by_role("textbox", name="Default email", exact=True)).to_have_count(0)
+    expect(page.get_by_role("textbox", name="MCP URL", exact=True)).to_have_value(BASE + "/v1/muse/mcp")
+    expect(page.get_by_role("button", name="Copy MCP URL", exact=True)).to_be_disabled()
+    expect(page.get_by_role("link", name="MCP setup")).to_have_attribute("href", "/docs/mcp#connect")
     assert api.writes == []
     assert page.evaluate("document.documentElement.scrollWidth <= innerWidth")
 
@@ -1043,7 +1048,7 @@ def test_registration_settings_preserve_bookmarks_and_sign_in_destination(page_f
     page = harness.page
     page.goto(BASE + "/settings/muse")
     expect(page).to_have_url(BASE + "/settings/registrations")
-    expect(page.get_by_role("heading", name="Registrations", exact=True)).to_be_visible()
+    expect(page.get_by_role("heading", name="Agentic registrations (Muse)", exact=True)).to_be_visible()
     expect(page.get_by_role("combobox", name="Provider", exact=True)).to_have_value("muse")
     api.muse_calls.clear()
     api.signed_in = False

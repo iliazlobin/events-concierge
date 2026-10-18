@@ -10,6 +10,8 @@ _DISCOVERY_ROUTES = {
     "/v1/me/muse/connection",
     "/v1/me/muse/batches",
     "/v1/muse/openapi.json",
+    "/v1/muse/connector/events",
+    "/v1/muse/connector/events/{event_id}",
     "/v1/muse/connector/batches",
     "/v1/muse/connector/batches/{batch_id}",
     "/v1/muse/connector/batches/{batch_id}/items/{event_id}/claim",

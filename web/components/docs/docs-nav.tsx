@@ -8,6 +8,7 @@ export const DOC_LINKS = [
   { href: "/docs", label: "Overview" },
   { href: "/docs/browsing", label: "Find events" },
   { href: "/docs/muse", label: "Registrations" },
+  { href: "/docs/mcp", label: "MCP discovery" },
   { href: "/docs/account", label: "Account" },
   { href: "/docs/how-it-works", label: "How it works" },
 ];
