@@ -1011,6 +1011,9 @@ def test_settings_help_supports_hover_keyboard_touch_and_copy_without_writes(pag
     page = harness.page
     page.goto(BASE + "/settings/registrations")
     expect(page.get_by_role("heading", name="Agentic registrations (Muse)", exact=True)).to_be_visible()
+    navigation = page.get_by_role("navigation", name="Settings sections", exact=True)
+    expect(navigation.get_by_role("link", name="Agentic registrations (Muse)", exact=True)).to_have_attribute("aria-current", "page")
+    expect(navigation.get_by_role("link", name="MCP (events discovery)", exact=True)).to_have_attribute("href", "/settings/mcp")
     connector = page.get_by_role("textbox", name="Connector URL", exact=True)
     expect(connector).to_have_value(BASE + "/v1/muse/openapi.json")
     expect(page.get_by_role("tooltip")).to_have_count(0)
