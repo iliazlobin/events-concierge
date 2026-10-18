@@ -52,13 +52,14 @@ export function MuseConnectionPanel() {
     catch { setMessage(null); setError(CLIPBOARD_ERROR); }
   }
   const schema = origin ? `${origin}/v1/muse/openapi.json` : "";
+  const mcp = origin ? `${origin}/v1/muse/mcp` : "";
   return <div className="settings-panel">
     {error ? <p role="alert" className="settings-error">{error}</p> : null}
     <p role="status" aria-live="polite" aria-atomic="true" className={message?.inline ? "settings-notice" : "sr-only"}>{message?.text}</p>
     <section className="settings-card" aria-labelledby="muse-connection-heading">
       <h2 id="muse-connection-heading" className="settings-card__title">Connection</h2>
       <dl className={`settings-facts ${styles.facts}`}>
-        <div><dt>Connection key <SettingsHelp label="Connection key">Lets Muse read and update your queued registrations for 30 days. An active key does not confirm Muse is connected.</SettingsHelp></dt>
+        <div><dt>Connection key <SettingsHelp label="Connection key">Authenticates catalog discovery and the signup connector for 30 days. An active key does not confirm Muse is connected.</SettingsHelp></dt>
           <dd>{connection ? connection.connected ? "Active" : "No active key" : error ? "Unavailable" : "Loading…"}
             {!connection && error ? <button type="button" className={styles.textButton} onClick={() => void refresh()}>Retry</button> : null}</dd></div>
         {connection?.connected && connection.expires_at ? <div><dt>Expires</dt><dd>{new Date(connection.expires_at).toLocaleDateString()}</dd></div> : null}
@@ -72,6 +73,17 @@ export function MuseConnectionPanel() {
           <input id="muse-connector-url" readOnly value={schema} />
           <button type="button" className="button" disabled={!origin} onClick={() => copy(schema, "URL copied.")}>Copy URL</button>
         </div>
+      </div>
+      <div className={`settings-field ${styles.connector}`}>
+        <div className={styles.fieldLabel}>
+          <label htmlFor="muse-mcp-url">MCP URL</label>
+          <SettingsHelp label="MCP URL">For clients supporting Streamable HTTP MCP. Use the same Bearer key. Provides read-only event search and details; signups use the connector above.</SettingsHelp>
+        </div>
+        <div className={styles.copyField}>
+          <input id="muse-mcp-url" readOnly value={mcp} />
+          <button type="button" className="button" disabled={!origin} onClick={() => copy(mcp, "MCP URL copied.")}>Copy MCP URL</button>
+        </div>
+        <Link className={styles.link} href="/docs/muse#mcp">MCP setup <span aria-hidden="true">→</span></Link>
       </div>
       <div className={styles.actions}>
         <button type="button" className="button button-primary" disabled={busy || !connection} onClick={createKey}>

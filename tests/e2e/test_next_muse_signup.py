@@ -988,6 +988,12 @@ def test_settings_help_supports_hover_keyboard_touch_and_copy_without_writes(pag
     expect(page.locator('.settings-panel > [role="status"]')).to_contain_text("URL copied.")
     expect(page.locator('.settings-panel > [role="status"]')).to_have_class("sr-only")
     assert page.evaluate("window.__fixtureCopied") == connector.input_value()
+    mcp = page.get_by_role("textbox", name="MCP URL", exact=True)
+    expect(mcp).to_have_value(BASE + "/v1/muse/mcp")
+    page.get_by_role("button", name="Copy MCP URL", exact=True).click()
+    assert page.evaluate("window.__fixtureCopied") == mcp.input_value()
+    expect(page.locator('.settings-panel > [role="status"]')).to_have_class("sr-only")
+    expect(page.get_by_role("link", name="MCP setup")).to_have_attribute("href", "/docs/muse#mcp")
     assert api.writes == []
     assert page.evaluate("document.documentElement.scrollWidth <= innerWidth")
 
