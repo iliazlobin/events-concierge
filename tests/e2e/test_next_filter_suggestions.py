@@ -666,8 +666,13 @@ def test_registration_open_is_searchable_editable_and_retained(discovery_filters
     page.get_by_role("button", name="Map", exact=True).click()
     expect(page.get_by_role("heading", name="Event map", exact=True)).to_be_visible()
     assert parse_qs(urlsplit(page.url).query)["availability"] == ["available"]
+    # Wait for the lazy map, then finish fixture tiles before hard navigation.
+    expect(page.locator(".maplibregl-canvas")).to_be_visible()
+    page.wait_for_load_state("networkidle")
     page.reload()
     expect(chip).to_contain_text("Open")
+    expect(page.locator(".maplibregl-canvas")).to_be_visible()
+    page.wait_for_load_state("networkidle")
     page.get_by_role("button", name="Events", exact=True).click()
     expect(page.locator(".event-card")).to_have_count(1)
     page.screenshot(path=str(tmp_path / f"registration-open-{width}.png"), animations="disabled")
