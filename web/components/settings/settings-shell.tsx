@@ -31,6 +31,8 @@ export function SettingsShell({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
   const { status, me, config, error, refresh } = useSession();
 
+  const missingApi = status === "failed" && error === "API upstream is not configured";
+
   return (
     <div className="settings-shell">
       <header className="settings-header">
@@ -73,7 +75,12 @@ export function SettingsShell({ children }: { children: React.ReactNode }) {
 
           {status === "failed" ? (
             <div className="settings-state" role="alert">
-              <p>{error ?? "Settings are briefly unavailable."}</p>
+              {missingApi ? <>
+                <h1>Settings preview only</h1>
+                <p>This preview has no API connected. Connection keys and account settings are unavailable.</p>
+                <p>To connect an assistant, use a deployed HTTPS site with MCP enabled. A localhost preview cannot be reached by Muse.</p>
+                <Link href={pathname === "/settings/mcp" ? "/docs/mcp" : "/docs/muse"} className="settings-guide-link">Read the setup guide →</Link>
+              </> : <p>{error ?? "Settings are briefly unavailable."}</p>}
               <button type="button" className="button button-primary" onClick={refresh}>
                 Try again
               </button>

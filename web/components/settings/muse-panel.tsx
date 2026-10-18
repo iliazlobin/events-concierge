@@ -52,6 +52,7 @@ export function MuseConnectionPanel({ purpose = "registrations" }: { purpose?: "
     }
     catch { setMessage(null); setError(CLIPBOARD_ERROR); }
   }
+  const publicConnection = origin.startsWith("https://") && !["localhost", "127.0.0.1", "[::1]"].includes(new URL(origin).hostname);
   const schema = origin ? `${origin}/v1/muse/openapi.json` : "";
   const mcp = origin ? `${origin}/v1/muse/mcp` : "";
   return <div className="settings-panel">
@@ -59,6 +60,7 @@ export function MuseConnectionPanel({ purpose = "registrations" }: { purpose?: "
     <p role="status" aria-live="polite" aria-atomic="true" className={message?.inline ? "settings-notice" : "sr-only"}>{message?.text}</p>
     <section className="settings-card" aria-labelledby="muse-connection-heading">
       <h2 id="muse-connection-heading" className="settings-card__title">Connection</h2>
+      {origin && !publicConnection ? <p className="settings-hint">Local preview only. Muse needs a deployed public HTTPS URL. These local URLs cannot connect Muse.</p> : null}
       <dl className={`settings-facts ${styles.facts}`}>
         <div><dt>Connection key <SettingsHelp label="Connection key">Authenticates catalog discovery and the signup connector for 30 days. An active key does not confirm Muse is connected.</SettingsHelp></dt>
           <dd>{connection ? connection.connected ? "Active" : "No active key" : error ? "Unavailable" : "Loading…"}
@@ -73,7 +75,7 @@ export function MuseConnectionPanel({ purpose = "registrations" }: { purpose?: "
         </div>
         <div className={styles.copyField}>
           <input id="muse-mcp-url" readOnly value={mcp} />
-          <button type="button" className="button" disabled={!origin} onClick={() => copy(mcp, "MCP URL copied.")}>Copy MCP URL</button>
+          <button type="button" className="button" disabled={!publicConnection} onClick={() => copy(mcp, "MCP URL copied.")}>Copy MCP URL</button>
         </div>
         <Link className={styles.link} href="/docs/mcp#connect">MCP setup <span aria-hidden="true">→</span></Link>
       </div>
@@ -85,7 +87,7 @@ export function MuseConnectionPanel({ purpose = "registrations" }: { purpose?: "
         </div>
         <div className={styles.copyField}>
           <input id="muse-connector-url" readOnly value={schema} />
-          <button type="button" className="button" disabled={!origin} onClick={() => copy(schema, "URL copied.")}>Copy URL</button>
+          <button type="button" className="button" disabled={!publicConnection} onClick={() => copy(schema, "URL copied.")}>Copy URL</button>
         </div>
       </div>
       </>}

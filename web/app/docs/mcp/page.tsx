@@ -6,6 +6,7 @@ export const metadata: Metadata = { title: "MCP (events discovery)" };
 export default function McpGuide() {
   return <GuidePage title="MCP (events discovery)" intro={<p>Connect an assistant to search the Events Concierge catalog and compare events.</p>}
     contents={[{ href: "#connect", label: "Connect" }, { href: "#discover", label: "Find events" }]}>
+    <p><strong>Before setup:</strong> open these settings on your deployed HTTPS site. A local docs preview has no account API unless one is configured, and Muse cannot reach localhost. The MCP endpoint must be released and enabled before you connect.</p>
     <h2 id="connect" tabIndex={-1}>Connect MCP</h2>
     <p>Use MCP for read-only catalog discovery in a client supporting <strong>Streamable HTTP</strong> and Bearer authentication. For Muse’s existing OpenAPI connector, follow <Link href="/docs/muse#connect">Connect Muse</Link>. That connector also supports discovery.</p>
     <ol>
