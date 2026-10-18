@@ -645,11 +645,46 @@ def test_tech_week_leads_saved_selections_without_hiding_typed_matches(discovery
     assert page.evaluate("document.documentElement.scrollWidth <= innerWidth")
 
 
+def _fixture_map_tile_barrier(page):
+    """Drain current fixture tiles without waiting on Next's streaming route reads."""
+    tile_pending, tile_finished = set(), []
+    tile_activity = [perf_counter()]
+
+    def track_tile(request):
+        if request.url.startswith("https://tile.openstreetmap.org/"):
+            tile_pending.add(request)
+            tile_activity[0] = perf_counter()
+
+    def finish_tile(request):
+        if request in tile_pending:
+            tile_pending.remove(request)
+            tile_finished.append(request)
+            tile_activity[0] = perf_counter()
+
+    page.on("request", track_tile)
+    page.on("requestfinished", finish_tile)
+    page.on("requestfailed", finish_tile)
+
+    def settle_fixture_map():
+        expect(page.locator(".maplibregl-canvas")).to_be_visible()
+        deadline = perf_counter() + 5
+        while perf_counter() < deadline:
+            if tile_finished and not tile_pending and perf_counter() - tile_activity[0] >= 0.25:
+                tile_finished.clear()
+                return
+            page.wait_for_timeout(25)
+        pytest.fail("Fixture map tiles did not finish before navigation")
+
+    return settle_fixture_map
+
+
 @pytest.mark.parametrize("width", [1440, 390])
 def test_registration_open_is_searchable_editable_and_retained(discovery_filters_page, tmp_path, width):
     harness, _, queries = discovery_filters_page
     page = harness.page
     page.set_viewport_size({"width": width, "height": 900})
+    page.emulate_media(reduced_motion="reduce")
+    settle_fixture_map = _fixture_map_tile_barrier(page)
     page.goto(f"{BASE}/?view=events&source=tech-week-sf-2026&when=all&price=any")
     expect(page.locator(".event-card")).to_have_count(4)
     search = page.get_by_role("combobox", name=SEARCH_NAME)
@@ -666,8 +701,11 @@ def test_registration_open_is_searchable_editable_and_retained(discovery_filters
     page.get_by_role("button", name="Map", exact=True).click()
     expect(page.get_by_role("heading", name="Event map", exact=True)).to_be_visible()
     assert parse_qs(urlsplit(page.url).query)["availability"] == ["available"]
+    # Only fixture tiles matter here; Next's streaming route reads may stay open.
+    settle_fixture_map()
     page.reload()
     expect(chip).to_contain_text("Open")
+    settle_fixture_map()
     page.get_by_role("button", name="Events", exact=True).click()
     expect(page.locator(".event-card")).to_have_count(1)
     page.screenshot(path=str(tmp_path / f"registration-open-{width}.png"), animations="disabled")

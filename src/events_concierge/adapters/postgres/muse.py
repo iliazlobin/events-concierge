@@ -711,7 +711,7 @@ class PostgresMuseRepository:
                 "batch_id": batch_id,
                 "event_id": event_id,
                 "status": outcome.status,
-                "outcome": json.dumps(outcome.model_dump(mode="json")),
+                "outcome": json.dumps(outcome.model_dump(mode="json", exclude_none=True)),
             }
             await session.execute(
                 text("""

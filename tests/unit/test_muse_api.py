@@ -14,6 +14,7 @@ from events_concierge.config import Settings
 from events_concierge.domain.muse import (
     MuseConflictError,
     MuseNotFoundError,
+    SignupOutcome,
     SignupRegistration,
     SignupRegistrations,
     SignupStatusCounts,
@@ -242,6 +243,43 @@ async def test_connector_schema_carries_signup_email_and_resumed_account_instruc
         assert "Never infer phone/email identity" in instructions
         assert "Never enter, guess or store phone numbers" in instructions
         assert "request SMS codes, enter verification codes or switch accounts" in instructions
+
+
+async def test_connector_accepts_optional_private_conversation_without_relaxing_provider_evidence(monkeypatch):
+    app, repository, tenant = muse_app(monkeypatch)
+    event_id = app.state.container.catalog.get_browse_event.return_value.canonical_event.canonical_event_id
+    batch = await app.state.container.muse.prepare(tenant, uuid4(), [event_id])
+    attempt = uuid4()
+    conversation = "https://muse.ai/thread/11111111-1111-4111-8111-111111111111"
+    outcome = SignupOutcome(status="failed", note="The organizer declined the application.", conversation_url=conversation)
+    reported = batch.items[0].model_copy(update={"status": outcome.status, "attempt_id": attempt, "outcome": outcome})
+    repository.report.return_value = reported
+    token, _ = await app.state.container.muse.connect(tenant)
+    path = f"/v1/muse/connector/batches/{batch.batch_id}/items/{event_id}/outcome"
+    async with AsyncClient(transport=ASGITransport(app=app), base_url=ORIGIN) as client:
+        schema = (await client.get("/v1/muse/openapi.json")).json()
+        contract = schema["components"]["schemas"]["SignupOutcome"]
+        assert "conversation_url" in contract["properties"]
+        assert "conversation_url" not in contract["required"]
+        assert "not provider confirmation" in contract["properties"]["conversation_url"]["description"]
+        instructions = " ".join(schema["paths"]["/v1/muse/connector/batches/{batch_id}/items/{event_id}/outcome"]["put"]["description"].split())
+        assert "short reason" in instructions and "never invent a link or create a public share" in instructions
+        payload = {"attempt_id": str(attempt), "outcome": outcome.model_dump()}
+        assert (await client.put(path, json=payload)).status_code == 401
+        repository.report.assert_not_awaited()
+        headers = {"Authorization": "Bearer " + token}
+        response = await client.put(path, json=payload, headers=headers)
+        assert response.status_code == 200
+        assert response.json()["outcome"]["conversation_url"] == conversation
+        assert "no-store" in response.headers["cache-control"]
+        repository.report.assert_awaited_once_with(tenant, batch.batch_id, event_id, attempt, outcome)
+        for invalid in (
+            {**payload["outcome"], "conversation_url": conversation + "?token=secret"},
+            {"status": "registered", "conversation_url": conversation},
+            {"status": "registered", "evidence_url": conversation},
+        ):
+            assert (await client.put(path, json={"attempt_id": str(attempt), "outcome": invalid}, headers=headers)).status_code == 422
+        assert repository.report.await_count == 1
 
 
 async def test_batch_body_cannot_set_tenant_or_provider_url(monkeypatch):

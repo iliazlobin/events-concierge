@@ -23,6 +23,9 @@ MUSE_HOSTS = frozenset(
 )
 _PARTIFUL_HOSTS = frozenset({"partiful.com", "www.partiful.com"})
 _PARTIFUL_EVENT_PATH = re.compile(r"/e/[A-Za-z0-9_-]+/?")
+_MUSE_CONVERSATION_URL = re.compile(
+    r"https://muse\.ai/thread/[0-9a-fA-F]{8}-(?:[0-9a-fA-F]{4}-){3}[0-9a-fA-F]{12}/?"
+)
 type RegistrationExecutor = Literal["muse"]
 type RegistrationProvider = Literal["luma", "meetup", "partiful"]
 _EMAIL_LOCAL = re.compile(r"[A-Za-z0-9!#$%&'*+/=?^_`{|}~-]+(?:\.[A-Za-z0-9!#$%&'*+/=?^_`{|}~-]+)*")
@@ -186,6 +189,14 @@ class SignupOutcome(MuseModel):
     note: str = Field(default="", max_length=500)
     confirmation_reference: str | None = Field(default=None, min_length=1, max_length=256)
     evidence_url: str | None = None
+    conversation_url: str | None = Field(
+        default=None,
+        description=(
+            "Private https://muse.ai/thread/<UUID> URL for the conversation that explains this "
+            "result. Copy the actual current conversation URL when available; otherwise omit. "
+            "Never invent a URL or create a public share. This is not provider confirmation evidence."
+        ),
+    )
 
     @field_validator("note", "confirmation_reference")
     @classmethod
@@ -201,6 +212,13 @@ class SignupOutcome(MuseModel):
     @classmethod
     def safe_evidence(cls, value: str | None) -> str | None:
         return provider_url(value) if value is not None else None
+
+    @field_validator("conversation_url")
+    @classmethod
+    def safe_conversation(cls, value: str | None) -> str | None:
+        if value is not None and _MUSE_CONVERSATION_URL.fullmatch(value) is None:
+            raise ValueError("a private Muse HTTPS conversation URL is required")
+        return value
 
     @model_validator(mode="after")
     def confirmation_required(self) -> SignupOutcome:
