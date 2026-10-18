@@ -194,7 +194,7 @@ def _settings(**overrides: Any) -> Settings:
     return Settings(**values)
 
 
-@pytest.mark.parametrize("return_to", ["/app#/plans", "/settings/registrations"])
+@pytest.mark.parametrize("return_to", ["/app#/plans", "/settings/registrations", "/settings/mcp"])
 async def test_oidc_bff_login_session_csrf_and_revocation_are_one_coherent_boundary(return_to: str) -> None:
     tenant_id = uuid4()
     store = _MemorySessionStore()

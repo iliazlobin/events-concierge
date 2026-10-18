@@ -12,7 +12,8 @@ import styles from "./muse-panel.module.css";
 
 const CLIPBOARD_ERROR = "Clipboard unavailable. Copy the field manually.";
 
-export function MuseConnectionPanel() {
+export function MuseConnectionPanel({ purpose = "registrations" }: { purpose?: "registrations" | "discovery" }) {
+  const discovery = purpose === "discovery";
   const { tenantId } = useSession();
   const [connection, setConnection] = useState<MuseConnection | null>(null);
   const [token, setToken] = useState<string | null>(null);
@@ -51,18 +52,34 @@ export function MuseConnectionPanel() {
     }
     catch { setMessage(null); setError(CLIPBOARD_ERROR); }
   }
+  const publicConnection = origin.startsWith("https://") && !["localhost", "127.0.0.1", "[::1]"].includes(new URL(origin).hostname);
   const schema = origin ? `${origin}/v1/muse/openapi.json` : "";
+  const mcp = origin ? `${origin}/v1/muse/mcp` : "";
   return <div className="settings-panel">
     {error ? <p role="alert" className="settings-error">{error}</p> : null}
     <p role="status" aria-live="polite" aria-atomic="true" className={message?.inline ? "settings-notice" : "sr-only"}>{message?.text}</p>
     <section className="settings-card" aria-labelledby="muse-connection-heading">
       <h2 id="muse-connection-heading" className="settings-card__title">Connection</h2>
+      {origin && !publicConnection ? <p className="settings-hint">Local preview only. Muse needs a deployed public HTTPS URL. These local URLs cannot connect Muse.</p> : null}
       <dl className={`settings-facts ${styles.facts}`}>
-        <div><dt>Connection key <SettingsHelp label="Connection key">Lets Muse read and update your queued registrations for 30 days. An active key does not confirm Muse is connected.</SettingsHelp></dt>
+        <div><dt>Connection key <SettingsHelp label="Connection key">Authenticates catalog discovery and the signup connector for 30 days. An active key does not confirm Muse is connected.</SettingsHelp></dt>
           <dd>{connection ? connection.connected ? "Active" : "No active key" : error ? "Unavailable" : "Loading…"}
             {!connection && error ? <button type="button" className={styles.textButton} onClick={() => void refresh()}>Retry</button> : null}</dd></div>
         {connection?.connected && connection.expires_at ? <div><dt>Expires</dt><dd>{new Date(connection.expires_at).toLocaleDateString()}</dd></div> : null}
       </dl>
+      {discovery ? <>
+      <div className={`settings-field ${styles.connector}`}>
+        <div className={styles.fieldLabel}>
+          <label htmlFor="muse-mcp-url">MCP URL</label>
+          <SettingsHelp label="MCP URL">For clients supporting Streamable HTTP MCP. Use the same Bearer key. Provides read-only event search and details; signups use the connector in Registration settings.</SettingsHelp>
+        </div>
+        <div className={styles.copyField}>
+          <input id="muse-mcp-url" readOnly value={mcp} />
+          <button type="button" className="button" disabled={!publicConnection} onClick={() => copy(mcp, "MCP URL copied.")}>Copy MCP URL</button>
+        </div>
+        <Link className={styles.link} href="/docs/mcp#connect">MCP setup <span aria-hidden="true">→</span></Link>
+      </div>
+      </> : <>
       <div className={`settings-field ${styles.connector}`}>
         <div className={styles.fieldLabel}>
           <label htmlFor="muse-connector-url">Connector URL</label>
@@ -70,9 +87,10 @@ export function MuseConnectionPanel() {
         </div>
         <div className={styles.copyField}>
           <input id="muse-connector-url" readOnly value={schema} />
-          <button type="button" className="button" disabled={!origin} onClick={() => copy(schema, "URL copied.")}>Copy URL</button>
+          <button type="button" className="button" disabled={!publicConnection} onClick={() => copy(schema, "URL copied.")}>Copy URL</button>
         </div>
       </div>
+      </>}
       <div className={styles.actions}>
         <button type="button" className="button button-primary" disabled={busy || !connection} onClick={createKey}>
           {connection?.connected ? "Replace key" : "Create key"}</button>
@@ -89,8 +107,9 @@ export function MuseConnectionPanel() {
       </div> : null}
     </section>
     <nav aria-label="Muse links" className={styles.links}>
-      <Link className={styles.link} href="/?registrations=1">Registrations <span aria-hidden="true">→</span></Link>
-      <a className={styles.link} href={MUSE_URL} target="_blank" rel="noopener noreferrer">Open Muse <span aria-hidden="true">↗</span></a>
+      {discovery ? <Link className={styles.link} href="/settings/registrations">Registration settings <span aria-hidden="true">→</span></Link> : <Link className={styles.link} href="/settings/mcp">MCP discovery <span aria-hidden="true">→</span></Link>}
+      {!discovery ? <Link className={styles.link} href="/?registrations=1">Registrations <span aria-hidden="true">→</span></Link> : null}
+      {!discovery ? <a className={styles.link} href={MUSE_URL} target="_blank" rel="noopener noreferrer">Open Muse <span aria-hidden="true">↗</span></a> : null}
     </nav>
   </div>;
 }

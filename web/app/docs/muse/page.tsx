@@ -3,11 +3,11 @@ import Link from "next/link";
 import { MuseInstructions } from "@/components/docs/muse-instructions";
 import { MUSE_URL } from "@/lib/muse";
 import { CodeBlock, FlowDiagram, GuidePage, RelatedGuides } from "@/components/docs/docs-kit";
-export const metadata: Metadata = { title: "Registrations" };
+export const metadata: Metadata = { title: "Agentic registrations (Muse)" };
 
 export default function MuseGuide() {
   return <GuidePage
-    title="Registrations"
+    title="Agentic registrations (Muse)"
     intro={<p>Queue free Luma, Meetup or Partiful events before they end. Muse completes registration in its own browser.</p>}
     contents={[{ href: "#connect", label: "Connect" }, { href: "#account", label: "Registration account" }, { href: "#start", label: "Queue and start" }, { href: "#progress", label: "Progress" }, { href: "#recovery", label: "Limits and recovery" }]}
   >
@@ -22,6 +22,7 @@ export default function MuseGuide() {
     <p>Bearer authentication sends the connection key in the request’s authorization header:</p>
     <CodeBlock label="Connector request format — placeholder key">{"GET /v1/muse/connector/batches?limit=100\nAuthorization: Bearer YOUR_CONNECTION_KEY"}</CodeBlock>
     <p>The <a href="/v1/muse/openapi.json">connector schema</a> describes the operations Muse can use when signups are enabled. Your event-provider logins stay in Muse.</p>
+    <p>Looking for catalog search through MCP? See <Link href="/docs/mcp">MCP discovery</Link>.</p>
     <h2 id="account" tabIndex={-1}>Registration account</h2>
     <p>Your Events Concierge sign-in owns the queue. The account Muse uses on the event website can be different.</p>
     <ol>

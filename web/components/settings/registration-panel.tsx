@@ -19,7 +19,7 @@ export function RegistrationPanel() {
 
   return <section className="settings-panel">
     <header className="settings-panel__head">
-      <h1>Registrations</h1>
+      <h1>Agentic registrations (Muse)</h1>
       <Link href={provider?.guideHref ?? "/docs/muse"} className="settings-guide-link">Setup guide <span aria-hidden="true">→</span></Link>
     </header>
     {provider && Panel ? <>

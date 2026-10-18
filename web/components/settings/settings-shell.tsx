@@ -13,6 +13,7 @@ const TABS = [
   { href: "/settings/taste", label: "Interests" },
   { href: "/settings/saved-filters", label: "Saved filters" },
   { href: "/settings/registrations", label: "Registrations" },
+  { href: "/settings/mcp", label: "MCP discovery" },
   { href: "/settings/activity", label: "Activity" },
   { href: "/settings/api-keys", label: "API keys" },
   { href: "/settings/security", label: "Security" },
@@ -29,6 +30,8 @@ const TABS = [
 export function SettingsShell({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
   const { status, me, config, error, refresh } = useSession();
+
+  const missingApi = status === "failed" && error === "API upstream is not configured";
 
   return (
     <div className="settings-shell">
@@ -47,7 +50,7 @@ export function SettingsShell({ children }: { children: React.ReactNode }) {
       <div className="settings-grid">
         <nav className="settings-nav" aria-label="Settings sections">
           {TABS.filter(tab => releaseSettingsAllowed(tab.href, releaseProfile(config))
-            && (tab.href !== "/settings/registrations" || availableRegistrationProviders(config).length > 0)).map((tab) => {
+            && (!["/settings/registrations", "/settings/mcp"].includes(tab.href) || availableRegistrationProviders(config).length > 0)).map((tab) => {
             const active = pathname === tab.href;
             return (
               <Link
@@ -72,7 +75,12 @@ export function SettingsShell({ children }: { children: React.ReactNode }) {
 
           {status === "failed" ? (
             <div className="settings-state" role="alert">
-              <p>{error ?? "Settings are briefly unavailable."}</p>
+              {missingApi ? <>
+                <h1>Settings preview only</h1>
+                <p>This preview has no API connected. Connection keys and account settings are unavailable.</p>
+                <p>To connect an assistant, use a deployed HTTPS site with MCP enabled. A localhost preview cannot be reached by Muse.</p>
+                <Link href={pathname === "/settings/mcp" ? "/docs/mcp" : "/docs/muse"} className="settings-guide-link">Read the setup guide →</Link>
+              </> : <p>{error ?? "Settings are briefly unavailable."}</p>}
               <button type="button" className="button button-primary" onClick={refresh}>
                 Try again
               </button>

@@ -6,6 +6,7 @@ import secrets
 from datetime import UTC, datetime, timedelta
 from uuid import UUID
 
+from ..domain.catalog_browse import CatalogBrowseEvent
 from ..domain.enums import EventStatus, PriceStatus, RegistrationStatus
 from ..domain.muse import (
     MAX_MUSE_EVENTS,
@@ -77,38 +78,7 @@ class MuseSignupService:
         browse = await self.catalog.get_browse_event(event_id)
         if browse is None:
             raise ValueError("an event is no longer available in the published catalog")
-        event = browse.canonical_event
-        now = datetime.now(UTC)
-        if (
-            not registration_window_open(event.start_at, event.end_at, now)
-            or event.price_status is not PriceStatus.FREE
-            or event.event_status is not EventStatus.SCHEDULED
-            or event.registration_status is RegistrationStatus.SOLD_OUT
-        ):
-            raise ValueError(
-                "Muse supports free upcoming or ongoing events with available registration"
-            )
-        eligible: list[tuple[str, datetime]] = []
-        for source in browse.sources:
-            try:
-                url = provider_url(source.registration_url)
-            except ValueError:
-                continue
-            if now - _MAX_OBSERVATION_AGE <= source.last_seen_at <= now + timedelta(minutes=5):
-                eligible.append((url, source.last_seen_at))
-        if not eligible:
-            raise ValueError("Muse needs a recently collected Luma, Meetup or Partiful event")
-        url, observed_at = max(eligible, key=lambda candidate: candidate[1])
-        return SignupEvent(
-            canonical_event_id=event_id,
-            title=event.title,
-            start_at=event.start_at,
-            end_at=event.end_at,
-            venue_name=event.venue_name,
-            city=event.city_norm,
-            registration_url=url,
-            observed_at=observed_at,
-        )
+        return selected_muse_event(browse, datetime.now(UTC))
 
     async def claim(
         self,
@@ -158,3 +128,38 @@ class MuseSignupService:
 
 def _digest(secret: str) -> str:
     return hashlib.sha256(secret.encode("ascii")).hexdigest()
+
+
+def selected_muse_event(browse: CatalogBrowseEvent, now: datetime) -> SignupEvent:
+    """The same eligibility decision for discovery and owner queueing, without extra I/O."""
+    event = browse.canonical_event
+    if (
+        not registration_window_open(event.start_at, event.end_at, now)
+        or event.price_status is not PriceStatus.FREE
+        or event.event_status is not EventStatus.SCHEDULED
+        or event.registration_status is RegistrationStatus.SOLD_OUT
+    ):
+        raise ValueError(
+            "Muse supports free upcoming or ongoing events with available registration"
+        )
+    eligible: list[tuple[str, datetime]] = []
+    for source in browse.sources:
+        try:
+            url = provider_url(source.registration_url)
+        except ValueError:
+            continue
+        if now - _MAX_OBSERVATION_AGE <= source.last_seen_at <= now + timedelta(minutes=5):
+            eligible.append((url, source.last_seen_at))
+    if not eligible:
+        raise ValueError("Muse needs a recently collected Luma, Meetup or Partiful event")
+    url, observed_at = max(eligible, key=lambda candidate: candidate[1])
+    return SignupEvent(
+        canonical_event_id=event.canonical_event_id,
+        title=event.title,
+        start_at=event.start_at,
+        end_at=event.end_at,
+        venue_name=event.venue_name,
+        city=event.city_norm,
+        registration_url=url,
+        observed_at=observed_at,
+    )

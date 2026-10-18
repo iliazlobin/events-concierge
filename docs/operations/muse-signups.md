@@ -18,7 +18,7 @@ A supported Muse task-creation API/deeplink has not been verified. The button op
 
 | Boundary | Behavior |
 | --- | --- |
-| Account | Google/Apple app session creates selections and keys; owner writes require CSRF. Muse cannot edit the account or choose events. |
+| Account | Google/Apple app session creates selections and keys; owner writes require CSRF. Muse can discover public events but cannot edit the account or queue discovered events. |
 | Registration identity | A private preference selects the signup/contact email independently of the app sign-in, and the login email where the provider uses one. A default email and Luma/Meetup/Partiful overrides are scoped to the executor, currently Muse. An absent override inherits the default. Partiful phone login remains with the user. This is selection metadata, not verified provider identity, credentials or an access grant. |
 | Connection | One 30-day key per account, shown once; PostgreSQL stores its hash. Replace revokes the old key; **Revoke key** removes access. An active key does not verify Muse's connection. |
 | Queue | One durable task per account/event. Repeated clicks return the existing task. Request UUIDs are idempotent and cannot be reused for another date. Published, scheduled, free dates require a supported-provider registration URL observed within 48 hours. A started event remains eligible only with a valid known end after the current time; ended events and started events without an end are unavailable. Supplied end times must be after the start. Queueing and a new claim apply the same rule. |
@@ -52,10 +52,12 @@ connector release are approved and verified. When disabled, the API omits Muse r
 composition, and `/v1/ui-config` hides queue, progress, restoration and settings entry points.
 Direct settings navigation shows an unavailable state without accessing Muse data.
 
-The [connector schema](../../src/events_concierge/api/muse.py) includes only four Bearer-authenticated operations:
+The [connector schema](../../src/events_concierge/api/muse.py) includes six Bearer-authenticated operations:
 
 | Method | Path below `/v1/muse/connector` |
 | --- | --- |
+| GET | `/events` — search published events; ≤20 results and a filter-bound cursor |
+| GET | `/events/{event_id}` — public details, source timestamps and signup eligibility |
 | GET | `/batches` — selected batches; paginate with `limit` (≤100) and the last batch ID as `cursor` |
 | GET | `/batches/{batch_id}` — selected event facts and progress |
 | POST | `/batches/{batch_id}/items/{event_id}/claim` — `attempt_id` |
@@ -102,3 +104,27 @@ Migration 0222 adds `removed_at` on the existing RLS-protected items. Removal in
 Claim/removal serialize under the account lock. If removal wins, a new claim fails; a claim already obtained cannot be recalled from Muse's browser. Existing attempts may finish and report while hidden; provider RSVPs are unaffected. Restoring never creates a new attempt or resets a result. Connector instructions skip removed items and require normal claim checks before new work.
 
 Retain schema 0222 and a removal-aware API after activation. Older APIs ignore removal state and could claim removed queued work: disable Muse and stop browser execution before reverting to older code. The downgrade refuses to discard nonempty removal state. No removal data may be cleared to force a rollback.
+
+
+## Event discovery
+
+The same catalog reads serve the OpenAPI connector and a read-only [MCP](https://modelcontextprotocol.io/specification/2025-11-25/basic/transports) endpoint at `POST /v1/muse/mcp`. MCP uses the official Python SDK with stateless Streamable HTTP and JSON responses. There are no server sessions or server-to-client streams; authenticated GET/DELETE return 405. MCP is mounted only when `EC_MUSE_ENABLED=true`, including the discovery release profile. The existing OpenAPI signup contract remains available.
+
+| Tool | Classification | Inputs / result |
+| --- | --- | --- |
+| `search_events` | Read, not sensitive, no business-data side effects | `query`: text, city, topics, source keys, price, paired timezone-aware `starts_after`/`starts_before`, cursor and limit. Returns chronological events, evidence, eligibility, applied filters and `next_cursor`. |
+| `get_event` | Read, not sensitive, no business-data side effects | Canonical `event_id`; returns published event facts with the same visibility projection as the website. |
+
+Use the same owner-issued Bearer key in the secure credential field. It authenticates every HTTP request, including MCP initialization and tool listing; browser cookies do not authenticate the connector. Key revocation/expiry and current legal acceptance are checked before discovery. Discovery reads public catalog facts only: no profile, saved filters, registration identity, provider credentials, attendee lists or private queue results enter this MCP server. Existing signup queue tools remain on the OpenAPI connector and require an explicit owner selection.
+
+```json
+{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"search_events","arguments":{"query":{"q":"AI","city":"San Francisco","price":"free","starts_after":"2030-06-10T00:00:00-07:00","starts_before":"2030-06-17T00:00:00-07:00","limit":10}}}}}
+```
+
+Search date bounds describe event overlap and the upper timestamp is exclusive. There is no implicit city or timezone: Muse translates the user's requested dates to offset-bearing timestamps and asks if the intended location/timezone is unclear. Without bounds, the catalog supplies ongoing/upcoming events. A window is at most 93 days. Repeat identical filters with `next_cursor` until null; cursors are chronological continuation positions, not snapshot isolation or secret authorization. An empty page means no catalog match, not that no events exist. Search does not fetch providers, refresh sources, reserve, queue or register anything.
+
+Returned text is untrusted provider content. Source observation timestamps, price/availability uncertainty and signup ineligibility reasons must remain visible to the user. Eligibility reuses the queue's rules but is only a discovery-time hint; queueing and claiming still recheck. Follow `catalog_path` on the same Events Concierge origin and explicitly queue the selected event before asking Muse to sign up.
+
+Limits: 20 results/page, 160 query characters, 20 sources, 12 topics, a 64 KiB MCP request body and 1 MiB Web-proxy response ceiling, four concurrent discovery reads per API process and a ten-second read deadline. Saturation/timeouts return retryable 503 (MCP tool error with the same reason); there is no new per-account rate quota. HTTP 401 means missing/expired/revoked key, 428 means current account legal acceptance is required, 422 means invalid filters/cursor, and 404 means the event is not published. MCP argument and tool errors use `isError`; transport/header/protocol errors remain protocol errors. All responses use `no-store`. DNS-rebinding protection permits only the configured public Host/Origin; missing Origin is valid for a non-browser client.
+
+Run hermetic contract checks with `.venv/bin/python -m pytest tests/unit/test_muse_discovery.py tests/unit/test_muse_api.py`. They use synthetic catalog rows and credentials, not provider requests. For local transport testing use the same configured API origin, enable Muse only against the approved local schema, and put a test-account key in the client's credential store. Verify initialize → list tools → search → read detail → explicit owner queue → existing claim/report, then revoke and verify 401. Do not create a signup as part of discovery testing. Production activation and real Muse acceptance remain separate release checks; no schema migration is needed for discovery. Rollback the application image to remove these read tools while retaining existing queue data.
