@@ -77,6 +77,7 @@ def test_docs_are_public_and_all_guides_work_without_backend(page_factory, width
     guides = [
         ("Find events", "browsing"),
         ("Registrations", "muse"),
+        ("MCP discovery", "mcp"),
         ("Account", "account"),
         ("How it works", "how-it-works"),
     ]

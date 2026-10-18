@@ -13,6 +13,7 @@ const TABS = [
   { href: "/settings/taste", label: "Interests" },
   { href: "/settings/saved-filters", label: "Saved filters" },
   { href: "/settings/registrations", label: "Registrations" },
+  { href: "/settings/mcp", label: "MCP discovery" },
   { href: "/settings/activity", label: "Activity" },
   { href: "/settings/api-keys", label: "API keys" },
   { href: "/settings/security", label: "Security" },
@@ -47,7 +48,7 @@ export function SettingsShell({ children }: { children: React.ReactNode }) {
       <div className="settings-grid">
         <nav className="settings-nav" aria-label="Settings sections">
           {TABS.filter(tab => releaseSettingsAllowed(tab.href, releaseProfile(config))
-            && (tab.href !== "/settings/registrations" || availableRegistrationProviders(config).length > 0)).map((tab) => {
+            && (!["/settings/registrations", "/settings/mcp"].includes(tab.href) || availableRegistrationProviders(config).length > 0)).map((tab) => {
             const active = pathname === tab.href;
             return (
               <Link
