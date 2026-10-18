@@ -3,11 +3,11 @@ import Link from "next/link";
 import { MuseInstructions } from "@/components/docs/muse-instructions";
 import { MUSE_URL } from "@/lib/muse";
 import { CodeBlock, FlowDiagram, GuidePage, RelatedGuides } from "@/components/docs/docs-kit";
-export const metadata: Metadata = { title: "Registrations" };
+export const metadata: Metadata = { title: "Agentic registrations (Muse)" };
 
 export default function MuseGuide() {
   return <GuidePage
-    title="Registrations"
+    title="Agentic registrations (Muse)"
     intro={<p>Queue free Luma, Meetup or Partiful events before they end. Muse completes registration in its own browser.</p>}
     contents={[{ href: "#connect", label: "Connect" }, { href: "#account", label: "Registration account" }, { href: "#start", label: "Queue and start" }, { href: "#progress", label: "Progress" }, { href: "#recovery", label: "Limits and recovery" }]}
   >
