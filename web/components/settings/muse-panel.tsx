@@ -69,7 +69,7 @@ export function MuseConnectionPanel({ purpose = "registrations" }: { purpose?: "
       <div className={`settings-field ${styles.connector}`}>
         <div className={styles.fieldLabel}>
           <label htmlFor="muse-mcp-url">MCP URL</label>
-          <SettingsHelp label="MCP URL">For clients supporting Streamable HTTP MCP. Use the same Bearer key. Provides read-only event search and details; signups use the connector above.</SettingsHelp>
+          <SettingsHelp label="MCP URL">For clients supporting Streamable HTTP MCP. Use the same Bearer key. Provides read-only event search and details; signups use the connector in Registration settings.</SettingsHelp>
         </div>
         <div className={styles.copyField}>
           <input id="muse-mcp-url" readOnly value={mcp} />
