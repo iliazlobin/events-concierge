@@ -76,17 +76,16 @@ def test_docs_are_public_and_all_guides_work_without_backend(page_factory, width
     )
     guides = [
         ("Find events", "browsing"),
-        ("Registrations", "muse"),
-        ("MCP discovery", "mcp"),
+        ("Agentic registrations (Muse)", "muse"),
+        ("MCP (events discovery)", "mcp"),
         ("Account", "account"),
         ("How it works", "how-it-works"),
     ]
     for title, slug in guides:
         nav.get_by_role("link", name=title, exact=True).click()
         expect(page).to_have_url(re.compile(rf"/docs/{slug}$"))
-        page_title = {"muse": "Agentic registrations (Muse)", "mcp": "MCP (events discovery)"}.get(slug, title)
-        expect(page.get_by_role("heading", name=page_title, exact=True)).to_be_visible()
-        expect(breadcrumb.locator('[aria-current="page"]')).to_have_text(page_title)
+        expect(page.get_by_role("heading", name=title, exact=True)).to_be_visible()
+        expect(breadcrumb.locator('[aria-current="page"]')).to_have_text(title)
         expect(breadcrumb.get_by_role("link", name="Docs", exact=True)).to_have_attribute(
             "href", "/docs"
         )

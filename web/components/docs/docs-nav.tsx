@@ -7,8 +7,8 @@ import styles from "@/app/docs/docs.module.css";
 export const DOC_LINKS = [
   { href: "/docs", label: "Overview" },
   { href: "/docs/browsing", label: "Find events" },
-  { href: "/docs/muse", label: "Registrations" },
-  { href: "/docs/mcp", label: "MCP discovery" },
+  { href: "/docs/muse", label: "Agentic registrations (Muse)" },
+  { href: "/docs/mcp", label: "MCP (events discovery)" },
   { href: "/docs/account", label: "Account" },
   { href: "/docs/how-it-works", label: "How it works" },
 ];

@@ -946,6 +946,9 @@ def test_settings_secret_is_one_time_with_instructions_in_docs(page_factory, wid
     page = harness.page
     page.goto(BASE + "/settings/registrations")
     expect(page.get_by_role("heading", name="Agentic registrations (Muse)", exact=True)).to_be_visible()
+    navigation = page.get_by_role("navigation", name="Settings sections", exact=True)
+    expect(navigation.get_by_role("link", name="Agentic registrations (Muse)", exact=True)).to_have_attribute("aria-current", "page")
+    expect(navigation.get_by_role("link", name="MCP (events discovery)", exact=True)).to_have_attribute("href", "/settings/mcp")
     expect(page.locator('.settings-panel > [role="status"]')).to_have_class("sr-only")
     selector = page.get_by_role("combobox", name="Provider", exact=True)
     expect(selector).to_have_value("muse")
