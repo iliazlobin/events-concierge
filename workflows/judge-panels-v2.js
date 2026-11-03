@@ -8,7 +8,7 @@ export const meta = {
   ],
 }
 
-const WS = '/Users/iliazlobin/Claude/events-concierge'
+const WS = '/Users/iliazlobin/projects/events-concierge/app'
 const REQ = WS + '/design/requirements.md'
 const R = WS + '/research'
 

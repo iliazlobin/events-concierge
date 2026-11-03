@@ -9,9 +9,9 @@ export const meta = {
   ],
 }
 
-const WS = '/Users/iliazlobin/Claude/events-concierge'
+const WS = '/Users/iliazlobin/projects/events-concierge/app'
 const REQ = WS + '/design/requirements.md'
-const EXEMPLAR = '/Users/iliazlobin/Claude/jobs-tracking-system/design/requirements.md'
+const EXEMPLAR = '/Users/iliazlobin/projects/career/job-tracker/design/requirements.md'
 const CRAFT = '/Users/iliazlobin/.claude/skills/project-design/references/requirements-craft.md'
 const TEMPLATES = '/Users/iliazlobin/.claude/skills/project-design/references/templates.md'
 

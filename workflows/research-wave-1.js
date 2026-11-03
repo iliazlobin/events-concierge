@@ -9,7 +9,7 @@ export const meta = {
   ],
 }
 
-const OUT_DIR = '/Users/iliazlobin/Claude/events-concierge/research'
+const OUT_DIR = '/Users/iliazlobin/projects/events-concierge/app/research'
 
 const CONTEXT = `CONTEXT — the system under design:
 A production-grade, MULTI-TENANT Events Concierge product. A user makes a natural-language request ("find me something Friday evening after work and sign me up"); the system DISCOVERS candidate events, RANKS them to the user's taste and constraints, autonomously REGISTERS / RSVPs (including PAID tickets) on the event's own site, and adds the confirmed event to the user's CALENDAR with de-duplication. It tracks each event through a lifecycle: found -> registered -> scheduled_to_calendar.
