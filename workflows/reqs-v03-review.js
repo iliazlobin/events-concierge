@@ -4,7 +4,7 @@ export const meta = {
   phases: [{ title: 'Review' }, { title: 'Closure' }],
 }
 
-const WS = '/Users/iliazlobin/Claude/events-concierge'
+const WS = '/Users/iliazlobin/projects/events-concierge/app'
 const REQ = WS + '/design/requirements.md'
 const OPINION = WS + '/design/product-opinion.md'
 const BRIEF = WS + '/research/00c-product-landscape-brief.md'

@@ -4,7 +4,7 @@ export const meta = {
   phases: [{ title: 'Gate', detail: 'lint, score x2, consistency' }],
 }
 
-const WS = '/Users/iliazlobin/Claude/events-concierge'
+const WS = '/Users/iliazlobin/projects/events-concierge/app'
 const DOC = WS + '/design/system-design.md'
 const PROJECT = WS + '/PROJECT.md'
 const ARCHITECTURE = WS + '/ARCHITECTURE.md'

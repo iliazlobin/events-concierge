@@ -4,7 +4,7 @@ export const meta = {
   phases: [{ title: 'Publish', detail: 'one agent per placeholder page' }],
 }
 
-const WS = '/Users/iliazlobin/Claude/events-concierge'
+const WS = '/Users/iliazlobin/projects/events-concierge/app'
 const PAGES = {
   requirements: '391d865005a8816b830bd280c9f2479e',
   systemDesign: '391d865005a88164a182eabc18fe068f',

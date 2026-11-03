@@ -9,7 +9,7 @@ export const meta = {
   ],
 }
 
-const OUT_DIR = '/Users/iliazlobin/Claude/events-concierge/research'
+const OUT_DIR = '/Users/iliazlobin/projects/events-concierge/app/research'
 
 const CONTEXT = `CONTEXT — the product under design:
 An "Events Concierge": a multi-tenant consumer product where a user makes a natural-language request ("find me something Friday evening after work and sign me up") and the system DISCOVERS candidate events across many sources, RANKS them to the user's taste and constraints, autonomously RSVPs/REGISTERS where the source permits, and writes the confirmed event to the user's CALENDAR, then keeps it reconciled (organizer cancel/reschedule detection, un-RSVP).

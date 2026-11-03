@@ -7,7 +7,7 @@ export const meta = {
   ],
 }
 
-const WS = '/Users/iliazlobin/Claude/events-concierge'
+const WS = '/Users/iliazlobin/projects/events-concierge/app'
 const DOC = WS + '/design/system-design.md'
 const REQ = WS + '/design/requirements.md'
 const P = { 1: WS + '/design/panels/01-discovery-topology.md', 2: WS + '/design/panels/02-registration-orchestration.md', 3: WS + '/design/panels/03-credential-isolation.md', 4: WS + '/design/panels/04-handoff-lifecycle.md' }
